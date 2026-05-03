@@ -24,6 +24,7 @@ so a min-power objective would drive machines to infinity.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -46,7 +47,12 @@ class Process:
     kind: str  # recipe | extractor | generator
     label: str
     rates: dict[str, float]  # item -> net per-minute for ONE unit
-    mw: float  # net MW for one unit: negative consumes, positive generates
+    mw: float  # net MW for one unit at this mode: negative consumes, positive generates
+    #: MW for one machine at 100% clock, and the exponent power scales by. Together
+    #: these let the readout recompute power exactly at the derived clock instead of
+    #: assuming it is linear.
+    mw_at_full: float = 0.0
+    power_exponent: float = 1.0
     building: str | None = None
     recipe: str | None = None
     clock: float = 1.0
@@ -73,11 +79,37 @@ class Scenario:
     raw_caps: dict[str, float] = field(default_factory=dict)
     extractor_nodes: dict[tuple[str, str, str], int] = field(default_factory=dict)
     allow_sinks: bool = True
+    #: Extra discrete clock modes to offer the solver as CHOICES.
+    #:
+    #: Normally you want just (1.0). Ratio underclocking does not need a mode: a
+    #: solution of 52.8 machine-equivalents is reported as 53 machines at 99.6%,
+    #: which is exact, always a clean ratio, and provably the power-optimal way to
+    #: run that throughput (c**1.32 is convex, so a uniform clock beats any mix).
+    #:
+    #: Offering explicit sub-100% modes lets the solver instead SPREAD a fixed
+    #: throughput over more machines purely to save power -- measured at +1140 MW for
+    #: +441 machines. That is a real option but it is not free, so it is priced by
+    #: machine_cost_mw. Overclock modes are not offered by default because they
+    #: consume Power Shards, which nothing here counts.
     clocks: tuple[float, ...] = (1.0,)
     sloop_budget: int = 0
     max_machines: float | None = None
-    belt_ipm: float = 780.0  # Mk5; used to price sink and logistics lines
+    #: What one machine costs, in MW, when the objective is power.
+    #:
+    #: Only bites when `clocks` offers sub-100% modes. Not arbitrary: spreading
+    #: throughput via 50% clocks was measured to gain +1140 MW for +441 machines,
+    #: i.e. 2.58 MW per extra machine. A default above that rejects marginal
+    #: spreading while still accepting a genuinely good trade. Set to 0 to reproduce
+    #: an unpriced (ill-posed) max-power solve.
+    machine_cost_mw: float = 5.0
+    belt_ipm: float = 780.0  # Mk5; used to price sinks and to count logistics lines
     pipe_m3min: float = 600.0
+    #: Force whole machine-equivalents in the SOLVER.
+    #:
+    #: Off by default and rarely wanted: a fractional result is not a rounding error,
+    #: it is the exact throughput, and it is rendered as whole machines at a derived
+    #: clock. Forcing integrality here instead makes exact ratios unreachable and can
+    #: turn a feasible plan infeasible, because every item balance is an equality.
     integral: bool = False
     buildings_available: set[str] | None = None
     #: MW the plant may draw from the existing grid.
@@ -101,6 +133,8 @@ class Solution:
     sunk: dict[str, float]
     machines_total: float
     grid_import_mw: float = 0.0
+    machine_penalty_mw: float = 0.0
+    logistics: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     binding: list[str] = field(default_factory=list)
 
@@ -151,6 +185,8 @@ def recipe_processes(sc: Scenario) -> list[Process]:
                         label=f"{r.name}{' ' + suffix if suffix else ''}",
                         rates=rates,
                         mw=mw,
+                        mw_at_full=-g.recipe_power_mw(r, 1.0, sloops),
+                        power_exponent=b.power_exponent,
                         building=b.cls,
                         recipe=rid,
                         clock=clock,
@@ -178,6 +214,8 @@ def extractor_processes(sc: Scenario) -> list[Process]:
                     label=f"{b.name} on {purity} {g.item_name(resource)}",
                     rates={resource: rate},
                     mw=-b.power_at(clock),
+                    mw_at_full=-b.power_at(1.0),
+                    power_exponent=b.power_exponent,
                     building=building,
                     clock=clock,
                     max_count=count,
@@ -214,6 +252,10 @@ def generator_processes(sc: Scenario) -> list[Process]:
                     label=f"{b.name} on {item.name}",
                     rates=rates,
                     mw=b.power_production_mw,
+                    mw_at_full=b.power_production_mw,
+                    # Generators are energy-conserving: output and fuel draw are both
+                    # linear in clock, so no exponent applies.
+                    power_exponent=1.0,
                     building=cls,
                 )
             )
@@ -230,6 +272,46 @@ def build_processes(sc: Scenario) -> list[Process]:
             raise AssertionError(f"duplicate process id {p.pid!r}")
         seen[p.pid] = p
     return procs
+
+
+def _logistics(
+    sc: Scenario, procs: list[Process], x, col_p, raw_used: dict[str, float] | None = None
+) -> list[dict]:
+    """How much of each item moves, and how many belts or pipes that needs.
+
+    Reported rather than constrained. A throughput CAP would be wrong here: a plan
+    can legitimately run several parallel lines, and the game has no global limit --
+    what a planner actually needs to know is how many lines, so the logistics burden
+    is visible instead of hidden inside a ratio.
+    """
+    moved: dict[str, float] = dict(raw_used or {})
+    for i, p in enumerate(procs):
+        v = float(x[col_p(i)])
+        if v <= _EPS:
+            continue
+        for item, rate in p.rates.items():
+            if rate > 0:
+                moved[item] = moved.get(item, 0.0) + rate * v
+
+    out: list[dict] = []
+    for item, rate in sorted(moved.items(), key=lambda kv: -kv[1]):
+        if rate <= _EPS:
+            continue
+        it = sc.game.items.get(item)
+        fluid = bool(it and it.is_fluid)
+        capacity = sc.pipe_m3min if fluid else sc.belt_ipm
+        out.append(
+            {
+                "item": item,
+                "name": it.name if it else item,
+                "rate": round(rate, 2),
+                "carrier": "pipe" if fluid else "belt",
+                "unit": "m3/min" if fluid else "/min",
+                "capacity_per_line": capacity,
+                "lines": math.ceil(rate / capacity - 1e-9) if capacity else None,
+            }
+        )
+    return out
 
 
 # ------------------------------------------------------------------------ solve
@@ -401,6 +483,20 @@ def solve(sc: Scenario) -> Solution:
             [f"unknown objective {sc.objective!r}"],
         )
 
+    # ---- price machines when the objective is power --------------------
+    #
+    # Underclocking is allowed, not banned -- but it is never free. Its only benefit
+    # is power efficiency and its only cost is buildings, so without a price a
+    # max-power solve is ill-posed and drives machine count upward for ever.
+    #
+    # Applied only to the power objectives: for max_item / min_raw, underclocking
+    # gives no benefit at all (throughput is linear in machines x clock), so it is
+    # never selected and needs no penalty.
+    machine_priced = sc.machine_cost_mw > 0 and sc.objective in ("max_mw", "min_power")
+    if machine_priced:
+        for i in range(nP):
+            c[col_p(i)] += sc.machine_cost_mw
+
     res = milp(c=c, constraints=constraints, integrality=integrality, bounds=(lb, ub))
     if not res.success or res.x is None:
         return Solution(
@@ -421,7 +517,10 @@ def solve(sc: Scenario) -> Solution:
     warnings: list[str] = []
     x = res.x
     if sc.objective not in ("min_machines",):
-        pin = LinearConstraint(c.reshape(1, -1), goal - 1e-6, goal + 1e-6)
+        # A MILP optimum is not exact to 1e-6; too tight a pin makes phase 2
+        # infeasible and silently loses the machine minimisation.
+        tol = max(1e-6, abs(goal) * 1e-7) if not sc.integral else max(1e-4, abs(goal) * 1e-6)
+        pin = LinearConstraint(c.reshape(1, -1), goal - tol, goal + tol)
         c2 = np.zeros(n)
         for i in range(nP):
             c2[col_p(i)] = 1.0
@@ -439,11 +538,22 @@ def solve(sc: Scenario) -> Solution:
     # ---- read out -----------------------------------------------------
     out_procs = []
     machines_total = 0.0
+    exact_mw_total = 0.0
     for i, p in enumerate(procs):
         v = float(x[col_p(i)])
         if v <= _EPS:
             continue
-        machines_total += v
+
+        # v is throughput in machine-equivalents. The build is ceil(v) whole machines
+        # all clocked to v/ceil(v) -- exact, always a clean ratio, and power-optimal
+        # for that throughput because c**k is convex, so a uniform clock beats any
+        # mix. This is why ratio underclocking needs no solver mode.
+        built = max(1, math.ceil(v - 1e-9))
+        effective_clock = p.clock * v / built
+        exact_mw = built * p.mw_at_full * (effective_clock**p.power_exponent)
+        machines_total += built
+        exact_mw_total += exact_mw
+
         out_procs.append(
             {
                 "pid": p.pid,
@@ -454,10 +564,15 @@ def solve(sc: Scenario) -> Solution:
                 else p.building,
                 "building_id": p.building,
                 "recipe": p.recipe,
-                "machines": round(v, 4),
-                "clock": p.clock,
+                "machines": built,
+                "machine_equivalents": round(v, 4),
+                "clock": round(effective_clock, 6),
                 "sloops": p.sloops,
-                "mw": round(v * p.mw, 2),
+                # Linear power (v * p.mw) is what the LP optimised; below 100% clock
+                # it is a conservative OVER-estimate, so the exact figure is never
+                # worse than what the solve promised.
+                "mw": round(exact_mw, 2),
+                "mw_linear": round(v * p.mw, 2),
             }
         )
     out_procs.sort(key=lambda d: -abs(d["mw"]))
@@ -478,6 +593,17 @@ def solve(sc: Scenario) -> Solution:
         if x[col_r(j)] >= sc.raw_caps[item] - 1e-6:
             binding.append(f"{g.item_name(item)} capped at {sc.raw_caps[item]:g}")
 
+    logistics = _logistics(sc, procs, x, col_p, raw_used)
+    heavy = [entry for entry in logistics if (entry["lines"] or 0) > 1]
+    if heavy:
+        warnings.append(
+            "multi-line logistics: "
+            + ", ".join(
+                f"{e['name']} {e['rate']:g}{e['unit']} needs {e['lines']} {e['carrier']}s"
+                for e in heavy[:4]
+            )
+        )
+
     if sunk:
         warnings.append(
             "plan sinks "
@@ -488,11 +614,17 @@ def solve(sc: Scenario) -> Solution:
         warnings.append(
             f"plan draws {grid_draw:g} MW from the existing grid (it is not self-powered)"
         )
-    if any(p["clock"] < 1.0 for p in out_procs):
-        warnings.append(
-            "gain depends on sub-100% clocks: underclocking trades many more machines "
-            "for less power per unit"
-        )
+    # Only warn about SPREADING, never about ratio clocks. A derived clock of 99.4%
+    # just means 176 machines carry 175 machines' worth of throughput -- that is the
+    # normal, exact way to build, not a tradeoff the caller should second-guess.
+    if min(sc.clocks) < 1.0:
+        used_low = [p for i, p in enumerate(procs) if p.clock < 1.0 and x[col_p(i)] > _EPS]
+        if used_low:
+            warnings.append(
+                f"{len(used_low)} process(es) use a sub-100% clock MODE: this spreads "
+                "throughput over more machines to save power, priced at "
+                f"{sc.machine_cost_mw:g} MW/machine"
+            )
 
     return Solution(
         status="optimal",
@@ -504,6 +636,7 @@ def solve(sc: Scenario) -> Solution:
         sunk=sunk,
         machines_total=round(machines_total, 3),
         grid_import_mw=grid_draw,
+        logistics=logistics,
         warnings=warnings,
         binding=binding,
     )

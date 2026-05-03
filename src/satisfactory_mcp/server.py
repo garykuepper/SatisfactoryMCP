@@ -782,6 +782,8 @@ def plan_factory(
     export_minimums: dict[str, float] | None = None,
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
+    clocks: list[float] | None = None,
+    machine_cost_mw: float = 5.0,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
@@ -799,6 +801,17 @@ def plan_factory(
         ["north", "resource:Crude Oil"]  narrow a location to one resource
 
     Omit it and the whole map is in scope. Use search_resource_nodes to discover ids.
+
+    Machine counts are whole buildings at a derived clock: a 52.8 machine-equivalent
+    result is reported as 53 machines at 99.6%. That is exact, always a clean ratio,
+    and provably the power-optimal way to run that throughput, so ordinary ratio
+    underclocking is automatic and needs no parameter.
+
+    ``clocks`` is only for asking a different question: passing [0.5, 1.0] lets the
+    solver SPREAD throughput over more machines to save power, which is real but not
+    free, so each machine is priced at ``machine_cost_mw`` (default 5 MW, just above
+    the 2.58 MW/machine that trade was measured to be worth). Overclock modes are not
+    offered by default because they consume Power Shards, which nothing here counts.
 
     objective: max_mw | max_item | min_raw | min_machines | min_power.
     Every item is balanced as an EQUALITY, so a byproduct with no consumer makes the
@@ -856,6 +869,8 @@ def plan_factory(
         export_minimums=minimums,
         extractor_nodes=ext,
         allow_sinks=allow_sinks,
+        clocks=tuple(clocks) if clocks else (1.0,),
+        machine_cost_mw=machine_cost_mw,
         buildings_available=st.unlocked_building_ids,
         grid_import_mw=None if MW in export_ids else 1e6,
     )
@@ -876,9 +891,10 @@ def plan_factory(
 
     rows_out = [
         (
-            render.num(p["machines"]),
-            p["label"][:44],
-            p["building"][:22],
+            p["machines"],
+            f"{p['clock'] * 100:.4g}%",
+            p["label"][:42],
+            p["building"][:20],
             render.num(p["mw"]),
             "BUILD" if p["building_id"] and st.built(p["building_id"]) == 0 else "",
         )
@@ -900,6 +916,23 @@ def plan_factory(
             + ", ".join(g.buildings[c].name for c in needed if c in g.buildings)
         )
 
+    # Water is modelled as unlimited (it effectively is on this map), so the honest
+    # thing is to surface the extractor count and pipe lines it implies rather than
+    # let that burden hide inside a ratio.
+    water_extractors = sum(
+        p["machines"] for p in sol.processes if p["building_id"] == "Build_WaterPump_C"
+    )
+    top_flows = [e for e in sol.logistics if e["rate"] > 0][:6]
+    logistics_block = ""
+    if top_flows:
+        logistics_block = "\n# logistics (lines at Mk5 belt / Mk2 pipe)\n" + render.table(
+            ("item", "rate", "carrier", "lines"),
+            [
+                (e["name"], f"{render.num(e['rate'])}{e['unit']}", e["carrier"], e["lines"])
+                for e in top_flows
+            ],
+        )
+
     summary = "\n".join(
         [
             (
@@ -910,7 +943,8 @@ def plan_factory(
             render.kv(
                 [
                     ("net_MW", render.num(sol.net_mw)),
-                    ("machines", render.num(sol.machines_total)),
+                    ("buildings", render.num(sol.machines_total)),
+                    ("water_extractors", water_extractors or None),
                     ("grid_import_MW", render.num(sol.grid_import_mw)),
                 ]
             ),
@@ -932,11 +966,12 @@ def plan_factory(
     return render.envelope(
         summary,
         render.table(
-            ("machines", "process", "building", "MW", "note"),
+            ("build", "clock", "process", "building", "MW", "note"),
             rows_out,
             total=len(sol.processes),
             limit=limit,
-        ),
+        )
+        + logistics_block,
         notes,
     )
 

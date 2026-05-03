@@ -89,6 +89,17 @@ one from the game's packaged `Persistent_Level.umap`, one community-traced — w
 every shared node. That merge recovered a pure Limestone node the single-source table was missing, found
 because the completeness check now counts save actors against table rows in *both* directions.
 
+**Whole machines at a derived clock.** A 52.8 machine-equivalent result is reported as **53 Blenders at
+99.6%** — exact, always a clean ratio, and provably the power-optimal way to run that throughput, since
+`c^1.32` is convex so a uniform clock beats any mix. Ratio underclocking is therefore automatic and needs
+no parameter. Passing `clocks=[0.5, 1.0]` asks a *different* question — spend buildings to save power —
+which is allowed but priced at `machine_cost_mw` (default 5 MW/machine, just above the 2.58 MW/machine
+that trade was measured to be worth) and announced in the warnings.
+
+**Logistics are reported, not capped.** Every plan lists each flow with the belts or pipes it implies,
+plus the water-extractor count. Capping throughput would be wrong — parallel lines are legal — but a plan
+that silently needs 7 Mk2 water pipes is not a plan.
+
 **Region names are advisory, and say so.** Boundaries come from a hand-derived 256 m raster, because the
 game ships no biome geometry. Every lookup carries a confidence (`interior` / `boundary` / `sparse`), a
 land mask built from 2,669 static world objects means ocean returns *"off-map or ocean"* instead of the

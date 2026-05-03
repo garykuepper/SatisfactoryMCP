@@ -629,20 +629,52 @@ Both run on **every** solve:
   5,985 MW instead of 8,610.
 - **Free-lunch audit.** Strip extractors, zero `raw_caps`, maximise MW; must return exactly 0.
 
-### 8.4 Clocks and sloops
+### 8.4 Clocks, machine counts and logistics
 
-Continuous clock is genuinely non-convex (`power = P·x^k·n^(1−k)`), and for fixed throughput power
-strictly decreases in `n`, so a min-power objective drives `n → ∞, c → 0`. **Use discrete
-`(clock, sloops)` modes**, each its own process with exact rate and power. Default `clocks = [1.0]`.
+**Machine counts are whole buildings at a derived clock.** A solve returns `x` in
+machine-equivalents; the readout reports `ceil(x)` machines all clocked to `x / ceil(x)`. So 52.8
+becomes **53 Blenders at 99.6%**. That is exact, always a clean ratio, and how the game is actually
+played — a fractional count is the ratio, not a rounding error.
 
-Two proven facts worth exposing:
+It is also provably the best way to run that throughput: power is `c^1.321929`, which is **convex**, so
+for a fixed total `Σc` the sum `Σc^k` is minimised by spreading the clock *equally*. A uniform clock
+therefore beats any mixed set, and the derivation needs no solver support at all.
 
-- **Linear power is a safe over-estimate below 100% clock** (`c^k ≤ c` for `c ≤ 1, k > 1`).
-- **Overclocking above 100% is never selected** for a throughput objective — adding 150/200/250% modes
-  changed the optimum by exactly 0 MW.
-- **The underclocking trap:** allowing 50% modes gained +1,140 MW while going from 516 to 957 machines.
-  A max-power model with a free clock is ill-posed. Bound the clock set or price machines, and **warn when
-  a sub-100% clock set is what produced the gain.**
+Because of that, **ratio underclocking is free and automatic**, and solver-side integrality is off by
+default: forcing whole machine-equivalents makes exact ratios unreachable and can turn a feasible plan
+infeasible, since every item balance is an equality.
+
+**Sub-100% clock modes are a different question, and are priced not banned.** Offering `clocks=[0.5, 1.0]`
+lets the solver *spread* a fixed throughput over more machines purely to save power — measured at
++1140 MW for +441 machines, i.e. 2.58 MW per extra machine. That is a real option, so each machine costs
+`machine_cost_mw` (default **5 MW**, set just above that measured figure) whenever the objective is
+`max_mw` or `min_power`. For `max_item` / `min_raw` no penalty is applied because underclocking gives no
+throughput benefit at all and is never selected.
+
+The warning fires **only** for genuine spreading, never for a derived ratio clock. An earlier version
+warned on any clock below 100%, which meant a routine 99.4% ratio looked like a tradeoff the caller
+should second-guess.
+
+Two proven facts kept from the research:
+
+- **Linear power is a safe over-estimate below 100% clock** (`c^k ≤ c` for `c ≤ 1, k > 1`), which is what
+  the LP optimises; the readout then recomputes each row's draw exactly at the derived clock, so the
+  reported figure is never worse than the solve promised.
+- **Overclocking above 100% is never selected for a throughput objective** — adding 150/200/250% modes
+  changed the optimum by exactly 0 MW. It is also not offered by default because it consumes Power
+  Shards, which nothing here counts.
+
+**Logistics are reported, never constrained.** Every plan lists each item's flow with the belt or pipe
+lines it implies at the current tier. A throughput *cap* would be wrong — parallel lines are legal and
+the game has no global limit — but a plan that silently needs 7 Mk2 pipes of water is not a plan. Water
+is modelled as unlimited, which on this map it effectively is, so the extractor count and pipe count are
+surfaced explicitly rather than hiding inside a ratio.
+
+**Somersloops remain dormant** by explicit decision. The machinery exists (`Process.sloops`,
+`Scenario.sloop_budget`, per-building boost multipliers) but nothing populates the budget, so no sloop
+modes are generated. Unconstrained sloops give meaningless answers, the runtime property names for
+reading installed ones are still unverified (OQ4), and the Alien Power Augmenter may be the better use
+anyway — a different model entirely.
 
 ### 8.5 Degeneracy
 
