@@ -30,7 +30,7 @@ The game install and save directory are auto-detected. Override with `SATISFACTO
 
 **Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`
-**Map** — `list_regions`, `describe_location`, `search_resource_nodes`
+**Map** — `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Planning** — `plan_factory`
 **MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
@@ -90,13 +90,24 @@ land mask built from 2,669 static world objects means ocean returns *"off-map or
 nearest land region, and 48 hand-verified nodes override the raster outright. All computation uses exact
 geometry — grid cells, cones, radii — never a name.
 
+## Resources and prompts
+
+Both are client-pulled, so they cost nothing until used.
+
+Resources: `satisfactory://docs/summary` (game-data census + content hash),
+`satisfactory://save/current` (which file would be read, and its headline state),
+`satisfactory://map/regions` (region names usable as selectors).
+
+Prompts, which surface as slash commands and carry the multi-step procedure so tool descriptions stay one
+line: `design_factory`, `plan_power_plant`, `pick_hard_drive`.
+
 ## Layout
 
 ```
 src/satisfactory_mcp/
   docs/       Docs.json -> normalized items / recipes / buildings / schematics
   save/       sidecar invocation, caching, derived world state
-  spatial/    exact map geometry, resource nodes
+  spatial/    exact geometry, nodes, region names, selectors, site ranking
   planning/   LP optimizer, hard-drive advisor
   render.py   ALL response formatting (context budget is the binding constraint)
   server.py   FastMCP tool registration only

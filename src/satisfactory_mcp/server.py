@@ -23,6 +23,7 @@ from .save import projection as proj
 from .save.state import WorldState, load_state
 from .spatial import geo
 from .spatial import nodes as nodes_mod
+from .spatial import ranking as ranking_mod
 from .spatial import regions as regions_mod
 from .spatial.select import SELECTOR_HELP, select_nodes
 
@@ -656,6 +657,119 @@ def search_resource_nodes(
     )
 
 
+@mcp.tool(structured_output=False)
+def rank_build_sites(
+    resource: str,
+    sources: list[str] | None = None,
+    top: int = 5,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Rank candidate fields for a new extraction site, best first.
+
+    Scores untapped REACHABLE capacity against spread, distance to your existing
+    buildings, and purity mix. Every raw component is shown so you can re-weight:
+    the single score is a starting point, not a verdict.
+
+    ``sources`` narrows the search area using the same selectors as
+    search_resource_nodes; omit it to search the whole map.
+    """
+    g = game()
+    rid = _item_id(resource)
+    if rid is None:
+        return f"no resource matching {resource!r}"
+    table = nodes_mod.load_nodes()
+
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return (
+            f"could not read save: {exc} (site ranking needs a save to know what is already built)"
+        )
+
+    spec = [*(sources or []), f"resource:{rid}"]
+    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id)
+    if sel.errors and not sel.nodes:
+        return render.envelope("# no candidates", "", [*sel.errors, SELECTOR_HELP])
+
+    rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
+    clusters = geo.cluster(rows, link_m=200.0)
+    scored = ranking_mod.rank_sites(
+        clusters,
+        infra=st.infra_points(),
+        consumer_z=st.consumer_z(),
+    )
+    if not scored:
+        return render.envelope(
+            f"# no untapped {g.item_name(rid)} in {sel.description}",
+            "",
+            [
+                "every reachable node here already has an extractor",
+                *sel.errors,
+            ],
+        )
+
+    rm = regions_mod.load_regions()
+    unit = "m3/min" if g.items[rid].is_fluid else "/min"
+    out_rows = []
+    for sc in scored[: render.clamp(top, default=5)]:
+        cx, cy, _cz = sc.centroid
+        raw = sc.raw
+        alt = raw["altitude_vs_consumer_m"]
+        out_rows.append(
+            (
+                render.num(sc.score),
+                rm.label_for(cx, cy).name or "ocean/off-map",
+                geo.grid_cell(cx, cy),
+                f"{int(cx / 100)},{int(cy / 100)}",
+                raw["nodes"],
+                render.num(raw["untapped_rate"]),
+                f"{render.num(raw['spread_m'])}m",
+                "-"
+                if raw["distance_to_infra_m"] is None
+                else f"{render.num(raw['distance_to_infra_m'])}m",
+                render.num(raw["purity_quality"]),
+                "-" if alt is None else f"{alt:+.0f}m",
+            )
+        )
+
+    notes = [*sel.errors]
+    notes.append(
+        "weights: throughput 1.00, spread -0.35, distance -0.25, purity +0.20 "
+        "(min-max normalised across these candidates only)"
+    )
+    notes.append(
+        "alt is the field's height above your refineries: POSITIVE means fluid flows "
+        "downhill to them and needs no pipeline pumps"
+    )
+    if st.consumer_z() is None:
+        notes.append("no refineries found, so altitude is not shown")
+
+    return render.envelope(
+        f"# {len(scored)} candidate {g.item_name(rid)} field(s) in {sel.description}, "
+        f"untapped and reachable only\n"
+        f"# {st.age_note}\n# rates {unit} at 100% clock; coords in metres",
+        render.table(
+            (
+                "score",
+                "region",
+                "grid",
+                "centre(m)",
+                "n",
+                "untapped",
+                "spread",
+                "to_infra",
+                "purity",
+                "alt",
+            ),
+            out_rows,
+            total=len(scored),
+            limit=top,
+        ),
+        notes,
+    )
+
+
 # ============================================================ planning
 
 
@@ -932,6 +1046,135 @@ def advise_hard_drive_pick(
             "deltas are marginal value vs this world's current recipes",
             "a 0 delta means the player already has a route that dominates it",
         ],
+    )
+
+
+# ============================================================ resources
+#
+# Resources are CLIENT-PULLED, so they cost zero context until something asks for
+# them. That makes them right for stable orientation data and wrong for anything
+# parameterised, which stays a tool.
+
+
+@mcp.resource("satisfactory://docs/summary", mime_type="text/plain")
+def docs_summary() -> str:
+    """One-line census of the normalized game data, plus its content hash."""
+    g = game()
+    kinds: dict[str, int] = {}
+    for r in g.recipes.values():
+        kinds[r.kind] = kinds.get(r.kind, 0) + 1
+    return render.kv(
+        [
+            ("items", len(g.items)),
+            ("fluids", sum(1 for i in g.items.values() if i.is_fluid)),
+            ("recipes", len(g.recipes)),
+            ("automatable", kinds.get("part", 0)),
+            ("alternates", len(g.alternates())),
+            ("buildings", len(g.buildings)),
+            ("schematics", len(g.schematics)),
+            ("docs_sha256", g.docs_sha256[:16]),
+            ("warnings", len(g.warnings)),
+        ]
+    )
+
+
+@mcp.resource("satisfactory://save/current", mime_type="text/plain")
+def current_save() -> str:
+    """Which world and file the server would read right now, and its headline state."""
+    try:
+        st = _state()
+    except Exception as exc:
+        return f"no readable save: {exc}"
+    p = st.progression()
+    return render.kv(
+        [
+            ("file", st.header.get("filename")),
+            ("world", st.header.get("session_name")),
+            ("played_h", int((st.header.get("play_duration_s") or 0) / 3600)),
+            ("save_version", st.header.get("save_version")),
+            ("phase", p["game_phase"]),
+            ("tier_complete", p["highest_complete_tier"]),
+            ("recipes", p["available_recipes"]),
+            ("alternates", len(st.unlocked_alternates)),
+            ("hard_drives_pending", len(st.hard_drive_offers)),
+        ]
+    )
+
+
+@mcp.resource("satisfactory://map/regions", mime_type="text/plain")
+def map_regions() -> str:
+    """Region names available as source selectors, with their accuracy caveat."""
+    rm = regions_mod.load_regions()
+    return (
+        f"# {len(rm.names())} regions, advisory names, ~{rm.meta.get('accuracy_m', 256)}m "
+        "boundary accuracy\n" + "\n".join(rm.names())
+    )
+
+
+# ============================================================ prompts
+#
+# Prompts also cost nothing until invoked, and they surface as slash commands. They
+# are where multi-step PROCEDURE lives, which keeps tool descriptions to one line and
+# the always-resident schema small.
+
+
+@mcp.prompt(title="Design a factory")
+def design_factory(target_item: str, rate_per_min: str = "300") -> str:
+    """Plan a factory for a target item, respecting what this world has unlocked."""
+    return (
+        f"Design a factory producing {rate_per_min}/min of {target_item} in my current "
+        "Satisfactory world.\n\n"
+        "Work in this order:\n"
+        f"1. alternates_for_item('{target_item}') to see every route and which I HAVE.\n"
+        "2. world_summary() for tier, power headroom, and anything unlocked but never built.\n"
+        f"3. plan_factory(objective='min_machines', target_item='{target_item}', "
+        f"exports=['{target_item}'], export_minimums={{'{target_item}': {rate_per_min}}}) "
+        "to get the real machine counts.\n"
+        "4. If it comes back INFEASIBLE, that usually means a byproduct has no consumer. "
+        "Identify it and either add it to exports or find a recipe that consumes it, then "
+        "re-solve.\n\n"
+        "Then tell me: the machine list, total power draw, raw inputs per minute, anything "
+        "I must build first, and any byproduct needing an outlet. Flag it explicitly if the "
+        "plan depends on exporting or sinking something."
+    )
+
+
+@mcp.prompt(title="Plan a power plant")
+def plan_power_plant(fuel_resource: str = "Crude Oil", sources: str = "north") -> str:
+    """Plan a power plant from a given resource and area."""
+    return (
+        f"Plan a power plant burning {fuel_resource} in my Satisfactory world, using "
+        f"sources: {sources}.\n\n"
+        f"1. search_resource_nodes(sources=['{sources}', 'resource:{fuel_resource}']) to see "
+        "what is there and what is already tapped. Note that free capacity far from my "
+        "existing base is not the same as usable capacity.\n"
+        f"2. rank_build_sites('{fuel_resource}', sources=['{sources}']) if I need a new site.\n"
+        f"3. plan_factory(objective='max_mw', sources=['{sources}'], exports=['MW']).\n"
+        "4. If that abandons the resource or comes back infeasible, the byproducts have "
+        "nowhere to go. Retry with exports=['MW','Plastic','Rubber'] and say plainly that "
+        "the plant only works if those leave the site.\n\n"
+        "Report net MW, the machine list, water demand, pipes and belts needed, what I must "
+        "build first, and every binding constraint."
+    )
+
+
+@mcp.prompt(title="Which hard drive recipe?")
+def pick_hard_drive(hard_drive_id: str = "") -> str:
+    """Advise which alternate recipe to take from a pending hard drive."""
+    which = (
+        f"hard drive {hard_drive_id}"
+        if hard_drive_id
+        else "each pending hard drive worth deciding now"
+    )
+    return (
+        f"Help me choose the alternate recipe for {which} in my Satisfactory world.\n\n"
+        "1. list_pending_hard_drive_choices() to see the live offers and rerolls left.\n"
+        "2. advise_hard_drive_pick(hard_drive_id=N) for the marginal value of each option.\n\n"
+        "Read the deltas carefully. A 0 in d_MW means I already own a route that dominates "
+        "it for power, NOT that the recipe is bad -- check d_own_output_mach, which measures "
+        "it on what it actually makes. Tell me which to take and why, name the tradeoff "
+        "rather than hiding it behind one score, and mention any new building type I would "
+        "have to unlock or build."
     )
 
 

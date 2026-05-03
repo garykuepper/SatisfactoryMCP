@@ -319,6 +319,18 @@ class WorldState:
 
     # ---- sites ---------------------------------------------------------
 
+    def infra_points(self) -> list[tuple[float, float]]:
+        """XY of every built production building, for distance-to-infrastructure."""
+        return [(r["pos"][0], r["pos"][1]) for r in self._all_records() if r.get("pos")]
+
+    def consumer_z(self, building_ids: tuple[str, ...] = ("Build_OilRefinery_C",)) -> float | None:
+        """Mean altitude of a consumer class, for pipe head-lift sign.
+
+        Defaults to refineries because that is what a fluid field usually feeds.
+        """
+        zs = [r["pos"][2] for r in self._all_records() if r.get("pos") and r["cls"] in building_ids]
+        return sum(zs) / len(zs) if zs else None
+
     def sites(self, link_m: float = 300.0) -> list[dict]:
         """Cluster built production buildings into named-by-content sites."""
         records = [r for r in self._all_records() if r.get("pos")]

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 16 tools, 84 tests passing. See README.md for usage.
+**Status:** implemented. 17 tools, 3 resources, 3 prompts, 119 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -685,7 +685,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
-**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`
+**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Planning:** `plan_factory`, `explain_byproducts`, `compare_recipe_options`, `diff_vs_save`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
@@ -838,7 +838,16 @@ All steps below are **done**; kept as a record of dependency order.
 6. **`planning/optimize.py`** — equality balance, both guards, two-phase solve, grid-import model.
 7. **`planning/advisor.py`** — hard-drive counterfactuals incl. an own-output objective.
 
-Not done: MCP **prompts and resources** (§10.3), and `rank_build_sites`. Both are additive.
+Everything in the spec is now built, including §10.3's resources and prompts and
+`rank_build_sites`.
+
+`rank_build_sites` scores `1.00·throughput − 0.35·spread − 0.25·distance + 0.20·purity`, min-max
+normalised **across the candidates in that query only**, and returns every raw component so a caller can
+re-weight. Four behaviours are pinned by tests because getting them wrong would produce confident
+nonsense: fully-tapped fields are not candidates; unreachable capacity (well satellites behind a locked
+Pressurizer) is excluded from throughput; a missing infrastructure distance stays `None` rather than
+scoring as adjacent; and the altitude delta is **positive when the field sits above the consumer**, since
+that means fluid flows downhill and needs no pipeline pumps.
 
 ---
 
