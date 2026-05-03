@@ -1,0 +1,209 @@
+"""Exact map geometry. No hand-authored region shapes here.
+
+Coordinate frame, established four independent ways (strongest: the wiki Crash_Site
+table's 118 pods carry both a Region column and raw save coordinates, and joining
+them to the vendored crash-site table matches 117/118 to sub-centimetre)::
+
+    -Y = north      +X = east      +Z = up      1 m = 100 cm exactly
+
+Everything in this module is derived and exact. Fuzzy biome *names* live in
+spatial.regions and are advisory only -- they never feed a calculation.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+__all__ = [
+    "CM_PER_M",
+    "DIRECTIONS",
+    "GRID_CELL",
+    "Cluster",
+    "bearing_deg",
+    "cluster",
+    "direction_of",
+    "distance_m",
+    "grid_cell",
+    "in_direction",
+]
+
+CM_PER_M = 100.0
+
+#: Biome grid: 1.024 km cells, numbered from the SOUTH-WEST corner. [WIKI]
+GRID_CELL = 102_400.0
+GRID_X0 = -319_600.0  # west edge of column X0
+GRID_Y0_SOUTH = 302_800.0  # south edge of row Y0
+
+#: Content extents measured over 2,371 static world objects.
+CONTENT_BBOX = (-298_838.0, -314_104.0, 406_564.0, 304_196.0)  # minx, miny, maxx, maxy
+
+#: Compass bearings in degrees, clockwise from north.
+DIRECTIONS: dict[str, float] = {
+    "north": 0.0,
+    "northeast": 45.0,
+    "east": 90.0,
+    "southeast": 135.0,
+    "south": 180.0,
+    "southwest": 225.0,
+    "west": 270.0,
+    "northwest": 315.0,
+}
+_ALIASES = {
+    "n": "north",
+    "ne": "northeast",
+    "e": "east",
+    "se": "southeast",
+    "s": "south",
+    "sw": "southwest",
+    "w": "west",
+    "nw": "northwest",
+}
+
+
+def grid_cell(x: float, y: float) -> str:
+    """Biome grid cell label, e.g. ``"X3Y4"``. Exact, no interpolation."""
+    i = math.floor((x - GRID_X0) / GRID_CELL)
+    j = math.floor((GRID_Y0_SOUTH - y) / GRID_CELL)
+    return f"X{i}Y{j}"
+
+
+def bearing_deg(x: float, y: float, ox: float = 0.0, oy: float = 0.0) -> float:
+    """Compass bearing from (ox, oy) to (x, y), degrees clockwise from north.
+
+    The negated Y is the thing naive implementations get wrong: north is -Y, so
+    ``atan2(dx, -dy)`` -- not ``atan2(dy, dx)``.
+    """
+    return math.degrees(math.atan2(x - ox, -(y - oy))) % 360.0
+
+
+def direction_of(x: float, y: float, ox: float = 0.0, oy: float = 0.0) -> str:
+    """Nearest of the eight compass names."""
+    b = bearing_deg(x, y, ox, oy)
+    return min(DIRECTIONS, key=lambda name: _angle_gap(b, DIRECTIONS[name]))
+
+
+def _angle_gap(a: float, b: float) -> float:
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+def normalise_direction(name: str) -> str:
+    key = name.strip().casefold().replace("-", "").replace(" ", "")
+    key = _ALIASES.get(key, key)
+    if key not in DIRECTIONS:
+        raise ValueError(f"unknown direction {name!r}; use one of {sorted(DIRECTIONS)}")
+    return key
+
+
+def in_direction(
+    x: float,
+    y: float,
+    direction: str,
+    origin: tuple[float, float] | None = None,
+    half_angle: float = 60.0,
+) -> bool:
+    """Cone test, falling back to a hemisphere when no origin is given.
+
+    With no origin the test is a pure hemisphere about the map centre, which is what
+    a question like "what oil is in the north" actually means. With an origin it is a
+    cone from the player, meaning "north of me".
+    """
+    d = normalise_direction(direction)
+    if origin is None:
+        return _hemisphere(x, y, d)
+    b = bearing_deg(x, y, origin[0], origin[1])
+    return _angle_gap(b, DIRECTIONS[d]) <= half_angle
+
+
+def _hemisphere(x: float, y: float, direction: str) -> bool:
+    target = DIRECTIONS[direction]
+    b = bearing_deg(x, y, 0.0, 0.0)
+    return _angle_gap(b, target) <= 90.0
+
+
+def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Planar XY distance in metres.
+
+    Z is deliberately excluded: it spans only 0.64 km and matters for pipe head,
+    not for proximity.
+    """
+    return math.dist(a, b) / CM_PER_M
+
+
+@dataclass
+class Cluster:
+    """A group of nearby nodes. Named by CONTENT, never by biome."""
+
+    members: list[dict]
+
+    @property
+    def size(self) -> int:
+        return len(self.members)
+
+    @property
+    def centroid(self) -> tuple[float, float, float]:
+        n = len(self.members)
+        return (
+            sum(m["x"] for m in self.members) / n,
+            sum(m["y"] for m in self.members) / n,
+            sum(m["z"] for m in self.members) / n,
+        )
+
+    @property
+    def diameter_m(self) -> float:
+        """Largest pairwise distance -- the honest measure of how spread out it is."""
+        pts = [(m["x"], m["y"]) for m in self.members]
+        if len(pts) < 2:
+            return 0.0
+        return max(
+            distance_m(pts[i], pts[j]) for i in range(len(pts)) for j in range(i + 1, len(pts))
+        )
+
+    @property
+    def grid_cell(self) -> str:
+        cx, cy, _ = self.centroid
+        return grid_cell(cx, cy)
+
+    def kinds(self) -> dict[str, int]:
+        """Node kinds present.
+
+        Kind must never be inferred from a single member: at a 200 m link distance
+        one real cluster merges 6 well satellites with a plain node 85 m away, and
+        assuming 'well' for all 7 understates the field by 120 m3/min.
+        """
+        out: dict[str, int] = {}
+        for m in self.members:
+            out[m["kind"]] = out.get(m["kind"], 0) + 1
+        return out
+
+    def purities(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for m in self.members:
+            out[m["purity"]] = out.get(m["purity"], 0) + 1
+        return out
+
+
+def cluster(nodes: list[dict], link_m: float = 200.0) -> list[Cluster]:
+    """Single-linkage clustering on XY.
+
+    200 m is the empirically right link distance: it recovers the real oil fields
+    (max within-field spread 288 m, far smaller than any between-field gap).
+    """
+    remaining = list(nodes)
+    out: list[Cluster] = []
+    while remaining:
+        seed = remaining.pop()
+        group = [seed]
+        changed = True
+        while changed:
+            changed = False
+            for cand in list(remaining):
+                cp = (cand["x"], cand["y"])
+                if any(distance_m(cp, (m["x"], m["y"])) <= link_m for m in group):
+                    group.append(cand)
+                    remaining.remove(cand)
+                    changed = True
+        out.append(Cluster(members=group))
+    out.sort(key=lambda c: (-c.size, c.centroid[1]))
+    return out

@@ -1,0 +1,271 @@
+"""Generate data/region_names.json -- the ADVISORY region-name layer.
+
+    uv run python tools/gen_region_names.py
+
+This is layer 2 of the spatial design. Layer 1 (grid cells, cones, radii, clustering)
+is exact and derived, and every calculation uses it. This layer only puts human names
+on coordinates, so it is explicitly approximate and carries a confidence per lookup.
+A name must never feed a computation.
+
+It takes data/satisfactory_regions.json as source material and fixes the four defects
+that made that file unusable as-is:
+
+1. **No void class.** All 900 raster cells carried a land label, so a lookup for open
+   ocean confidently returned "Rocky Desert". Fixed by building a land mask from
+   2,669 known static world objects (resource nodes, crash sites, power slugs,
+   somersloops, Mercer shrines/spheres) and blanking cells that are far from all of
+   them.
+2. **Raster spilling outside its own bboxes.** The shipped bboxes disagreed with the
+   raster for 11 of 21 regions, so a bbox-AND-raster test returned False for points
+   the raster itself assigned. Fixed by recomputing every bbox FROM the raster, so
+   containment holds by construction.
+3. **Boundary mislabels presented as certain.** Fixed by emitting a per-cell
+   confidence derived from neighbour agreement, plus authoritative per-node overrides
+   taken from the hand-verified oil clusters.
+4. **A second implementation that contradicted the prose.** data/geo_reference.py is
+   deleted; src/satisfactory_mcp/spatial/regions.py is the only implementation.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "sidecar" / "vendor" / "sat_sav_parse"))
+
+import sav_data.crashSites as crash_sites
+import sav_data.mercerSphere as mercer
+from sav_data import slug, somersloop
+from sav_data.resourcePurity import RESOURCE_PURITY
+
+VOID = "."
+
+#: A cell whose centre is farther than this from any known static object is treated
+#: as void (ocean or off-map). Chosen from the measured distribution: cell-to-nearest
+#: distances are strongly bimodal, median 123 m on land vs p90 1212 m, and 1000 m
+#: blanks 14.7% of the raster -- close to the 26% of the raster that lies outside the
+#: content bbox, while staying conservative about inland lakes and plateaus.
+VOID_DISTANCE_M = 1000.0
+
+#: Between these two a label is emitted but flagged low-confidence.
+UNCERTAIN_DISTANCE_M = 400.0
+
+
+def reference_points() -> list[tuple[float, float]]:
+    """Static world objects, used purely as a land mask."""
+    pts: list[tuple[float, float]] = []
+    for entry in RESOURCE_PURITY.values():
+        pts.append((entry[2][0], entry[2][1]))
+    for entry in crash_sites.CRASH_SITES.values():
+        pts.append((entry[2][0], entry[2][1]))
+    for table in (slug.POWER_SLUGS_BLUE, slug.POWER_SLUGS_PURPLE, slug.POWER_SLUGS_YELLOW):
+        for pos in table.values():
+            pts.append((pos[0], pos[1]))
+    for entry in somersloop.SOMERSLOOPS.values():
+        pts.append((entry[2][0], entry[2][1]))
+    for table in (mercer.MERCER_SHRINES, mercer.MERCER_SPHERES):
+        for entry in table.values():
+            pts.append((entry[2][0], entry[2][1]))
+    return pts
+
+
+def nearest_distance_m(x: float, y: float, pts: list[tuple[float, float]]) -> float:
+    best = math.inf
+    for px, py in pts:
+        d = (px - x) ** 2 + (py - y) ** 2
+        best = min(best, d)
+    return math.sqrt(best) / 100.0
+
+
+def main() -> int:
+    src = json.loads((ROOT / "data" / "satisfactory_regions.json").read_text(encoding="utf-8"))
+    legend: dict[str, str] = src["legend"]
+    grid: list[str] = src["region_grid"]
+    gm = src["grid_meta"]
+    x0, y0, cell, nx, ny = gm["x0"], gm["y0"], gm["cell"], gm["nx"], gm["ny"]
+
+    pts = reference_points()
+    print(f"land mask from {len(pts)} static world objects")
+
+    # ---- 1. void mask ---------------------------------------------------
+    rows: list[str] = []
+    confidence_rows: list[str] = []
+    counts = {"land": 0, "uncertain": 0, "void": 0}
+    for j in range(ny):
+        row_chars: list[str] = []
+        conf_chars: list[str] = []
+        for i in range(nx):
+            cx, cy = x0 + (i + 0.5) * cell, y0 + (j + 0.5) * cell
+            d = nearest_distance_m(cx, cy, pts)
+            letter = grid[j][i]
+            if d > VOID_DISTANCE_M:
+                row_chars.append(VOID)
+                conf_chars.append(VOID)
+                counts["void"] += 1
+            elif d > UNCERTAIN_DISTANCE_M:
+                row_chars.append(letter)
+                conf_chars.append("u")
+                counts["uncertain"] += 1
+            else:
+                row_chars.append(letter)
+                conf_chars.append("l")
+                counts["land"] += 1
+        rows.append("".join(row_chars))
+        confidence_rows.append("".join(conf_chars))
+    print(f"cells: {counts['land']} land, {counts['uncertain']} uncertain, {counts['void']} void")
+
+    # ---- 2. neighbour agreement -> per-cell confidence -------------------
+    # A cell whose 8 neighbours all share its label is interior; a cell on a
+    # boundary is where the +-256 m raster error actually bites.
+    for j in range(ny):
+        conf = list(confidence_rows[j])
+        for i in range(nx):
+            if rows[j][i] == VOID:
+                continue
+            here = rows[j][i]
+            disagree = False
+            for dj in (-1, 0, 1):
+                for di in (-1, 0, 1):
+                    nj, ni = j + dj, i + di
+                    if 0 <= nj < ny and 0 <= ni < nx:
+                        other = rows[nj][ni]
+                        if other != VOID and other != here:
+                            disagree = True
+            if disagree and conf[i] == "l":
+                conf[i] = "b"  # boundary
+        confidence_rows[j] = "".join(conf)
+    boundary = sum(r.count("b") for r in confidence_rows)
+    print(f"boundary cells (neighbour disagreement): {boundary}")
+
+    # ---- 3. recompute bboxes FROM the raster ----------------------------
+    regions: dict[str, dict] = {}
+    letter_of = {name: ch for ch, name in legend.items()}
+    for name, ch in letter_of.items():
+        cells = [(i, j) for j in range(ny) for i in range(nx) if rows[j][i] == ch]
+        if not cells:
+            continue
+        xs = [x0 + i * cell for i, _ in cells] + [x0 + (i + 1) * cell for i, _ in cells]
+        ys = [y0 + j * cell for _, j in cells] + [y0 + (j + 1) * cell for _, j in cells]
+        cx = sum(x0 + (i + 0.5) * cell for i, _ in cells) / len(cells)
+        cy = sum(y0 + (j + 0.5) * cell for _, j in cells) / len(cells)
+        original = src["regions"].get(name, {})
+        regions[name] = {
+            "letter": ch,
+            # Derived from the raster, so raster-in-bbox containment always holds.
+            "bbox": [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))],
+            "centroid": [int(cx), int(cy)],
+            "cells": len(cells),
+            "area_km2": round(len(cells) * (cell / 100_000) ** 2, 2),
+            "grid_cells": original.get("grid_cells", []),
+        }
+
+    # ---- 4. authoritative per-node overrides ----------------------------
+    # The source file states these were verified by eye against the biome map and
+    # should be trusted over a raster lookup.
+    overrides: dict[str, str] = {}
+    for cluster in src.get("oil_clusters", ()):
+        region = cluster.get("region")
+        if not region:
+            continue
+        for member in cluster.get("members", ()):
+            inst = member.get("inst")
+            if inst:
+                overrides[inst] = region
+    print(f"authoritative node overrides: {len(overrides)}")
+
+    # ---- validation: raster vs the hand-verified clusters ---------------
+    agree = disagree = void_hit = 0
+    mismatches: list[str] = []
+    for cluster in src.get("oil_clusters", ()):
+        region = cluster.get("region")
+        cx_, cy_ = cluster["centroid"][0], cluster["centroid"][1]
+        i = int((cx_ - x0) // cell)
+        j = int((cy_ - y0) // cell)
+        if not (0 <= i < nx and 0 <= j < ny):
+            continue
+        ch = rows[j][i]
+        if ch == VOID:
+            void_hit += 1
+        elif legend.get(ch) == region:
+            agree += 1
+        else:
+            disagree += 1
+            mismatches.append(f"{cluster['id']} {region} -> raster says {legend.get(ch)}")
+    total = agree + disagree + void_hit
+    print(
+        f"validation vs {total} hand-verified oil clusters: {agree} agree, "
+        f"{disagree} disagree, {void_hit} landed on void"
+    )
+    for m in mismatches:
+        print("   mismatch:", m)
+
+    out = {
+        "_meta": {
+            "purpose": (
+                "ADVISORY region names only. Layer 1 (grid cells, cones, radii, "
+                "clustering) is exact and is what every calculation uses. A name from "
+                "this file must never feed a computation."
+            ),
+            "game_version": src["_meta"].get("game_version"),
+            "units": "centimetres; north is -Y, east is +X, up is +Z",
+            "accuracy_m": int(cell / 100),
+            "confidence_legend": {
+                "l": "interior cell, all neighbours agree",
+                "b": "boundary cell, a neighbour disagrees -- may be off by one region",
+                "u": f"sparse cell, >{UNCERTAIN_DISTANCE_M:.0f} m from any known object",
+                ".": "void: ocean or off-map, no label emitted",
+            },
+            "void_distance_m": VOID_DISTANCE_M,
+            "uncertain_distance_m": UNCERTAIN_DISTANCE_M,
+            "land_mask_reference_points": len(pts),
+            "cell_counts": counts,
+            "boundary_cells": boundary,
+            "validation_vs_hand_verified_oil_clusters": {
+                "agree": agree,
+                "disagree": disagree,
+                "on_void": void_hit,
+                "mismatches": mismatches,
+            },
+            "known_limitations": [
+                (
+                    "Boundaries are accurate to about one 256 m cell; adjacent-region "
+                    "confusion is expected and is what the 'b' confidence flags."
+                ),
+                (
+                    "Region geometry is hand-derived from the wiki biome map. The game "
+                    "ships no biome geometry, so this cannot be regenerated from game "
+                    "data and will not track map changes."
+                ),
+                (
+                    "Per-crash-site validation needs the wiki Region column, which is not "
+                    "shipped locally; validation here uses the 14 hand-verified oil "
+                    "clusters instead."
+                ),
+            ],
+            "provenance": src["_meta"].get("provenance"),
+            "source_file": "data/satisfactory_regions.json",
+        },
+        "grid_meta": {"x0": x0, "y0": y0, "cell": cell, "nx": nx, "ny": ny, "void": VOID},
+        "legend": legend,
+        "region_grid": rows,
+        "confidence_grid": confidence_rows,
+        "regions": dict(sorted(regions.items())),
+        "node_region_overrides": dict(sorted(overrides.items())),
+    }
+
+    dest = ROOT / "data" / "region_names.json"
+    dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    print(f"wrote {dest.relative_to(ROOT)}  {dest.stat().st_size} B  {len(regions)} regions")
+
+    legacy = ROOT / "data" / "geo_reference.py"
+    if legacy.exists():
+        legacy.unlink()
+        print("removed data/geo_reference.py (superseded; it contradicted its own spec)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,645 @@
+{
+ "_meta": {
+  "purpose": "ADVISORY region names only. Layer 1 (grid cells, cones, radii, clustering) is exact and is what every calculation uses. A name from this file must never feed a computation.",
+  "game_version": "v1.2.2.1 (saveVersion 60)",
+  "units": "centimetres; north is -Y, east is +X, up is +Z",
+  "accuracy_m": 256,
+  "confidence_legend": {
+   "l": "interior cell, all neighbours agree",
+   "b": "boundary cell, a neighbour disagrees -- may be off by one region",
+   "u": "sparse cell, >400 m from any known object",
+   ".": "void: ocean or off-map, no label emitted"
+  },
+  "void_distance_m": 1000.0,
+  "uncertain_distance_m": 400.0,
+  "land_mask_reference_points": 2669,
+  "cell_counts": {
+   "land": 590,
+   "uncertain": 178,
+   "void": 132
+  },
+  "boundary_cells": 333,
+  "validation_vs_hand_verified_oil_clusters": {
+   "agree": 13,
+   "disagree": 1,
+   "on_void": 0,
+   "mismatches": [
+    "C9 Western Beaches -> raster says Jungle Spires"
+   ]
+  },
+  "known_limitations": [
+   "Boundaries are accurate to about one 256 m cell; adjacent-region confusion is expected and is what the 'b' confidence flags.",
+   "Region geometry is hand-derived from the wiki biome map. The game ships no biome geometry, so this cannot be regenerated from game data and will not track map changes.",
+   "Per-crash-site validation needs the wiki Region column, which is not shipped locally; validation here uses the 14 hand-verified oil clusters instead."
+  ],
+  "provenance": [
+   "coords: GreyHak/sat_sav_parse sav_data/resourcePurity.py + the users .sav",
+   "region labels: satisfactory.wiki.gg Crash_Site table (118 drop pods with Region + save coords)",
+   "region geometry: satisfactory.wiki.gg File:Biome_Map.jpg (5000x5000) + its printed 1.024 km grid",
+   "map->world transform: px_x = 2231.4 + x/149.598 ; px_y = 2526.4 + y/149.598 (cm/px = 102400/684.5)",
+   "grid: cell X_i spans x in [-319600 + i*102400, +102400); cell Y_j spans y in (302800-(j+1)*102400, 302800-j*102400]"
+  ],
+  "source_file": "data/satisfactory_regions.json"
+ },
+ "grid_meta": {
+  "x0": -336000.0,
+  "y0": -380000.0,
+  "cell": 25600.0,
+  "nx": 30,
+  "ny": 30,
+  "void": "."
+ },
+ "legend": {
+  "A": "Abyss Cliffs",
+  "B": "Blue Crater",
+  "C": "Crater Lakes",
+  "D": "Desert Canyons",
+  "E": "Dune Desert",
+  "F": "Eastern Dune Forest",
+  "G": "Grass Fields",
+  "H": "Jungle Spires",
+  "I": "Lake Forest",
+  "J": "Maze Canyons",
+  "K": "Northern Forest",
+  "L": "Red Bamboo Fields",
+  "M": "Red Jungle",
+  "N": "Rocky Desert",
+  "O": "Snaketree Forest",
+  "P": "Southern Forest",
+  "Q": "Spire Coast",
+  "R": "Swamp",
+  "S": "Titan Forest",
+  "T": "Western Beaches",
+  "U": "Western Dune Forest"
+ },
+ "region_grid": [
+  ".................QQQQQQQQQEEEE",
+  ".........QQQQQQQQQQQQQQQQEEEEE",
+  "........QQQQQQQQQQQQQQQQEEEEEE",
+  "..NNNNNNQQQQQQQQQQQQQQQQEEEEEE",
+  "NNNNNNNNQQQQQQQQQQQQQQQEEEEEEE",
+  "NNNNNNNNQQQQQQQQQQQQQQQEEEEEEE",
+  "NNNNNNNNNQQQQQQQQQQQQQEEEEEEEE",
+  "NNNNNNNNNQQQQQQQQQQQQQEEEEEEEE",
+  "NNNNNNNNNNQQQQQQQQQQQQEEEEEEEE",
+  "NNNNNNNNNNKKKKKKQQQQQQEEEEEEEE",
+  "NNNNNNNNNNKKKKKKKDDQQEEEEEEEEE",
+  "NNNNNNNNNCCKKKKKKJDDEEEEEEEEEE",
+  "NNNNNNNNCCCCKKKKJJJDSSEEEEEEEE",
+  "NNNNNNNNCCCCCIIIJJJSSSSEEEEEES",
+  "NNNNNNNMMMLLLLIIISSSSRRRRESSSS",
+  "NNMMMMMMMMMLLLLSSSSSSRRRRSSSSS",
+  "TTTMMMMMMMMMLLLSSSSSSRRRRSSSS.",
+  "TTTTHHHHMMMLLLLFSSSFRRRRRRRSS.",
+  "TTTTTHHHUMMLLLFFFFSFRRRRRRRR..",
+  "TTTTTTHHUUULLLFFFFFFFRARRRRR..",
+  "TTTTTHHUUUUOOFFFFFFFFBARRRRR..",
+  "TTTTHHHUUOOOGGGPPBBBBBAARRRS..",
+  ".TTGGHHUOOGGGGPPPBBBBBAABRS...",
+  "..GGGGGGOOGGGGPPPBBBBBBBBB....",
+  "...GGGGGGGGGGGPPPBBBBBBBB.....",
+  "....GGGGGGGGGGGGPBBBBBBB......",
+  "....GGGGGGGGGGGGBBBBBBB.......",
+  "......GGOGGGGGGGBBBBBBB.......",
+  "......GGOGGGGGGGBBBBBB........",
+  "........OOGGGGGG..BB.........."
+ ],
+ "confidence_grid": [
+  ".................uuuuuuuuuuuuu",
+  ".........uuuuuuuuuuulllbbuuluu",
+  "........uuuuuuuuuulllllbbblllu",
+  "..uuuuuuuulllulluullllbbblllll",
+  "uuuuuuuuulllllllllllllbbblllll",
+  "uuuuuuuuublllllllllllbbbllllll",
+  "ullllllbbblllllllllllbbbllllll",
+  "ulllllllbbbllllllllllbblllllll",
+  "llllllllbbbbbbbbbllllbblllllll",
+  "lllllllllbbbbbbbbbbbbbblllllll",
+  "ulllllllbbbblllbbbbbbbblllllll",
+  "ullllllbbbbbbllbbbbbbbblllllll",
+  "lllllllbbbbbbbbbbbbbbbbbllllbb",
+  "llllllbbbbbbbbbbbbbbbbbbbbbbbu",
+  "lbbbbbbbbbbbbbbbbbbbbbbbbbbbuu",
+  "ubbbbbbblbbbbbbbbbllbbllbbbuuu",
+  "uubbbbbbblbbblbbblbbbbllbbuuu.",
+  "ulbbbbbbbbbbbbbbbbbbbbllbbuuu.",
+  "ullbbbbbbbbblbbbbbbbbbbblluu..",
+  "ulllbbbbbbbbbbbllbbbbbbblluu..",
+  "uulbbbbbbbbbbbbbbbbbbbbbbluu..",
+  "uuuubbbbbbbbbbbbbbbbbbbbuuuu..",
+  ".uuuubbbbbbbbbbbbblllbbuuuu...",
+  "..uuuubbbbbllbblbblllbbuuu....",
+  "...uuulbbbbllbbbbblllluuu.....",
+  "....uuullllllbbbbbllluuu......",
+  "....uuuubblllllbublluuu.......",
+  "......uuubllllluuuuuuuu.......",
+  "......uuuuuuuuuuuuuuuu........",
+  "........uuuuuuuu..uu.........."
+ ],
+ "regions": {
+  "Abyss Cliffs": {
+   "letter": "A",
+   "bbox": [
+    227200,
+    106400,
+    278400,
+    208800
+   ],
+   "centroid": [
+    248533,
+    166133
+   ],
+   "cells": 6,
+   "area_km2": 0.39,
+   "grid_cells": [
+    "X5Y1"
+   ]
+  },
+  "Blue Crater": {
+   "letter": "B",
+   "bbox": [
+    73600,
+    132000,
+    329600,
+    388000
+   ],
+   "centroid": [
+    180855,
+    263089
+   ],
+   "cells": 58,
+   "area_km2": 3.8,
+   "grid_cells": [
+    "X4Y0",
+    "X4Y1",
+    "X5Y1"
+   ]
+  },
+  "Crater Lakes": {
+   "letter": "C",
+   "bbox": [
+    -131200,
+    -98400,
+    -3200,
+    -21600
+   ],
+   "centroid": [
+    -74181,
+    -53018
+   ],
+   "cells": 11,
+   "area_km2": 0.72,
+   "grid_cells": [
+    "X1Y3",
+    "X2Y3",
+    "X3Y3"
+   ]
+  },
+  "Desert Canyons": {
+   "letter": "D",
+   "bbox": [
+    99200,
+    -124000,
+    176000,
+    -47200
+   ],
+   "centroid": [
+    142720,
+    -90720
+   ],
+   "cells": 5,
+   "area_km2": 0.33,
+   "grid_cells": [
+    "X3Y4",
+    "X4Y3",
+    "X4Y4"
+   ]
+  },
+  "Dune Desert": {
+   "letter": "E",
+   "bbox": [
+    176000,
+    -380000,
+    432000,
+    4000
+   ],
+   "centroid": [
+    334542,
+    -183184
+   ],
+   "cells": 101,
+   "area_km2": 6.62,
+   "grid_cells": [
+    "X5Y3",
+    "X5Y4",
+    "X5Y5",
+    "X6Y3",
+    "X6Y4",
+    "X6Y5",
+    "X7Y5"
+   ]
+  },
+  "Eastern Dune Forest": {
+   "letter": "F",
+   "bbox": [
+    -3200,
+    55200,
+    201600,
+    157600
+   ],
+   "centroid": [
+    102690,
+    118036
+   ],
+   "cells": 22,
+   "area_km2": 1.44,
+   "grid_cells": [
+    "X2Y1",
+    "X3Y1",
+    "X3Y2",
+    "X4Y1",
+    "X4Y2"
+   ]
+  },
+  "Grass Fields": {
+   "letter": "G",
+   "bbox": [
+    -284800,
+    157600,
+    73600,
+    388000
+   ],
+   "centroid": [
+    -77046,
+    279364
+   ],
+   "cells": 78,
+   "area_km2": 5.11,
+   "grid_cells": [
+    "X0Y0",
+    "X1Y-1",
+    "X1Y0",
+    "X2Y-1",
+    "X2Y0",
+    "X2Y1",
+    "X3Y0",
+    "X3Y1"
+   ]
+  },
+  "Jungle Spires": {
+   "letter": "H",
+   "bbox": [
+    -233600,
+    55200,
+    -131200,
+    208800
+   ],
+   "centroid": [
+    -179200,
+    124000
+   ],
+   "cells": 16,
+   "area_km2": 1.05,
+   "grid_cells": [
+    "X0Y2",
+    "X1Y1",
+    "X1Y2",
+    "X2Y2"
+   ]
+  },
+  "Lake Forest": {
+   "letter": "I",
+   "bbox": [
+    -3200,
+    -47200,
+    99200,
+    4000
+   ],
+   "centroid": [
+    48000,
+    -21600
+   ],
+   "cells": 6,
+   "area_km2": 0.39,
+   "grid_cells": [
+    "X2Y3",
+    "X3Y2",
+    "X3Y3"
+   ]
+  },
+  "Maze Canyons": {
+   "letter": "J",
+   "bbox": [
+    73600,
+    -98400,
+    150400,
+    -21600
+   ],
+   "centroid": [
+    112000,
+    -52685
+   ],
+   "cells": 7,
+   "area_km2": 0.46,
+   "grid_cells": [
+    "X3Y3",
+    "X4Y3"
+   ]
+  },
+  "Northern Forest": {
+   "letter": "K",
+   "bbox": [
+    -80000,
+    -149600,
+    99200,
+    -47200
+   ],
+   "centroid": [
+    11826,
+    -102295
+   ],
+   "cells": 23,
+   "area_km2": 1.51,
+   "grid_cells": [
+    "X2Y3",
+    "X2Y4",
+    "X3Y3",
+    "X3Y4",
+    "X4Y3"
+   ]
+  },
+  "Red Bamboo Fields": {
+   "letter": "L",
+   "bbox": [
+    -80000,
+    -21600,
+    48000,
+    132000
+   ],
+   "centroid": [
+    -9904,
+    50933
+   ],
+   "cells": 21,
+   "area_km2": 1.38,
+   "grid_cells": [
+    "X2Y1",
+    "X2Y2",
+    "X2Y3",
+    "X3Y1",
+    "X3Y2",
+    "X3Y3"
+   ]
+  },
+  "Red Jungle": {
+   "letter": "M",
+   "bbox": [
+    -284800,
+    -21600,
+    -28800,
+    106400
+   ],
+   "centroid": [
+    -139076,
+    34523
+   ],
+   "cells": 26,
+   "area_km2": 1.7,
+   "grid_cells": [
+    "X0Y2",
+    "X1Y2",
+    "X1Y3",
+    "X2Y1",
+    "X2Y2"
+   ]
+  },
+  "Rocky Desert": {
+   "letter": "N",
+   "bbox": [
+    -336000,
+    -303200,
+    -80000,
+    29600
+   ],
+   "centroid": [
+    -223753,
+    -144676
+   ],
+   "cells": 104,
+   "area_km2": 6.82,
+   "grid_cells": [
+    "X0Y2",
+    "X0Y3",
+    "X0Y4",
+    "X1Y3",
+    "X1Y4",
+    "X2Y3",
+    "X2Y4"
+   ]
+  },
+  "Snaketree Forest": {
+   "letter": "O",
+   "bbox": [
+    -131200,
+    132000,
+    -3200,
+    388000
+   ],
+   "centroid": [
+    -86892,
+    235384
+   ],
+   "cells": 13,
+   "area_km2": 0.85,
+   "grid_cells": [
+    "X1Y0",
+    "X1Y1",
+    "X2Y0",
+    "X2Y1"
+   ]
+  },
+  "Southern Forest": {
+   "letter": "P",
+   "bbox": [
+    22400,
+    157600,
+    99200,
+    285600
+   ],
+   "centroid": [
+    65066,
+    217333
+   ],
+   "cells": 12,
+   "area_km2": 0.79,
+   "grid_cells": [
+    "X3Y0",
+    "X3Y1"
+   ]
+  },
+  "Spire Coast": {
+   "letter": "Q",
+   "bbox": [
+    -131200,
+    -380000,
+    329600,
+    -98400
+   ],
+   "centroid": [
+    85822,
+    -257485
+   ],
+   "cells": 133,
+   "area_km2": 8.72,
+   "grid_cells": [
+    "X2Y4",
+    "X2Y5",
+    "X3Y4",
+    "X3Y5",
+    "X4Y3",
+    "X4Y4",
+    "X4Y5",
+    "X4Y6",
+    "X5Y4",
+    "X5Y5",
+    "X5Y6"
+   ]
+  },
+  "Swamp": {
+   "letter": "R",
+   "bbox": [
+    176000,
+    -21600,
+    380800,
+    208800
+   ],
+   "centroid": [
+    280228,
+    85066
+   ],
+   "cells": 42,
+   "area_km2": 2.75,
+   "grid_cells": [
+    "X4Y2",
+    "X5Y1",
+    "X5Y2",
+    "X5Y3"
+   ]
+  },
+  "Titan Forest": {
+   "letter": "S",
+   "bbox": [
+    48000,
+    -72800,
+    432000,
+    208800
+   ],
+   "centroid": [
+    237672,
+    23781
+   ],
+   "cells": 44,
+   "area_km2": 2.88,
+   "grid_cells": [
+    "X3Y2",
+    "X4Y2",
+    "X4Y3",
+    "X5Y2",
+    "X5Y3",
+    "X6Y2"
+   ]
+  },
+  "Western Beaches": {
+   "letter": "T",
+   "bbox": [
+    -336000,
+    29600,
+    -182400,
+    208800
+   ],
+   "centroid": [
+    -276413,
+    116551
+   ],
+   "cells": 29,
+   "area_km2": 1.9,
+   "grid_cells": [
+    "X0Y1",
+    "X0Y2",
+    "X1Y1",
+    "X1Y2"
+   ]
+  },
+  "Western Dune Forest": {
+   "letter": "U",
+   "bbox": [
+    -156800,
+    80800,
+    -54400,
+    208800
+   ],
+   "centroid": [
+    -111418,
+    142472
+   ],
+   "cells": 11,
+   "area_km2": 0.72,
+   "grid_cells": [
+    "X1Y1",
+    "X1Y2",
+    "X2Y1",
+    "X2Y2"
+   ]
+  }
+ },
+ "node_region_overrides": {
+  "BP_FrackingSatellite45": "Swamp",
+  "BP_FrackingSatellite46": "Swamp",
+  "BP_FrackingSatellite47": "Swamp",
+  "BP_FrackingSatellite48": "Swamp",
+  "BP_FrackingSatellite49": "Swamp",
+  "BP_FrackingSatellite50": "Swamp",
+  "BP_FrackingSatellite57": "Red Bamboo Fields",
+  "BP_FrackingSatellite59": "Red Bamboo Fields",
+  "BP_FrackingSatellite60": "Red Bamboo Fields",
+  "BP_FrackingSatellite61": "Red Bamboo Fields",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D7DF01_1933830510": "Western Beaches",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D7DF01_2053713511": "Western Beaches",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1587984689": "Western Beaches",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1704280690": "Western Beaches",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1999134691": "Western Beaches",
+  "BP_FrackingSatellite61_UAID_40B076DF2F79D9DF01_1230935868": "Western Beaches",
+  "BP_FrackingSatellite62": "Red Bamboo Fields",
+  "BP_FrackingSatellite63": "Red Bamboo Fields",
+  "BP_ResourceNode100": "Blue Crater",
+  "BP_ResourceNode14_609": "Spire Coast",
+  "BP_ResourceNode15": "Spire Coast",
+  "BP_ResourceNode151": "Blue Crater",
+  "BP_ResourceNode152_995": "Blue Crater",
+  "BP_ResourceNode154": "Blue Crater",
+  "BP_ResourceNode155": "Blue Crater",
+  "BP_ResourceNode16": "Spire Coast",
+  "BP_ResourceNode23_96": "Spire Coast",
+  "BP_ResourceNode24_97": "Spire Coast",
+  "BP_ResourceNode25_98": "Spire Coast",
+  "BP_ResourceNode26_99": "Spire Coast",
+  "BP_ResourceNode27_100": "Spire Coast",
+  "BP_ResourceNode28_101": "Spire Coast",
+  "BP_ResourceNode29_102": "Spire Coast",
+  "BP_ResourceNode30_103": "Spire Coast",
+  "BP_ResourceNode31_104": "Spire Coast",
+  "BP_ResourceNode32_105": "Spire Coast",
+  "BP_ResourceNode444_0": "Desert Canyons",
+  "BP_ResourceNode446_1": "Desert Canyons",
+  "BP_ResourceNode447": "Desert Canyons",
+  "BP_ResourceNode448": "Desert Canyons",
+  "BP_ResourceNode458": "Lake Forest",
+  "BP_ResourceNode459": "Lake Forest",
+  "BP_ResourceNode460": "Lake Forest",
+  "BP_ResourceNode86": "Western Beaches",
+  "BP_ResourceNode87": "Western Beaches",
+  "BP_ResourceNode88": "Western Beaches",
+  "BP_ResourceNode89": "Western Beaches",
+  "BP_ResourceNode98": "Blue Crater"
+ }
+}

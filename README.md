@@ -1,0 +1,117 @@
+# SatisfactoryMcp
+
+An MCP server for planning Satisfactory factories. It reads the game's own data dump for recipes and
+rates, reads your save for progress and unlocks, and runs a real LP/MILP optimizer over the result.
+
+Nothing is hardcoded and nothing is fetched from the network — game data comes from
+`CommunityResources/Docs/en-US.json`, which updates itself when the game patches.
+
+See [DESIGN.md](DESIGN.md) for the full design and the evidence behind every number.
+
+## Setup
+
+```bash
+uv sync --extra dev
+uv run python tools/gen_resource_nodes.py   # builds data/resource_nodes.json (607 nodes)
+uv run python tools/gen_region_names.py     # builds data/region_names.json (21 regions)
+uv run pytest -q
+```
+
+Register with Claude Code:
+
+```bash
+claude mcp add satisfactory -- uv run --directory "E:/development/Hobby Projekte/SatisfactoryMcp" satisfactory-mcp
+```
+
+The game install and save directory are auto-detected. Override with `SATISFACTORY_DOCS` and
+`SATISFACTORY_SAVES` if they live somewhere unusual.
+
+## Tools
+
+**Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
+**Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`
+**Map** — `list_regions`, `describe_location`, `search_resource_nodes`
+**Planning** — `plan_factory`
+**MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
+
+Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest save is
+used by default, and every response says which file it read and how old it is.
+
+### Choosing sources
+
+`search_resource_nodes` and `plan_factory` both take `sources`, a list of selectors. Locations union,
+filters intersect:
+
+```
+["north"]                              northern half of the map
+["region:Spire Coast"]                 a named region (a bare name works too)
+["near:120,-2020,1500"]                within 1500 m of (120, -2020) metres
+["grid:X3Y4", "grid:X3Y5"]             specific 1.024 km grid cells
+["node:BP_ResourceNode30_103"]         one exact node, repeatable
+["bbox:-500,-2500,600,-1800"]          a rectangle, metres
+["north", "resource:Crude Oil"]        narrow a location to one resource
+```
+
+Call `search_resource_nodes(..., group="node")` to get node ids you can feed straight back in.
+A selector that fails to resolve returns **nothing** and says why — it never silently widens to the
+whole map, because that would answer a different question.
+
+## What makes it different
+
+**Byproducts are modelled correctly.** Every item is balanced as an *equality*. A byproduct with no
+consumer does not vanish — it fills a pipe and stalls the line — so a plan that produces one is
+reported as infeasible rather than silently overstated. Concretely, for 300 m³/min of crude into
+plastic:
+
+| formulation | plastic/min | machines |
+|---|---|---|
+| treat residue as exportable (what naive calculators do) | 200 | **10.0** |
+| consume the residue for real | 200 | **11.7** |
+| route it to a solid AWESOME Sink | 200 | **12.5** |
+
+The naive answer understates the build by 17–25% and leaves 100 m³/min of Heavy Oil Residue with
+nowhere to go.
+
+**Fluids cannot be sunk.** `Docs.json` claims Heavy Oil Residue has 30 sink points and
+`mCanBeDiscarded = True`, but the AWESOME Sink has a conveyor-only input. This is one of exactly four
+values not taken from game data; see `docs/constants.py`.
+
+**An LP, not a recipe tree.** Recycled Plastic and Recycled Rubber form a genuine 2-cycle, so
+depth-limited chain expansion has no correct answer. The LP handles it and finds plans no tree walk
+can reach.
+
+**Hard-drive advice by counterfactual.** `advise_hard_drive_pick` reads the *actual* pending offers
+from your save, then solves your objective with and without each option and reports the delta —
+including one measured on the candidate's own output, so a cable recipe isn't judged on plastic.
+
+**Region names are advisory, and say so.** Boundaries come from a hand-derived 256 m raster, because the
+game ships no biome geometry. Every lookup carries a confidence (`interior` / `boundary` / `sparse`), a
+land mask built from 2,669 static world objects means ocean returns *"off-map or ocean"* instead of the
+nearest land region, and 48 hand-verified nodes override the raster outright. All computation uses exact
+geometry — grid cells, cones, radii — never a name.
+
+## Layout
+
+```
+src/satisfactory_mcp/
+  docs/       Docs.json -> normalized items / recipes / buildings / schematics
+  save/       sidecar invocation, caching, derived world state
+  spatial/    exact map geometry, resource nodes
+  planning/   LP optimizer, hard-drive advisor
+  render.py   ALL response formatting (context budget is the binding constraint)
+  server.py   FastMCP tool registration only
+sidecar/      separate process: vendored GPL save parser, emits a JSON projection
+tools/        one-off data generators
+```
+
+Save parsing lives behind one subprocess boundary. `sav_parse` hard-fails on unrecognised
+`saveVersion`, so a game patch breaks exactly one module; a torn autosave or parser crash cannot take
+down the server; and the ~130 kB JSON projection is the committed test fixture, so the suite runs with
+no game install.
+
+## Licence
+
+None — this is a private project, all rights reserved by default. Note that `sidecar/vendor/sat_sav_parse`
+is GPL-3.0-only; its copyleft attaches on *distribution*, so publishing this would require licensing the
+combined work GPL-3.0. `data/resource_nodes.json` derives from SCIM data via that repo — third-party
+terms, recorded in the file's `_meta`.
