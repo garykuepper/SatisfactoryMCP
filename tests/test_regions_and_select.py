@@ -26,6 +26,59 @@ def table():
     return nodes_mod.load_nodes()
 
 
+# ------------------------------------------------- node table completeness
+
+
+def test_node_table_matches_the_save_in_both_directions(table, projection):
+    """The join must be checked BOTH ways.
+
+    The original check only asserted that every table entry appears in the save,
+    which passed at 607/607 while the table was silently missing a node the save
+    contained -- a pure Limestone node absent from the SCIM extract. Counting save
+    actors against table rows is what caught it.
+    """
+    counts = projection["building_counts"]
+    by_kind: dict[str, int] = {}
+    for n in table.nodes:
+        by_kind[n["kind"]] = by_kind.get(n["kind"], 0) + 1
+
+    assert by_kind["node"] == counts["BP_ResourceNode_C"]
+    assert by_kind["well_sat"] == counts["BP_FrackingSatellite_C"]
+    assert by_kind["geyser"] == counts["BP_ResourceNodeGeyser_C"]
+
+
+def test_the_recovered_limestone_node_is_present(table):
+    """BP_ResourceNode11: in the game assets and in the save, absent from SCIM."""
+    node = next((n for n in table.nodes if n["instance"].endswith(".BP_ResourceNode11")), None)
+    assert node is not None
+    assert node["resource"] == "Desc_Stone_C"
+    assert node["purity"] == "pure"
+
+
+def test_deposits_and_cores_are_excluded_from_the_node_table(table):
+    """A deposit is hand-mineable only and a fracking core produces nothing, so
+    neither may advertise capacity."""
+    kinds = {n["kind"] for n in table.nodes}
+    assert kinds == {"node", "well_sat", "geyser"}
+
+
+def test_every_well_satellite_keeps_its_core_link(table):
+    """Well rate is summed per core, so a satellite without one is unplannable."""
+    sats = [n for n in table.nodes if n["kind"] == "well_sat"]
+    assert sats
+    assert all(n["well_core"] for n in sats)
+
+
+def test_sources_are_recorded_with_licences(table):
+    sources = table.meta["sources"]
+    assert sources["primary"]["licence"] == "MIT"
+    assert "1.2.0.0" in sources["secondary"]["game_version_pinned"]
+    xval = table.meta["cross_validation"]
+    assert xval["purity_mismatches"] == []
+    assert xval["resource_mismatches"] == []
+    assert xval["max_position_delta_cm"] < 1.0
+
+
 # ------------------------------------------------------- defect 1: void class
 
 

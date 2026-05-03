@@ -2,11 +2,44 @@
  "_meta": {
   "description": "Static resource node table: type, purity, world position.",
   "why": "Save files serialize only mResourcesLeft for node actors; resource type and purity are level data and must come from a static table.",
-  "source": "sat_sav_parse/sav_data/resourcePurity.py",
-  "source_provenance": "Upstream header reads '# Extracted from SCIM for Satisfactory v1.2.0.0' -- data originates from Satisfactory-Calculator Interactive Map, a third party. No licence header present.",
-  "game_version_pinned": "1.2.0.0",
+  "sources": {
+   "primary": {
+    "name": "rockfactory/satisfactory-logistics WorldResourceNodes.json",
+    "licence": "MIT",
+    "derivation": "FModel dump of Persistent_Level.umap (game assets)",
+    "role": "authoritative node set, resource, purity, position"
+   },
+   "secondary": {
+    "name": "sat_sav_parse sav_data/resourcePurity.py",
+    "licence": "none stated; data extracted from SCIM, a third party",
+    "game_version_pinned": "1.2.0.0",
+    "role": "satellite -> fracking core link only"
+   }
+  },
+  "cross_validation": {
+   "shared_nodes": 607,
+   "purity_mismatches": [],
+   "resource_mismatches": [],
+   "max_position_delta_cm": 0.685,
+   "in_scim_not_in_game_assets": [],
+   "in_game_assets_not_in_scim": [
+    "BP_ResourceNode11"
+   ],
+   "satellites_without_core_link": 0
+  },
+  "excluded": {
+   "BP_ResourceDeposit_C": "hand-mineable only, no extractor can be placed",
+   "BP_FrackingCore_C": "produces nothing itself; referenced as well_core on satellites"
+  },
+  "geyser_note": "Desc_Geyser_C is a synthetic label. A geyser is not an item in Docs.json -- it is a placement target for the Geothermal Generator.",
   "join_key": "instance (matches save actor instanceName exactly)",
-  "count": 607,
+  "count": 608,
+  "by_kind": {
+   "well_sat": 118,
+   "node": 459,
+   "geyser": 31
+  },
+  "fracking_cores": 17,
   "purity_multiplier": {
    "impure": 0.5,
    "normal": 1.0,
@@ -20,9 +53,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 212492.41,
-   "y": 138086.91,
-   "z": -126.03,
+   "x": 212492.0,
+   "y": 138087.0,
+   "z": -126.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -30,9 +63,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 9269.22,
-   "y": 190201.78,
-   "z": -10440.82,
+   "x": 9269.0,
+   "y": 190202.0,
+   "z": -10441.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -40,9 +73,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 3582.62,
-   "y": 187082.12,
-   "z": -10305.06,
+   "x": 3583.0,
+   "y": 187082.0,
+   "z": -10305.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -50,9 +83,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 185693.72,
-   "y": -61072.18,
-   "z": 5431.79,
+   "x": 185694.0,
+   "y": -61072.0,
+   "z": 5432.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -60,9 +93,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 314408.25,
-   "y": -292941.69,
-   "z": 1253.29,
+   "x": 314408.0,
+   "y": -292942.0,
+   "z": 1253.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -70,9 +103,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -22450.55,
-   "y": 171714.27,
-   "z": -27.8,
+   "x": -22451.0,
+   "y": 171714.0,
+   "z": -28.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -80,9 +113,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -17700.78,
-   "y": 174876.78,
-   "z": -70.82,
+   "x": -17701.0,
+   "y": 174877.0,
+   "z": -71.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -90,9 +123,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 216407.41,
-   "y": 139499.91,
-   "z": -212.03,
+   "x": 216407.0,
+   "y": 139500.0,
+   "z": -212.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -100,9 +133,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -16087.41,
-   "y": 170350.59,
-   "z": 351.42,
+   "x": -16087.0,
+   "y": 170351.0,
+   "z": 351.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -110,9 +143,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -15611.97,
-   "y": 172710.39,
-   "z": 239.21,
+   "x": -15612.0,
+   "y": 172710.0,
+   "z": 239.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -120,9 +153,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -23406.79,
-   "y": 174254.38,
-   "z": -437.74,
+   "x": -23407.0,
+   "y": 174254.0,
+   "z": -438.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -130,9 +163,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -20451.47,
-   "y": 175654.28,
-   "z": -99.56,
+   "x": -20451.0,
+   "y": 175654.0,
+   "z": -100.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -140,9 +173,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -111801.47,
-   "y": 73189.28,
-   "z": 3120.44,
+   "x": -111801.0,
+   "y": 73189.0,
+   "z": 3120.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -150,9 +183,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -111814.81,
-   "y": 71121.26,
-   "z": 3061.76,
+   "x": -111815.0,
+   "y": 71121.0,
+   "z": 3062.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -160,9 +193,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -107606.78,
-   "y": 71069.38,
-   "z": 2912.26,
+   "x": -107607.0,
+   "y": 71069.0,
+   "z": 2912.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -170,9 +203,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -104692.41,
-   "y": 73355.59,
-   "z": 3096.42,
+   "x": -104692.0,
+   "y": 73356.0,
+   "z": 3096.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -180,9 +213,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -110139.16,
-   "y": 75375.22,
-   "z": 3196.48,
+   "x": -110139.0,
+   "y": 75375.0,
+   "z": 3196.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -190,9 +223,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -104200.78,
-   "y": 70976.78,
-   "z": 2859.18,
+   "x": -104201.0,
+   "y": 70977.0,
+   "z": 2859.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -200,9 +233,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 218169.41,
-   "y": 137548.91,
-   "z": -209.03,
+   "x": 218169.0,
+   "y": 137549.0,
+   "z": -209.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -210,9 +243,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -108478.47,
-   "y": 77599.94,
-   "z": 3709.26,
+   "x": -108478.0,
+   "y": 77600.0,
+   "z": 3709.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore18"
   },
   {
@@ -220,9 +253,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -20347.14,
-   "y": 170787.44,
-   "z": 6.99,
+   "x": -20347.0,
+   "y": 170787.0,
+   "z": 7.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore17"
   },
   {
@@ -230,9 +263,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 211685.88,
-   "y": 133160.88,
-   "z": -247.36,
+   "x": 211686.0,
+   "y": 133161.0,
+   "z": -247.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -240,9 +273,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 225241.62,
-   "y": -309813.31,
-   "z": 7875.64,
+   "x": 225242.0,
+   "y": -309813.0,
+   "z": 7876.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -250,9 +283,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 221785.27,
-   "y": -308346,
-   "z": 8244.49,
+   "x": 221785.0,
+   "y": -308346.0,
+   "z": 8244.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -260,9 +293,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 220214.53,
-   "y": -310720.59,
-   "z": 7879.72,
+   "x": 220215.0,
+   "y": -310721.0,
+   "z": 7880.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -270,9 +303,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 226487.78,
-   "y": -313623.97,
-   "z": 8160.95,
+   "x": 226488.0,
+   "y": -313624.0,
+   "z": 8161.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -280,9 +313,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 126644,
-   "y": 253042,
-   "z": -372,
+   "x": 126644.0,
+   "y": 253042.0,
+   "z": -372.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -290,9 +323,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 221263.53,
-   "y": -312256.59,
-   "z": 7931.72,
+   "x": 221264.0,
+   "y": -312257.0,
+   "z": 7932.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -300,9 +333,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 125104,
-   "y": 256475,
-   "z": 734,
+   "x": 125104.0,
+   "y": 256475.0,
+   "z": 734.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -310,9 +343,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 223981.33,
-   "y": -314008.66,
-   "z": 7867.12,
+   "x": 223981.0,
+   "y": -314009.0,
+   "z": 7867.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -320,9 +353,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -253679.44,
-   "y": -187151.62,
-   "z": -1240.98,
+   "x": -253679.0,
+   "y": -187152.0,
+   "z": -1241.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -330,9 +363,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -254692.42,
-   "y": -191072.62,
-   "z": -1581.98,
+   "x": -254692.0,
+   "y": -191073.0,
+   "z": -1582.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -340,9 +373,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 226851.62,
-   "y": -311423.31,
-   "z": 7905.64,
+   "x": 226852.0,
+   "y": -311423.0,
+   "z": 7906.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore3"
   },
   {
@@ -350,9 +383,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -251958.17,
-   "y": -191565.81,
-   "z": -1741.09,
+   "x": -251958.0,
+   "y": -191566.0,
+   "z": -1741.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -360,9 +393,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -249899.39,
-   "y": -190381.27,
-   "z": -1739.57,
+   "x": -249899.0,
+   "y": -190381.0,
+   "z": -1740.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -370,9 +403,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -249449.39,
-   "y": -188216.27,
-   "z": -1739.57,
+   "x": -249449.0,
+   "y": -188216.0,
+   "z": -1740.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -380,9 +413,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -250936.72,
-   "y": -184679.19,
-   "z": -1457.13,
+   "x": -250937.0,
+   "y": -184679.0,
+   "z": -1457.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -390,9 +423,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -147628.72,
-   "y": 125722.81,
-   "z": 15315.87,
+   "x": -147629.0,
+   "y": 125723.0,
+   "z": 15316.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -400,9 +433,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -144341.72,
-   "y": 124609.81,
-   "z": 15387.87,
+   "x": -144342.0,
+   "y": 124610.0,
+   "z": 15388.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -410,9 +443,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 125098.87,
-   "y": 254321.44,
-   "z": 159.65,
+   "x": 125099.0,
+   "y": 254321.0,
+   "z": 160.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -420,9 +453,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -145715.25,
-   "y": 119442.08,
-   "z": 15181.54,
+   "x": -145715.0,
+   "y": 119442.0,
+   "z": 15182.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -430,9 +463,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -142779.19,
-   "y": 120243.19,
-   "z": 15174.91,
+   "x": -142779.0,
+   "y": 120243.0,
+   "z": 15175.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -440,9 +473,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -141750.38,
-   "y": 121997.73,
-   "z": 15259.43,
+   "x": -141750.0,
+   "y": 121998.0,
+   "z": 15259.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -450,9 +483,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -142911.44,
-   "y": 118402.38,
-   "z": 14995.02,
+   "x": -142911.0,
+   "y": 118402.0,
+   "z": 14995.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -460,9 +493,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -145565.44,
-   "y": 126028.38,
-   "z": 15439.02,
+   "x": -145565.0,
+   "y": 126028.0,
+   "z": 15439.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore5"
   },
   {
@@ -470,9 +503,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 87916.73,
-   "y": 102044.87,
-   "z": 10177.97,
+   "x": 87917.0,
+   "y": 102045.0,
+   "z": 10178.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -480,9 +513,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 81638.91,
-   "y": 103495.17,
-   "z": 10183.62,
+   "x": 81639.0,
+   "y": 103495.0,
+   "z": 10184.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -490,9 +523,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 88734.25,
-   "y": 107722.67,
-   "z": 9991.83,
+   "x": 88734.0,
+   "y": 107723.0,
+   "z": 9992.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -500,9 +533,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 83093.97,
-   "y": 101821.16,
-   "z": 10216.44,
+   "x": 83094.0,
+   "y": 101821.0,
+   "z": 10216.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -510,9 +543,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 87990.5,
-   "y": 105052.12,
-   "z": 10209.37,
+   "x": 87991.0,
+   "y": 105052.0,
+   "z": 10209.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -520,9 +553,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 130516,
-   "y": 255126,
-   "z": -294,
+   "x": 130516.0,
+   "y": 255126.0,
+   "z": -294.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -530,9 +563,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 86696.75,
-   "y": 99524.29,
-   "z": 10057.59,
+   "x": 86697.0,
+   "y": 99524.0,
+   "z": 10058.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -540,9 +573,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 83988.22,
-   "y": 107803.27,
-   "z": 10103.81,
+   "x": 83988.0,
+   "y": 107803.0,
+   "z": 10104.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -550,9 +583,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 84661.39,
-   "y": 99202.77,
-   "z": 10049.58,
+   "x": 84661.0,
+   "y": 99203.0,
+   "z": 10050.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -560,9 +593,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 81664.47,
-   "y": 106667.91,
-   "z": 10241.17,
+   "x": 81664.0,
+   "y": 106668.0,
+   "z": 10241.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -570,9 +603,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 86027.56,
-   "y": 109451.11,
-   "z": 9962.32,
+   "x": 86028.0,
+   "y": 109451.0,
+   "z": 9962.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6"
   },
   {
@@ -580,9 +613,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 267123.12,
-   "y": 115156.31,
-   "z": -101.34,
+   "x": 267123.0,
+   "y": 115156.0,
+   "z": -101.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -590,9 +623,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 264051.56,
-   "y": 112280.8,
-   "z": -66.4,
+   "x": 264052.0,
+   "y": 112281.0,
+   "z": -66.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -600,9 +633,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 264231.31,
-   "y": 114518.45,
-   "z": -77.76,
+   "x": 264231.0,
+   "y": 114518.0,
+   "z": -78.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -610,9 +643,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 271425.28,
-   "y": 111504.1,
-   "z": -102.58,
+   "x": 271425.0,
+   "y": 111504.0,
+   "z": -103.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -620,9 +653,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 269500.41,
-   "y": 115587.59,
-   "z": -83.29,
+   "x": 269500.0,
+   "y": 115588.0,
+   "z": -83.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -630,9 +663,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 131025,
-   "y": 257428,
-   "z": 238,
+   "x": 131025.0,
+   "y": 257428.0,
+   "z": 238.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -640,9 +673,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 267439.25,
-   "y": 110349.33,
-   "z": -91.16,
+   "x": 267439.0,
+   "y": 110349.0,
+   "z": -91.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore7"
   },
   {
@@ -650,9 +683,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -253968.72,
-   "y": -189214.19,
-   "z": -1460.13,
+   "x": -253969.0,
+   "y": -189214.0,
+   "z": -1460.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore4"
   },
   {
@@ -660,9 +693,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -40199.91,
-   "y": -4304.33,
-   "z": 25053.8,
+   "x": -40200.0,
+   "y": -4304.0,
+   "z": 25054.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -670,9 +703,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 313890.5,
-   "y": -287979.47,
-   "z": 1212.35,
+   "x": 313891.0,
+   "y": -287979.0,
+   "z": 1212.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -680,9 +713,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -43758.8,
-   "y": -8409.4,
-   "z": 25138.88,
+   "x": -43759.0,
+   "y": -8409.0,
+   "z": 25139.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -690,9 +723,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 214659.7,
-   "y": 137993.52,
-   "z": -225.08,
+   "x": 214660.0,
+   "y": 137994.0,
+   "z": -225.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -700,9 +733,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -41776.45,
-   "y": -9868.38,
-   "z": 25142.19,
+   "x": -41776.0,
+   "y": -9868.0,
+   "z": 25142.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -710,9 +743,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -38956.84,
-   "y": -10362.68,
-   "z": 25325.07,
+   "x": -38957.0,
+   "y": -10363.0,
+   "z": 25325.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -720,9 +753,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -260625.77,
-   "y": 72573.23,
-   "z": -1188.05,
+   "x": -260626.0,
+   "y": 72573.0,
+   "z": -1188.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -730,9 +763,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": -261941.47,
-   "y": 70474.51,
-   "z": -1159.06,
+   "x": -261941.0,
+   "y": 70475.0,
+   "z": -1159.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -740,9 +773,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -264372.75,
-   "y": 76059.47,
-   "z": -1296.59,
+   "x": -264373.0,
+   "y": 76059.0,
+   "z": -1297.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -750,9 +783,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -266194.75,
-   "y": 75227.37,
-   "z": -1279.52,
+   "x": -266195.0,
+   "y": 75227.0,
+   "z": -1280.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -760,9 +793,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": -263341.78,
-   "y": 72359.8,
-   "z": -1353.62,
+   "x": -263342.0,
+   "y": 72360.0,
+   "z": -1354.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -770,9 +803,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": -265378.25,
-   "y": 72493.37,
-   "z": -1342.29,
+   "x": -265378.0,
+   "y": 72493.0,
+   "z": -1342.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789"
   },
   {
@@ -780,9 +813,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -36959.13,
-   "y": -7833.78,
-   "z": 25170.35,
+   "x": -36959.0,
+   "y": -7834.0,
+   "z": 25170.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -790,9 +823,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": -43238.79,
-   "y": -6518.91,
-   "z": 25053.65,
+   "x": -43239.0,
+   "y": -6519.0,
+   "z": 25054.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore9"
   },
   {
@@ -800,9 +833,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 314277.5,
-   "y": -289755.78,
-   "z": 1267.87,
+   "x": 314278.0,
+   "y": -289756.0,
+   "z": 1268.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -810,9 +843,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 319126.59,
-   "y": -290062.66,
-   "z": 1228.42,
+   "x": 319127.0,
+   "y": -290063.0,
+   "z": 1228.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -820,9 +853,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 320535.31,
-   "y": -291279.56,
-   "z": 1229.57,
+   "x": 320535.0,
+   "y": -291280.0,
+   "z": 1230.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -830,9 +863,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 316513.25,
-   "y": -293371.69,
-   "z": 1243.29,
+   "x": 316513.0,
+   "y": -293372.0,
+   "z": 1243.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -840,9 +873,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 316668.31,
-   "y": -288089.66,
-   "z": 1174.04,
+   "x": 316668.0,
+   "y": -288090.0,
+   "z": 1174.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore10"
   },
   {
@@ -850,9 +883,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 188862.86,
-   "y": -57590.3,
-   "z": 5566.2,
+   "x": 188863.0,
+   "y": -57590.0,
+   "z": 5566.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -860,9 +893,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 213448.88,
-   "y": 132706.88,
-   "z": -317.36,
+   "x": 213449.0,
+   "y": 132707.0,
+   "z": -317.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -870,9 +903,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 183113.64,
-   "y": -55532.73,
-   "z": 5512.05,
+   "x": 183114.0,
+   "y": -55533.0,
+   "z": 5512.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -880,9 +913,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 182806.09,
-   "y": -58147.62,
-   "z": 5535.64,
+   "x": 182806.0,
+   "y": -58148.0,
+   "z": 5536.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -890,9 +923,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 186318.42,
-   "y": -52985.66,
-   "z": 5425.98,
+   "x": 186318.0,
+   "y": -52986.0,
+   "z": 5426.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -900,9 +933,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 183610.3,
-   "y": -59943.7,
-   "z": 5585.64,
+   "x": 183610.0,
+   "y": -59944.0,
+   "z": 5586.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -910,9 +943,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 188079.22,
-   "y": -54423.78,
-   "z": 5518.65,
+   "x": 188079.0,
+   "y": -54424.0,
+   "z": 5519.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore11"
   },
   {
@@ -920,9 +953,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 240891.97,
-   "y": -66618.56,
-   "z": 6182.66,
+   "x": 240892.0,
+   "y": -66619.0,
+   "z": 6183.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -930,9 +963,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 238332.19,
-   "y": -69283.02,
-   "z": 5403.43,
+   "x": 238332.0,
+   "y": -69283.0,
+   "z": 5403.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -940,9 +973,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 242801.66,
-   "y": -71309.54,
-   "z": 5419.41,
+   "x": 242802.0,
+   "y": -71310.0,
+   "z": 5419.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -950,9 +983,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 239763.44,
-   "y": -71695.06,
-   "z": 5256.66,
+   "x": 239763.0,
+   "y": -71695.0,
+   "z": 5257.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -960,9 +993,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 245033.62,
-   "y": -71845.84,
-   "z": 4617.38,
+   "x": 245034.0,
+   "y": -71846.0,
+   "z": 4617.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -970,9 +1003,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 215726,
-   "y": 132791,
-   "z": -285,
+   "x": 215726.0,
+   "y": 132791.0,
+   "z": -285.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -980,9 +1013,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 240788,
-   "y": -74885.24,
-   "z": 4801.52,
+   "x": 240788.0,
+   "y": -74885.0,
+   "z": 4802.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore12"
   },
   {
@@ -990,9 +1023,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 95981.59,
-   "y": 85227.59,
-   "z": 10170.42,
+   "x": 95982.0,
+   "y": 85228.0,
+   "z": 10170.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1000,9 +1033,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 101158.72,
-   "y": 85561.38,
-   "z": 10250.34,
+   "x": 101159.0,
+   "y": 85561.0,
+   "z": 10250.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1010,9 +1043,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 98700.53,
-   "y": 86231.94,
-   "z": 10246.26,
+   "x": 98701.0,
+   "y": 86232.0,
+   "z": 10246.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1020,9 +1053,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 97653.22,
-   "y": 82023.77,
-   "z": 10255.18,
+   "x": 97653.0,
+   "y": 82024.0,
+   "z": 10255.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1030,9 +1063,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 100208.75,
-   "y": 81507.73,
-   "z": 10271.41,
+   "x": 100209.0,
+   "y": 81508.0,
+   "z": 10271.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1040,9 +1073,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 102318.72,
-   "y": 82976.38,
-   "z": 10270.34,
+   "x": 102319.0,
+   "y": 82976.0,
+   "z": 10270.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore13"
   },
   {
@@ -1050,9 +1083,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 99743.53,
-   "y": 147302.94,
-   "z": 6441.26,
+   "x": 99744.0,
+   "y": 147303.0,
+   "z": 6441.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1060,9 +1093,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 106354.59,
-   "y": 139678.59,
-   "z": 6603.42,
+   "x": 106355.0,
+   "y": 139679.0,
+   "z": 6603.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1070,9 +1103,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 108080.53,
-   "y": 142057.28,
-   "z": 6632.44,
+   "x": 108081.0,
+   "y": 142057.0,
+   "z": 6632.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1080,9 +1113,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 218040.88,
-   "y": 134223.3,
-   "z": -187.52,
+   "x": 218041.0,
+   "y": 134223.0,
+   "z": -188.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore2"
   },
   {
@@ -1090,9 +1123,9 @@
    "resource": "Desc_Water_C",
    "purity": "impure",
    "kind": "well_sat",
-   "x": 108262.06,
-   "y": 145417.83,
-   "z": 6486.44,
+   "x": 108262.0,
+   "y": 145418.0,
+   "z": 6486.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1100,9 +1133,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 103179.53,
-   "y": 141524.94,
-   "z": 6429.26,
+   "x": 103180.0,
+   "y": 141525.0,
+   "z": 6429.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1110,9 +1143,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 104641.22,
-   "y": 149304.78,
-   "z": 6456.18,
+   "x": 104641.0,
+   "y": 149305.0,
+   "z": 6456.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1120,9 +1153,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 100829.72,
-   "y": 143446.38,
-   "z": 6461.34,
+   "x": 100830.0,
+   "y": 143446.0,
+   "z": 6461.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1130,9 +1163,9 @@
    "resource": "Desc_Water_C",
    "purity": "normal",
    "kind": "well_sat",
-   "x": 100716.75,
-   "y": 149703.72,
-   "z": 6494.41,
+   "x": 100717.0,
+   "y": 149704.0,
+   "z": 6494.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore14"
   },
   {
@@ -1140,9 +1173,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 4933.53,
-   "y": 184744.28,
-   "z": -10424.56,
+   "x": 4934.0,
+   "y": 184744.0,
+   "z": -10425.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -1150,9 +1183,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 7164.16,
-   "y": 183858.44,
-   "z": -10524.95,
+   "x": 7164.0,
+   "y": 183858.0,
+   "z": -10525.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -1160,9 +1193,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 5973.21,
-   "y": 189394.38,
-   "z": -10357.74,
+   "x": 5973.0,
+   "y": 189394.0,
+   "z": -10358.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -1170,9 +1203,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 9112.53,
-   "y": 184869.94,
-   "z": -10505.74,
+   "x": 9113.0,
+   "y": 184870.0,
+   "z": -10506.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -1180,9 +1213,9 @@
    "resource": "Desc_Water_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 10342.59,
-   "y": 187520.59,
-   "z": -10473.58,
+   "x": 10343.0,
+   "y": 187521.0,
+   "z": -10474.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore15"
   },
   {
@@ -1190,9 +1223,9 @@
    "resource": "Desc_NitrogenGas_C",
    "purity": "pure",
    "kind": "well_sat",
-   "x": 128216,
-   "y": 258878,
-   "z": 890,
+   "x": 128216.0,
+   "y": 258878.0,
+   "z": 890.0,
    "well_core": "Persistent_Level:PersistentLevel.BP_FrackingCore_8"
   },
   {
@@ -1200,9 +1233,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 178265.38,
-   "y": 206095.64,
-   "z": -9238.57,
+   "x": 178265.0,
+   "y": 206096.0,
+   "z": -9239.0,
    "well_core": null
   },
   {
@@ -1210,9 +1243,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 161928.67,
-   "y": 103777.14,
-   "z": 5602.89,
+   "x": 161929.0,
+   "y": 103777.0,
+   "z": 5603.0,
    "well_core": null
   },
   {
@@ -1220,9 +1253,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 119148.91,
-   "y": 71321.39,
-   "z": 18673.61,
+   "x": 119149.0,
+   "y": 71321.0,
+   "z": 18674.0,
    "well_core": null
   },
   {
@@ -1230,9 +1263,9 @@
    "resource": "Desc_SAM_C",
    "purity": "pure",
    "kind": "node",
-   "x": 162898.92,
-   "y": 65413.69,
-   "z": 9782.39,
+   "x": 162899.0,
+   "y": 65414.0,
+   "z": 9782.0,
    "well_core": null
   },
   {
@@ -1240,9 +1273,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -280836.69,
-   "y": -42089.18,
-   "z": -1276.15,
+   "x": -280837.0,
+   "y": -42089.0,
+   "z": -1276.0,
    "well_core": null
   },
   {
@@ -1250,9 +1283,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -267051.41,
-   "y": -24386.79,
-   "z": -723.65,
+   "x": -267051.0,
+   "y": -24387.0,
+   "z": -724.0,
    "well_core": null
   },
   {
@@ -1260,9 +1293,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -273321.22,
-   "y": -19667,
-   "z": -1537.05,
+   "x": -273321.0,
+   "y": -19667.0,
+   "z": -1537.0,
    "well_core": null
   },
   {
@@ -1270,9 +1303,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -263873.03,
-   "y": -30848.37,
-   "z": -411.67,
+   "x": -263873.0,
+   "y": -30848.0,
+   "z": -412.0,
    "well_core": null
   },
   {
@@ -1280,9 +1313,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -260110.45,
-   "y": -27673.63,
-   "z": -640.13,
+   "x": -260110.0,
+   "y": -27674.0,
+   "z": -640.0,
    "well_core": null
   },
   {
@@ -1290,9 +1323,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -256244,
-   "y": -29564,
-   "z": -668.01,
+   "x": -256244.0,
+   "y": -29564.0,
+   "z": -668.0,
    "well_core": null
   },
   {
@@ -1300,9 +1333,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -259120.33,
-   "y": -44688.95,
-   "z": -494.15,
+   "x": -259120.0,
+   "y": -44689.0,
+   "z": -494.0,
    "well_core": null
   },
   {
@@ -1310,9 +1343,19 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -261358.45,
-   "y": -41228.13,
-   "z": -327,
+   "x": -261358.0,
+   "y": -41228.0,
+   "z": -327.0,
+   "well_core": null
+  },
+  {
+   "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode11",
+   "resource": "Desc_Stone_C",
+   "purity": "pure",
+   "kind": "node",
+   "x": -279020.0,
+   "y": -186294.0,
+   "z": 269.0,
    "well_core": null
   },
   {
@@ -1320,9 +1363,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -178099.06,
-   "y": -165241.56,
-   "z": 7616.87,
+   "x": -178099.0,
+   "y": -165242.0,
+   "z": 7617.0,
    "well_core": null
   },
   {
@@ -1330,9 +1373,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -268264.41,
-   "y": -54991.44,
-   "z": -343.69,
+   "x": -268264.0,
+   "y": -54991.0,
+   "z": -344.0,
    "well_core": null
   },
   {
@@ -1340,9 +1383,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -266711.88,
-   "y": -51317.58,
-   "z": -331.48,
+   "x": -266712.0,
+   "y": -51318.0,
+   "z": -331.0,
    "well_core": null
   },
   {
@@ -1350,9 +1393,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -165001.94,
-   "y": -133278.09,
-   "z": 1610.91,
+   "x": -165002.0,
+   "y": -133278.0,
+   "z": 1611.0,
    "well_core": null
   },
   {
@@ -1360,9 +1403,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -152490.28,
-   "y": -45786.51,
-   "z": 692.62,
+   "x": -152490.0,
+   "y": -45787.0,
+   "z": 693.0,
    "well_core": null
   },
   {
@@ -1370,9 +1413,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -166731.05,
-   "y": -26566.14,
-   "z": -509.77,
+   "x": -166731.0,
+   "y": -26566.0,
+   "z": -510.0,
    "well_core": null
   },
   {
@@ -1380,9 +1423,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -170447.58,
-   "y": -28321.37,
-   "z": -596.01,
+   "x": -170448.0,
+   "y": -28321.0,
+   "z": -596.0,
    "well_core": null
   },
   {
@@ -1390,9 +1433,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": -148008.2,
-   "y": -30185.45,
-   "z": -556.13,
+   "x": -148008.0,
+   "y": -30185.0,
+   "z": -556.0,
    "well_core": null
   },
   {
@@ -1400,8 +1443,8 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -133444.86,
-   "y": -35240.25,
+   "x": -133445.0,
+   "y": -35240.0,
    "z": 3832.0,
    "well_core": null
   },
@@ -1410,9 +1453,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -145781,
-   "y": -31969,
-   "z": 3281.08,
+   "x": -145781.0,
+   "y": -31969.0,
+   "z": 3281.0,
    "well_core": null
   },
   {
@@ -1420,9 +1463,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": -178491,
-   "y": -79788,
-   "z": 3331,
+   "x": -178491.0,
+   "y": -79788.0,
+   "z": 3331.0,
    "well_core": null
   },
   {
@@ -1430,9 +1473,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": -135468,
-   "y": -174682,
-   "z": 7753,
+   "x": -135468.0,
+   "y": -174682.0,
+   "z": 7753.0,
    "well_core": null
   },
   {
@@ -1440,9 +1483,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -99604.05,
-   "y": -146823.22,
-   "z": -1631.12,
+   "x": -99604.0,
+   "y": -146823.0,
+   "z": -1631.0,
    "well_core": null
   },
   {
@@ -1450,9 +1493,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -110588,
-   "y": -135153,
-   "z": 1911,
+   "x": -110588.0,
+   "y": -135153.0,
+   "z": 1911.0,
    "well_core": null
   },
   {
@@ -1460,9 +1503,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -90457.87,
-   "y": -152279.48,
-   "z": -1700.31,
+   "x": -90458.0,
+   "y": -152279.0,
+   "z": -1650.0,
    "well_core": null
   },
   {
@@ -1470,9 +1513,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -96801,
-   "y": -135276,
-   "z": 166,
+   "x": -96801.0,
+   "y": -135276.0,
+   "z": 166.0,
    "well_core": null
   },
   {
@@ -1480,9 +1523,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -96100.71,
-   "y": 163752.86,
-   "z": -3734.49,
+   "x": -96101.0,
+   "y": 163753.0,
+   "z": -3734.0,
    "well_core": null
   },
   {
@@ -1490,9 +1533,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -94265.12,
-   "y": 165842.2,
-   "z": -3734.83,
+   "x": -94265.0,
+   "y": 165842.0,
+   "z": -3735.0,
    "well_core": null
   },
   {
@@ -1500,9 +1543,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -190787,
-   "y": -117690,
-   "z": 706,
+   "x": -190787.0,
+   "y": -117690.0,
+   "z": 706.0,
    "well_core": null
   },
   {
@@ -1510,9 +1553,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -113615.88,
-   "y": -50450,
-   "z": 16266.27,
+   "x": -113616.0,
+   "y": -50450.0,
+   "z": 16266.0,
    "well_core": null
   },
   {
@@ -1520,9 +1563,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 248481.44,
-   "y": -146160.34,
-   "z": 3561.89,
+   "x": 248481.0,
+   "y": -146160.0,
+   "z": 3592.0,
    "well_core": null
   },
   {
@@ -1530,9 +1573,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 242691.67,
-   "y": -149432.56,
-   "z": 2590.65,
+   "x": 242692.0,
+   "y": -149433.0,
+   "z": 2591.0,
    "well_core": null
   },
   {
@@ -1540,9 +1583,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -107640.28,
-   "y": -52375.52,
-   "z": 16193.37,
+   "x": -107640.0,
+   "y": -52376.0,
+   "z": 16193.0,
    "well_core": null
   },
   {
@@ -1550,9 +1593,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -266903.94,
-   "y": -133355.44,
-   "z": 5973.78,
+   "x": -266904.0,
+   "y": -133355.0,
+   "z": 5974.0,
    "well_core": null
   },
   {
@@ -1560,9 +1603,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -173249.03,
-   "y": -112172.63,
-   "z": 31.64,
+   "x": -173249.0,
+   "y": -112173.0,
+   "z": 32.0,
    "well_core": null
   },
   {
@@ -1570,9 +1613,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 109989.1,
-   "y": 196758.81,
-   "z": -3246.71,
+   "x": 109989.0,
+   "y": 196759.0,
+   "z": -3247.0,
    "well_core": null
   },
   {
@@ -1580,9 +1623,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 109619.43,
-   "y": 155798.28,
-   "z": 4175.67,
+   "x": 109619.0,
+   "y": 155798.0,
+   "z": 4176.0,
    "well_core": null
   },
   {
@@ -1590,9 +1633,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": -182183.36,
-   "y": -142367,
-   "z": -1743.87,
+   "x": -182183.0,
+   "y": -142367.0,
+   "z": -1744.0,
    "well_core": null
   },
   {
@@ -1600,9 +1643,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": 37926.11,
-   "y": 120939.23,
-   "z": 13370.25,
+   "x": 37926.0,
+   "y": 120939.0,
+   "z": 13370.0,
    "well_core": null
   },
   {
@@ -1610,9 +1653,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": 61653.52,
-   "y": 196432.23,
-   "z": -3725.46,
+   "x": 61654.0,
+   "y": 196432.0,
+   "z": -3725.0,
    "well_core": null
   },
   {
@@ -1620,9 +1663,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "impure",
    "kind": "node",
-   "x": 62111.48,
-   "y": 207627.14,
-   "z": -4197.02,
+   "x": 62111.0,
+   "y": 207627.0,
+   "z": -4197.0,
    "well_core": null
   },
   {
@@ -1630,9 +1673,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 55253.26,
-   "y": 205856.16,
-   "z": -5763.19,
+   "x": 55253.0,
+   "y": 205856.0,
+   "z": -5763.0,
    "well_core": null
   },
   {
@@ -1640,9 +1683,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 34968.07,
-   "y": 118464.16,
-   "z": 13410.25,
+   "x": 34968.0,
+   "y": 118464.0,
+   "z": 13370.0,
    "well_core": null
   },
   {
@@ -1650,9 +1693,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 175981.11,
-   "y": -40156.31,
-   "z": 6611.69,
+   "x": 175981.0,
+   "y": -40156.0,
+   "z": 6612.0,
    "well_core": null
   },
   {
@@ -1660,9 +1703,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 158314.44,
-   "y": -65002.84,
-   "z": 2591.26,
+   "x": 158314.0,
+   "y": -65003.0,
+   "z": 2591.0,
    "well_core": null
   },
   {
@@ -1670,9 +1713,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": 236608.72,
-   "y": -260095.61,
-   "z": 11784.35,
+   "x": 236609.0,
+   "y": -260096.0,
+   "z": 11784.0,
    "well_core": null
   },
   {
@@ -1680,9 +1723,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 297710.44,
-   "y": -107995.77,
-   "z": 5475.02,
+   "x": 297710.0,
+   "y": -107996.0,
+   "z": 5475.0,
    "well_core": null
   },
   {
@@ -1690,9 +1733,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 224307.77,
-   "y": -128741.74,
-   "z": 7240.55,
+   "x": 224308.0,
+   "y": -128742.0,
+   "z": 7241.0,
    "well_core": null
   },
   {
@@ -1700,9 +1743,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 211843.22,
-   "y": -18819.65,
-   "z": -29.2,
+   "x": 211843.0,
+   "y": -18820.0,
+   "z": -29.0,
    "well_core": null
   },
   {
@@ -1710,9 +1753,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": 208139.61,
-   "y": -23983.09,
-   "z": 594.19,
+   "x": 208140.0,
+   "y": -23983.0,
+   "z": 594.0,
    "well_core": null
   },
   {
@@ -1720,9 +1763,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 208006.5,
-   "y": -16382.59,
-   "z": -55.34,
+   "x": 208007.0,
+   "y": -16383.0,
+   "z": -55.0,
    "well_core": null
   },
   {
@@ -1730,9 +1773,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -129599,
-   "y": -96956,
-   "z": 4129.62,
+   "x": -129599.0,
+   "y": -96956.0,
+   "z": 4210.0,
    "well_core": null
   },
   {
@@ -1740,9 +1783,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -231390.3,
-   "y": -89529.73,
-   "z": 823.98,
+   "x": -231390.0,
+   "y": -89530.0,
+   "z": 804.0,
    "well_core": null
   },
   {
@@ -1750,9 +1793,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -194906.31,
-   "y": -25779.79,
-   "z": -627.99,
+   "x": -194906.0,
+   "y": -25780.0,
+   "z": -628.0,
    "well_core": null
   },
   {
@@ -1760,9 +1803,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 96959.12,
-   "y": 157163.2,
-   "z": 2110.3,
+   "x": 96959.0,
+   "y": 157163.0,
+   "z": 2110.0,
    "well_core": null
   },
   {
@@ -1770,9 +1813,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 96326,
-   "y": 159762.45,
-   "z": 2102.84,
+   "x": 96326.0,
+   "y": 159762.0,
+   "z": 2103.0,
    "well_core": null
   },
   {
@@ -1780,9 +1823,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 93730.26,
-   "y": 160263.92,
-   "z": 2111.12,
+   "x": 93730.0,
+   "y": 160264.0,
+   "z": 2111.0,
    "well_core": null
   },
   {
@@ -1790,9 +1833,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 92724.95,
-   "y": 163305.55,
-   "z": 1881.96,
+   "x": 92725.0,
+   "y": 163306.0,
+   "z": 1882.0,
    "well_core": null
   },
   {
@@ -1800,9 +1843,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 26597.5,
-   "y": -193983.95,
-   "z": -1683.9,
+   "x": 26598.0,
+   "y": -193984.0,
+   "z": -1684.0,
    "well_core": null
   },
   {
@@ -1810,9 +1853,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": -32599.65,
-   "y": -192537.5,
-   "z": 2280.04,
+   "x": -32600.0,
+   "y": -192537.0,
+   "z": 2280.0,
    "well_core": null
   },
   {
@@ -1820,9 +1863,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 108117.26,
-   "y": 152283.92,
-   "z": 3387.57,
+   "x": 108117.0,
+   "y": 152284.0,
+   "z": 3388.0,
    "well_core": null
   },
   {
@@ -1830,9 +1873,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 185124.39,
-   "y": 214441.7,
-   "z": -8910.61,
+   "x": 185124.0,
+   "y": 214442.0,
+   "z": -8911.0,
    "well_core": null
   },
   {
@@ -1840,9 +1883,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": 184226.86,
-   "y": 217101.75,
-   "z": -8910.76,
+   "x": 184227.0,
+   "y": 217102.0,
+   "z": -8911.0,
    "well_core": null
   },
   {
@@ -1850,9 +1893,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -258432.72,
-   "y": -40560.85,
-   "z": -327,
+   "x": -258433.0,
+   "y": -40561.0,
+   "z": -327.0,
    "well_core": null
   },
   {
@@ -1860,9 +1903,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": 182115.7,
-   "y": 188396.66,
-   "z": -5640.1,
+   "x": 182116.0,
+   "y": 188397.0,
+   "z": -5640.0,
    "well_core": null
   },
   {
@@ -1870,9 +1913,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": 184782.69,
-   "y": 191090.11,
-   "z": -5732.21,
+   "x": 184783.0,
+   "y": 191090.0,
+   "z": -5732.0,
    "well_core": null
   },
   {
@@ -1880,9 +1923,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -281345.62,
-   "y": -71999.67,
-   "z": -1200.91,
+   "x": -281346.0,
+   "y": -72000.0,
+   "z": -1201.0,
    "well_core": null
   },
   {
@@ -1890,9 +1933,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -268787.81,
-   "y": -79095.18,
-   "z": -292.37,
+   "x": -268788.0,
+   "y": -79095.0,
+   "z": -292.0,
    "well_core": null
   },
   {
@@ -1900,9 +1943,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -129015.44,
-   "y": -39541.04,
-   "z": 2898.15,
+   "x": -129015.0,
+   "y": -39541.0,
+   "z": 2898.0,
    "well_core": null
   },
   {
@@ -1910,9 +1953,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -166357.25,
-   "y": -129627.56,
-   "z": 1600.23,
+   "x": -166357.0,
+   "y": -129628.0,
+   "z": 1600.0,
    "well_core": null
   },
   {
@@ -1920,9 +1963,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": -43612.14,
-   "y": -190316.36,
-   "z": 2291.04,
+   "x": -43612.0,
+   "y": -190316.0,
+   "z": 2291.0,
    "well_core": null
   },
   {
@@ -1930,9 +1973,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -250080.31,
-   "y": -126362.7,
-   "z": 3837.6,
+   "x": -250080.0,
+   "y": -126363.0,
+   "z": 3838.0,
    "well_core": null
   },
   {
@@ -1940,9 +1983,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -252032.61,
-   "y": -125001.14,
-   "z": 3847.6,
+   "x": -252033.0,
+   "y": -125001.0,
+   "z": 3848.0,
    "well_core": null
   },
   {
@@ -1950,9 +1993,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -163354.12,
-   "y": -192096.66,
-   "z": 10761.33,
+   "x": -163354.0,
+   "y": -192097.0,
+   "z": 10761.0,
    "well_core": null
   },
   {
@@ -1960,9 +2003,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -221696.69,
-   "y": -104736.01,
-   "z": 4105.7,
+   "x": -221697.0,
+   "y": -104736.0,
+   "z": 4106.0,
    "well_core": null
   },
   {
@@ -1970,9 +2013,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -261495.66,
-   "y": -116492.59,
-   "z": 4302.59,
+   "x": -261496.0,
+   "y": -116493.0,
+   "z": 4303.0,
    "well_core": null
   },
   {
@@ -1980,9 +2023,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -281761.41,
-   "y": -134704.47,
-   "z": 1998.01,
+   "x": -281761.0,
+   "y": -134704.0,
+   "z": 1998.0,
    "well_core": null
   },
   {
@@ -1990,9 +2033,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -206172.67,
-   "y": -141688.64,
-   "z": 4859.96,
+   "x": -206173.0,
+   "y": -141689.0,
+   "z": 4860.0,
    "well_core": null
   },
   {
@@ -2000,9 +2043,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -186902.3,
-   "y": -118339.83,
-   "z": 706,
+   "x": -186902.0,
+   "y": -118340.0,
+   "z": 706.0,
    "well_core": null
   },
   {
@@ -2010,9 +2053,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -187932.66,
-   "y": -114624.19,
-   "z": 706,
+   "x": -187933.0,
+   "y": -114624.0,
+   "z": 706.0,
    "well_core": null
   },
   {
@@ -2020,9 +2063,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 114180.02,
-   "y": -16999.98,
-   "z": 14021.45,
+   "x": 114180.0,
+   "y": -17000.0,
+   "z": 14021.0,
    "well_core": null
   },
   {
@@ -2030,9 +2073,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": -41122.32,
-   "y": -72631.13,
-   "z": 23212.21,
+   "x": -41122.0,
+   "y": -72631.0,
+   "z": 23212.0,
    "well_core": null
   },
   {
@@ -2040,9 +2083,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": -24065.67,
-   "y": 269858.09,
-   "z": -13353.77,
+   "x": -24066.0,
+   "y": 269858.0,
+   "z": -13354.0,
    "well_core": null
   },
   {
@@ -2050,9 +2093,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 80730.34,
-   "y": 204811.92,
-   "z": 5722.41,
+   "x": 80730.0,
+   "y": 204812.0,
+   "z": 5722.0,
    "well_core": null
   },
   {
@@ -2060,9 +2103,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 264240.25,
-   "y": -162899.2,
-   "z": 3331.66,
+   "x": 264240.0,
+   "y": -162899.0,
+   "z": 3332.0,
    "well_core": null
   },
   {
@@ -2070,9 +2113,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -227410.78,
-   "y": -118862.21,
-   "z": 3931.6,
+   "x": -227411.0,
+   "y": -118862.0,
+   "z": 3932.0,
    "well_core": null
   },
   {
@@ -2080,9 +2123,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -230852.83,
-   "y": -115124.49,
-   "z": 3917.6,
+   "x": -230853.0,
+   "y": -115124.0,
+   "z": 3918.0,
    "well_core": null
   },
   {
@@ -2090,9 +2133,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": -153387.22,
-   "y": 82252.45,
-   "z": 20330.23,
+   "x": -153387.0,
+   "y": 82252.0,
+   "z": 20330.0,
    "well_core": null
   },
   {
@@ -2100,9 +2143,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": 34655,
-   "y": 284303,
-   "z": 905,
+   "x": 34655.0,
+   "y": 284303.0,
+   "z": 905.0,
    "well_core": null
   },
   {
@@ -2110,9 +2153,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 186164.39,
-   "y": 77069.96,
-   "z": 1138.16,
+   "x": 186164.0,
+   "y": 77070.0,
+   "z": 1138.0,
    "well_core": null
   },
   {
@@ -2120,9 +2163,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 225503.75,
-   "y": 55772.54,
-   "z": -1303.98,
+   "x": 225504.0,
+   "y": 55773.0,
+   "z": -1304.0,
    "well_core": null
   },
   {
@@ -2130,9 +2173,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 285860.75,
-   "y": -127665.09,
-   "z": 3875.85,
+   "x": 285861.0,
+   "y": -127665.0,
+   "z": 3876.0,
    "well_core": null
   },
   {
@@ -2140,9 +2183,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 237354.58,
-   "y": -164936.42,
-   "z": 2636.01,
+   "x": 237355.0,
+   "y": -164936.0,
+   "z": 2636.0,
    "well_core": null
   },
   {
@@ -2150,9 +2193,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 244591.2,
-   "y": -190902.92,
-   "z": 1832.6,
+   "x": 244591.0,
+   "y": -190903.0,
+   "z": 1833.0,
    "well_core": null
   },
   {
@@ -2160,9 +2203,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 311229.81,
-   "y": -128705.04,
-   "z": 4669.49,
+   "x": 311230.0,
+   "y": -128705.0,
+   "z": 4669.0,
    "well_core": null
   },
   {
@@ -2170,9 +2213,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 252874.52,
-   "y": -161693.45,
-   "z": 3452.74,
+   "x": 252875.0,
+   "y": -161693.0,
+   "z": 3453.0,
    "well_core": null
   },
   {
@@ -2180,9 +2223,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 295895.53,
-   "y": -272876.5,
-   "z": 1237.46,
+   "x": 295896.0,
+   "y": -272876.0,
+   "z": 1237.0,
    "well_core": null
   },
   {
@@ -2190,9 +2233,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 225406.31,
-   "y": -237056.66,
-   "z": 1043.23,
+   "x": 225406.0,
+   "y": -237057.0,
+   "z": 1043.0,
    "well_core": null
   },
   {
@@ -2200,9 +2243,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 256401.88,
-   "y": -184355.41,
-   "z": 3519.33,
+   "x": 256402.0,
+   "y": -184355.0,
+   "z": 3519.0,
    "well_core": null
   },
   {
@@ -2210,9 +2253,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 308652.03,
-   "y": -100658.06,
-   "z": 6378.2,
+   "x": 308652.0,
+   "y": -100658.0,
+   "z": 6378.0,
    "well_core": null
   },
   {
@@ -2220,9 +2263,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 311622.66,
-   "y": -69811.22,
-   "z": 5620.27,
+   "x": 311623.0,
+   "y": -69811.0,
+   "z": 5620.0,
    "well_core": null
   },
   {
@@ -2230,9 +2273,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 299122,
-   "y": -85512,
-   "z": 5936,
+   "x": 299122.0,
+   "y": -85512.0,
+   "z": 5936.0,
    "well_core": null
   },
   {
@@ -2240,9 +2283,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 270316.84,
-   "y": -211596.89,
-   "z": 3051.48,
+   "x": 270317.0,
+   "y": -211597.0,
+   "z": 3051.0,
    "well_core": null
   },
   {
@@ -2250,9 +2293,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 383045.91,
-   "y": -92549.2,
-   "z": 207.14,
+   "x": 383046.0,
+   "y": -92549.0,
+   "z": 207.0,
    "well_core": null
   },
   {
@@ -2260,9 +2303,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 297397.53,
-   "y": -96437.46,
-   "z": 6021.43,
+   "x": 297398.0,
+   "y": -96437.0,
+   "z": 6021.0,
    "well_core": null
   },
   {
@@ -2270,9 +2313,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 277591.06,
-   "y": -94119.44,
-   "z": 5535.77,
+   "x": 277591.0,
+   "y": -94119.0,
+   "z": 5536.0,
    "well_core": null
   },
   {
@@ -2280,9 +2323,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 255249.61,
-   "y": -91659.65,
-   "z": 5523.86,
+   "x": 255250.0,
+   "y": -91660.0,
+   "z": 5524.0,
    "well_core": null
   },
   {
@@ -2290,9 +2333,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 355997.62,
-   "y": -66386.5,
-   "z": -396.26,
+   "x": 355998.0,
+   "y": -66386.0,
+   "z": -396.0,
    "well_core": null
   },
   {
@@ -2300,9 +2343,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 268524.31,
-   "y": -116944.1,
-   "z": 4206.8,
+   "x": 268524.0,
+   "y": -116944.0,
+   "z": 4207.0,
    "well_core": null
   },
   {
@@ -2310,8 +2353,8 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 266880.72,
-   "y": -120714.6,
+   "x": 266881.0,
+   "y": -120715.0,
    "z": 4084.0,
    "well_core": null
   },
@@ -2320,9 +2363,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 283968.62,
-   "y": -121598.34,
-   "z": 4452.27,
+   "x": 283969.0,
+   "y": -121598.0,
+   "z": 4452.0,
    "well_core": null
   },
   {
@@ -2330,9 +2373,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 347227.78,
-   "y": -58490.81,
-   "z": -748.96,
+   "x": 347228.0,
+   "y": -58491.0,
+   "z": -749.0,
    "well_core": null
   },
   {
@@ -2340,8 +2383,8 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 233446.56,
-   "y": -247935.03,
+   "x": 233447.0,
+   "y": -247935.0,
    "z": 1057.0,
    "well_core": null
   },
@@ -2350,9 +2393,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 319464.06,
-   "y": -158098.33,
-   "z": 3864.57,
+   "x": 319464.0,
+   "y": -158098.0,
+   "z": 3865.0,
    "well_core": null
   },
   {
@@ -2360,9 +2403,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 330433.03,
-   "y": -142399.73,
-   "z": 3965.9,
+   "x": 330433.0,
+   "y": -142400.0,
+   "z": 3966.0,
    "well_core": null
   },
   {
@@ -2370,9 +2413,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 313010.19,
-   "y": -133841.61,
-   "z": 4861.55,
+   "x": 313010.0,
+   "y": -133842.0,
+   "z": 4862.0,
    "well_core": null
   },
   {
@@ -2380,9 +2423,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 339300.19,
-   "y": -183354.42,
-   "z": 4477.05,
+   "x": 339300.0,
+   "y": -183354.0,
+   "z": 4477.0,
    "well_core": null
   },
   {
@@ -2390,9 +2433,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 273729.53,
-   "y": -148172.91,
-   "z": 4082.71,
+   "x": 273730.0,
+   "y": -148173.0,
+   "z": 4083.0,
    "well_core": null
   },
   {
@@ -2400,9 +2443,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 338207.62,
-   "y": -177564.14,
-   "z": 4959.22,
+   "x": 338208.0,
+   "y": -177564.0,
+   "z": 4959.0,
    "well_core": null
   },
   {
@@ -2410,9 +2453,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 372373.69,
-   "y": -153420.89,
-   "z": 4005.97,
+   "x": 372374.0,
+   "y": -153421.0,
+   "z": 4006.0,
    "well_core": null
   },
   {
@@ -2420,9 +2463,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -280305.97,
-   "y": -181362.97,
-   "z": 338.11,
+   "x": -280306.0,
+   "y": -181363.0,
+   "z": 338.0,
    "well_core": null
   },
   {
@@ -2430,9 +2473,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 348525.66,
-   "y": -123750.76,
-   "z": 4283.54,
+   "x": 348526.0,
+   "y": -123751.0,
+   "z": 4284.0,
    "well_core": null
   },
   {
@@ -2440,9 +2483,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 348939.47,
-   "y": -185584.44,
-   "z": 4235.77,
+   "x": 348939.0,
+   "y": -185584.0,
+   "z": 4236.0,
    "well_core": null
   },
   {
@@ -2450,9 +2493,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 329409.59,
-   "y": -186014.45,
-   "z": 3740.88,
+   "x": 329410.0,
+   "y": -186014.0,
+   "z": 3741.0,
    "well_core": null
   },
   {
@@ -2460,9 +2503,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 355461.72,
-   "y": -149808.08,
-   "z": 4214.5,
+   "x": 355462.0,
+   "y": -149808.0,
+   "z": 4215.0,
    "well_core": null
   },
   {
@@ -2470,9 +2513,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 326947.06,
-   "y": -209586.44,
-   "z": 3687.77,
+   "x": 326947.0,
+   "y": -209586.0,
+   "z": 3688.0,
    "well_core": null
   },
   {
@@ -2480,9 +2523,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 287767.78,
-   "y": -274886.12,
-   "z": 1242.49,
+   "x": 287768.0,
+   "y": -274886.0,
+   "z": 1242.0,
    "well_core": null
   },
   {
@@ -2490,9 +2533,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 342806.28,
-   "y": -114728.1,
-   "z": 6020.39,
+   "x": 342806.0,
+   "y": -114728.0,
+   "z": 6020.0,
    "well_core": null
   },
   {
@@ -2500,9 +2543,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 278266.31,
-   "y": -210771.86,
-   "z": 3221.95,
+   "x": 278266.0,
+   "y": -210772.0,
+   "z": 3222.0,
    "well_core": null
   },
   {
@@ -2510,9 +2553,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 298733.94,
-   "y": -199292.72,
-   "z": 2709.46,
+   "x": 298734.0,
+   "y": -199293.0,
+   "z": 2709.0,
    "well_core": null
   },
   {
@@ -2520,9 +2563,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 282689.31,
-   "y": -179305.02,
-   "z": 4212.36,
+   "x": 282689.0,
+   "y": -179305.0,
+   "z": 4212.0,
    "well_core": null
   },
   {
@@ -2530,9 +2573,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 385302.66,
-   "y": -189927.91,
-   "z": 4280.76,
+   "x": 385303.0,
+   "y": -189928.0,
+   "z": 4281.0,
    "well_core": null
   },
   {
@@ -2540,9 +2583,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 311798.84,
-   "y": -215343.44,
-   "z": 2436.9,
+   "x": 311799.0,
+   "y": -215343.0,
+   "z": 2437.0,
    "well_core": null
   },
   {
@@ -2550,9 +2593,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 314598.09,
-   "y": -196773.44,
-   "z": 3905.69,
+   "x": 314598.0,
+   "y": -196773.0,
+   "z": 3906.0,
    "well_core": null
   },
   {
@@ -2560,9 +2603,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 276673.56,
-   "y": -195099.81,
-   "z": 2898.74,
+   "x": 276674.0,
+   "y": -195100.0,
+   "z": 2899.0,
    "well_core": null
   },
   {
@@ -2570,9 +2613,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 359885,
-   "y": -200469,
-   "z": 4110,
+   "x": 359885.0,
+   "y": -200469.0,
+   "z": 4110.0,
    "well_core": null
   },
   {
@@ -2580,9 +2623,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 391118.03,
-   "y": -208702.95,
-   "z": 4998.16,
+   "x": 391118.0,
+   "y": -208703.0,
+   "z": 4998.0,
    "well_core": null
   },
   {
@@ -2590,9 +2633,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 338761,
-   "y": -205718,
-   "z": 4225,
+   "x": 338761.0,
+   "y": -205718.0,
+   "z": 4225.0,
    "well_core": null
   },
   {
@@ -2600,9 +2643,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 348908,
-   "y": -163350.39,
-   "z": 4238.03,
+   "x": 348908.0,
+   "y": -163350.0,
+   "z": 4238.0,
    "well_core": null
   },
   {
@@ -2610,9 +2653,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 370713,
-   "y": -221971,
-   "z": 4225,
+   "x": 370713.0,
+   "y": -221971.0,
+   "z": 4225.0,
    "well_core": null
   },
   {
@@ -2620,9 +2663,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 385953,
-   "y": -254364.75,
-   "z": 3420.02,
+   "x": 385953.0,
+   "y": -254365.0,
+   "z": 3390.0,
    "well_core": null
   },
   {
@@ -2630,9 +2673,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 280137.94,
-   "y": -261096.7,
-   "z": 1859.7,
+   "x": 280138.0,
+   "y": -261097.0,
+   "z": 1860.0,
    "well_core": null
   },
   {
@@ -2640,9 +2683,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 305659.97,
-   "y": -301305.59,
-   "z": 1232.69,
+   "x": 305660.0,
+   "y": -301306.0,
+   "z": 1233.0,
    "well_core": null
   },
   {
@@ -2650,9 +2693,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 308597.78,
-   "y": -296079.19,
-   "z": 1256.87,
+   "x": 308598.0,
+   "y": -296079.0,
+   "z": 1257.0,
    "well_core": null
   },
   {
@@ -2660,9 +2703,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 374874.69,
-   "y": -259903.08,
-   "z": 3231.76,
+   "x": 374875.0,
+   "y": -259903.0,
+   "z": 3232.0,
    "well_core": null
   },
   {
@@ -2670,9 +2713,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 355115.5,
-   "y": -122969.93,
-   "z": 5003.64,
+   "x": 355116.0,
+   "y": -122970.0,
+   "z": 5004.0,
    "well_core": null
   },
   {
@@ -2680,9 +2723,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 380813.62,
-   "y": -169867.75,
-   "z": 4187.02,
+   "x": 380814.0,
+   "y": -169868.0,
+   "z": 4187.0,
    "well_core": null
   },
   {
@@ -2690,9 +2733,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 377738.06,
-   "y": -254225.64,
-   "z": 3347.13,
+   "x": 377738.0,
+   "y": -254226.0,
+   "z": 3347.0,
    "well_core": null
   },
   {
@@ -2700,9 +2743,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 381666.31,
-   "y": -268289.94,
-   "z": 3485.97,
+   "x": 381666.0,
+   "y": -268290.0,
+   "z": 3486.0,
    "well_core": null
   },
   {
@@ -2710,9 +2753,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 304839.66,
-   "y": -172907.91,
-   "z": 3801.06,
+   "x": 304840.0,
+   "y": -172908.0,
+   "z": 3801.0,
    "well_core": null
   },
   {
@@ -2720,9 +2763,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 297575.81,
-   "y": -150186.38,
-   "z": 3972.99,
+   "x": 297576.0,
+   "y": -150186.0,
+   "z": 3973.0,
    "well_core": null
   },
   {
@@ -2730,9 +2773,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 57144.12,
-   "y": -191300.44,
-   "z": -1744.93,
+   "x": 57144.0,
+   "y": -191300.0,
+   "z": -1745.0,
    "well_core": null
   },
   {
@@ -2740,9 +2783,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": 406563.88,
-   "y": -206810.05,
-   "z": -1539.46,
+   "x": 406564.0,
+   "y": -206810.0,
+   "z": -1539.0,
    "well_core": null
   },
   {
@@ -2750,9 +2793,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": 172559.33,
-   "y": -285516.91,
-   "z": 21591.23,
+   "x": 172559.0,
+   "y": -285517.0,
+   "z": 21591.0,
    "well_core": null
   },
   {
@@ -2760,9 +2803,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 272832.38,
-   "y": -261865.69,
-   "z": 1087.68,
+   "x": 272832.0,
+   "y": -261866.0,
+   "z": 1088.0,
    "well_core": null
   },
   {
@@ -2770,9 +2813,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 15357.45,
-   "y": -197672.22,
-   "z": -1606.5,
+   "x": 15357.0,
+   "y": -197672.0,
+   "z": -1606.0,
    "well_core": null
   },
   {
@@ -2780,9 +2823,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 29991.33,
-   "y": -186849.66,
-   "z": -1689.26,
+   "x": 29991.0,
+   "y": -186850.0,
+   "z": -1689.0,
    "well_core": null
   },
   {
@@ -2790,9 +2833,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": 44495.81,
-   "y": -228950.03,
-   "z": -1743.5,
+   "x": 44496.0,
+   "y": -228950.0,
+   "z": -1744.0,
    "well_core": null
   },
   {
@@ -2801,8 +2844,8 @@
    "purity": "pure",
    "kind": "node",
    "x": 12163.0,
-   "y": -225348.3,
-   "z": -1744.18,
+   "y": -225348.0,
+   "z": -1744.0,
    "well_core": null
   },
   {
@@ -2810,9 +2853,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": -35725.82,
-   "y": -209521.09,
-   "z": -1708.58,
+   "x": -35726.0,
+   "y": -209521.0,
+   "z": -1709.0,
    "well_core": null
   },
   {
@@ -2820,9 +2863,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 52471.01,
-   "y": -201464.72,
-   "z": -1658.74,
+   "x": 52471.0,
+   "y": -201465.0,
+   "z": -1659.0,
    "well_core": null
   },
   {
@@ -2830,9 +2873,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 148477.58,
-   "y": -193869.42,
-   "z": -1603.09,
+   "x": 148478.0,
+   "y": -193869.0,
+   "z": -1603.0,
    "well_core": null
   },
   {
@@ -2840,9 +2883,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 147769.36,
-   "y": -212912.34,
-   "z": -1429.34,
+   "x": 147769.0,
+   "y": -212912.0,
+   "z": -1429.0,
    "well_core": null
   },
   {
@@ -2850,9 +2893,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 146451.92,
-   "y": -222638.25,
-   "z": -1580.84,
+   "x": 146452.0,
+   "y": -222638.0,
+   "z": -1581.0,
    "well_core": null
   },
   {
@@ -2860,9 +2903,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 256611.66,
-   "y": -197978.56,
-   "z": 3561.47,
+   "x": 256612.0,
+   "y": -197979.0,
+   "z": 3561.0,
    "well_core": null
   },
   {
@@ -2870,9 +2913,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 241090.69,
-   "y": -239787.95,
-   "z": 1048.34,
+   "x": 241091.0,
+   "y": -239788.0,
+   "z": 1048.0,
    "well_core": null
   },
   {
@@ -2880,9 +2923,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 177197.55,
-   "y": -86516.85,
-   "z": 2459.14,
+   "x": 177198.0,
+   "y": -86517.0,
+   "z": 2459.0,
    "well_core": null
   },
   {
@@ -2890,9 +2933,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 167904.11,
-   "y": -116373.08,
-   "z": 2426.64,
+   "x": 167904.0,
+   "y": -116373.0,
+   "z": 2427.0,
    "well_core": null
   },
   {
@@ -2900,9 +2943,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 181723.7,
-   "y": -116280.3,
-   "z": 2150.03,
+   "x": 181724.0,
+   "y": -116280.0,
+   "z": 2150.0,
    "well_core": null
   },
   {
@@ -2910,9 +2953,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 178061.91,
-   "y": -120503.63,
-   "z": 2250.75,
+   "x": 178062.0,
+   "y": -120504.0,
+   "z": 2281.0,
    "well_core": null
   },
   {
@@ -2920,9 +2963,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 107368.21,
-   "y": -43239.49,
-   "z": 14774.43,
+   "x": 107368.0,
+   "y": -43239.0,
+   "z": 14774.0,
    "well_core": null
   },
   {
@@ -2930,9 +2973,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 68075.34,
-   "y": -81001.09,
-   "z": 9944.15,
+   "x": 68075.0,
+   "y": -81001.0,
+   "z": 9944.0,
    "well_core": null
   },
   {
@@ -2940,9 +2983,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 70865.27,
-   "y": -78125.82,
-   "z": 10451.65,
+   "x": 70865.0,
+   "y": -78126.0,
+   "z": 10452.0,
    "well_core": null
   },
   {
@@ -2950,9 +2993,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 63823.27,
-   "y": 8376.8,
-   "z": 14012.66,
+   "x": 63823.0,
+   "y": 8377.0,
+   "z": 14013.0,
    "well_core": null
   },
   {
@@ -2960,9 +3003,9 @@
    "resource": "Desc_SAM_C",
    "purity": "pure",
    "kind": "node",
-   "x": 82558.77,
-   "y": -219609.03,
-   "z": 8929.07,
+   "x": 82559.0,
+   "y": -219609.0,
+   "z": 8929.0,
    "well_core": null
   },
   {
@@ -2970,9 +3013,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 59113.39,
-   "y": -71501.63,
-   "z": 10568.02,
+   "x": 59113.0,
+   "y": -71502.0,
+   "z": 10568.0,
    "well_core": null
   },
   {
@@ -2980,9 +3023,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 64576.34,
-   "y": -71386.95,
-   "z": 10641.13,
+   "x": 64576.0,
+   "y": -71387.0,
+   "z": 10641.0,
    "well_core": null
   },
   {
@@ -2990,9 +3033,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 84199.14,
-   "y": -86393.55,
-   "z": 9766.53,
+   "x": 84199.0,
+   "y": -86394.0,
+   "z": 9767.0,
    "well_core": null
   },
   {
@@ -3000,9 +3043,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 83508.54,
-   "y": -90506.79,
-   "z": 9590.73,
+   "x": 83509.0,
+   "y": -90507.0,
+   "z": 9591.0,
    "well_core": null
   },
   {
@@ -3010,9 +3053,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 79670.5,
-   "y": -75852.08,
-   "z": 12028.01,
+   "x": 79671.0,
+   "y": -75852.0,
+   "z": 12028.0,
    "well_core": null
   },
   {
@@ -3020,9 +3063,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": -46645.43,
-   "y": -252947.02,
-   "z": 4931.1,
+   "x": -46645.0,
+   "y": -252947.0,
+   "z": 4931.0,
    "well_core": null
   },
   {
@@ -3030,9 +3073,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": -80869.77,
-   "y": -32418.93,
-   "z": 15656.7,
+   "x": -80870.0,
+   "y": -32419.0,
+   "z": 15657.0,
    "well_core": null
   },
   {
@@ -3040,9 +3083,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 152961.88,
-   "y": -24054.34,
-   "z": 4287.44,
+   "x": 152962.0,
+   "y": -24054.0,
+   "z": 4287.0,
    "well_core": null
   },
   {
@@ -3050,9 +3093,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 230542.48,
-   "y": -33617.02,
-   "z": 2185.3,
+   "x": 230542.0,
+   "y": -33617.0,
+   "z": 2185.0,
    "well_core": null
   },
   {
@@ -3060,9 +3103,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 69552.09,
-   "y": -100368.7,
-   "z": 9391.89,
+   "x": 69552.0,
+   "y": -100369.0,
+   "z": 9392.0,
    "well_core": null
   },
   {
@@ -3070,9 +3113,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 67878.4,
-   "y": -95777.43,
-   "z": 9362.03,
+   "x": 67878.0,
+   "y": -95777.0,
+   "z": 9352.0,
    "well_core": null
   },
   {
@@ -3080,9 +3123,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 60592.71,
-   "y": -77890.83,
-   "z": 9437.14,
+   "x": 60593.0,
+   "y": -77891.0,
+   "z": 9417.0,
    "well_core": null
   },
   {
@@ -3090,9 +3133,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -6448.66,
-   "y": -120483.45,
-   "z": 10380.25,
+   "x": -6449.0,
+   "y": -120483.0,
+   "z": 10380.0,
    "well_core": null
   },
   {
@@ -3100,9 +3143,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 173702.45,
-   "y": -91776.41,
-   "z": 1051.04,
+   "x": 173702.0,
+   "y": -91776.0,
+   "z": 1051.0,
    "well_core": null
   },
   {
@@ -3110,9 +3153,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 56109.16,
-   "y": -85970.16,
-   "z": 9944.39,
+   "x": 56109.0,
+   "y": -85970.0,
+   "z": 9944.0,
    "well_core": null
   },
   {
@@ -3120,9 +3163,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 167391.5,
-   "y": -88953.6,
-   "z": 1049.77,
+   "x": 167392.0,
+   "y": -88954.0,
+   "z": 1050.0,
    "well_core": null
   },
   {
@@ -3130,9 +3173,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 176296.81,
-   "y": -94196.84,
-   "z": 1419.15,
+   "x": 176297.0,
+   "y": -94197.0,
+   "z": 1419.0,
    "well_core": null
   },
   {
@@ -3140,9 +3183,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 172814.17,
-   "y": -94608.2,
-   "z": 1042.36,
+   "x": 172814.0,
+   "y": -94608.0,
+   "z": 1042.0,
    "well_core": null
   },
   {
@@ -3150,9 +3193,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 136290.22,
-   "y": -20923.61,
-   "z": 9425.3,
+   "x": 136290.0,
+   "y": -20924.0,
+   "z": 9425.0,
    "well_core": null
   },
   {
@@ -3160,9 +3203,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 128059.31,
-   "y": -24824.61,
-   "z": 8263.72,
+   "x": 128059.0,
+   "y": -24825.0,
+   "z": 8264.0,
    "well_core": null
   },
   {
@@ -3170,9 +3213,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 122698.04,
-   "y": -26966.29,
-   "z": 7998.92,
+   "x": 122698.0,
+   "y": -26966.0,
+   "z": 7999.0,
    "well_core": null
   },
   {
@@ -3180,9 +3223,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -44869.38,
-   "y": -139479.69,
-   "z": 7983.02,
+   "x": -44869.0,
+   "y": -139480.0,
+   "z": 7983.0,
    "well_core": null
   },
   {
@@ -3190,9 +3233,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -43381.93,
-   "y": -136820.03,
-   "z": 8046.35,
+   "x": -43382.0,
+   "y": -136820.0,
+   "z": 8046.0,
    "well_core": null
   },
   {
@@ -3200,9 +3243,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 116236.01,
-   "y": -15552.19,
-   "z": 14026.74,
+   "x": 116236.0,
+   "y": -15552.0,
+   "z": 14027.0,
    "well_core": null
   },
   {
@@ -3210,9 +3253,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 49403.65,
-   "y": -4743.89,
-   "z": 13191.5,
+   "x": 49404.0,
+   "y": -4744.0,
+   "z": 13192.0,
    "well_core": null
   },
   {
@@ -3220,9 +3263,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": 52588.73,
-   "y": -8859.3,
-   "z": 13593.47,
+   "x": 52589.0,
+   "y": -8859.0,
+   "z": 13593.0,
    "well_core": null
   },
   {
@@ -3230,9 +3273,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": 49638.54,
-   "y": 655.76,
-   "z": 13149.62,
+   "x": 49639.0,
+   "y": 656.0,
+   "z": 13150.0,
    "well_core": null
   },
   {
@@ -3240,9 +3283,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": 128296.09,
-   "y": -75942,
-   "z": 3668.38,
+   "x": 128296.0,
+   "y": -75942.0,
+   "z": 3668.0,
    "well_core": null
   },
   {
@@ -3250,9 +3293,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -37614.5,
-   "y": -142250.45,
-   "z": 7971.79,
+   "x": -37614.0,
+   "y": -142250.0,
+   "z": 7972.0,
    "well_core": null
   },
   {
@@ -3260,9 +3303,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -58995.68,
-   "y": -224574.77,
-   "z": 9573.6,
+   "x": -58996.0,
+   "y": -224575.0,
+   "z": 9574.0,
    "well_core": null
   },
   {
@@ -3270,9 +3313,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -64962.75,
-   "y": -201169.06,
-   "z": 6925.35,
+   "x": -64963.0,
+   "y": -201169.0,
+   "z": 6925.0,
    "well_core": null
   },
   {
@@ -3280,9 +3323,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -52876.69,
-   "y": -201761.7,
-   "z": 6792.53,
+   "x": -52877.0,
+   "y": -201762.0,
+   "z": 6793.0,
    "well_core": null
   },
   {
@@ -3290,9 +3333,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -55554.98,
-   "y": -129406.36,
-   "z": 6951.59,
+   "x": -55555.0,
+   "y": -129406.0,
+   "z": 6952.0,
    "well_core": null
   },
   {
@@ -3300,9 +3343,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 50259.73,
-   "y": -157152.75,
-   "z": -144.06,
+   "x": 50260.0,
+   "y": -157153.0,
+   "z": -144.0,
    "well_core": null
   },
   {
@@ -3310,9 +3353,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 15240.25,
-   "y": -158578.61,
-   "z": -1397.12,
+   "x": 15240.0,
+   "y": -158579.0,
+   "z": -1387.0,
    "well_core": null
   },
   {
@@ -3320,9 +3363,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 66756.95,
-   "y": -150676.98,
-   "z": -1180.96,
+   "x": 66757.0,
+   "y": -150677.0,
+   "z": -1181.0,
    "well_core": null
   },
   {
@@ -3330,9 +3373,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 92494.69,
-   "y": -132749.06,
-   "z": 700.68,
+   "x": 92495.0,
+   "y": -132749.0,
+   "z": 671.0,
    "well_core": null
   },
   {
@@ -3340,9 +3383,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 40251.39,
-   "y": -144690.52,
-   "z": 369.07,
+   "x": 40251.0,
+   "y": -144691.0,
+   "z": 369.0,
    "well_core": null
   },
   {
@@ -3350,9 +3393,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 121322.34,
-   "y": -88295.22,
-   "z": 13669.12,
+   "x": 121322.0,
+   "y": -88295.0,
+   "z": 13669.0,
    "well_core": null
   },
   {
@@ -3360,9 +3403,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 168496.5,
-   "y": -108029.6,
-   "z": 1587.06,
+   "x": 168497.0,
+   "y": -108030.0,
+   "z": 1557.0,
    "well_core": null
   },
   {
@@ -3370,9 +3413,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "normal",
    "kind": "node",
-   "x": 92072.6,
-   "y": 3163.58,
-   "z": 16079.17,
+   "x": 92073.0,
+   "y": 3164.0,
+   "z": 16079.0,
    "well_core": null
   },
   {
@@ -3380,9 +3423,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 138805.36,
-   "y": -23952.67,
-   "z": 9410.77,
+   "x": 138805.0,
+   "y": -23953.0,
+   "z": 9441.0,
    "well_core": null
   },
   {
@@ -3390,9 +3433,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 343519.19,
-   "y": -83469.72,
-   "z": 5618,
+   "x": 343519.0,
+   "y": -83470.0,
+   "z": 5618.0,
    "well_core": null
   },
   {
@@ -3400,9 +3443,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 196667.81,
-   "y": -13955.93,
-   "z": 9398.48,
+   "x": 196668.0,
+   "y": -13956.0,
+   "z": 9398.0,
    "well_core": null
   },
   {
@@ -3410,9 +3453,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": 193979.56,
-   "y": -5467.69,
-   "z": 10260.31,
+   "x": 193980.0,
+   "y": -5468.0,
+   "z": 10260.0,
    "well_core": null
   },
   {
@@ -3420,9 +3463,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": 190097.75,
-   "y": -17280.93,
-   "z": 9456.52,
+   "x": 190098.0,
+   "y": -17281.0,
+   "z": 9457.0,
    "well_core": null
   },
   {
@@ -3430,9 +3473,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": 263148.09,
-   "y": 53611.16,
-   "z": -1325.39,
+   "x": 263148.0,
+   "y": 53611.0,
+   "z": -1325.0,
    "well_core": null
   },
   {
@@ -3440,9 +3483,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "impure",
    "kind": "node",
-   "x": 261127.97,
-   "y": 48274.6,
-   "z": -816.8,
+   "x": 261128.0,
+   "y": 48275.0,
+   "z": -817.0,
    "well_core": null
   },
   {
@@ -3450,9 +3493,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": 260298.52,
-   "y": 56227.53,
-   "z": -866.57,
+   "x": 260299.0,
+   "y": 56228.0,
+   "z": -867.0,
    "well_core": null
   },
   {
@@ -3460,9 +3503,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": 15459.89,
-   "y": -803.77,
-   "z": 14671.21,
+   "x": 15460.0,
+   "y": -804.0,
+   "z": 14671.0,
    "well_core": null
   },
   {
@@ -3470,9 +3513,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": 199007.17,
-   "y": 89173.19,
-   "z": 1096.8,
+   "x": 199007.0,
+   "y": 89173.0,
+   "z": 1097.0,
    "well_core": null
   },
   {
@@ -3480,9 +3523,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "impure",
    "kind": "node",
-   "x": 198936.42,
-   "y": 93354.05,
-   "z": 1238.62,
+   "x": 198936.0,
+   "y": 93354.0,
+   "z": 1239.0,
    "well_core": null
   },
   {
@@ -3490,9 +3533,9 @@
    "resource": "Desc_OreUranium_C",
    "purity": "impure",
    "kind": "node",
-   "x": 168712.56,
-   "y": 50839.16,
-   "z": -9.32,
+   "x": 168713.0,
+   "y": 50839.0,
+   "z": -9.0,
    "well_core": null
   },
   {
@@ -3500,9 +3543,9 @@
    "resource": "Desc_OreUranium_C",
    "purity": "impure",
    "kind": "node",
-   "x": 180193.91,
-   "y": -189199.45,
-   "z": 23503.2,
+   "x": 180194.0,
+   "y": -189199.0,
+   "z": 23503.0,
    "well_core": null
   },
   {
@@ -3510,9 +3553,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": -59322.13,
-   "y": 14594.76,
-   "z": 23995.04,
+   "x": -59322.0,
+   "y": 14595.0,
+   "z": 23995.0,
    "well_core": null
   },
   {
@@ -3520,9 +3563,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": 2570.99,
-   "y": 9834.49,
-   "z": 24001.52,
+   "x": 2571.0,
+   "y": 9834.0,
+   "z": 23972.0,
    "well_core": null
   },
   {
@@ -3530,9 +3573,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": -12814.52,
-   "y": -104642.12,
-   "z": 10908.92,
+   "x": -12815.0,
+   "y": -104642.0,
+   "z": 10909.0,
    "well_core": null
   },
   {
@@ -3540,9 +3583,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 103845.57,
-   "y": -94854.04,
-   "z": 12651.91,
+   "x": 103846.0,
+   "y": -94854.0,
+   "z": 12652.0,
    "well_core": null
   },
   {
@@ -3550,9 +3593,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -94905.47,
-   "y": 262677.5,
-   "z": -4620.16,
+   "x": -94905.0,
+   "y": 262678.0,
+   "z": -4620.0,
    "well_core": null
   },
   {
@@ -3560,9 +3603,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -97178.42,
-   "y": 264232.12,
-   "z": -4625.65,
+   "x": -97178.0,
+   "y": 264232.0,
+   "z": -4626.0,
    "well_core": null
   },
   {
@@ -3570,9 +3613,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 265501.22,
-   "y": -178205.92,
-   "z": 3456.91,
+   "x": 265501.0,
+   "y": -178206.0,
+   "z": 3457.0,
    "well_core": null
   },
   {
@@ -3580,9 +3623,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -98579.16,
-   "y": 265801.06,
-   "z": -4634.95,
+   "x": -98579.0,
+   "y": 265801.0,
+   "z": -4635.0,
    "well_core": null
   },
   {
@@ -3590,9 +3633,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -91267.71,
-   "y": 253077.45,
-   "z": -4513.92,
+   "x": -91268.0,
+   "y": 253077.0,
+   "z": -4514.0,
    "well_core": null
   },
   {
@@ -3600,9 +3643,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -83962.15,
-   "y": 273576.62,
-   "z": -6240.13,
+   "x": -83962.0,
+   "y": 273577.0,
+   "z": -6240.0,
    "well_core": null
   },
   {
@@ -3610,9 +3653,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -83133.63,
-   "y": 275762.22,
-   "z": -6264.25,
+   "x": -83134.0,
+   "y": 275762.0,
+   "z": -6264.0,
    "well_core": null
   },
   {
@@ -3620,9 +3663,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -36499.56,
-   "y": 243893.73,
-   "z": -2502.62,
+   "x": -36500.0,
+   "y": 243894.0,
+   "z": -2503.0,
    "well_core": null
   },
   {
@@ -3630,9 +3673,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -35040.73,
-   "y": 245805.3,
-   "z": -2504.11,
+   "x": -35041.0,
+   "y": 245805.0,
+   "z": -2504.0,
    "well_core": null
   },
   {
@@ -3640,9 +3683,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -49077.02,
-   "y": 231707.75,
-   "z": -3845.75,
+   "x": -49077.0,
+   "y": 231708.0,
+   "z": -3846.0,
    "well_core": null
   },
   {
@@ -3650,9 +3693,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -51644.6,
-   "y": 229391.39,
-   "z": -3845.75,
+   "x": -51645.0,
+   "y": 229391.0,
+   "z": -3846.0,
    "well_core": null
   },
   {
@@ -3660,9 +3703,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 400379.41,
-   "y": -262928.12,
-   "z": 3427.25,
+   "x": 400379.0,
+   "y": -262928.0,
+   "z": 3427.0,
    "well_core": null
   },
   {
@@ -3670,9 +3713,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 155867.52,
-   "y": 248394.41,
-   "z": -6062.53,
+   "x": 155868.0,
+   "y": 248394.0,
+   "z": -6063.0,
    "well_core": null
   },
   {
@@ -3680,9 +3723,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 157195.48,
-   "y": 241871.55,
-   "z": -6201.17,
+   "x": 157195.0,
+   "y": 241872.0,
+   "z": -6201.0,
    "well_core": null
   },
   {
@@ -3690,9 +3733,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 153876.16,
-   "y": 252816.97,
-   "z": -4609.96,
+   "x": 153876.0,
+   "y": 252817.0,
+   "z": -4610.0,
    "well_core": null
   },
   {
@@ -3700,9 +3743,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 150582.83,
-   "y": 249923.77,
-   "z": -5135.73,
+   "x": 150583.0,
+   "y": 249924.0,
+   "z": -5136.0,
    "well_core": null
   },
   {
@@ -3710,9 +3753,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -75977.25,
-   "y": 130576.34,
-   "z": -3632.12,
+   "x": -75977.0,
+   "y": 130576.0,
+   "z": -3632.0,
    "well_core": null
   },
   {
@@ -3720,9 +3763,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -78418.71,
-   "y": 129174.29,
-   "z": -3648.87,
+   "x": -78419.0,
+   "y": 129174.0,
+   "z": -3649.0,
    "well_core": null
   },
   {
@@ -3730,9 +3773,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 7171.53,
-   "y": 155231.7,
-   "z": -12082.94,
+   "x": 7172.0,
+   "y": 155232.0,
+   "z": -12083.0,
    "well_core": null
   },
   {
@@ -3740,9 +3783,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 5251.41,
-   "y": 157169.19,
-   "z": -12082.82,
+   "x": 5251.0,
+   "y": 157169.0,
+   "z": -12083.0,
    "well_core": null
   },
   {
@@ -3750,9 +3793,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 5023.7,
-   "y": 159951.48,
-   "z": -12082.94,
+   "x": 5024.0,
+   "y": 159951.0,
+   "z": -12083.0,
    "well_core": null
   },
   {
@@ -3760,9 +3803,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 120084.59,
-   "y": -9957.31,
-   "z": 10448.19,
+   "x": 120085.0,
+   "y": -9957.0,
+   "z": 10448.0,
    "well_core": null
   },
   {
@@ -3770,9 +3813,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -108119.98,
-   "y": 261059.14,
-   "z": -4801.66,
+   "x": -108120.0,
+   "y": 261059.0,
+   "z": -4802.0,
    "well_core": null
   },
   {
@@ -3780,9 +3823,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": -39889.76,
-   "y": -93579.23,
-   "z": 343.08,
+   "x": -39890.0,
+   "y": -93579.0,
+   "z": 343.0,
    "well_core": null
   },
   {
@@ -3790,9 +3833,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -52587.44,
-   "y": 264646.91,
-   "z": -3819.66,
+   "x": -52587.0,
+   "y": 264647.0,
+   "z": -3820.0,
    "well_core": null
   },
   {
@@ -3800,9 +3843,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -89046.08,
-   "y": 153285.14,
-   "z": -3019.69,
+   "x": -89046.0,
+   "y": 153285.0,
+   "z": -3020.0,
    "well_core": null
   },
   {
@@ -3810,9 +3853,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 152648.42,
-   "y": 5227.09,
-   "z": 15168.27,
+   "x": 152648.0,
+   "y": 5227.0,
+   "z": 15168.0,
    "well_core": null
   },
   {
@@ -3820,9 +3863,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 157737.73,
-   "y": 14877.82,
-   "z": 15369.97,
+   "x": 157738.0,
+   "y": 14878.0,
+   "z": 15370.0,
    "well_core": null
   },
   {
@@ -3830,9 +3873,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 149936.7,
-   "y": 4686.47,
-   "z": 15468.13,
+   "x": 149937.0,
+   "y": 4686.0,
+   "z": 15468.0,
    "well_core": null
   },
   {
@@ -3840,9 +3883,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 166452.45,
-   "y": 7804.26,
-   "z": 15934.05,
+   "x": 166452.0,
+   "y": 7804.0,
+   "z": 15934.0,
    "well_core": null
   },
   {
@@ -3850,9 +3893,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 124933.16,
-   "y": 5226.19,
-   "z": 15573.58,
+   "x": 124933.0,
+   "y": 5226.0,
+   "z": 15574.0,
    "well_core": null
   },
   {
@@ -3860,9 +3903,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 128572.93,
-   "y": 1795.3,
-   "z": 15542.84,
+   "x": 128573.0,
+   "y": 1795.0,
+   "z": 15543.0,
    "well_core": null
   },
   {
@@ -3870,9 +3913,9 @@
    "resource": "Desc_SAM_C",
    "purity": "pure",
    "kind": "node",
-   "x": -48375.42,
-   "y": 128937.13,
-   "z": 23613.65,
+   "x": -48375.0,
+   "y": 128937.0,
+   "z": 23614.0,
    "well_core": null
   },
   {
@@ -3880,9 +3923,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": -181813.77,
-   "y": 89076.63,
-   "z": 17039.23,
+   "x": -181814.0,
+   "y": 89077.0,
+   "z": 17039.0,
    "well_core": null
   },
   {
@@ -3890,9 +3933,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": -90474.37,
-   "y": 67259.8,
-   "z": 2145.05,
+   "x": -90474.0,
+   "y": 67260.0,
+   "z": 2145.0,
    "well_core": null
   },
   {
@@ -3900,9 +3943,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -107864.8,
-   "y": 60190.59,
-   "z": 2653.35,
+   "x": -107865.0,
+   "y": 60191.0,
+   "z": 2653.0,
    "well_core": null
   },
   {
@@ -3910,9 +3953,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -164380.91,
-   "y": 64840.77,
-   "z": 24379.79,
+   "x": -164381.0,
+   "y": 64841.0,
+   "z": 24380.0,
    "well_core": null
   },
   {
@@ -3920,9 +3963,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -167201.16,
-   "y": 61297.75,
-   "z": 24000.76,
+   "x": -167201.0,
+   "y": 61298.0,
+   "z": 24001.0,
    "well_core": null
   },
   {
@@ -3930,9 +3973,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": -90370.42,
-   "y": 63712.16,
-   "z": 2145.05,
+   "x": -90370.0,
+   "y": 63712.0,
+   "z": 2145.0,
    "well_core": null
   },
   {
@@ -3940,9 +3983,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 245043.19,
-   "y": -22318.06,
-   "z": 8820.63,
+   "x": 245043.0,
+   "y": -22318.0,
+   "z": 8821.0,
    "well_core": null
   },
   {
@@ -3950,9 +3993,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 237724.66,
-   "y": -23005.72,
-   "z": 8796.64,
+   "x": 237725.0,
+   "y": -23006.0,
+   "z": 8797.0,
    "well_core": null
   },
   {
@@ -3960,9 +4003,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 233141.59,
-   "y": -26440.26,
-   "z": 8976.27,
+   "x": 233142.0,
+   "y": -26440.0,
+   "z": 8976.0,
    "well_core": null
   },
   {
@@ -3970,9 +4013,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": 39477.65,
-   "y": 52119.99,
-   "z": 23601.6,
+   "x": 39478.0,
+   "y": 52120.0,
+   "z": 23602.0,
    "well_core": null
   },
   {
@@ -3980,9 +4023,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -99586.61,
-   "y": 267811.94,
-   "z": -4660.73,
+   "x": -99587.0,
+   "y": 267812.0,
+   "z": -4661.0,
    "well_core": null
   },
   {
@@ -3990,9 +4033,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -93267.11,
-   "y": 254146.17,
-   "z": -4509.76,
+   "x": -93267.0,
+   "y": 254146.0,
+   "z": -4510.0,
    "well_core": null
   },
   {
@@ -4000,9 +4043,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -94006.57,
-   "y": 268116.22,
-   "z": -3127.73,
+   "x": -94007.0,
+   "y": 268116.0,
+   "z": -3128.0,
    "well_core": null
   },
   {
@@ -4010,9 +4053,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -92372.08,
-   "y": 266081.84,
-   "z": -3125.04,
+   "x": -92372.0,
+   "y": 266082.0,
+   "z": -3125.0,
    "well_core": null
   },
   {
@@ -4020,9 +4063,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -55951.41,
-   "y": 271564.91,
-   "z": -3776.7,
+   "x": -55951.0,
+   "y": 271565.0,
+   "z": -3777.0,
    "well_core": null
   },
   {
@@ -4030,9 +4073,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -65049.11,
-   "y": 137463.8,
-   "z": 8488.22,
+   "x": -65049.0,
+   "y": 137464.0,
+   "z": 8488.0,
    "well_core": null
   },
   {
@@ -4040,9 +4083,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -42273.1,
-   "y": 132150.97,
-   "z": 8668.77,
+   "x": -42273.0,
+   "y": 132151.0,
+   "z": 8669.0,
    "well_core": null
   },
   {
@@ -4050,9 +4093,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -60453.42,
-   "y": 141695.67,
-   "z": 8416.78,
+   "x": -60453.0,
+   "y": 141696.0,
+   "z": 8417.0,
    "well_core": null
   },
   {
@@ -4060,9 +4103,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -41928.32,
-   "y": 206907.64,
-   "z": -2228.23,
+   "x": -41928.0,
+   "y": 206908.0,
+   "z": -2228.0,
    "well_core": null
   },
   {
@@ -4070,9 +4113,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -43940.16,
-   "y": 207992.47,
-   "z": -2228.23,
+   "x": -43940.0,
+   "y": 207992.0,
+   "z": -2228.0,
    "well_core": null
   },
   {
@@ -4080,9 +4123,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": -21758.37,
-   "y": -145311.75,
-   "z": 10021.68,
+   "x": -21758.0,
+   "y": -145312.0,
+   "z": 10042.0,
    "well_core": null
   },
   {
@@ -4090,9 +4133,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -33328.18,
-   "y": 231626.16,
-   "z": -1394.35,
+   "x": -33328.0,
+   "y": 231626.0,
+   "z": -1394.0,
    "well_core": null
   },
   {
@@ -4100,9 +4143,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -38249.46,
-   "y": 127975.21,
-   "z": 8811.5,
+   "x": -38249.0,
+   "y": 127975.0,
+   "z": 8811.0,
    "well_core": null
   },
   {
@@ -4110,9 +4153,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -41484.49,
-   "y": 125793.59,
-   "z": 8644.93,
+   "x": -41484.0,
+   "y": 125794.0,
+   "z": 8645.0,
    "well_core": null
   },
   {
@@ -4120,9 +4163,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 571.74,
-   "y": 283802.09,
-   "z": -1139.76,
+   "x": 572.0,
+   "y": 283802.0,
+   "z": -1140.0,
    "well_core": null
   },
   {
@@ -4130,9 +4173,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -1126.06,
-   "y": 285301.25,
-   "z": -1139.76,
+   "x": -1126.0,
+   "y": 285301.0,
+   "z": -1140.0,
    "well_core": null
   },
   {
@@ -4140,9 +4183,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -44922.05,
-   "y": 302273.56,
-   "z": -2543.12,
+   "x": -44922.0,
+   "y": 302274.0,
+   "z": -2573.0,
    "well_core": null
   },
   {
@@ -4150,9 +4193,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -50406.53,
-   "y": 302870.72,
-   "z": -2583.33,
+   "x": -50407.0,
+   "y": 302871.0,
+   "z": -2583.0,
    "well_core": null
   },
   {
@@ -4160,9 +4203,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -21265.09,
-   "y": 283147.75,
-   "z": -2531.19,
+   "x": -21265.0,
+   "y": 283148.0,
+   "z": -2531.0,
    "well_core": null
   },
   {
@@ -4170,9 +4213,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": 80832.04,
-   "y": 242478.2,
-   "z": -4444.05,
+   "x": 80832.0,
+   "y": 242478.0,
+   "z": -4444.0,
    "well_core": null
   },
   {
@@ -4180,9 +4223,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 58030.62,
-   "y": 82304.88,
-   "z": 11800.67,
+   "x": 58031.0,
+   "y": 82305.0,
+   "z": 11801.0,
    "well_core": null
   },
   {
@@ -4190,9 +4233,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 3998.15,
-   "y": 271120.62,
-   "z": -4107.96,
+   "x": 3998.0,
+   "y": 271121.0,
+   "z": -4108.0,
    "well_core": null
   },
   {
@@ -4200,9 +4243,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 4127.77,
-   "y": 273241.81,
-   "z": -4107.96,
+   "x": 4128.0,
+   "y": 273242.0,
+   "z": -4108.0,
    "well_core": null
   },
   {
@@ -4210,9 +4253,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -41844.61,
-   "y": -152412.11,
-   "z": 9227.16,
+   "x": -41845.0,
+   "y": -152412.0,
+   "z": 9227.0,
    "well_core": null
   },
   {
@@ -4220,9 +4263,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 16091.84,
-   "y": 264153.12,
-   "z": -3824.18,
+   "x": 16092.0,
+   "y": 264153.0,
+   "z": -3854.0,
    "well_core": null
   },
   {
@@ -4230,9 +4273,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -54100.96,
-   "y": 229417.02,
-   "z": -3845.75,
+   "x": -54101.0,
+   "y": 229417.0,
+   "z": -3846.0,
    "well_core": null
   },
   {
@@ -4240,9 +4283,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "normal",
    "kind": "node",
-   "x": -194230.34,
-   "y": -140421.95,
-   "z": -1241.92,
+   "x": -194230.0,
+   "y": -140422.0,
+   "z": -1242.0,
    "well_core": null
   },
   {
@@ -4250,9 +4293,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -41301.41,
-   "y": 288558.03,
-   "z": -2545.57,
+   "x": -41301.0,
+   "y": 288558.0,
+   "z": -2576.0,
    "well_core": null
   },
   {
@@ -4260,9 +4303,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -37142.07,
-   "y": 201538.16,
-   "z": -3056.46,
+   "x": -37142.0,
+   "y": 201538.0,
+   "z": -3066.0,
    "well_core": null
   },
   {
@@ -4270,9 +4313,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -62536.77,
-   "y": 228042.59,
-   "z": -3279.11,
+   "x": -62537.0,
+   "y": 228043.0,
+   "z": -3279.0,
    "well_core": null
   },
   {
@@ -4280,9 +4323,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -110521.77,
-   "y": 249721.67,
-   "z": -5349.68,
+   "x": -110522.0,
+   "y": 249722.0,
+   "z": -5380.0,
    "well_core": null
   },
   {
@@ -4290,9 +4333,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -94477.42,
-   "y": 228243.27,
-   "z": -2399.37,
+   "x": -94477.0,
+   "y": 228243.0,
+   "z": -2399.0,
    "well_core": null
   },
   {
@@ -4300,9 +4343,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -8996.64,
-   "y": 293512.31,
-   "z": -2527.25,
+   "x": -8997.0,
+   "y": 293512.0,
+   "z": -2527.0,
    "well_core": null
   },
   {
@@ -4310,9 +4353,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -89379.35,
-   "y": 136763.08,
-   "z": -3948.65,
+   "x": -89379.0,
+   "y": 136763.0,
+   "z": -3949.0,
    "well_core": null
   },
   {
@@ -4320,9 +4363,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -47085.4,
-   "y": -141054.67,
-   "z": 8074.43,
+   "x": -47085.0,
+   "y": -141055.0,
+   "z": 8074.0,
    "well_core": null
   },
   {
@@ -4330,9 +4373,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -86788.44,
-   "y": 138201.34,
-   "z": -3613.6,
+   "x": -86788.0,
+   "y": 138201.0,
+   "z": -3614.0,
    "well_core": null
   },
   {
@@ -4340,9 +4383,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -55288.33,
-   "y": 129002.88,
-   "z": 8671.78,
+   "x": -55288.0,
+   "y": 129003.0,
+   "z": 8672.0,
    "well_core": null
   },
   {
@@ -4350,9 +4393,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -71673.08,
-   "y": 106511.31,
-   "z": 8466.15,
+   "x": -71673.0,
+   "y": 106511.0,
+   "z": 8466.0,
    "well_core": null
   },
   {
@@ -4360,9 +4403,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 271770.69,
-   "y": 100432.48,
-   "z": -1294.8,
+   "x": 271771.0,
+   "y": 100432.0,
+   "z": -1295.0,
    "well_core": null
   },
   {
@@ -4370,9 +4413,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 225650.66,
-   "y": 147647.98,
-   "z": -193.44,
+   "x": 225651.0,
+   "y": 147648.0,
+   "z": -193.0,
    "well_core": null
   },
   {
@@ -4380,9 +4423,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 221480.64,
-   "y": 146593.89,
-   "z": -200.09,
+   "x": 221481.0,
+   "y": 146594.0,
+   "z": -200.0,
    "well_core": null
   },
   {
@@ -4390,9 +4433,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 233432.66,
-   "y": 145602.98,
-   "z": -267.44,
+   "x": 233433.0,
+   "y": 145603.0,
+   "z": -267.0,
    "well_core": null
   },
   {
@@ -4400,9 +4443,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": 233292.98,
-   "y": 139879.98,
-   "z": -304.44,
+   "x": 233293.0,
+   "y": 139880.0,
+   "z": -304.0,
    "well_core": null
   },
   {
@@ -4410,9 +4453,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 284986.28,
-   "y": 111894.07,
-   "z": -1605.71,
+   "x": 284986.0,
+   "y": 111894.0,
+   "z": -1606.0,
    "well_core": null
   },
   {
@@ -4420,9 +4463,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 242756.75,
-   "y": 87933.09,
-   "z": -617.18,
+   "x": 242757.0,
+   "y": 87933.0,
+   "z": -617.0,
    "well_core": null
   },
   {
@@ -4430,9 +4473,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "impure",
    "kind": "node",
-   "x": -5633.59,
-   "y": 44274.06,
-   "z": 21066.0,
+   "x": -5634.0,
+   "y": 44274.0,
+   "z": 21106.0,
    "well_core": null
   },
   {
@@ -4440,9 +4483,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 245861.55,
-   "y": 4378.94,
-   "z": 573.63,
+   "x": 245862.0,
+   "y": 4379.0,
+   "z": 574.0,
    "well_core": null
   },
   {
@@ -4450,9 +4493,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": -5292.68,
-   "y": 92075.2,
-   "z": 22756.33,
+   "x": -5293.0,
+   "y": 92075.0,
+   "z": 22756.0,
    "well_core": null
   },
   {
@@ -4460,9 +4503,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -43326.97,
-   "y": 130254.38,
-   "z": 8662.27,
+   "x": -43327.0,
+   "y": 130254.0,
+   "z": 8662.0,
    "well_core": null
   },
   {
@@ -4470,9 +4513,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": 270786.06,
-   "y": 120111.02,
-   "z": -54.52,
+   "x": 270786.0,
+   "y": 120111.0,
+   "z": -55.0,
    "well_core": null
   },
   {
@@ -4480,9 +4523,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -53615.43,
-   "y": 160375.56,
-   "z": 3355.89,
+   "x": -53615.0,
+   "y": 160376.0,
+   "z": 3356.0,
    "well_core": null
   },
   {
@@ -4490,9 +4533,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 153853.69,
-   "y": 84162.78,
-   "z": 9505.6,
+   "x": 153854.0,
+   "y": 84163.0,
+   "z": 9506.0,
    "well_core": null
   },
   {
@@ -4500,9 +4543,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 206003.17,
-   "y": 181237.31,
-   "z": 10347.32,
+   "x": 206003.0,
+   "y": 181237.0,
+   "z": 10347.0,
    "well_core": null
   },
   {
@@ -4510,9 +4553,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 209926.73,
-   "y": 162974.75,
-   "z": 5348.38,
+   "x": 209927.0,
+   "y": 162975.0,
+   "z": 5348.0,
    "well_core": null
   },
   {
@@ -4520,9 +4563,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": -144746.09,
-   "y": 64418.61,
-   "z": 3136.95,
+   "x": -144746.0,
+   "y": 64419.0,
+   "z": 3137.0,
    "well_core": null
   },
   {
@@ -4530,9 +4573,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -148429.69,
-   "y": 56309.95,
-   "z": 3127.68,
+   "x": -148430.0,
+   "y": 56310.0,
+   "z": 3128.0,
    "well_core": null
   },
   {
@@ -4540,9 +4583,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": -281034.41,
-   "y": -142694.97,
-   "z": -1635.98,
+   "x": -281034.0,
+   "y": -142695.0,
+   "z": -1636.0,
    "well_core": null
   },
   {
@@ -4550,9 +4593,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": -271793.5,
-   "y": -146229.11,
-   "z": -1628.9,
+   "x": -271793.0,
+   "y": -146229.0,
+   "z": -1629.0,
    "well_core": null
   },
   {
@@ -4560,9 +4603,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -275456.5,
-   "y": -165870.11,
-   "z": -1621.9,
+   "x": -275456.0,
+   "y": -165870.0,
+   "z": -1622.0,
    "well_core": null
   },
   {
@@ -4570,9 +4613,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 151131.3,
-   "y": 75310.91,
-   "z": 9714.44,
+   "x": 151131.0,
+   "y": 75311.0,
+   "z": 9714.0,
    "well_core": null
   },
   {
@@ -4580,9 +4623,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 155600.48,
-   "y": 113111.57,
-   "z": 6026.25,
+   "x": 155600.0,
+   "y": 113112.0,
+   "z": 6026.0,
    "well_core": null
   },
   {
@@ -4590,9 +4633,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 177478.03,
-   "y": 129905.27,
-   "z": 10377.46,
+   "x": 177478.0,
+   "y": 129905.0,
+   "z": 10377.0,
    "well_core": null
   },
   {
@@ -4600,9 +4643,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 214894.03,
-   "y": 116756.27,
-   "z": 10801.46,
+   "x": 214894.0,
+   "y": 116756.0,
+   "z": 10801.0,
    "well_core": null
   },
   {
@@ -4610,9 +4653,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 239775.03,
-   "y": 148305.28,
-   "z": 6662.46,
+   "x": 239775.0,
+   "y": 148305.0,
+   "z": 6682.0,
    "well_core": null
   },
   {
@@ -4620,9 +4663,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 193869.03,
-   "y": 116585.27,
-   "z": 10248.46,
+   "x": 193869.0,
+   "y": 116585.0,
+   "z": 10248.0,
    "well_core": null
   },
   {
@@ -4630,9 +4673,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 180820.03,
-   "y": 141195.28,
-   "z": 9394.46,
+   "x": 180820.0,
+   "y": 141195.0,
+   "z": 9394.0,
    "well_core": null
   },
   {
@@ -4640,9 +4683,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -265694.5,
-   "y": -162571.11,
-   "z": 1526.1,
+   "x": -265694.0,
+   "y": -162571.0,
+   "z": 1526.0,
    "well_core": null
   },
   {
@@ -4650,9 +4693,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "normal",
    "kind": "node",
-   "x": 90375.79,
-   "y": 80713.84,
-   "z": 10116.56,
+   "x": 90376.0,
+   "y": 80714.0,
+   "z": 10117.0,
    "well_core": null
   },
   {
@@ -4660,9 +4703,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -80089.19,
-   "y": 204746.5,
-   "z": 1544.53,
+   "x": -80089.0,
+   "y": 204747.0,
+   "z": 1545.0,
    "well_core": null
   },
   {
@@ -4670,9 +4713,9 @@
    "resource": "Desc_OreUranium_C",
    "purity": "normal",
    "kind": "node",
-   "x": 38000.17,
-   "y": 91735.95,
-   "z": -4809.05,
+   "x": 38000.0,
+   "y": 91736.0,
+   "z": -4809.0,
    "well_core": null
   },
   {
@@ -4680,9 +4723,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -55693.17,
-   "y": 194370.48,
-   "z": -2557.03,
+   "x": -55693.0,
+   "y": 194370.0,
+   "z": -2557.0,
    "well_core": null
   },
   {
@@ -4690,9 +4733,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -57161.06,
-   "y": 192772.7,
-   "z": -2513.37,
+   "x": -57161.0,
+   "y": 192773.0,
+   "z": -2513.0,
    "well_core": null
   },
   {
@@ -4700,9 +4743,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -58919.39,
-   "y": 195892.94,
-   "z": -2195.57,
+   "x": -58919.0,
+   "y": 195893.0,
+   "z": -2196.0,
    "well_core": null
   },
   {
@@ -4710,9 +4753,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "impure",
    "kind": "node",
-   "x": 55041.62,
-   "y": -130641.27,
-   "z": 7156.28,
+   "x": 55042.0,
+   "y": -130641.0,
+   "z": 7156.0,
    "well_core": null
   },
   {
@@ -4720,9 +4763,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "impure",
    "kind": "node",
-   "x": 62289.97,
-   "y": -137424.12,
-   "z": 8325.42,
+   "x": 62290.0,
+   "y": -137424.0,
+   "z": 8325.0,
    "well_core": null
   },
   {
@@ -4730,9 +4773,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -61757.27,
-   "y": 194633.72,
-   "z": -2042.01,
+   "x": -61757.0,
+   "y": 194634.0,
+   "z": -2042.0,
    "well_core": null
   },
   {
@@ -4740,9 +4783,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 276452.75,
-   "y": -250331.38,
-   "z": 1260.68,
+   "x": 276453.0,
+   "y": -250331.0,
+   "z": 1261.0,
    "well_core": null
   },
   {
@@ -4750,9 +4793,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": 296499.78,
-   "y": 13253.51,
-   "z": -881.77,
+   "x": 296500.0,
+   "y": 13254.0,
+   "z": -882.0,
    "well_core": null
   },
   {
@@ -4760,9 +4803,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 255908.45,
-   "y": -3071.19,
-   "z": 3583.28,
+   "x": 255908.0,
+   "y": -3071.0,
+   "z": 3583.0,
    "well_core": null
   },
   {
@@ -4770,9 +4813,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": -8700.85,
-   "y": 283439.62,
-   "z": -1137.01,
+   "x": -8701.0,
+   "y": 283440.0,
+   "z": -1137.0,
    "well_core": null
   },
   {
@@ -4780,9 +4823,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": -10233.54,
-   "y": 291034.91,
-   "z": -2475.65,
+   "x": -10234.0,
+   "y": 291035.0,
+   "z": -2476.0,
    "well_core": null
   },
   {
@@ -4790,9 +4833,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": -43321.69,
-   "y": 239553.47,
-   "z": -3810.86,
+   "x": -43322.0,
+   "y": 239553.0,
+   "z": -3851.0,
    "well_core": null
   },
   {
@@ -4800,9 +4843,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -66076.53,
-   "y": 296870.72,
-   "z": -6102.43,
+   "x": -66077.0,
+   "y": 296871.0,
+   "z": -6102.0,
    "well_core": null
   },
   {
@@ -4810,9 +4853,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": -167359.83,
-   "y": -145682.58,
-   "z": -1914.12,
+   "x": -167360.0,
+   "y": -145683.0,
+   "z": -1914.0,
    "well_core": null
   },
   {
@@ -4820,9 +4863,9 @@
    "resource": "Desc_RawQuartz_C",
    "purity": "pure",
    "kind": "node",
-   "x": -171986.09,
-   "y": -144145.58,
-   "z": -2030.19,
+   "x": -171986.0,
+   "y": -144146.0,
+   "z": -2030.0,
    "well_core": null
   },
   {
@@ -4830,9 +4873,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 8341.53,
-   "y": 147571.7,
-   "z": -9599.88,
+   "x": 8342.0,
+   "y": 147572.0,
+   "z": -9600.0,
    "well_core": null
   },
   {
@@ -4840,9 +4883,9 @@
    "resource": "Desc_Stone_C",
    "purity": "impure",
    "kind": "node",
-   "x": 135005.19,
-   "y": 123175.48,
-   "z": 12311.32,
+   "x": 135005.0,
+   "y": 123175.0,
+   "z": 12311.0,
    "well_core": null
   },
   {
@@ -4850,9 +4893,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 146861,
-   "y": 115062.79,
-   "z": 12296.14,
+   "x": 146861.0,
+   "y": 115063.0,
+   "z": 12296.0,
    "well_core": null
   },
   {
@@ -4860,9 +4903,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 17163.82,
-   "y": 280787.91,
-   "z": 2768.05,
+   "x": 17164.0,
+   "y": 280788.0,
+   "z": 2768.0,
    "well_core": null
   },
   {
@@ -4870,9 +4913,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -47534.36,
-   "y": 289606.59,
-   "z": -2526.48,
+   "x": -47534.0,
+   "y": 289607.0,
+   "z": -2526.0,
    "well_core": null
   },
   {
@@ -4880,9 +4923,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "impure",
    "kind": "node",
-   "x": -50101.9,
-   "y": 284478.03,
-   "z": -2614.76,
+   "x": -50102.0,
+   "y": 284478.0,
+   "z": -2615.0,
    "well_core": null
   },
   {
@@ -4890,9 +4933,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -28703.17,
-   "y": 198210.48,
-   "z": -1997.03,
+   "x": -28703.0,
+   "y": 198210.0,
+   "z": -1997.0,
    "well_core": null
   },
   {
@@ -4900,9 +4943,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 404788.16,
-   "y": -113960.59,
-   "z": 634.64,
+   "x": 404788.0,
+   "y": -113961.0,
+   "z": 635.0,
    "well_core": null
   },
   {
@@ -4910,9 +4953,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": -217052.25,
-   "y": 11242.14,
-   "z": 17705.38,
+   "x": -217052.0,
+   "y": 11242.0,
+   "z": 17705.0,
    "well_core": null
   },
   {
@@ -4920,9 +4963,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": -177367.2,
-   "y": 44998.92,
-   "z": 23765.87,
+   "x": -177367.0,
+   "y": 44999.0,
+   "z": 23766.0,
    "well_core": null
   },
   {
@@ -4930,9 +4973,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": -150574.8,
-   "y": -22.56,
-   "z": 19505.62,
+   "x": -150575.0,
+   "y": -23.0,
+   "z": 19506.0,
    "well_core": null
   },
   {
@@ -4940,9 +4983,9 @@
    "resource": "Desc_OreUranium_C",
    "purity": "normal",
    "kind": "node",
-   "x": -75893.16,
-   "y": 51636.96,
-   "z": 19145.95,
+   "x": -75893.0,
+   "y": 51637.0,
+   "z": 19146.0,
    "well_core": null
   },
   {
@@ -4950,9 +4993,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -60960.89,
-   "y": 96196.09,
-   "z": 21234.12,
+   "x": -60961.0,
+   "y": 96196.0,
+   "z": 21234.0,
    "well_core": null
   },
   {
@@ -4960,9 +5003,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 20776.25,
-   "y": -134970.05,
-   "z": 16881.84,
+   "x": 20776.0,
+   "y": -134970.0,
+   "z": 16882.0,
    "well_core": null
   },
   {
@@ -4970,9 +5013,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -107739.1,
-   "y": -130639.96,
-   "z": -1525.48,
+   "x": -107739.0,
+   "y": -130640.0,
+   "z": -1525.0,
    "well_core": null
   },
   {
@@ -4980,9 +5023,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -29925.75,
-   "y": 39693.06,
-   "z": 21307.76,
+   "x": -29926.0,
+   "y": 39693.0,
+   "z": 21308.0,
    "well_core": null
   },
   {
@@ -4990,9 +5033,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -64843.04,
-   "y": -7738.49,
-   "z": 22626.66,
+   "x": -64843.0,
+   "y": -7738.0,
+   "z": 22627.0,
    "well_core": null
   },
   {
@@ -5000,9 +5043,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 33024.75,
-   "y": 69.48,
-   "z": 23076.41,
+   "x": 33025.0,
+   "y": 69.0,
+   "z": 23076.0,
    "well_core": null
   },
   {
@@ -5010,9 +5053,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 57623.45,
-   "y": 45463.21,
-   "z": 24895.33,
+   "x": 57623.0,
+   "y": 45463.0,
+   "z": 24895.0,
    "well_core": null
   },
   {
@@ -5020,9 +5063,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 8348.43,
-   "y": 70432,
-   "z": 23244.65,
+   "x": 8348.0,
+   "y": 70432.0,
+   "z": 23245.0,
    "well_core": null
   },
   {
@@ -5030,9 +5073,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -107793.87,
-   "y": 31855.47,
-   "z": 22428.25,
+   "x": -107794.0,
+   "y": 31855.0,
+   "z": 22428.0,
    "well_core": null
   },
   {
@@ -5040,9 +5083,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -141071.52,
-   "y": 39662.03,
-   "z": 19144.66,
+   "x": -141072.0,
+   "y": 39662.0,
+   "z": 19145.0,
    "well_core": null
   },
   {
@@ -5050,9 +5093,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": -143612.11,
-   "y": 20728.18,
-   "z": 19457.72,
+   "x": -143612.0,
+   "y": 20728.0,
+   "z": 19458.0,
    "well_core": null
   },
   {
@@ -5060,9 +5103,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -53781.88,
-   "y": 33003.27,
-   "z": 20012.23,
+   "x": -53782.0,
+   "y": 33003.0,
+   "z": 20012.0,
    "well_core": null
   },
   {
@@ -5070,9 +5113,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 75114.84,
-   "y": -123003.48,
-   "z": 13630.33,
+   "x": 75115.0,
+   "y": -123003.0,
+   "z": 13630.0,
    "well_core": null
   },
   {
@@ -5080,9 +5123,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 404471.16,
-   "y": -116794.98,
-   "z": 1122.16,
+   "x": 404471.0,
+   "y": -116795.0,
+   "z": 1122.0,
    "well_core": null
   },
   {
@@ -5090,9 +5133,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 368850.56,
-   "y": -76218.82,
-   "z": -538.83,
+   "x": 368851.0,
+   "y": -76219.0,
+   "z": -539.0,
    "well_core": null
   },
   {
@@ -5100,9 +5143,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 365436.38,
-   "y": -80081.98,
-   "z": -63.16,
+   "x": 365436.0,
+   "y": -80082.0,
+   "z": -63.0,
    "well_core": null
   },
   {
@@ -5110,9 +5153,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "normal",
    "kind": "node",
-   "x": 380366.25,
-   "y": -109496.38,
-   "z": 9236.62,
+   "x": 380366.0,
+   "y": -109496.0,
+   "z": 9237.0,
    "well_core": null
   },
   {
@@ -5120,9 +5163,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 330471.41,
-   "y": -264658.34,
-   "z": 2144.01,
+   "x": 330471.0,
+   "y": -264658.0,
+   "z": 2144.0,
    "well_core": null
   },
   {
@@ -5130,9 +5173,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 271513.69,
-   "y": -246510.55,
-   "z": 1630.91,
+   "x": 271514.0,
+   "y": -246511.0,
+   "z": 1631.0,
    "well_core": null
   },
   {
@@ -5140,9 +5183,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 399533.88,
-   "y": -255364.92,
-   "z": 3822.78,
+   "x": 399534.0,
+   "y": -255365.0,
+   "z": 3823.0,
    "well_core": null
   },
   {
@@ -5150,9 +5193,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 362593.59,
-   "y": -135769.97,
-   "z": 5895.03,
+   "x": 362594.0,
+   "y": -135770.0,
+   "z": 5895.0,
    "well_core": null
   },
   {
@@ -5160,9 +5203,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 368128.34,
-   "y": -139150.7,
-   "z": 5475.85,
+   "x": 368128.0,
+   "y": -139151.0,
+   "z": 5476.0,
    "well_core": null
   },
   {
@@ -5170,9 +5213,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": 365854.44,
-   "y": -133383.73,
-   "z": 5255.9,
+   "x": 365854.0,
+   "y": -133384.0,
+   "z": 5256.0,
    "well_core": null
   },
   {
@@ -5180,9 +5223,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -227331.09,
-   "y": -158278.33,
-   "z": 8947.67,
+   "x": -227331.0,
+   "y": -158278.0,
+   "z": 8948.0,
    "well_core": null
   },
   {
@@ -5190,9 +5233,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 406197.03,
-   "y": -252989.97,
-   "z": 3920.43,
+   "x": 406197.0,
+   "y": -252990.0,
+   "z": 3940.0,
    "well_core": null
   },
   {
@@ -5200,9 +5243,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 218926.47,
-   "y": -255338.89,
-   "z": 1070.19,
+   "x": 218926.0,
+   "y": -255339.0,
+   "z": 1070.0,
    "well_core": null
   },
   {
@@ -5210,9 +5253,9 @@
    "resource": "Desc_Coal_C",
    "purity": "impure",
    "kind": "node",
-   "x": 220712.89,
-   "y": -250482.2,
-   "z": 1257.35,
+   "x": 220713.0,
+   "y": -250482.0,
+   "z": 1257.0,
    "well_core": null
   },
   {
@@ -5220,9 +5263,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": 325548.81,
-   "y": -264500.12,
-   "z": 1673.58,
+   "x": 325549.0,
+   "y": -264500.0,
+   "z": 1674.0,
    "well_core": null
   },
   {
@@ -5230,9 +5273,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "pure",
    "kind": "node",
-   "x": 246502.22,
-   "y": -276999.91,
-   "z": 1498.77,
+   "x": 246502.0,
+   "y": -277000.0,
+   "z": 1499.0,
    "well_core": null
   },
   {
@@ -5240,9 +5283,9 @@
    "resource": "Desc_OreUranium_C",
    "purity": "impure",
    "kind": "node",
-   "x": -132772.22,
-   "y": -187579.23,
-   "z": 46528.31,
+   "x": -132772.0,
+   "y": -187579.0,
+   "z": 46528.0,
    "well_core": null
   },
   {
@@ -5250,9 +5293,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "normal",
    "kind": "node",
-   "x": 106047.65,
-   "y": 50478.79,
-   "z": 9765.12,
+   "x": 106048.0,
+   "y": 50479.0,
+   "z": 9765.0,
    "well_core": null
   },
   {
@@ -5260,9 +5303,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "pure",
    "kind": "node",
-   "x": 116877.54,
-   "y": 51510.91,
-   "z": 17359.51,
+   "x": 116878.0,
+   "y": 51511.0,
+   "z": 17360.0,
    "well_core": null
   },
   {
@@ -5270,9 +5313,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "impure",
    "kind": "node",
-   "x": 103317.65,
-   "y": 67498.78,
-   "z": 9540.12,
+   "x": 103318.0,
+   "y": 67499.0,
+   "z": 9540.0,
    "well_core": null
   },
   {
@@ -5280,9 +5323,9 @@
    "resource": "Desc_OreBauxite_C",
    "purity": "impure",
    "kind": "node",
-   "x": 89592.65,
-   "y": 62638.78,
-   "z": 10375.12,
+   "x": 89593.0,
+   "y": 62639.0,
+   "z": 10375.0,
    "well_core": null
   },
   {
@@ -5290,9 +5333,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 219394.75,
-   "y": 37188.82,
-   "z": -1292.17,
+   "x": 219395.0,
+   "y": 37189.0,
+   "z": -1292.0,
    "well_core": null
   },
   {
@@ -5300,9 +5343,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 245700.44,
-   "y": 30065.4,
-   "z": -847.3,
+   "x": 245700.0,
+   "y": 30065.0,
+   "z": -847.0,
    "well_core": null
   },
   {
@@ -5310,9 +5353,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 270772.25,
-   "y": 47035.57,
-   "z": -1613.82,
+   "x": 270772.0,
+   "y": 47036.0,
+   "z": -1614.0,
    "well_core": null
   },
   {
@@ -5320,9 +5363,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": -36771.39,
-   "y": 296778.97,
-   "z": -2366.05,
+   "x": -36771.0,
+   "y": 296779.0,
+   "z": -2366.0,
    "well_core": null
   },
   {
@@ -5330,9 +5373,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 225430.5,
-   "y": -6949.23,
-   "z": -1549.86,
+   "x": 225431.0,
+   "y": -6949.0,
+   "z": -1550.0,
    "well_core": null
   },
   {
@@ -5340,9 +5383,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -110109.1,
-   "y": -129159.96,
-   "z": -1405.48,
+   "x": -110109.0,
+   "y": -129160.0,
+   "z": -1405.0,
    "well_core": null
   },
   {
@@ -5350,9 +5393,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": -131573.67,
-   "y": 227253.09,
-   "z": -787.02,
+   "x": -131574.0,
+   "y": 227253.0,
+   "z": -787.0,
    "well_core": null
   },
   {
@@ -5360,9 +5403,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "normal",
    "kind": "node",
-   "x": -101381.73,
-   "y": 91578.52,
-   "z": 8665.24,
+   "x": -101382.0,
+   "y": 91579.0,
+   "z": 8665.0,
    "well_core": null
   },
   {
@@ -5370,9 +5413,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "pure",
    "kind": "node",
-   "x": 188183.27,
-   "y": -247467.91,
-   "z": 23307.01,
+   "x": 188183.0,
+   "y": -247468.0,
+   "z": 23307.0,
    "well_core": null
   },
   {
@@ -5380,9 +5423,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "pure",
    "kind": "node",
-   "x": 242309.97,
-   "y": 152778.88,
-   "z": 8887.83,
+   "x": 242310.0,
+   "y": 152779.0,
+   "z": 8888.0,
    "well_core": null
   },
   {
@@ -5390,9 +5433,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "pure",
    "kind": "node",
-   "x": 94847.23,
-   "y": 224537.16,
-   "z": -85.8,
+   "x": 94847.0,
+   "y": 224537.0,
+   "z": -86.0,
    "well_core": null
   },
   {
@@ -5400,9 +5443,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "impure",
    "kind": "node",
-   "x": 91305.27,
-   "y": 220216.78,
-   "z": -78.61,
+   "x": 91305.0,
+   "y": 220217.0,
+   "z": -79.0,
    "well_core": null
   },
   {
@@ -5410,9 +5453,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "normal",
    "kind": "node",
-   "x": 96367.98,
-   "y": 220401.47,
-   "z": -83.76,
+   "x": 96368.0,
+   "y": 220401.0,
+   "z": -84.0,
    "well_core": null
   },
   {
@@ -5420,9 +5463,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "pure",
    "kind": "node",
-   "x": -145043.58,
-   "y": 165965.16,
-   "z": 12698.5,
+   "x": -145044.0,
+   "y": 165965.0,
+   "z": 12699.0,
    "well_core": null
   },
   {
@@ -5430,9 +5473,9 @@
    "resource": "Desc_Sulfur_C",
    "purity": "normal",
    "kind": "node",
-   "x": -213022.56,
-   "y": -170020.81,
-   "z": -1317.3,
+   "x": -213023.0,
+   "y": -170021.0,
+   "z": -1317.0,
    "well_core": null
   },
   {
@@ -5440,9 +5483,9 @@
    "resource": "Desc_OreGold_C",
    "purity": "pure",
    "kind": "node",
-   "x": -92343.34,
-   "y": 281605.88,
-   "z": -4620.5,
+   "x": -92343.0,
+   "y": 281606.0,
+   "z": -4620.0,
    "well_core": null
   },
   {
@@ -5450,9 +5493,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 133276.12,
-   "y": 197857,
-   "z": -7378.84,
+   "x": 133276.0,
+   "y": 197857.0,
+   "z": -7379.0,
    "well_core": null
   },
   {
@@ -5460,9 +5503,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 131967.42,
-   "y": 194729,
-   "z": -7424.69,
+   "x": 131967.0,
+   "y": 194729.0,
+   "z": -7425.0,
    "well_core": null
   },
   {
@@ -5470,9 +5513,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 130551,
-   "y": 179528.53,
-   "z": -5545.1,
+   "x": 130551.0,
+   "y": 179529.0,
+   "z": -5545.0,
    "well_core": null
   },
   {
@@ -5480,9 +5523,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 133637.48,
-   "y": 205791.55,
-   "z": -7424.32,
+   "x": 133637.0,
+   "y": 205792.0,
+   "z": -7424.0,
    "well_core": null
   },
   {
@@ -5490,9 +5533,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 226320,
-   "y": -200702,
-   "z": 1079.35,
+   "x": 226320.0,
+   "y": -200702.0,
+   "z": 1079.0,
    "well_core": null
   },
   {
@@ -5500,9 +5543,9 @@
    "resource": "Desc_SAM_C",
    "purity": "normal",
    "kind": "node",
-   "x": 228273.23,
-   "y": 116287.04,
-   "z": -1581.82,
+   "x": 228273.0,
+   "y": 116287.0,
+   "z": -1582.0,
    "well_core": null
   },
   {
@@ -5510,9 +5553,9 @@
    "resource": "Desc_Coal_C",
    "purity": "normal",
    "kind": "node",
-   "x": -102630.02,
-   "y": -140319.84,
-   "z": -1581.73,
+   "x": -102630.0,
+   "y": -140320.0,
+   "z": -1582.0,
    "well_core": null
   },
   {
@@ -5520,9 +5563,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -167603.14,
-   "y": 179557.16,
-   "z": 1589.63,
+   "x": -167603.0,
+   "y": 179557.0,
+   "z": 1590.0,
    "well_core": null
   },
   {
@@ -5530,9 +5573,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -164442.61,
-   "y": 171771.8,
-   "z": 1612.35,
+   "x": -164443.0,
+   "y": 171772.0,
+   "z": 1612.0,
    "well_core": null
   },
   {
@@ -5540,9 +5583,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": -162723.67,
-   "y": 182453.09,
-   "z": 712.98,
+   "x": -162724.0,
+   "y": 182453.0,
+   "z": 713.0,
    "well_core": null
   },
   {
@@ -5550,9 +5593,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": -171878.62,
-   "y": 185789.22,
-   "z": 1077.16,
+   "x": -171879.0,
+   "y": 185789.0,
+   "z": 1077.0,
    "well_core": null
   },
   {
@@ -5560,9 +5603,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -159616.38,
-   "y": 112857.88,
-   "z": 16254.22,
+   "x": -159616.0,
+   "y": 112858.0,
+   "z": 16254.0,
    "well_core": null
   },
   {
@@ -5570,9 +5613,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": -156723.47,
-   "y": 109165.41,
-   "z": 16113.07,
+   "x": -156723.0,
+   "y": 109165.0,
+   "z": 16113.0,
    "well_core": null
   },
   {
@@ -5580,9 +5623,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -156728.53,
-   "y": 202159.61,
-   "z": 961.46,
+   "x": -156729.0,
+   "y": 202160.0,
+   "z": 961.0,
    "well_core": null
   },
   {
@@ -5590,9 +5633,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": -151152.17,
-   "y": 184381,
-   "z": 998.07,
+   "x": -151152.0,
+   "y": 184381.0,
+   "z": 978.0,
    "well_core": null
   },
   {
@@ -5600,9 +5643,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": -229053.75,
-   "y": 78058.34,
-   "z": -1684.97,
+   "x": -229054.0,
+   "y": 78058.0,
+   "z": -1685.0,
    "well_core": null
   },
   {
@@ -5610,9 +5653,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": -245048.64,
-   "y": 90588.17,
-   "z": -1652.4,
+   "x": -245049.0,
+   "y": 90588.0,
+   "z": -1652.0,
    "well_core": null
   },
   {
@@ -5620,9 +5663,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "normal",
    "kind": "node",
-   "x": -232468.75,
-   "y": 62838.28,
-   "z": -1676.49,
+   "x": -232469.0,
+   "y": 62838.0,
+   "z": -1676.0,
    "well_core": null
   },
   {
@@ -5630,9 +5673,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "pure",
    "kind": "node",
-   "x": -252533.73,
-   "y": 69813.32,
-   "z": -1562.46,
+   "x": -252534.0,
+   "y": 69813.0,
+   "z": -1562.0,
    "well_core": null
   },
   {
@@ -5640,9 +5683,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "normal",
    "kind": "node",
-   "x": 252751.22,
-   "y": 29139.62,
-   "z": -798.66,
+   "x": 252751.0,
+   "y": 29140.0,
+   "z": -799.0,
    "well_core": null
   },
   {
@@ -5650,9 +5693,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 282284.19,
-   "y": 63326.75,
-   "z": -1601.31,
+   "x": 282284.0,
+   "y": 63327.0,
+   "z": -1601.0,
    "well_core": null
   },
   {
@@ -5660,9 +5703,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 297499.06,
-   "y": -7312.44,
-   "z": -298.23,
+   "x": 297499.0,
+   "y": -7312.0,
+   "z": -298.0,
    "well_core": null
   },
   {
@@ -5670,9 +5713,9 @@
    "resource": "Desc_Stone_C",
    "purity": "pure",
    "kind": "node",
-   "x": 219900.91,
-   "y": 42217.5,
-   "z": -1597.66,
+   "x": 219901.0,
+   "y": 42217.0,
+   "z": -1598.0,
    "well_core": null
   },
   {
@@ -5680,9 +5723,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "normal",
    "kind": "node",
-   "x": 160085.53,
-   "y": 259420.73,
-   "z": -1094.71,
+   "x": 160086.0,
+   "y": 259421.0,
+   "z": -1095.0,
    "well_core": null
   },
   {
@@ -5690,9 +5733,9 @@
    "resource": "Desc_OreIron_C",
    "purity": "pure",
    "kind": "node",
-   "x": 164518.28,
-   "y": 238317.95,
-   "z": -8588.6,
+   "x": 164518.0,
+   "y": 238318.0,
+   "z": -8589.0,
    "well_core": null
   },
   {
@@ -5700,9 +5743,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 141567.92,
-   "y": 230906.75,
-   "z": -5835.19,
+   "x": 141568.0,
+   "y": 230907.0,
+   "z": -5835.0,
    "well_core": null
   },
   {
@@ -5710,9 +5753,9 @@
    "resource": "Desc_Stone_C",
    "purity": "normal",
    "kind": "node",
-   "x": 245860.05,
-   "y": -218934.48,
-   "z": 1311.57,
+   "x": 245860.0,
+   "y": -218934.0,
+   "z": 1312.0,
    "well_core": null
   },
   {
@@ -5720,9 +5763,9 @@
    "resource": "Desc_LiquidOil_C",
    "purity": "impure",
    "kind": "node",
-   "x": 169716.92,
-   "y": 203386.05,
-   "z": -9242.58,
+   "x": 169717.0,
+   "y": 203386.0,
+   "z": -9243.0,
    "well_core": null
   },
   {
@@ -5730,9 +5773,9 @@
    "resource": "Desc_SAM_C",
    "purity": "impure",
    "kind": "node",
-   "x": 132957.52,
-   "y": 240892.88,
-   "z": -14192.57,
+   "x": 132958.0,
+   "y": 240893.0,
+   "z": -14193.0,
    "well_core": null
   },
   {
@@ -5740,9 +5783,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 49337,
-   "y": -54670,
-   "z": 5773,
+   "x": 49337.0,
+   "y": -54670.0,
+   "z": 5773.0,
    "well_core": null
   },
   {
@@ -5750,9 +5793,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 70191,
-   "y": -14100,
-   "z": 13085,
+   "x": 70191.0,
+   "y": -14100.0,
+   "z": 13085.0,
    "well_core": null
   },
   {
@@ -5760,9 +5803,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -33373,
-   "y": -88036,
-   "z": -87,
+   "x": -33373.0,
+   "y": -88036.0,
+   "z": -87.0,
    "well_core": null
   },
   {
@@ -5770,9 +5813,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": -49789,
-   "y": -162415.91,
-   "z": -1849,
+   "x": -49789.0,
+   "y": -162416.0,
+   "z": -1849.0,
    "well_core": null
   },
   {
@@ -5780,9 +5823,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 202233,
-   "y": 45027.02,
-   "z": -1317,
+   "x": 202233.0,
+   "y": 45027.0,
+   "z": -1317.0,
    "well_core": null
   },
   {
@@ -5790,9 +5833,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": -142293.36,
-   "y": -61383.32,
-   "z": 3018.41,
+   "x": -142293.0,
+   "y": -61383.0,
+   "z": 3018.0,
    "well_core": null
   },
   {
@@ -5800,9 +5843,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -138869.89,
-   "y": -57952.96,
-   "z": 3236.36,
+   "x": -138870.0,
+   "y": -57953.0,
+   "z": 3236.0,
    "well_core": null
   },
   {
@@ -5810,9 +5853,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 206903,
-   "y": 45592.02,
-   "z": -1367,
+   "x": 206903.0,
+   "y": 45592.0,
+   "z": -1367.0,
    "well_core": null
   },
   {
@@ -5820,9 +5863,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 141833,
-   "y": -89090,
-   "z": 1558.64,
+   "x": 141833.0,
+   "y": -89090.0,
+   "z": 1559.0,
    "well_core": null
   },
   {
@@ -5830,9 +5873,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 281106.34,
-   "y": 8139.64,
-   "z": 953.33,
+   "x": 281106.0,
+   "y": 8140.0,
+   "z": 953.0,
    "well_core": null
   },
   {
@@ -5840,9 +5883,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 92620,
-   "y": -31568.24,
-   "z": 5615.95,
+   "x": 92620.0,
+   "y": -31568.0,
+   "z": 5616.0,
    "well_core": null
   },
   {
@@ -5850,9 +5893,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 95894.55,
-   "y": -30845.92,
-   "z": 5590,
+   "x": 95895.0,
+   "y": -30846.0,
+   "z": 5590.0,
    "well_core": null
   },
   {
@@ -5860,9 +5903,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 43763,
-   "y": -98725,
-   "z": 10544,
+   "x": 43763.0,
+   "y": -98725.0,
+   "z": 10544.0,
    "well_core": null
   },
   {
@@ -5870,9 +5913,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 134478.39,
-   "y": -90977.96,
-   "z": 1984.02,
+   "x": 134478.0,
+   "y": -90978.0,
+   "z": 1984.0,
    "well_core": null
   },
   {
@@ -5880,9 +5923,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 125777,
-   "y": -147081,
-   "z": 18842,
+   "x": 125777.0,
+   "y": -147081.0,
+   "z": 18842.0,
    "well_core": null
   },
   {
@@ -5890,9 +5933,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -213328,
-   "y": -160655,
-   "z": -1621,
+   "x": -213328.0,
+   "y": -160655.0,
+   "z": -1621.0,
    "well_core": null
   },
   {
@@ -5900,9 +5943,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -209862,
-   "y": -159644,
-   "z": -1769,
+   "x": -209862.0,
+   "y": -159644.0,
+   "z": -1769.0,
    "well_core": null
   },
   {
@@ -5910,9 +5953,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -92534,
-   "y": -67192,
-   "z": 15498,
+   "x": -92534.0,
+   "y": -67192.0,
+   "z": 15498.0,
    "well_core": null
   },
   {
@@ -5920,9 +5963,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -173000,
-   "y": 29532,
-   "z": 15333,
+   "x": -173000.0,
+   "y": 29532.0,
+   "z": 15333.0,
    "well_core": null
   },
   {
@@ -5930,9 +5973,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": -169793,
-   "y": 20466,
-   "z": 15329,
+   "x": -169793.0,
+   "y": 20466.0,
+   "z": 15329.0,
    "well_core": null
   },
   {
@@ -5940,9 +5983,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 50532,
-   "y": 44056,
-   "z": 23962,
+   "x": 50532.0,
+   "y": 44056.0,
+   "z": 23962.0,
    "well_core": null
   },
   {
@@ -5950,9 +5993,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 46522,
-   "y": 53125,
-   "z": 23943,
+   "x": 46522.0,
+   "y": 53125.0,
+   "z": 23943.0,
    "well_core": null
   },
   {
@@ -5960,9 +6003,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 44326,
-   "y": 48548,
-   "z": 23761,
+   "x": 44326.0,
+   "y": 48548.0,
+   "z": 23761.0,
    "well_core": null
   },
   {
@@ -5970,9 +6013,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 39037,
-   "y": 218871,
-   "z": -5933,
+   "x": 39037.0,
+   "y": 218871.0,
+   "z": -5933.0,
    "well_core": null
   },
   {
@@ -5980,9 +6023,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "normal",
    "kind": "geyser",
-   "x": 40792,
-   "y": 211028,
-   "z": -5818,
+   "x": 40792.0,
+   "y": 211028.0,
+   "z": -5818.0,
    "well_core": null
   },
   {
@@ -5990,9 +6033,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 152735,
-   "y": 211451,
-   "z": -8796,
+   "x": 152735.0,
+   "y": 211451.0,
+   "z": -8796.0,
    "well_core": null
   },
   {
@@ -6000,9 +6043,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 282899,
-   "y": 1745,
-   "z": 2550,
+   "x": 282899.0,
+   "y": 1745.0,
+   "z": 2550.0,
    "well_core": null
   },
   {
@@ -6010,9 +6053,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 281822,
-   "y": -583,
-   "z": 2408,
+   "x": 281822.0,
+   "y": -583.0,
+   "z": 2408.0,
    "well_core": null
   },
   {
@@ -6020,9 +6063,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 89458,
-   "y": 223800,
-   "z": 21,
+   "x": 89458.0,
+   "y": 223800.0,
+   "z": 21.0,
    "well_core": null
   },
   {
@@ -6030,9 +6073,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "pure",
    "kind": "geyser",
-   "x": 94642,
-   "y": 218487,
-   "z": -154,
+   "x": 94642.0,
+   "y": 218487.0,
+   "z": -154.0,
    "well_core": null
   },
   {
@@ -6040,9 +6083,9 @@
    "resource": "Desc_Geyser_C",
    "purity": "impure",
    "kind": "geyser",
-   "x": 191906,
-   "y": -242852,
-   "z": 22813,
+   "x": 191906.0,
+   "y": -242852.0,
+   "z": 22813.0,
    "well_core": null
   },
   {
@@ -6050,9 +6093,9 @@
    "resource": "Desc_Coal_C",
    "purity": "pure",
    "kind": "node",
-   "x": -113215.83,
-   "y": -44145,
-   "z": 16295.93,
+   "x": -113216.0,
+   "y": -44145.0,
+   "z": 16296.0,
    "well_core": null
   },
   {
@@ -6060,9 +6103,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 20143.98,
-   "y": -169847.12,
-   "z": 15477.61,
+   "x": 20144.0,
+   "y": -169847.0,
+   "z": 15478.0,
    "well_core": null
   },
   {
@@ -6070,9 +6113,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "impure",
    "kind": "node",
-   "x": 95345.54,
-   "y": -168441.8,
-   "z": 13262,
+   "x": 95346.0,
+   "y": -168442.0,
+   "z": 13262.0,
    "well_core": null
   },
   {
@@ -6080,9 +6123,9 @@
    "resource": "Desc_OreCopper_C",
    "purity": "pure",
    "kind": "node",
-   "x": -26897.67,
-   "y": -145468.75,
-   "z": 8397.13,
+   "x": -26898.0,
+   "y": -145469.0,
+   "z": 8397.0,
    "well_core": null
   }
  ]

@@ -84,6 +84,11 @@ can reach.
 from your save, then solves your objective with and without each option and reports the delta —
 including one measured on the candidate's own output, so a cable recipe isn't judged on plastic.
 
+**Node data is cross-validated, not trusted.** The table is merged from two independent extractions —
+one from the game's packaged `Persistent_Level.umap`, one community-traced — which agree on purity for
+every shared node. That merge recovered a pure Limestone node the single-source table was missing, found
+because the completeness check now counts save actors against table rows in *both* directions.
+
 **Region names are advisory, and say so.** Boundaries come from a hand-derived 256 m raster, because the
 game ships no biome geometry. Every lookup carries a confidence (`interior` / `boundary` / `sparse`), a
 land mask built from 2,669 static world objects means ocean returns *"off-map or ocean"* instead of the
@@ -124,5 +129,10 @@ no game install.
 
 None — this is a private project, all rights reserved by default. Note that `sidecar/vendor/sat_sav_parse`
 is GPL-3.0-only; its copyleft attaches on *distribution*, so publishing this would require licensing the
-combined work GPL-3.0. `data/resource_nodes.json` derives from SCIM data via that repo — third-party
-terms, recorded in the file's `_meta`.
+combined work GPL-3.0.
+
+`data/resource_nodes.json` is merged from two sources, both recorded in the file's `_meta`: an
+MIT-licensed set extracted from the game's own map assets
+([rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)) for
+resource, purity and position, plus the vendored SCIM-derived table for the satellite→core link it
+lacks. They agree on purity for all 607 shared nodes to within 0.69 cm of position.

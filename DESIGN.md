@@ -102,20 +102,49 @@ pre-1.0 saves with `saveHeaderType` 1, 8 or 9, rejected at the header check. Of 
 > - Autosaves can catch the factory mid-restructure, so diagnostics must distinguish "broken" from
 >   "under construction".
 
-### 3.4 Resource node purity — the one gap
+### 3.4 Resource node type and purity — the one gap, now closed
 
 Node actors serialize **only** `mResourcesLeft` and their transform. Resource type and purity are
-**not in the save**, and no biome/region geometry is in `Docs.json`.
+**not in the save**, and no biome/region geometry is in `Docs.json`. So a static table is required.
 
-`sav_data/resourcePurity.py` in the GreyHak repo fills this: 607 entries keyed by `instanceName` →
-`(resourceClass, Purity, (x,y,z), parentFrackingCore)`. Joins **607/607 = 100%** when
-`BP_FrackingCore_C` actors are included in the match set.
+**They are, however, in the game's packaged assets.** `FactoryGame-Windows.utoc`/`.ucas` contain
+`Map/GameLevel01/Persistent_Level.umap`, where each node is a placed actor carrying `mResourceClass`
+and `mPurity`; `CommunityResources/FactoryGame.usmap` ships specifically so external tools can
+deserialize them. An earlier draft of this spec called this data unverifiable from the game files.
+That was wrong — it was unextracted, not unverifiable.
 
-> **Provenance caveat.** That file carries no licence header; its only provenance line is
-> `# Extracted from SCIM for Satisfactory v1.2.0.0` — the data came from a third party
-> (Satisfactory-Calculator Interactive Map), and it is **pinned to v1.2.0.0 while the save is v1.2.2.1**.
-> Treat it as a vendored data snapshot with a `source` and `game_version` field, validated at load
-> (assert 100% key join; warn on node-count drift). Regenerating it independently is a known future task.
+`data/resource_nodes.json` is therefore **merged from two independent sources**, because neither alone
+is sufficient:
+
+| source | licence | role |
+|---|---|---|
+| `data/world_resource_nodes.mit.json` — rockfactory/satisfactory-logistics | **MIT** | authoritative node set, resource, purity, position. Derived from an FModel dump of `Persistent_Level.umap`, i.e. from game assets. |
+| vendored `sav_data/resourcePurity.py` | none stated; SCIM-derived, pinned to v1.2.0.0 | satellite → fracking-core link only, which the MIT set lacks and the well-rate maths needs. |
+
+Cross-validation at generation time: **607 shared nodes, 0 purity mismatches, 0 resource mismatches,
+max position delta 0.69 cm.** Independent agreement that close is strong corroboration of both.
+
+> **The bug this found, and the mistake that hid it.** SCIM was missing `BP_ResourceNode11`, a pure
+> Limestone node worth 480/min. The save proves it exists — 459 `BP_ResourceNode_C` actors against
+> SCIM's 458. It went unnoticed because the original validation checked the join in **one direction
+> only**: every table entry appeared in the save (607/607), which says nothing about save nodes missing
+> from the table. `test_node_table_matches_the_save_in_both_directions` now counts save actors against
+> table rows per kind. Konsl's world-generator notes a missing limestone node as a known 1.2-build
+> discrepancy, consistent with SCIM's v1.2.0.0 pin — exactly the version-drift risk this section
+> flagged.
+
+Excluded on purpose: `BP_ResourceDeposit_C` (hand-mineable only, no extractor can be placed) and
+`BP_FrackingCore_C` (produces nothing itself; referenced as `well_core` on satellites).
+
+Geysers are labelled `Desc_Geyser_C`. Neither that nor the MIT set's `Desc_GeothermalEnergy_C` exists in
+`Docs.json` — a geyser is not an item, it is a placement target for the Geothermal Generator — so the
+difference between the two sources there is cosmetic.
+
+**Regenerating from the paks directly** remains possible and is the fully first-party option: CUE4Parse
+driven by the usmap, following the recipe in Konsl's MIT-licensed `scripts/extract.cs`. It needs
+CUE4Parse ≥ 1.2.2.21 (nuget's 1.2.2 mis-parses UE 5.6, which this build is) and an Oodle *data*
+decompressor, which the game does not ship — only OodleNetwork, a different library. Not worth the
+second toolchain while two independent sources agree to 0.69 cm.
 
 ---
 
@@ -821,7 +850,7 @@ terms, not GreyHak's, would govern.
 | OQ3 | Are `mNumSchematicsPerHardDrive = 2` / `mNumRerollsPerHardDrive = 1` overridden by a packaged ini? | Reroll advice. | Only inside the shipping DLL; treat as semi-verified. |
 | OQ4 | Runtime property names for installed somersloops. | Reading sloop placement from a save. | Place a sloop, re-save, diff the properties. |
 | OQ5 | Water pump -> water volume mapping (`FGWaterVolume*` aren't purity keys). | Water capacity accounting. | Coordinate fallback, or accept "unknown". |
-| OQ6 | Regenerate the node/purity table independently of SCIM, for v1.2.2.1. | Provenance and version drift. | Parse map assets, or validate the existing table against a fresh save. |
+| ~~OQ6~~ | ~~Regenerate the node/purity table independently of SCIM.~~ | **CLOSED** — merged with an MIT, game-asset-derived set; 0 purity/resource mismatches, and a missing node recovered. See §3.4. | — |
 | OQ7 | How many somersloops does the user actually hold? 37 collected per one table, 15 demonstrably on hand. | Sloop budget in the optimizer. | Reconcile depot + inventories + world actors. |
 
 ---
