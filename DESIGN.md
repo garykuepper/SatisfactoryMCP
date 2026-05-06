@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 18 tools, 3 resources, 3 prompts, 149 tests passing. See README.md for usage.
+**Status:** implemented. 19 tools, 3 resources, 3 prompts, 185 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -710,7 +710,76 @@ machine on it; logistics decks are 4 m.
 
 Site size is the **peak** floor, not the sum, since floors stack.
 
-### 8.5 Degeneracy
+### 8.6 Diff vs save — what to actually change
+
+`plan_factory` says what the factory should be. `diff_vs_save` says what to do about it. The hard part
+is not arithmetic, it is deciding which existing machine **counts** toward the plan.
+
+**Identity, never position.** Three keys, each forced by what the save stores:
+
+| plan row | key | why |
+|---|---|---|
+| recipe | `(building, recipe)` | `mCurrentRecipe` is per machine and is exactly what the player changes. |
+| generator | `building` only | A generator has no recipe; `mCurrentFuelClass` is whatever is piped in. 176 on Fuel + 20 on Turbofuel is **196 identical buildings and one plumbing decision**. |
+| extractor | the node it occupies | Resolved from `mExtractableResource`, and the plan's extractor columns were built from those same node rows. Exact, no inference. |
+
+Class-only matching is the failure this exists to avoid: the save has **36 Refineries, of which 5 run
+Alt HOR** and 31 make copper, plastic and alumina. "You have 36, build 10" is arithmetically true and
+tells the player to break their copper line. Off-recipe machines are named as a reuse pool, never counted.
+
+**Spatial proximity is not part of matching**, and the evidence is in this save: the region raster is
+±256 m advisory and splits the single 458-building site across *three* region names, 300 m single-linkage
+merges the oil plant and the main base (only ~900 m apart) into one cluster, and the plan's own build
+targets sit 0.4–2.5 km out. No radius separates them. Position is used only to *report* (`where(km)`
+distance bands from the anchor — the centroid of the in-scope tapped extractors, the only thing a plan
+pins to the ground) and for one 200 m proximity test that gates what is **mentioned**.
+
+**Where identity is unavailable, emit a range.** All 23 Water Extractors point at `FGWaterVolume`
+objects that are not node keys (OQ5), so none can be attributed to a plant. 31 needed vs 23 built is
+reported as **build 8..27** — low bound counts every pump in the world, high bound only those standing
+among the plan's own machines (4 at the plant, 13 at the main base, 6 at 2.5 km). A single number there
+is a confident lie in whichever direction it falls.
+
+**Action taxonomy, free actions first**, because materials are the scarce resource:
+`UNPAUSE` → `SETRECIPE` → `BUILD`. On this save that turns "build 4 Assemblers" into four dropdowns —
+4 Assemblers with **no recipe set** stand 20 m from the plan's Compacted Coal Assembler, so reusing them
+has zero opportunity cost. Paused and recipe-less machines appear **only where they intersect the plan**;
+the 10 paused biomass generators belong to `world_summary`, not here.
+
+**There is no `DISMANTLE` verb.** Machines standing among the plan but not in it are listed for the
+player to judge. Two guards keep that block honest: the 200 m radius (which excludes the 32 Coal
+Generators at 887–1060 m) and a shared-item test — without it, one matched Assembler standing in the main
+base swept in 22 Iron Ingot Smelters and 19 Iron Rod Constructors. What survives is the right answer: the
+Diluted Packaged Fuel route the 37 Blenders replace.
+
+**Clocks.** A reclock is proposed only when a machine's **own** clock is off 100%, never by comparing
+against the plan's clock — 99.43% is a derived ratio (§8.4), and comparing against it renders an ordinary
+plan as hundreds of slider adjustments. An overclocked machine is *noted* and never actioned: the oil pump
+at 250% means the plan understates what the player already extracts.
+
+**Ordering** reuses the layout's SCC-condensed `chain_depth`, so extractors fall out at stage 1 and
+generators last with nothing special-cased. Power is **incremental** — charging the plan's total would
+double-count the 20 Fuel Generators that already draw. "Power first?" then becomes a number: 4,655 MW of
+new draw against 831 MW of headroom, and since an LP solution is a **ray**, any fraction of it is itself
+feasible and self-powered, so the answer is "build it in ≥6 proportional slices".
+
+**Cost** totals `build_cost` for the build counts against `WorldState.stock()` — carried + storage +
+Depot, never machine buffers. Only shortfalls are shown, ranked by shortfall ÷ existing production lines,
+so the finding is *"8,800 Rubber and you have no machine making Rubber"* rather than a shopping list.
+Items with no automatable recipe (Portable Miner) have zero lines by nature and are demoted.
+
+**Signature: re-solve, no plan handle.** `diff_vs_save` takes `plan_factory`'s arguments verbatim and
+re-solves; the server keeps no state and a handle would be invalidated by every autosave rotation. Both
+tools print `[plan <id>/save <id>]`. `plan_id` hashes the arguments **plus the save-derived solve inputs**
+(unlocked recipes, extractor node census, buildable set), so two responses sharing it are provably the
+same plan; `save_id` hashes the machine census, so *same plan, different save* is the mid-build signal.
+Solving is deterministic on identical inputs (verified), which is what makes the id meaningful. Cost:
+~1.5 s per call and the model must repeat the arguments.
+
+Infeasible and empty plans short-circuit. An empty table would read as "you already have it", which is
+the opposite of both.
+
+### 8.7 Degeneracy
 
 `min_raw` LPs are **degenerate** — equally optimal vertices give materially different raw vectors (water
 −57.78 vs −46.67 on the same objective). Either apply a documented lexicographic tie-break or label
@@ -782,7 +851,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `explain_byproducts`, `compare_recipe_options`, `diff_vs_save`
+**Planning:** `plan_factory`, `diff_vs_save`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -944,6 +1013,57 @@ nonsense: fully-tapped fields are not candidates; unreachable capacity (well sat
 Pressurizer) is excluded from throughput; a missing infrastructure distance stays `None` rather than
 scoring as adjacent; and the altitude delta is **positive when the field sits above the consumer**, since
 that means fluid flows downhill and needs no pipeline pumps.
+
+---
+
+## 16. Parked: site outlines and visualisation
+
+Deliberately out of scope for now. Recorded because the enabling investigation was
+non-obvious and would be expensive to redo.
+
+**The idea.** A website that visualises a plan per floor, plus a way to mark on the map
+where a factory floor actually has room -- an outline you declare, against which a plan can be
+fit-checked. Read-only; no editing.
+
+**The finding that makes it feasible.** Existing foundations are fully readable from the save.
+`FGLightweightBuildableSubsystem.actorSpecificInfo` is shaped
+`[count, [classPath, [instance, ...]], ...]`, and each instance is a 12-field list where
+`[0]` is a rotation quaternion and **`[1]` is an exact world position**. On the reference save
+that is **5,105 foundation pieces** (4,626 `Build_Foundation_8x1_01_C` + 479 polished),
+occupying **2,844 distinct 8 m cells = 182,016 m²**, which flood-fill into 8 contiguous
+platforms of 20+ cells:
+
+| cells | area | extent | centre (m) | altitude |
+|---|---|---|---|---|
+| 504 | 32,256 m² | 168×440 m | 103, −2819 | −18 m |
+| 326 | 20,864 m² | 216×192 m | −474, −1505 | +46 m |
+| 287 | 18,368 m² | 688×112 m | −1513, −1206 | +20 m |
+
+So "where do I already have flat space" needs no marking at all — it is derivable. Only
+unbuilt ground needs a declared outline.
+
+**What it would enable.** Build sites as first-class objects, derived from foundations or
+declared as rectangles. A fit check against a plan's peak floor: the Spire Coast plan needs
+**1,632 foundations** while the largest existing platform is **504**, so it does not fit on
+anything currently built. And a floor view that packs blocks into a *real* boundary rather
+than an arbitrary square, which is the difference between a meaningless arrangement and
+"it fits with 18% slack".
+
+**Terrain is partially derivable too.** There is no heightmap, but Z is known at ~8,500
+points (foundations, buildings, nodes, slugs, crash sites), so an outline can report
+elevation spread and sample density — "varies 40 m across 12 samples, expect heavy
+foundation work" — rather than either silence or invention.
+
+**Prerequisite: plan persistence.** A visualisation needs a stable target, and a plan cannot
+be re-derived later because the *save is an input to the solve* — unlocked recipes, node
+occupancy, buildings available. Re-solving next month against a drifted save gives a
+different answer with no record of the old one. A stored plan would need the scenario
+arguments, the solved processes, the layout, the save header it was computed against, and
+`docs_sha256` so it stays interpretable across a game patch. Agreed location if built:
+a user data directory, not the repo.
+
+**Still not derivable, and would be invention:** world placement, belt routing, terrain
+fitting, foundation alignment to the world grid.
 
 ---
 
