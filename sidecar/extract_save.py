@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -207,7 +207,9 @@ def extract(path: str) -> dict:
         "generators": [],
         "pipe_networks": [],
         "depot": {},
-        "inventory_totals": {},
+        # Split by owner: lumping machine buffers in with carried stock overstates
+        # everything. Fluids are raw litres here; the server scales them.
+        "inventories": {"player": {}, "storage": {}, "machine": {}},
         "node_state": {},
         "warnings": [],
     }
@@ -223,7 +225,8 @@ def extract(path: str) -> dict:
         # Inventories live on COMPONENTS, which have no typePath at all, so this
         # must run before the empty-cls guard or every stack is silently skipped.
         if "mInventoryStacks" in p:
-            _accumulate_inventory(p["mInventoryStacks"], out["inventory_totals"])
+            bucket = inventory_bucket(str(instance))
+            _accumulate_inventory(p["mInventoryStacks"], out["inventories"][bucket])
 
         if not cls:
             continue
@@ -442,6 +445,29 @@ def _lightweight(obj) -> dict:
 
     walk(getattr(obj, "actorSpecificInfo", None))
     return out
+
+
+def inventory_bucket(instance: str) -> str:
+    """Which pile a stack belongs to, from the component's instanceName.
+
+    An instanceName looks like
+    ``...PersistentLevel.Build_ConstructorMk1_C_2147441119.InputInventory``, so it
+    carries both the owning actor class and the inventory's ROLE.
+
+    This distinction is not cosmetic. Summing every stack in the world gives Water
+    5,556,375 and Fuel 1,048,762 -- pipe and machine-buffer contents, in litres --
+    which is a wildly wrong answer to "what do I have on hand". A build-cost check
+    against that number would tell the player they can afford anything.
+    """
+    owner = instance.rsplit(".", 2)[-2] if instance.count(".") >= 2 else instance
+    role = instance.rsplit(".", 1)[-1]
+    if "PlayerState" in owner or owner.startswith(("Char_", "BP_Player")):
+        return "player"
+    if role == "StorageInventory" and any(
+        tag in owner for tag in ("StorageContainer", "CentralStorage", "FreightWagon")
+    ):
+        return "storage"
+    return "machine"
 
 
 def _accumulate_inventory(raw, totals: dict) -> None:

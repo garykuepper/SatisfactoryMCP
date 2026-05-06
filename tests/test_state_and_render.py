@@ -189,6 +189,34 @@ def test_dependency_gate_uses_dependencies_not_tier(state):
 
 
 @pytest.mark.integration
+def test_stock_excludes_machine_buffers(state):
+    """Summing every stack in the world gives Water 5,556,375 and Fuel 1,048,762 --
+    pipe and machine contents in litres. A build-cost check against that would tell
+    the player they can afford anything."""
+    stock = state.stock()
+    buffers = state.machine_buffers()
+    assert stock and buffers
+    # Nothing spendable is in the millions.
+    assert max(stock.values()) < 1_000_000
+    # The fluids that dominated the old flat total are buffers, not stock.
+    assert stock.get("Desc_Water_C", 0) < buffers.get("Desc_Water_C", 0)
+
+
+@pytest.mark.integration
+def test_fluid_stock_is_scaled_to_cubic_metres(state):
+    """The sidecar reports raw litres; anything user-facing must be m3."""
+    buffers = state.machine_buffers()
+    water = buffers.get("Desc_Water_C", 0)
+    assert 0 < water < 100_000  # ~5,558 m3, not 5,558,240 litres
+
+
+@pytest.mark.integration
+def test_hard_drives_counted_from_spendable_stock_only(state):
+    """1 drive sits in the Dimensional Depot; none are carried."""
+    assert state.spare_hard_drives() == 1
+
+
+@pytest.mark.integration
 def test_power_report_excludes_paused(state):
     pw = state.power_report()
     assert pw["generation_mw"] > 0

@@ -312,10 +312,44 @@ class WorldState:
         return out
 
     def spare_hard_drives(self) -> int:
-        """Unanalysed drives on hand (depot + inventories)."""
-        depot = self.projection.get("depot", {}).get("Desc_HardDrive_C", 0)
-        inv = self.projection.get("inventory_totals", {}).get("Desc_HardDrive_C", 0)
-        return int(depot) + int(inv)
+        """Unanalysed drives on hand."""
+        return int(self.stock().get("Desc_HardDrive_C", 0))
+
+    @cached_property
+    def _inventories(self) -> dict[str, dict[str, float]]:
+        return self.projection.get("inventories", {}) or {}
+
+    def stock(self) -> dict[str, float]:
+        """What the player can actually spend: carried + storage + Dimensional Depot.
+
+        Deliberately EXCLUDES machine buffers. Summing every stack in the world gives
+        Water 5,556,375 and Fuel 1,048,762 -- pipe and machine contents in litres --
+        so a build-cost check against that would say anything is affordable. Fluids
+        are scaled to m3 here; the sidecar reports raw litres.
+        """
+        out: dict[str, float] = {}
+        sources = [
+            self._inventories.get("player", {}),
+            self._inventories.get("storage", {}),
+            self.projection.get("depot", {}),
+        ]
+        for source in sources:
+            for item, amount in source.items():
+                out[item] = out.get(item, 0.0) + amount
+        for item in list(out):
+            it = self.game.items.get(item)
+            if it is not None and it.is_fluid:
+                out[item] /= 1000.0
+        return out
+
+    def machine_buffers(self) -> dict[str, float]:
+        """Material sitting in machine inputs, outputs and pipes. Not spendable."""
+        out = dict(self._inventories.get("machine", {}))
+        for item in list(out):
+            it = self.game.items.get(item)
+            if it is not None and it.is_fluid:
+                out[item] /= 1000.0
+        return out
 
     # ---- sites ---------------------------------------------------------
 
