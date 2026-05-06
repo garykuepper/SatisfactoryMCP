@@ -39,7 +39,7 @@ belt/pipe *routing* geometry (only throughput accounting and altitude deltas).
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | **Python 3.11**, `uv`-managed | User preference; best MILP ecosystem. |
-| D2 | Game data from the **local `Docs/en-US.json`**, normalized in-process | Ships with the game, updates on patch, authoritative. No web API, no hardcoding. |
+| D2 | Game data from the **local `Docs/en-US.json`**, normalized in-process | Ships with the game, updates on patch, authoritative. No web API, no hardcoding. **No committed snapshot fallback** — the server is only ever run on a machine with the game installed, so a fallback would be untested weight and a second source of truth to drift. |
 | D3 | **`Headers.zip` + `FactoryGame.usmap`** as the authority for save property names | The game ships its own C++ headers — property semantics are quoted, not guessed. |
 | D4 | Save parsing via **GreyHak `sav_parse`** behind a **subprocess sidecar** | Supports `saveVersion 60` exactly; parses in 3.7 s. Sidecar for version-fragility isolation, crash isolation, and a tiny test fixture. |
 | D5 | **`scipy.optimize.milp`** (HiGHS) | Fastest at scale, ships with scipy, no external binary, BSD/MIT. |
@@ -939,7 +939,12 @@ would add invalidation bugs to save 50 ms. Optionally persist the normalized sna
 **The save projection is where caching matters: 3.7 s → 1 ms.** Cache the *projection*, not the parse
 tree. Key: `sha256(abspath | st_mtime_ns | st_size | schema_version)[:16]`. Two-tier: process LRU(3) in
 front of a pickle at `%LOCALAPPDATA%\satisfactory-mcp\cache\` (via `platformdirs.user_cache_dir` —
-`LOCALAPPDATA`, not `APPDATA`; regenerable data must not roam). Prune to N newest on startup.
+`LOCALAPPDATA`, not `APPDATA`; regenerable data must not roam).
+
+**Pruned on write, not on startup.** Autosaves rotate every ~5 minutes and each rotation is a new
+cache key, so a long session grows the directory by ~500 kB per autosave — and startup pruning would
+never fire during the session causing the growth. Globbing a dozen files costs nothing next to the 4 s
+parse that just completed. Keeps the 12 newest.
 
 ---
 

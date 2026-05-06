@@ -190,6 +190,10 @@ def load_projection(
     _remember(key, payload)
     try:
         (config.cache_dir() / f"save-{key}.pkl").write_bytes(pickle.dumps(payload))
+        # Prune on write, because autosaves rotate every ~5 minutes and each one is a
+        # new cache key: without this the directory grows by ~500 kB per autosave for
+        # ever. Globbing a dozen files is far cheaper than the 4 s parse we just did.
+        prune_cache()
     except OSError:
         pass  # cache is an optimisation, never a requirement
     return payload
