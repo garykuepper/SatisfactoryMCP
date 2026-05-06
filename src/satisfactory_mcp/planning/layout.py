@@ -1,0 +1,426 @@
+"""Turn a solved plan into a buildable schematic: blocks, buses and floors.
+
+This is a SCHEMATIC, not a blueprint. It answers "what modules do I build, what feeds
+what, how much space, and what goes on which floor". It deliberately does not produce
+world coordinates: there is no terrain heightmap in any data available here, so belt
+pathfinding and foundation alignment would be invention rather than derivation.
+
+Three ideas do the work:
+
+**Blocks come from throughput, not taste.** 46 Refineries consuming 1380 m3/min of
+crude cannot sit on one manifold when a Mk2 pipe carries 600 -- that is 3 lines, so it
+is 3 blocks of ~16. Line count *is* block count, which makes the split derived rather
+than arbitrary.
+
+**Connections are buses, not pairings.** The LP gives net balances, not who feeds whom.
+Recovering specific producer-consumer pairs is a min-cost flow problem with no unique
+answer absent geometry, so each item gets one bus that producers feed and consumers
+draw from. That is also what a manifold physically is.
+
+**Floors come from chain depth.** Stage = longest path through the item graph, so
+extractors land on the bottom floor and generators on top, with a logistics deck
+between each pair. Depth is computed on the graph's CONDENSATION, because the recipe
+graph genuinely contains cycles -- Recycled Plastic and Recycled Rubber consume each
+other's output. Collapsing each strongly connected component makes the graph acyclic
+and puts cycle members on one floor, which is also right physically: they have to be
+built together.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+from ..docs.footprint import FOUNDATION_M
+from ..docs.model import GameData
+from .optimize import MW, Solution
+
+__all__ = ["LOGISTICS_FLOOR_M", "Block", "Bus", "Floor", "Layout", "build_layout"]
+
+#: Height reserved for a logistics deck: belts, pipes and a walkway between them.
+LOGISTICS_FLOOR_M = 4.0
+
+#: Vertical headroom above the tallest machine on a production floor.
+FLOOR_HEADROOM_M = 1.0
+
+#: Foundations are 1, 2 or 4 m thick; floor heights round up to this.
+FLOOR_STEP_M = 2.0
+
+#: A manifold longer than this stops being sensible to build or feed evenly.
+MAX_MACHINES_PER_BLOCK = 24
+
+
+@dataclass
+class Block:
+    """One buildable module: a row of identical machines on one manifold."""
+
+    key: str
+    label: str
+    building_id: str
+    building: str
+    recipe: str | None
+    machines: int
+    clock: float
+    part: int  # 1-based index within a split group
+    parts: int  # how many blocks the process was split into
+    inputs: dict[str, float] = field(default_factory=dict)
+    outputs: dict[str, float] = field(default_factory=dict)
+    stage: int = 0
+    width_m: float = 0.0
+    depth_m: float = 0.0
+    height_m: float = 0.0
+    foundations: int = 0
+
+    @property
+    def name(self) -> str:
+        return f"{self.label} ({self.part}/{self.parts})" if self.parts > 1 else self.label
+
+
+@dataclass
+class Bus:
+    """All movement of one item, pooled. Producers feed it, consumers draw from it."""
+
+    item: str
+    name: str
+    rate: float
+    carrier: str  # belt | pipe
+    unit: str
+    lines: int
+    producers: list[str] = field(default_factory=list)
+    consumers: list[str] = field(default_factory=list)
+    from_stage: int = 0
+    to_stage: int = 0
+    external: bool = False  # enters or leaves the site
+
+
+@dataclass
+class Floor:
+    index: int
+    kind: str  # production | logistics
+    stage: int | None
+    height_m: float
+    blocks: list[Block] = field(default_factory=list)
+    buses: list[Bus] = field(default_factory=list)
+
+    @property
+    def foundations(self) -> int:
+        return sum(b.foundations for b in self.blocks)
+
+    @property
+    def machines(self) -> int:
+        return sum(b.machines for b in self.blocks)
+
+
+@dataclass
+class Layout:
+    blocks: list[Block]
+    buses: list[Bus]
+    floors: list[Floor]
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def foundations(self) -> int:
+        """Peak footprint: floors stack, so the site is sized by its largest floor."""
+        return max((f.foundations for f in self.floors), default=0)
+
+    @property
+    def total_foundations(self) -> int:
+        return sum(f.foundations for f in self.floors)
+
+    @property
+    def machines(self) -> int:
+        return sum(b.machines for b in self.blocks)
+
+    @property
+    def height_m(self) -> float:
+        return sum(f.height_m for f in self.floors)
+
+    def site_side_m(self) -> float:
+        """Side of a square site that fits the largest floor."""
+        return math.ceil(math.sqrt(max(self.foundations, 1))) * FOUNDATION_M
+
+
+def _carrier(game: GameData, item: str, belt_ipm: float, pipe_m3min: float):
+    it = game.items.get(item)
+    fluid = bool(it and it.is_fluid)
+    return ("pipe", "m3/min", pipe_m3min) if fluid else ("belt", "/min", belt_ipm)
+
+
+def _lines_for(rate: float, capacity: float) -> int:
+    if capacity <= 0:
+        return 1
+    return max(1, math.ceil(rate / capacity - 1e-9))
+
+
+def _split_process(game: GameData, proc: dict, belt_ipm: float, pipe_m3min: float) -> int:
+    """How many parallel manifolds this process needs.
+
+    The binding item wins: if crude needs 3 pipes and the output needs 1 belt, the
+    block is still 3 blocks, because one manifold cannot be fed by three pipes.
+    """
+    needed = 1
+    for item, rate in proc.get("rates", {}).items():
+        if item == MW:
+            continue
+        _, _, capacity = _carrier(game, item, belt_ipm, pipe_m3min)
+        needed = max(needed, _lines_for(abs(rate), capacity))
+    # A manifold also stops being practical past a certain length.
+    needed = max(needed, math.ceil(proc["machines"] / MAX_MACHINES_PER_BLOCK))
+    return max(1, min(needed, proc["machines"]))
+
+
+def _blocks_from(game: GameData, sol: Solution, belt_ipm: float, pipe_m3min: float) -> list[Block]:
+    blocks: list[Block] = []
+    for proc in sol.processes:
+        parts = _split_process(game, proc, belt_ipm, pipe_m3min)
+        machines = proc["machines"]
+        building = game.buildings.get(proc["building_id"] or "")
+        fp = building.footprint if building else None
+
+        # Spread machines as evenly as possible; remainder goes to the first blocks.
+        base, extra = divmod(machines, parts)
+        for part in range(parts):
+            n = base + (1 if part < extra else 0)
+            if n <= 0:
+                continue
+            share = (n / machines) if machines else 0.0
+            inputs: dict[str, float] = {}
+            outputs: dict[str, float] = {}
+            # Straight from the solve: these already include clock and boost, and
+            # they cover extractors and generators, which have no recipe at all.
+            for item, rate in proc.get("rates", {}).items():
+                if item == MW:
+                    continue
+                (outputs if rate > 0 else inputs)[item] = abs(rate) * share
+            blocks.append(
+                Block(
+                    key=f"{proc['pid']}#{part + 1}",
+                    label=proc["label"],
+                    building_id=proc["building_id"] or "",
+                    building=proc["building"],
+                    recipe=proc.get("recipe"),
+                    machines=n,
+                    clock=proc["clock"],
+                    part=part + 1,
+                    parts=parts,
+                    inputs=inputs,
+                    outputs=outputs,
+                    width_m=fp.width_m if fp else 0.0,
+                    depth_m=fp.depth_m if fp else 0.0,
+                    height_m=fp.height_m if fp else 0.0,
+                    foundations=(fp.foundations * n) if fp else 0,
+                )
+            )
+    return blocks
+
+
+def _strongly_connected(n: int, edges: dict[int, set[int]]) -> list[list[int]]:
+    """Tarjan's SCC, iterative so a deep chain cannot blow the recursion limit."""
+    index = [None] * n
+    low = [0] * n
+    on_stack = [False] * n
+    stack: list[int] = []
+    result: list[list[int]] = []
+    counter = 0
+
+    for root in range(n):
+        if index[root] is not None:
+            continue
+        work = [(root, iter(sorted(edges.get(root, ()))))]
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack[root] = True
+
+        while work:
+            node, it = work[-1]
+            advanced = False
+            for nxt in it:
+                if index[nxt] is None:
+                    index[nxt] = low[nxt] = counter
+                    counter += 1
+                    stack.append(nxt)
+                    on_stack[nxt] = True
+                    work.append((nxt, iter(sorted(edges.get(nxt, ())))))
+                    advanced = True
+                    break
+                if on_stack[nxt]:
+                    low[node] = min(low[node], index[nxt])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[node])
+            if low[node] == index[node]:
+                component = []
+                while True:
+                    member = stack.pop()
+                    on_stack[member] = False
+                    component.append(member)
+                    if member == node:
+                        break
+                result.append(component)
+    return result
+
+
+def _assign_stages(blocks: list[Block]) -> None:
+    """Chain depth, computed on the condensation of the block graph.
+
+    A plain longest-path walk is not available: the recipe graph genuinely contains
+    cycles, because Recycled Plastic and Recycled Rubber each consume the other's
+    output. Naive relaxation does not settle on a cycle either -- it lifts every
+    member by one stage per pass until the iteration cap, so depth ends up reporting
+    how long the loop ran rather than how deep the chain is.
+
+    Collapsing each strongly connected component to a single node fixes both: the
+    condensation is acyclic by construction, and every member of a cycle shares a
+    stage, which is also right physically since they must be built together.
+    """
+    producers: dict[str, list[int]] = {}
+    for i, b in enumerate(blocks):
+        for item in b.outputs:
+            producers.setdefault(item, []).append(i)
+
+    edges: dict[int, set[int]] = {}
+    for i, b in enumerate(blocks):
+        for item in b.inputs:
+            for src in producers.get(item, ()):
+                if src != i:
+                    edges.setdefault(src, set()).add(i)
+
+    components = _strongly_connected(len(blocks), edges)
+    component_of = {}
+    for cid, members in enumerate(components):
+        for member in members:
+            component_of[member] = cid
+
+    # Longest path over the condensation, which is a DAG.
+    condensed: dict[int, set[int]] = {}
+    for src, dsts in edges.items():
+        for dst in dsts:
+            a, b_ = component_of[src], component_of[dst]
+            if a != b_:
+                condensed.setdefault(a, set()).add(b_)
+
+    depth = [0] * len(components)
+    for _ in range(len(components)):
+        changed = False
+        for a, dsts in condensed.items():
+            for b_ in dsts:
+                if depth[b_] < depth[a] + 1:
+                    depth[b_] = depth[a] + 1
+                    changed = True
+        if not changed:
+            break
+
+    for i, b in enumerate(blocks):
+        b.stage = depth[component_of[i]]
+
+
+def _buses(
+    game: GameData,
+    blocks: list[Block],
+    sol: Solution,
+    belt_ipm: float,
+    pipe_m3min: float,
+) -> list[Bus]:
+    items: set[str] = set()
+    for b in blocks:
+        items |= set(b.inputs) | set(b.outputs)
+
+    buses: list[Bus] = []
+    for item in sorted(items):
+        if item == MW:
+            continue
+        produced = sum(b.outputs.get(item, 0.0) for b in blocks)
+        consumed = sum(b.inputs.get(item, 0.0) for b in blocks)
+        rate = max(produced, consumed)
+        if rate <= 1e-6:
+            continue
+        carrier, unit, capacity = _carrier(game, item, belt_ipm, pipe_m3min)
+        src = [b for b in blocks if b.outputs.get(item, 0.0) > 1e-6]
+        dst = [b for b in blocks if b.inputs.get(item, 0.0) > 1e-6]
+        it = game.items.get(item)
+        buses.append(
+            Bus(
+                item=item,
+                name=it.name if it else item,
+                rate=rate,
+                carrier=carrier,
+                unit=unit,
+                lines=_lines_for(rate, capacity),
+                producers=[b.key for b in src],
+                consumers=[b.key for b in dst],
+                from_stage=min((b.stage for b in src), default=0),
+                # With no consumer on site the item leaves at the level it is made,
+                # so the destination is its own stage -- not 0, which would render
+                # as flowing backwards down the stack.
+                to_stage=max(
+                    (b.stage for b in dst),
+                    default=min((b.stage for b in src), default=0),
+                ),
+                # Leaves or enters the site: exported, sunk, or drawn from raw supply.
+                external=item in sol.exports or item in sol.sunk or not src or not dst,
+            )
+        )
+    buses.sort(key=lambda b: -b.rate)
+    return buses
+
+
+def _floors(blocks: list[Block], buses: list[Bus]) -> list[Floor]:
+    stages = sorted({b.stage for b in blocks})
+    floors: list[Floor] = []
+    index = 0
+    for position, stage in enumerate(stages):
+        on_stage = [b for b in blocks if b.stage == stage]
+        tallest = max((b.height_m for b in on_stage), default=0.0)
+        height = math.ceil((tallest + FLOOR_HEADROOM_M) / FLOOR_STEP_M) * FLOOR_STEP_M
+        floors.append(
+            Floor(index=index, kind="production", stage=stage, height_m=height, blocks=on_stage)
+        )
+        index += 1
+        if position < len(stages) - 1:
+            # A logistics deck carries everything crossing this boundary.
+            crossing = [
+                bus
+                for bus in buses
+                if bus.from_stage <= stage < bus.to_stage
+                or (bus.external and bus.from_stage == stage)
+            ]
+            floors.append(
+                Floor(
+                    index=index,
+                    kind="logistics",
+                    stage=None,
+                    height_m=LOGISTICS_FLOOR_M,
+                    buses=crossing,
+                )
+            )
+            index += 1
+    return floors
+
+
+def build_layout(
+    game: GameData,
+    sol: Solution,
+    belt_ipm: float = 780.0,
+    pipe_m3min: float = 600.0,
+) -> Layout:
+    """Decompose a solved plan into blocks, buses and floors."""
+    blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
+    _assign_stages(blocks)
+    buses = _buses(game, blocks, sol, belt_ipm, pipe_m3min)
+    floors = _floors(blocks, buses)
+
+    warnings: list[str] = []
+    missing = sorted({b.building for b in blocks if b.foundations == 0})
+    if missing:
+        warnings.append("no clearance data, excluded from the space budget: " + ", ".join(missing))
+    split = [b for b in blocks if b.parts > 1]
+    if split:
+        worst = max(split, key=lambda b: b.parts)
+        warnings.append(
+            f"{len({b.label for b in split})} process(es) split across parallel "
+            f"manifolds by throughput, up to {worst.parts}x ({worst.label})"
+        )
+    return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings)

@@ -31,7 +31,7 @@ The game install and save directory are auto-detected. Override with `SATISFACTO
 **Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`
 **Map** — `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
-**Planning** — `plan_factory`
+**Planning** — `plan_factory`, `plan_layout`
 **MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest save is
@@ -88,6 +88,13 @@ including one measured on the candidate's own output, so a cable recipe isn't ju
 one from the game's packaged `Persistent_Level.umap`, one community-traced — which agree on purity for
 every shared node. That merge recovered a pure Limestone node the single-source table was missing, found
 because the completeness check now counts save actors against table rows in *both* directions.
+
+**Layouts are schematics, honestly.** `plan_layout` turns a plan into blocks, buses and floors with a
+space budget — machine footprints come from `mClearanceData`, so a Refinery is 10×22×15 m and 6
+foundations, derived not hardcoded. Blocks are split by throughput (46 Refineries needing 1,380 m³/min of
+crude are 3 blocks, because a Mk2 pipe carries 600), and floors follow chain depth with a logistics deck
+between. It gives no world coordinates and no belt routing: there is no terrain data here, so those would
+be invented.
 
 **Whole machines at a derived clock.** A 52.8 machine-equivalent result is reported as **53 Blenders at
 99.6%** — exact, always a clean ratio, and provably the power-optimal way to run that throughput, since

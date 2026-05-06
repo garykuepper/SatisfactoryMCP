@@ -573,6 +573,10 @@ def solve(sc: Scenario) -> Solution:
                 # worse than what the solve promised.
                 "mw": round(exact_mw, 2),
                 "mw_linear": round(v * p.mw, 2),
+                # Net per-minute item rates for the whole process. Already include
+                # clock and somersloop boost, so downstream consumers must not
+                # re-derive them from the recipe.
+                "rates": {k: round(r * v, 4) for k, r in p.rates.items() if abs(r * v) > _EPS},
             }
         )
     out_procs.sort(key=lambda d: -abs(d["mw"]))

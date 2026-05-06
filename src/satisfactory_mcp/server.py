@@ -18,6 +18,7 @@ from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
 from .planning import advisor
+from .planning.layout import build_layout
 from .planning.optimize import MW, Scenario, free_lunch_audit, solve
 from .save import projection as proj
 from .save.state import WorldState, load_state
@@ -974,6 +975,279 @@ def plan_factory(
         + logistics_block,
         notes,
     )
+
+
+def _scenario_for(
+    st,
+    objective: str,
+    target_item: str | None,
+    sources: list[str] | None,
+    exports: list[str] | None,
+    export_minimums: dict[str, float] | None,
+    only_free_nodes: bool,
+    allow_sinks: bool,
+    clocks: list[float] | None,
+    machine_cost_mw: float,
+):
+    """Build a Scenario from tool arguments. Shared by plan_factory and plan_layout so
+    the two cannot drift apart and describe different factories."""
+    g = game()
+    export_ids = []
+    for name in exports or [MW]:
+        export_ids.append(MW if name in (MW, "MW", "power") else (_item_id(name) or name))
+    minimums = {}
+    for name, value in (export_minimums or {}).items():
+        minimums[_item_id(name) or name] = float(value)
+
+    table = nodes_mod.load_nodes()
+    sel = select_nodes(sources, table.nodes, resolve_resource=_item_id)
+    rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
+    rows = [r for r in rows if r["reachable"]]
+    if only_free_nodes:
+        rows = [r for r in rows if not r["tapped"]]
+
+    ext: dict[tuple[str, str, str], int] = {}
+    for r in rows:
+        if r["kind"] != "node" or r["rate"] <= 0:
+            continue
+        for cls in ("Build_OilPump_C", "Build_MinerMk3_C", "Build_MinerMk2_C", "Build_MinerMk1_C"):
+            b = g.buildings.get(cls)
+            if b is None or cls not in st.unlocked_building_ids:
+                continue
+            if b.allowed_resources and r["resource"] not in b.allowed_resources:
+                continue
+            if not b.allowed_resources and g.items[r["resource"]].is_fluid:
+                continue
+            key = (cls, r["resource"], r["purity"])
+            ext[key] = ext.get(key, 0) + 1
+            break
+    if "Build_WaterPump_C" in st.unlocked_building_ids:
+        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = 200
+
+    return sel, Scenario(
+        game=g,
+        recipes=[r.cls for r in st.unlocked_recipes("part")],
+        objective=objective,
+        target_item=_item_id(target_item) if target_item else None,
+        exports=tuple(export_ids),
+        export_minimums=minimums,
+        extractor_nodes=ext,
+        allow_sinks=allow_sinks,
+        clocks=tuple(clocks) if clocks else (1.0,),
+        machine_cost_mw=machine_cost_mw,
+        buildings_available=st.unlocked_building_ids,
+        grid_import_mw=None if MW in export_ids else 1e6,
+    )
+
+
+@mcp.tool(structured_output=False)
+def plan_layout(
+    objective: str = "max_mw",
+    target_item: str | None = None,
+    sources: list[str] | None = None,
+    exports: list[str] | None = None,
+    export_minimums: dict[str, float] | None = None,
+    detail: str = "floors",
+    only_free_nodes: bool = False,
+    allow_sinks: bool = True,
+    belt_tier: str = "Mk5",
+    pipe_tier: str = "Mk2",
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 20,
+) -> str:
+    """Turn a plan into a buildable schematic: blocks, buses and floors.
+
+    Same arguments as plan_factory, plus ``detail``: "floors" (default, the stack),
+    "blocks" (every module with its size and rates) or "buses" (item flows).
+
+    This is a SCHEMATIC, not a blueprint. It gives modules, connections, floor
+    assignment and a space budget. It deliberately does NOT give world coordinates or
+    belt routing -- there is no terrain data here, so those would be invented.
+
+    Blocks are split by throughput: 46 Refineries needing 1380 m3/min of crude cannot
+    share one manifold when a Mk2 pipe carries 600, so that is 3 blocks. Floors follow
+    chain depth, with a logistics deck between each pair of production floors.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    belts = {
+        b.name.replace("Conveyor Belt ", ""): b.items_per_min
+        for b in g.buildings.values()
+        if b.items_per_min
+    }
+    pipes = {
+        b.name.replace("Pipeline ", ""): b.flow_m3_min
+        for b in g.buildings.values()
+        if b.flow_m3_min
+    }
+    belt_ipm = belts.get(belt_tier, 780.0)
+    pipe_m3min = pipes.get(pipe_tier, 600.0)
+
+    sel, sc = _scenario_for(
+        st,
+        objective,
+        target_item,
+        sources,
+        exports,
+        export_minimums,
+        only_free_nodes,
+        allow_sinks,
+        None,
+        machine_cost_mw=5.0,
+    )
+    sc.belt_ipm = belt_ipm
+    sc.pipe_m3min = pipe_m3min
+    if sel.errors and not sel.nodes:
+        return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
+
+    sol = solve(sc)
+    if not sol.ok:
+        return render.envelope(
+            f"# INFEASIBLE ({objective}) -- nothing to lay out",
+            "",
+            [*sol.warnings, "see plan_factory for why"],
+        )
+
+    lay = build_layout(g, sol, belt_ipm=belt_ipm, pipe_m3min=pipe_m3min)
+    production = [f for f in lay.floors if f.kind == "production"]
+    logistics = [f for f in lay.floors if f.kind == "logistics"]
+
+    summary = "\n".join(
+        [
+            f"# layout for {objective} over {sel.description}",
+            f"# {st.age_note}",
+            render.kv(
+                [
+                    ("net_MW", render.num(sol.net_mw)),
+                    ("machines", lay.machines),
+                    ("blocks", len(lay.blocks)),
+                    ("floors", f"{len(production)} production + {len(logistics)} logistics"),
+                    ("stack_height", f"{lay.height_m:g}m"),
+                ]
+            ),
+            render.kv(
+                [
+                    ("peak_floor_foundations", lay.foundations),
+                    ("site", f"~{lay.site_side_m():g}x{lay.site_side_m():g}m"),
+                    (
+                        "carriers",
+                        (
+                            f"{belt_tier} belt {render.num(belt_ipm)}/min, "
+                            f"{pipe_tier} pipe {render.num(pipe_m3min)}m3/min"
+                        ),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+    notes = [*lay.warnings]
+    notes.append(
+        "schematic only: no world coordinates or belt routing -- there is no terrain "
+        "data available, so those would be invented"
+    )
+    needed = {b.building_id for b in lay.blocks if b.building_id and st.built(b.building_id) == 0}
+    if needed:
+        notes.append(
+            "must build first: "
+            + ", ".join(g.buildings[c].name for c in needed if c in g.buildings)
+        )
+
+    if detail == "blocks":
+        rows = [
+            (
+                b.name[:36],
+                f"F{b.stage}",
+                b.machines,
+                f"{b.clock * 100:.4g}%",
+                f"{b.width_m:g}x{b.depth_m:g}",
+                b.foundations,
+                ", ".join(
+                    f"{render.num(v)} {g.item_name(k)}"
+                    for k, v in sorted(b.inputs.items(), key=lambda kv: -kv[1])[:2]
+                )
+                or "-",
+                ", ".join(
+                    f"{render.num(v)} {g.item_name(k)}"
+                    for k, v in sorted(b.outputs.items(), key=lambda kv: -kv[1])[:2]
+                )
+                or "-",
+            )
+            for b in sorted(lay.blocks, key=lambda b: (b.stage, -b.machines))[
+                : render.clamp(limit, default=20)
+            ]
+        ]
+        body = render.table(
+            ("block", "floor", "n", "clock", "each(m)", "found", "in/min", "out/min"),
+            rows,
+            total=len(lay.blocks),
+            limit=limit,
+        )
+    elif detail == "buses":
+        rows = [
+            (
+                b.name[:24],
+                f"{render.num(b.rate)}{b.unit}",
+                b.carrier,
+                b.lines,
+                f"F{b.from_stage}->F{b.to_stage}",
+                len(b.producers),
+                len(b.consumers),
+                "leaves site" if b.external else "",
+            )
+            for b in lay.buses[: render.clamp(limit, default=20)]
+        ]
+        body = render.table(
+            ("item", "rate", "carrier", "lines", "flow", "from", "to", "note"),
+            rows,
+            total=len(lay.buses),
+            limit=limit,
+        )
+    else:
+        rows = []
+        for f in lay.floors:
+            if f.kind == "production":
+                contents = ", ".join(
+                    f"{b.machines}x {b.label[:22]}"
+                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:2]
+                )
+                rows.append(
+                    (
+                        f"F{f.index}",
+                        f"stage {f.stage}",
+                        len(f.blocks),
+                        f.machines,
+                        f"{f.height_m:g}m",
+                        f.foundations,
+                        contents,
+                    )
+                )
+            else:
+                rows.append(
+                    (
+                        f"L{f.index}",
+                        "logistics",
+                        len(f.buses),
+                        "",
+                        f"{f.height_m:g}m",
+                        "",
+                        ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:4]),
+                    )
+                )
+        body = render.table(
+            ("floor", "kind", "n", "machines", "height", "found", "contents"),
+            rows,
+            total=len(lay.floors),
+            limit=limit,
+        )
+        notes.append('detail="blocks" for every module, detail="buses" for item flows')
+
+    return render.envelope(summary, body, notes)
 
 
 @mcp.tool(structured_output=False)

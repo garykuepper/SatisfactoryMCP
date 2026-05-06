@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 17 tools, 3 resources, 3 prompts, 119 tests passing. See README.md for usage.
+**Status:** implemented. 18 tools, 3 resources, 3 prompts, 149 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -676,6 +676,40 @@ modes are generated. Unconstrained sloops give meaningless answers, the runtime 
 reading installed ones are still unverified (OQ4), and the Alien Power Augmenter may be the better use
 anyway — a different model entirely.
 
+### 8.5 Layout: blocks, buses and floors
+
+`plan_layout` turns a solved plan into a buildable **schematic** — modules, connections, floor
+assignment and a space budget. Explicitly *not* a blueprint: no world coordinates and no belt routing,
+because there is no terrain heightmap in any data available here and inventing one would be worse than
+declining.
+
+**Footprints are derived, not hardcoded.** Every buildable carries `mClearanceData`, so machine
+dimensions come from the game: Constructor 8×10×6, Refinery 10×22×15, Blender 18×16×10.5,
+Manufacturer 18×20×11. Foundations follow at the 8 m grid.
+
+> **The rotation trap.** Clearance is a *list* of boxes, and they can carry a `RelativeTransform`
+> rotation. The Fuel Generator's is several thin boxes at 45° increments approximating a round machine,
+> so taking the largest box naively yields **22×4 m** instead of the real ~20×20 — understating a
+> 176-generator plan by roughly 1,000 foundations. Every box is transformed by its quaternion and the
+> union taken.
+
+**Blocks come from throughput, not taste.** 46 Refineries drawing 1,380 m³/min of crude cannot share one
+manifold when a Mk2 pipe carries 600 — that is 3 lines, so it is 3 blocks. **Line count is block count**,
+which makes the split derived. A secondary cap (24 machines) keeps a manifold physically sensible.
+
+**Connections are buses, not pairings.** The LP gives net balances, not who feeds whom; recovering
+specific producer→consumer pairs is a min-cost flow with no unique answer absent geometry. Each item gets
+one bus that producers feed and consumers draw from — which is what a manifold physically is.
+
+**Floors come from chain depth**, computed on the graph's **condensation**. A plain longest path is
+unavailable because the recipe graph contains real cycles (Recycled Plastic ↔ Recycled Rubber), and
+naive relaxation does not settle on one — it lifts every member a stage per pass, so depth ends up
+reporting how long the loop ran. Collapsing each strongly connected component makes the graph acyclic and
+puts cycle members on one floor, which is also correct physically. Floor height clears the tallest
+machine on it; logistics decks are 4 m.
+
+Site size is the **peak** floor, not the sum, since floors stack.
+
 ### 8.5 Degeneracy
 
 `min_raw` LPs are **degenerate** — equally optimal vertices give materially different raw vectors (water
@@ -747,6 +781,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
+**Layout:** `plan_layout`
 **Planning:** `plan_factory`, `explain_byproducts`, `compare_recipe_options`, `diff_vs_save`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 

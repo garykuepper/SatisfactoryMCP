@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .footprint import Footprint
+
 __all__ = [
     "MANUFACTURER_NATIVES",
     "Building",
@@ -131,6 +133,9 @@ class Building:
     descriptor: str | None = None
     build_cost: tuple[Flow, ...] = ()
     unlocked_by: tuple[str, ...] = ()
+    #: Axis-aligned footprint from mClearanceData, in metres. None for a few
+    #: buildables that declare no clearance at all.
+    footprint: Footprint | None = None
 
     # extractor
     items_per_cycle: float = 0.0

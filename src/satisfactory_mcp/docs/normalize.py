@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from .constants import BELT_SPEED_TO_IPM, PURITY_MULT
+from .footprint import extract_footprint
 from .loader import DocsDump
 from .model import (
     MANUFACTURER_NATIVES,
@@ -229,6 +230,7 @@ def _build_buildings(dump: DocsDump, items: dict[str, Item]) -> dict[str, Buildi
                 fuels=_fuels(c.get("mFuel")),
                 items_per_min=speed * BELT_SPEED_TO_IPM if speed else 0.0,
                 flow_m3_min=_f(c.get("mFlowLimit")) * 60,
+                footprint=extract_footprint(c.get("mClearanceData")),
             )
     return out
 
@@ -425,6 +427,8 @@ def _check(data: GameData, dump: DocsDump) -> None:
     for b in data.buildings.values():
         if (b.is_manufacturer or b.is_extractor or b.is_generator) and not b.descriptor:
             w.append(f"{b.cls}: no FGBuildingDescriptor match, build cost unavailable")
+        if (b.is_manufacturer or b.is_generator) and b.footprint is None:
+            w.append(f"{b.cls}: no clearance data, cannot size a layout")
 
 
 def normalize(dump: DocsDump) -> GameData:
