@@ -18,8 +18,11 @@ from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
 from .planning import advisor
+from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
+from .planning.diff import build_diff
 from .planning.layout import build_layout
-from .planning.optimize import MW, Scenario, free_lunch_audit, solve
+from .planning.optimize import MW, free_lunch_audit, solve
+from .planning.scenario import build_scenario, resolve_item
 from .save import projection as proj
 from .save.state import WorldState, load_state
 from .spatial import geo
@@ -44,16 +47,7 @@ def _state(save: str | None = None, world: str | None = None) -> WorldState:
 
 
 def _item_id(query: str) -> str | None:
-    """Resolve a display name or class id to an item id."""
-    g = game()
-    if query in g.items:
-        return query
-    q = query.casefold()
-    exact = [c for c, i in g.items.items() if i.name.casefold() == q]
-    if exact:
-        return exact[0]
-    partial = [c for c, i in g.items.items() if q in i.name.casefold()]
-    return partial[0] if len(partial) == 1 else (partial[0] if partial else None)
+    return resolve_item(game(), query)
 
 
 # ============================================================ game data
@@ -825,56 +819,23 @@ def plan_factory(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    export_ids = []
-    for name in exports or [MW]:
-        export_ids.append(MW if name in (MW, "MW", "power") else (_item_id(name) or name))
-    minimums = {}
-    for name, value in (export_minimums or {}).items():
-        minimums[_item_id(name) or name] = float(value)
-
-    table = nodes_mod.load_nodes()
-    sel = select_nodes(sources, table.nodes, resolve_resource=_item_id)
+    req = build_scenario(
+        g,
+        st,
+        objective=objective,
+        target_item=target_item,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        only_free_nodes=only_free_nodes,
+        allow_sinks=allow_sinks,
+        clocks=clocks,
+        machine_cost_mw=machine_cost_mw,
+    )
+    sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
-    rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
-    rows = [r for r in rows if r["reachable"]]
-    if only_free_nodes:
-        rows = [r for r in rows if not r["tapped"]]
 
-    ext: dict[tuple[str, str, str], int] = {}
-    for r in rows:
-        if r["kind"] != "node" or r["rate"] <= 0:
-            continue
-        for cls in ("Build_OilPump_C", "Build_MinerMk3_C", "Build_MinerMk2_C", "Build_MinerMk1_C"):
-            b = g.buildings.get(cls)
-            if b is None or cls not in st.unlocked_building_ids:
-                continue
-            if b.allowed_resources and r["resource"] not in b.allowed_resources:
-                continue
-            if not b.allowed_resources and g.items[r["resource"]].is_fluid:
-                continue
-            key = (cls, r["resource"], r["purity"])
-            ext[key] = ext.get(key, 0) + 1
-            break
-    # Water comes from water volumes, not from the node table, so it is not
-    # node-limited; cap the extractor count rather than the flow.
-    if "Build_WaterPump_C" in st.unlocked_building_ids:
-        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = 200
-
-    sc = Scenario(
-        game=g,
-        recipes=[r.cls for r in st.unlocked_recipes("part")],
-        objective=objective,
-        target_item=_item_id(target_item) if target_item else None,
-        exports=tuple(export_ids),
-        export_minimums=minimums,
-        extractor_nodes=ext,
-        allow_sinks=allow_sinks,
-        clocks=tuple(clocks) if clocks else (1.0,),
-        machine_cost_mw=machine_cost_mw,
-        buildings_available=st.unlocked_building_ids,
-        grid_import_mw=None if MW in export_ids else 1e6,
-    )
     audit_ok, audit_val = free_lunch_audit(sc)
     sol = solve(sc)
     if not sol.ok:
@@ -977,69 +938,6 @@ def plan_factory(
     )
 
 
-def _scenario_for(
-    st,
-    objective: str,
-    target_item: str | None,
-    sources: list[str] | None,
-    exports: list[str] | None,
-    export_minimums: dict[str, float] | None,
-    only_free_nodes: bool,
-    allow_sinks: bool,
-    clocks: list[float] | None,
-    machine_cost_mw: float,
-):
-    """Build a Scenario from tool arguments. Shared by plan_factory and plan_layout so
-    the two cannot drift apart and describe different factories."""
-    g = game()
-    export_ids = []
-    for name in exports or [MW]:
-        export_ids.append(MW if name in (MW, "MW", "power") else (_item_id(name) or name))
-    minimums = {}
-    for name, value in (export_minimums or {}).items():
-        minimums[_item_id(name) or name] = float(value)
-
-    table = nodes_mod.load_nodes()
-    sel = select_nodes(sources, table.nodes, resolve_resource=_item_id)
-    rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
-    rows = [r for r in rows if r["reachable"]]
-    if only_free_nodes:
-        rows = [r for r in rows if not r["tapped"]]
-
-    ext: dict[tuple[str, str, str], int] = {}
-    for r in rows:
-        if r["kind"] != "node" or r["rate"] <= 0:
-            continue
-        for cls in ("Build_OilPump_C", "Build_MinerMk3_C", "Build_MinerMk2_C", "Build_MinerMk1_C"):
-            b = g.buildings.get(cls)
-            if b is None or cls not in st.unlocked_building_ids:
-                continue
-            if b.allowed_resources and r["resource"] not in b.allowed_resources:
-                continue
-            if not b.allowed_resources and g.items[r["resource"]].is_fluid:
-                continue
-            key = (cls, r["resource"], r["purity"])
-            ext[key] = ext.get(key, 0) + 1
-            break
-    if "Build_WaterPump_C" in st.unlocked_building_ids:
-        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = 200
-
-    return sel, Scenario(
-        game=g,
-        recipes=[r.cls for r in st.unlocked_recipes("part")],
-        objective=objective,
-        target_item=_item_id(target_item) if target_item else None,
-        exports=tuple(export_ids),
-        export_minimums=minimums,
-        extractor_nodes=ext,
-        allow_sinks=allow_sinks,
-        clocks=tuple(clocks) if clocks else (1.0,),
-        machine_cost_mw=machine_cost_mw,
-        buildings_available=st.unlocked_building_ids,
-        grid_import_mw=None if MW in export_ids else 1e6,
-    )
-
-
 @mcp.tool(structured_output=False)
 def plan_layout(
     objective: str = "max_mw",
@@ -1088,20 +986,20 @@ def plan_layout(
     belt_ipm = belts.get(belt_tier, 780.0)
     pipe_m3min = pipes.get(pipe_tier, 600.0)
 
-    sel, sc = _scenario_for(
+    req = build_scenario(
+        g,
         st,
-        objective,
-        target_item,
-        sources,
-        exports,
-        export_minimums,
-        only_free_nodes,
-        allow_sinks,
-        None,
-        machine_cost_mw=5.0,
+        objective=objective,
+        target_item=target_item,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        only_free_nodes=only_free_nodes,
+        allow_sinks=allow_sinks,
+        belt_ipm=belt_ipm,
+        pipe_m3min=pipe_m3min,
     )
-    sc.belt_ipm = belt_ipm
-    sc.pipe_m3min = pipe_m3min
+    sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
 
@@ -1248,6 +1146,216 @@ def plan_layout(
         notes.append('detail="blocks" for every module, detail="buses" for item flows')
 
     return render.envelope(summary, body, notes)
+
+
+@mcp.tool(structured_output=False)
+def diff_vs_save(
+    objective: str = "max_mw",
+    target_item: str | None = None,
+    sources: list[str] | None = None,
+    exports: list[str] | None = None,
+    export_minimums: dict[str, float] | None = None,
+    only_free_nodes: bool = False,
+    allow_sinks: bool = True,
+    clocks: list[float] | None = None,
+    machine_cost_mw: float = 5.0,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 20,
+    show_cost: bool = True,
+) -> str:
+    """What to change to get from the factory you have to the one plan_factory plans.
+
+    Takes exactly plan_factory's arguments and re-solves, because the server keeps no
+    state. Both tools print a plan id hashed over the arguments AND the save-derived
+    solve inputs, so two responses carrying the same id are provably the same plan.
+
+    Machines are matched by IDENTITY, never by position: a manufacturer on (building,
+    recipe), a generator on its building alone since its fuel is piped in rather than
+    set on the machine, an extractor on the node it occupies. A Refinery running some
+    other recipe is busy, not spare, so it never counts toward the plan.
+
+    Actions are ordered free-first -- UNPAUSE, then SETRECIPE on machines that produce
+    nothing today, then BUILD. Stages follow the plan's own chain depth and the power
+    arithmetic is INCREMENTAL, charging only the machines you have yet to place. Where
+    a machine cannot be identified at all (Water Extractors have no recipe and no
+    resolvable node) the answer is a RANGE, never a number.
+
+    Saves are read-only: this never proposes writing one, and there is no dismantle
+    action. Machines standing among the plan but not in it are listed for you to judge.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    req = build_scenario(
+        g,
+        st,
+        objective=objective,
+        target_item=target_item,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        only_free_nodes=only_free_nodes,
+        allow_sinks=allow_sinks,
+        clocks=clocks,
+        machine_cost_mw=machine_cost_mw,
+    )
+    sel = req.selection
+    if sel.errors and not sel.nodes:
+        return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
+
+    sol = solve(req.scenario)
+    if not sol.ok:
+        # Hand back the plan's own reason. An empty diff table would read as "you
+        # already have it", which is the opposite of what infeasible means.
+        return render.envelope(
+            f"# INFEASIBLE ({objective}) -- no plan to diff against",
+            "",
+            [*sol.warnings, "see plan_factory for why; there is nothing to change yet"],
+        )
+
+    if not sol.processes:
+        # Feasible but empty. Rendering an empty table would read as "nothing to do",
+        # when what happened is that the objective walked away from the resource --
+        # every crude route here emits Polymer Resin, and with MW as the only export
+        # the LP abandons oil entirely.
+        return render.envelope(
+            f"# EMPTY PLAN ({objective} over {sel.description}) -- nothing to change",
+            "",
+            [
+                *sol.warnings,
+                (
+                    "the solve chose to build nothing, which usually means a byproduct "
+                    "has no outlet -- widen exports and re-run plan_factory first"
+                ),
+            ],
+        )
+
+    rep = build_diff(g, st, sol, req)
+    pw = st.power_report()
+
+    rows = []
+    targets: list[str] = []
+    for r in rep.rows[: render.clamp(limit, default=20)]:
+        count = "" if r.verb == "OK" else render.num(r.count)
+        if r.verb == "BUILD" and r.build_max is not None and r.build_max != r.build:
+            count = f"{r.build}..{r.build_max}"
+        note = r.note
+        if r.targets:
+            # Ids go in one footer, per the house rule -- a node instance name runs to
+            # 51 characters and would crowd every other column off the row.
+            spans = [t[1] / 1000 for t in r.targets]
+            reach = (
+                f"{min(spans):.2g}km"
+                if max(spans) - min(spans) < 0.1
+                else f"{min(spans):.2g}-{max(spans):.2g}km"
+            )
+            head = f"on {len(r.targets)} free node(s) @{reach}"
+            note = f"{head}; {note}" if note else head
+            targets += [t[0] for t in r.targets]
+        rows.append(
+            (
+                r.stage,
+                r.verb,
+                count,
+                r.process[:30],
+                r.building[:20],
+                r.have,
+                render.where_bands(r.have_distances),
+                note[:56],
+            )
+        )
+
+    to_place = (
+        render.num(rep.to_build)
+        if rep.to_build_max == rep.to_build
+        else f"{rep.to_build}..{rep.to_build_max}"
+    )
+    summary = "\n".join(
+        [
+            f"# diff vs plan {objective}|{sel.description} [plan {req.plan_id}/save {rep.save_id}]",
+            f"# {st.age_note}",
+            render.kv(
+                [
+                    ("target_MW", render.num(sol.net_mw)),
+                    ("plan_buildings", render.num(sol.machines_total)),
+                    ("to_place", to_place),
+                    ("actionable", sum(1 for r in rep.rows if r.actionable)),
+                ]
+            ),
+            render.kv(
+                [
+                    ("now_gen_MW", render.num(pw["generation_mw"])),
+                    ("draw_MW", render.num(pw["draw_mw"])),
+                    ("headroom_MW", render.num(pw["headroom_mw"])),
+                ]
+            ),
+        ]
+    )
+
+    notes = [*rep.notes]
+    for r in [r for r in rep.rows if r.build_max is not None and r.build_max != r.build][:2]:
+        notes.append(
+            f"{r.building}s cannot be matched to a job, so {r.need} needed vs {r.have} "
+            f"built is a RANGE: build {r.build}..{r.build_max}"
+        )
+    spread = [t[1] for r in rep.rows for t in r.targets]
+    if spread and max(spread) - min(spread) > 1000:
+        notes.append(
+            f"the plan's build targets span {min(spread) / 1000:.2g}-"
+            f"{max(spread) / 1000:.2g}km from your plant -- this is one plan, not one site"
+        )
+    if any("plan budgets 100%" in r.note for r in rep.rows):
+        notes.append(
+            "matched machines running off 100% are noted, not actioned: the plan "
+            "budgets 100%, so it understates what you already produce"
+        )
+
+    parts = [
+        render.table(
+            ("st", "act", "n", "process", "building", "have", "where(km)", "note"),
+            rows,
+            total=len(rep.rows),
+            limit=limit,
+        )
+    ]
+    if targets:
+        parts.append(
+            "# build targets, reusable as node: selectors -- "
+            + " ".join(targets[:4])
+            + (f" (+{len(targets) - 4} more)" if len(targets) > 4 else "")
+        )
+    if rep.neighbours:
+        near = ", ".join(f"{n}x {label}" for label, n in rep.neighbours[:3])
+        parts.append(
+            f"# within {int(DIFF_NEIGHBOUR_M)}m and competing for the plan's own "
+            f"materials, but NOT in it: {near}"
+            "\n#   yours to keep or reclaim; no action proposed"
+        )
+    if show_cost and rep.cost:
+        parts.append(
+            "# cost of the build counts. stock is spendable only, never machine buffers."
+            "\n"
+            + render.table(
+                ("item", "need", "stock", "your_lines"),
+                [
+                    (c.name[:24], render.num(c.need), render.num(c.stock), c.lines)
+                    for c in rep.cost[:5]
+                ],
+            )
+        )
+    if rep.deficit_mw > 0 and rep.slices > 1:
+        parts.append(
+            "# ORDER: an LP solution is a ray, so any fraction of the plan is itself "
+            f"feasible and self-powered.\n# The build dips {render.num(rep.deficit_mw)} MW "
+            f"against {render.num(rep.headroom_mw)} MW of headroom, so place it in "
+            f">={rep.slices} proportional slices."
+        )
+
+    return render.envelope(summary, "\n".join(parts), notes)
 
 
 @mcp.tool(structured_output=False)

@@ -851,7 +851,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `diff_vs_save`
+**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```

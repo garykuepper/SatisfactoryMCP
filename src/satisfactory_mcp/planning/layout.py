@@ -29,13 +29,22 @@ built together.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from ..docs.footprint import FOUNDATION_M
 from ..docs.model import GameData
 from .optimize import MW, Solution
 
-__all__ = ["LOGISTICS_FLOOR_M", "Block", "Bus", "Floor", "Layout", "build_layout"]
+__all__ = [
+    "LOGISTICS_FLOOR_M",
+    "Block",
+    "Bus",
+    "Floor",
+    "Layout",
+    "build_layout",
+    "chain_depth",
+]
 
 #: Height reserved for a logistics deck: belts, pipes and a walkway between them.
 LOGISTICS_FLOOR_M = 4.0
@@ -263,8 +272,13 @@ def _strongly_connected(n: int, edges: dict[int, set[int]]) -> list[list[int]]:
     return result
 
 
-def _assign_stages(blocks: list[Block]) -> None:
-    """Chain depth, computed on the condensation of the block graph.
+def chain_depth(nodes: Sequence[tuple[Iterable[str], Iterable[str]]]) -> list[int]:
+    """Chain depth per node, computed on the condensation of the item graph.
+
+    Each node is ``(inputs, outputs)`` as item ids; the result is its longest-path
+    depth, so pure consumers of raw material sit at 0 and terminal consumers sit
+    highest. Shared by the layout (floors) and the diff (build stages), because
+    "what has to exist before this can run" is one question, not two.
 
     A plain longest-path walk is not available: the recipe graph genuinely contains
     cycles, because Recycled Plastic and Recycled Rubber each consume the other's
@@ -274,21 +288,21 @@ def _assign_stages(blocks: list[Block]) -> None:
 
     Collapsing each strongly connected component to a single node fixes both: the
     condensation is acyclic by construction, and every member of a cycle shares a
-    stage, which is also right physically since they must be built together.
+    depth, which is also right physically since they must be built together.
     """
     producers: dict[str, list[int]] = {}
-    for i, b in enumerate(blocks):
-        for item in b.outputs:
+    for i, (_ins, outs) in enumerate(nodes):
+        for item in outs:
             producers.setdefault(item, []).append(i)
 
     edges: dict[int, set[int]] = {}
-    for i, b in enumerate(blocks):
-        for item in b.inputs:
+    for i, (ins, _outs) in enumerate(nodes):
+        for item in ins:
             for src in producers.get(item, ()):
                 if src != i:
                     edges.setdefault(src, set()).add(i)
 
-    components = _strongly_connected(len(blocks), edges)
+    components = _strongly_connected(len(nodes), edges)
     component_of = {}
     for cid, members in enumerate(components):
         for member in members:
@@ -313,8 +327,12 @@ def _assign_stages(blocks: list[Block]) -> None:
         if not changed:
             break
 
-    for i, b in enumerate(blocks):
-        b.stage = depth[component_of[i]]
+    return [depth[component_of[i]] for i in range(len(nodes))]
+
+
+def _assign_stages(blocks: list[Block]) -> None:
+    for stage, b in zip(chain_depth([(b.inputs, b.outputs) for b in blocks]), blocks):
+        b.stage = stage
 
 
 def _buses(

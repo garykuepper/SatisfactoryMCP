@@ -10,11 +10,11 @@ from .. import config
 from ..docs.model import GameData
 from . import geo
 
-__all__ = ["NodeTable", "load_nodes", "occupancy"]
+__all__ = ["EXTRACTOR_FOR_KIND", "NodeTable", "load_nodes", "occupancy"]
 
 #: Extractor class -> what it can tap. A well satellite needs a Well Extractor AND
 #: a Pressurizer on its parent core, so it is not interchangeable with a plain node.
-_EXTRACTOR_FOR_KIND = {
+EXTRACTOR_FOR_KIND = {
     "node": ("Build_MinerMk1_C", "Build_MinerMk2_C", "Build_MinerMk3_C", "Build_OilPump_C"),
     "well_sat": ("Build_FrackingExtractor_C",),
     "geyser": (),
@@ -80,7 +80,7 @@ def node_rate(node: dict, game: GameData, extractor_cls: str | None = None) -> f
     kind = node["kind"]
     if kind == "geyser":
         return 0.0
-    candidates = (extractor_cls,) if extractor_cls else _EXTRACTOR_FOR_KIND.get(kind, ())
+    candidates = (extractor_cls,) if extractor_cls else EXTRACTOR_FOR_KIND.get(kind, ())
     best = 0.0
     for cls in candidates:
         b = game.buildings.get(cls)
@@ -143,7 +143,7 @@ def reachable(node: dict, unlocked_buildings: set[str] | None) -> bool:
         return "Build_GeneratorGeoThermal_C" in unlocked_buildings
     if kind == "well_sat":
         return {"Build_FrackingSmasher_C", "Build_FrackingExtractor_C"} <= unlocked_buildings
-    return any(cls in unlocked_buildings for cls in _EXTRACTOR_FOR_KIND.get(kind, ()))
+    return any(cls in unlocked_buildings for cls in EXTRACTOR_FOR_KIND.get(kind, ()))
 
 
 def annotate(

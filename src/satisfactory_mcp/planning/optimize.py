@@ -55,6 +55,10 @@ class Process:
     power_exponent: float = 1.0
     building: str | None = None
     recipe: str | None = None
+    #: Node purity for extractor columns. Carried through to the readout because it is
+    #: the only key that joins a plan's extractor row back to the nodes in the save --
+    #: recovering it by parsing the pid would tie the diff to a string format.
+    purity: str = ""
     clock: float = 1.0
     sloops: int = 0
     max_count: float | None = None
@@ -217,6 +221,7 @@ def extractor_processes(sc: Scenario) -> list[Process]:
                     mw_at_full=-b.power_at(1.0),
                     power_exponent=b.power_exponent,
                     building=building,
+                    purity=purity,
                     clock=clock,
                     max_count=count,
                 )
@@ -564,6 +569,7 @@ def solve(sc: Scenario) -> Solution:
                 else p.building,
                 "building_id": p.building,
                 "recipe": p.recipe,
+                "purity": p.purity,
                 "machines": built,
                 "machine_equivalents": round(v, 4),
                 "clock": round(effective_clock, 6),

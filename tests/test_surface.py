@@ -27,12 +27,13 @@ def test_tools_resources_prompts_registered():
     tools = _run(srv.mcp.list_tools())
     resources = _run(srv.mcp.list_resources())
     prompts = _run(srv.mcp.list_prompts())
-    assert len(tools) >= 17
+    assert len(tools) >= 19
     names = {t.name for t in tools}
     for expected in (
         "search_resource_nodes",
         "rank_build_sites",
         "plan_factory",
+        "diff_vs_save",
         "list_regions",
         "advise_hard_drive_pick",
     ):
@@ -110,6 +111,14 @@ def test_docs_summary_reports_no_normalisation_warnings():
         ("search_resource_nodes", {"sources": ["north"], "resource": "Crude Oil"}),
         ("rank_build_sites", {"resource": "Crude Oil", "sources": ["north"]}),
         ("plan_factory", {"objective": "max_mw", "sources": ["region:Spire Coast"]}),
+        (
+            "diff_vs_save",
+            {
+                "objective": "max_mw",
+                "sources": ["region:Spire Coast"],
+                "exports": ["MW", "Plastic", "Rubber"],
+            },
+        ),
         ("list_pending_hard_drive_choices", {}),
         ("advise_hard_drive_pick", {"hard_drive_id": 34}),
     ],

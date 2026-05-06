@@ -17,7 +17,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-__all__ = ["bullets", "envelope", "ids_footer", "kv", "num", "rate", "table"]
+__all__ = [
+    "bullets",
+    "envelope",
+    "ids_footer",
+    "kv",
+    "num",
+    "plural",
+    "rate",
+    "table",
+    "where_bands",
+]
 
 MAX_ROWS = 25
 
@@ -107,6 +117,42 @@ def flows(items: Iterable[tuple[str, float, bool]]) -> str:
     Fluids arrive pre-divided by 1000, so this never shows raw litres.
     """
     return " + ".join(f"{num(amount)} {name}" for name, amount, _ in items) or "-"
+
+
+def plural(name: str, count: int) -> str:
+    """Pluralise a building or item name. "31 Refinerys" reads as a typo, which makes
+    the reader distrust the number next to it."""
+    if count == 1:
+        return name
+    if name.endswith("y") and name[-2:-1] not in "aeiou":
+        return name[:-1] + "ies"
+    return name + ("es" if name.endswith(("s", "x", "z", "ch", "sh")) else "s")
+
+
+def where_bands(distances_m: Iterable[float], gap_m: float = 200.0, max_bands: int = 3) -> str:
+    """Where a set of machines actually is, as ``4@0 13@1 6@2.5`` kilometres.
+
+    A count alone hides the thing that matters: 23 Water Extractors reads as one fleet
+    until you see that 4 stand at the plant, 13 at the main base and 6 two and a half
+    kilometres away. A mean hides it just as well, so distances are single-linkage
+    clustered at the same 200 m the node and site clustering uses, and every group is
+    shown with its own count.
+    """
+    ordered = sorted(distances_m)
+    if not ordered:
+        return ""
+    groups: list[list[float]] = [[ordered[0]]]
+    for d in ordered[1:]:
+        if d - groups[-1][-1] > gap_m:
+            groups.append([])
+        groups[-1].append(d)
+    if len(groups) > max_bands:
+        # Near groups stay separate -- that is where the reusable machines are -- and
+        # the tail collapses, since it only ever means "and some far away".
+        head, tail = groups[: max_bands - 1], groups[max_bands - 1 :]
+        groups = [*head, [d for g in tail for d in g]]
+    parts = [f"{len(g)}@{sum(g) / len(g) / 1000:.1f}".rstrip("0").rstrip(".") for g in groups]
+    return " ".join(f"{p}0" if p.endswith("@") else p for p in parts)
 
 
 def clamp(value: int | None, default: int = 10, lo: int = 1, hi: int = MAX_ROWS) -> int:
