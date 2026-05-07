@@ -17,11 +17,15 @@ uv run python tools/gen_region_names.py     # builds data/region_names.json (21 
 uv run pytest -q
 ```
 
-Register with Claude Code:
+Register with Claude Code at **user scope**, so it loads in any directory rather than only inside
+this repo — you will usually be asking about the game, not about this code:
 
 ```bash
-claude mcp add satisfactory -- uv run --directory "E:/development/Hobby Projekte/SatisfactoryMcp" satisfactory-mcp
+claude mcp add --scope user satisfactory -- uv run --directory "E:/development/Hobby Projekte/SatisfactoryMcp" satisfactory-mcp
 ```
+
+It runs from source via `uv run`, so edits take effect on the next server start; there is nothing to
+reinstall after a change. Check it with `claude mcp list`.
 
 The game install and save directory are auto-detected. Override with `SATISFACTORY_DOCS` and
 `SATISFACTORY_SAVES` if they live somewhere unusual.
