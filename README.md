@@ -31,7 +31,7 @@ The game install and save directory are auto-detected. Override with `SATISFACTO
 **Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`
 **Map** — `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
-**Planning** — `plan_factory`, `plan_layout`, `diff_vs_save`
+**Planning** — `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
 **MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest save is
@@ -55,6 +55,15 @@ filters intersect:
 Call `search_resource_nodes(..., group="node")` to get node ids you can feed straight back in.
 A selector that fails to resolve returns **nothing** and says why — it never silently widens to the
 whole map, because that would answer a different question.
+
+### Banning routes
+
+Every planning tool takes `exclude_recipes`. Patterns match a class id, an exact display name, or any
+substring — and a substring takes **every** match, so `["Recycled"]` drops both Recycled Plastic and
+Recycled Rubber. Banning half a two-recipe loop would leave the loop intact.
+
+A pattern that matches nothing is reported rather than ignored, because a silently dropped ban returns a
+plan using the very recipe you forbade.
 
 ## What makes it different
 

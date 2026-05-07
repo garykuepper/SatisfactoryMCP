@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..docs.model import GameData
@@ -28,7 +28,7 @@ from .optimize import MW, Scenario
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
     from ..save.state import WorldState
 
-__all__ = ["PlanRequest", "build_scenario", "resolve_item"]
+__all__ = ["PlanRequest", "build_scenario", "match_recipes", "resolve_item"]
 
 #: Extractors are tried best-first: the first one that can tap a node wins it.
 _EXTRACTOR_PREFERENCE = (
@@ -55,6 +55,23 @@ def resolve_item(game: GameData, query: str) -> str | None:
     return partial[0] if partial else None
 
 
+def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
+    """Resolve one recipe pattern against a pool of recipe ids.
+
+    Matching is deliberately widening, in this order: exact class id, exact display
+    name, then case-insensitive substring returning EVERY match. That is what makes
+    "Recycled" drop both Recycled Plastic and Recycled Rubber in one go -- banning
+    half a two-recipe loop would leave the loop intact and the ban useless.
+    """
+    if pattern in pool:
+        return [pattern]
+    q = pattern.strip().casefold()
+    exact = [rid for rid in pool if game.recipes[rid].name.casefold() == q]
+    if exact:
+        return exact
+    return [rid for rid in pool if q in game.recipes[rid].name.casefold()]
+
+
 @dataclass
 class PlanRequest:
     """Everything a planning tool needs, and everything diff_vs_save needs to match."""
@@ -65,6 +82,11 @@ class PlanRequest:
     #: extractor rows against these, which is the one exact machine match available.
     node_rows: list[dict]
     plan_id: str
+    #: Recipes removed by exclude_recipes, and patterns that matched nothing. A
+    #: silently ignored ban would produce a plan using the very recipe the user
+    #: forbade, which is worse than refusing.
+    excluded: list[str] = field(default_factory=list)
+    recipe_errors: list[str] = field(default_factory=list)
 
 
 def build_scenario(
@@ -81,6 +103,8 @@ def build_scenario(
     machine_cost_mw: float = 5.0,
     belt_ipm: float = 780.0,
     pipe_m3min: float = 600.0,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id."""
     export_ids = []
@@ -116,6 +140,30 @@ def build_scenario(
         ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = _WATER_EXTRACTOR_CAP
 
     recipes = [r.cls for r in state.unlocked_recipes("part")]
+    excluded: list[str] = []
+    recipe_errors: list[str] = []
+
+    if only_recipes:
+        keep: set[str] = set()
+        for pattern in only_recipes:
+            hits = match_recipes(game, pattern, recipes)
+            if not hits:
+                recipe_errors.append(f"only_recipes: nothing matches {pattern!r}")
+            keep.update(hits)
+        if keep:
+            recipes = [rid for rid in recipes if rid in keep]
+
+    for pattern in exclude_recipes or []:
+        hits = match_recipes(game, pattern, recipes)
+        if not hits:
+            # Refuse quietly-wrong answers: a ban that matched nothing would return a
+            # plan happily using the recipe the user meant to forbid.
+            recipe_errors.append(f"exclude_recipes: nothing matches {pattern!r}")
+            continue
+        excluded.extend(game.recipes[rid].name for rid in hits)
+        banned = set(hits)
+        recipes = [rid for rid in recipes if rid not in banned]
+
     buildings = state.unlocked_building_ids
     sc = Scenario(
         game=game,
@@ -140,6 +188,8 @@ def build_scenario(
         selection=sel,
         node_rows=rows,
         plan_id=_plan_id(sc, only_free_nodes),
+        excluded=sorted(set(excluded)),
+        recipe_errors=recipe_errors,
     )
 
 

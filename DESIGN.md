@@ -779,6 +779,34 @@ Solving is deterministic on identical inputs (verified), which is what makes the
 Infeasible and empty plans short-circuit. An empty table would read as "you already have it", which is
 the opposite of both.
 
+### 8.8 Constraining the recipe set
+
+Every planning tool takes `exclude_recipes` and `only_recipes`, applied in `build_scenario` so one
+translation serves all of them. Patterns resolve in widening order — class id, exact display name, then
+case-insensitive substring taking **every** match.
+
+Substring-takes-all is the load-bearing choice: `["Recycled"]` must drop both Recycled Plastic and
+Recycled Rubber, because banning half a two-recipe loop leaves the loop intact and the ban useless.
+Exact-name match short-circuits it, because `"Plastic"` is the literal name of `Recipe_Plastic_C` and
+there would otherwise be no way to target a single recipe whose name is a substring of others.
+
+**A pattern matching nothing is reported, never ignored.** A silently dropped ban returns a plan happily
+using the recipe the user forbade, which is worse than refusing because it looks like compliance. The
+`plan_id` also covers the recipe set, so a banned-recipe plan cannot be confused with an unbanned one by
+`diff_vs_save`.
+
+Worked example on the reference save — max MW from Spire Coast with 300 plastic and 300 rubber required:
+
+| | net MW | routes chosen |
+|---|---|---|
+| unrestricted | 40,337 | Residual Rubber, **Recycled Plastic**, Residual Plastic |
+| `exclude_recipes=["Recycled"]` | 33,313 | Residual Rubber, Residual Plastic |
+
+Banning the loop costs **7,024 MW**, which is the useful output: the tool does not argue, it prices the
+preference. Note the direction — the loop is 9× more expensive than resin routes *per unit* in
+isolation, but once cheap resin is exhausted it beats scaling resin production, so the solver was right
+to use it at the margin.
+
 ### 8.7 Degeneracy
 
 `min_raw` LPs are **degenerate** — equally optimal vertices give materially different raw vectors (water
@@ -851,7 +879,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`
+**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```

@@ -15,17 +15,38 @@ Methodology rules, each learned from a wrong answer during design:
   the tradeoff: a recipe can be useless for power and excellent for parts.
 * Deltas ramp, they do not step. Near a binding constraint a coarse sweep reports a
   flat delta and then a cliff, both wrong.
+* **The baseline must be the same quantity plan_factory reports.** Every scenario
+  here is built by ``planning.scenario.build_scenario``, the one construction path,
+  so raw material arrives through real extractor processes on real nodes -- power
+  charged, count capped by node availability. Feeding the same basket in as free
+  ``raw_caps`` instead inflated the northern baseline from 92,269 MW to 171,882 MW.
+  The deltas mostly survived that, because the bias cancels between the two solves,
+  but the absolute number the user is invited to compare against plan_factory did
+  not.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..docs.model import GameData, Recipe
 from ..save.state import WorldState
+from ..spatial.select import SELECTOR_HELP
 from .optimize import MW, Scenario, Solution, solve
+from .scenario import PlanRequest, build_scenario
 
-__all__ = ["CandidateVerdict", "Objective", "advise_hard_drive", "evaluate_candidates"]
+__all__ = [
+    "CandidateVerdict",
+    "Evaluation",
+    "Objective",
+    "advise_hard_drive",
+    "evaluate_candidates",
+    "standard_objectives",
+]
+
+#: Throughput the min-machines objectives are measured at. Any fixed rate works --
+#: an LP solution is a ray -- but the number is reported to the user, so it is named.
+_TARGET_RATE = 300.0
 
 
 @dataclass
@@ -34,14 +55,26 @@ class Objective:
 
     key: str
     description: str
-    scenario_kwargs: dict
     unit: str
+    #: Arguments for ``build_scenario``, NOT for ``Scenario`` directly. Going through
+    #: the one construction path is what makes these figures mean the same thing as
+    #: plan_factory's; a hand-built Scenario silently reintroduces free raw material.
+    build_kwargs: dict = field(default_factory=dict)
     higher_is_better: bool = True
+    #: Which field of the Solution is the answer: "objective_value" or "net_mw".
+    #:
+    #: For a power objective they are NOT the same number. The LP maximises
+    #: ``net_mw - machine_cost_mw * machines`` so that spreading throughput over more
+    #: machines has to pay for itself; the penalty is a shaping term, not power the
+    #: player loses, and plan_factory reports ``net_mw``. Reading objective_value here
+    #: put the baseline 4,966 MW below the plan_factory figure it invites comparison
+    #: with -- a smaller version of exactly the bug free raw_caps caused.
+    metric: str = "objective_value"
 
     def value_of(self, sol: Solution) -> float | None:
         if not sol.ok:
             return None
-        return sol.objective_value
+        return sol.net_mw if self.metric == "net_mw" else sol.objective_value
 
 
 @dataclass
@@ -60,45 +93,53 @@ class CandidateVerdict:
         return any(v is not None and v > 1e-6 for v in self.deltas.values())
 
 
-def standard_objectives(
-    game: GameData, state: WorldState, resource_caps: dict[str, float]
-) -> list[Objective]:
+@dataclass
+class Evaluation:
+    """Verdicts plus the baseline they were measured against.
+
+    ``basket`` is worded exactly as plan_factory words its sources, because the two
+    tools now describe the same node scope and a different phrasing would suggest
+    otherwise.
+    """
+
+    verdicts: list[CandidateVerdict]
+    baseline: dict[str, float | None]
+    basket: str
+    selector_errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def standard_objectives() -> list[Objective]:
     """A small battery, so a candidate is never judged on power alone."""
     return [
         Objective(
             key="net_mw",
             description="max net MW from the given resource basket",
             unit="MW",
-            scenario_kwargs=dict(
-                objective="max_mw",
-                exports=(MW,),
-                raw_caps=resource_caps,
-                allow_sinks=True,
-            ),
+            metric="net_mw",
+            build_kwargs=dict(objective="max_mw", exports=[MW], allow_sinks=True),
         ),
         Objective(
             key="mw_with_products",
             description="max net MW while exporting Plastic and Rubber",
             unit="MW",
-            scenario_kwargs=dict(
+            metric="net_mw",
+            build_kwargs=dict(
                 objective="max_mw",
-                exports=(MW, "Desc_Plastic_C", "Desc_Rubber_C"),
-                raw_caps=resource_caps,
+                exports=[MW, "Desc_Plastic_C", "Desc_Rubber_C"],
                 allow_sinks=True,
             ),
         ),
         Objective(
             key="min_machines_for_plastic",
-            description="fewest machines for 300 Plastic/min",
+            description=f"fewest machines for {_TARGET_RATE:g} Plastic/min",
             unit="machines",
             higher_is_better=False,
-            scenario_kwargs=dict(
+            build_kwargs=dict(
                 objective="min_machines",
-                exports=("Desc_Plastic_C",),
-                export_minimums={"Desc_Plastic_C": 300.0},
-                raw_caps=resource_caps,
+                exports=["Desc_Plastic_C"],
+                export_minimums={"Desc_Plastic_C": _TARGET_RATE},
                 allow_sinks=True,
-                grid_import_mw=1e6,
             ),
         ),
     ]
@@ -111,18 +152,29 @@ def _new_recipes_for(state: WorldState, schematic_id: str) -> list[Recipe]:
     return state._schematic_recipes(s)
 
 
-def _solve_with(
-    state: WorldState,
-    baseline_recipes: list[str],
-    extra: list[str],
-    obj: Objective,
-) -> Solution:
+def _request(state: WorldState, sources: list[str] | None, obj: Objective) -> PlanRequest:
+    """Baseline scenario for one objective, via the single construction path.
+
+    build_scenario also derives ``grid_import_mw`` from the export set, so the
+    min-machines objectives get their import allowance without this module having to
+    restate a rule that lives there.
+    """
+    return build_scenario(state.game, state, sources=sources, **obj.build_kwargs)
+
+
+def _solve_with(sc: Scenario, state: WorldState, extra: list[str]) -> Solution:
+    """Re-solve a baseline scenario with a candidate's recipes bolted on."""
+    if not extra:
+        return solve(sc)
+    have = set(sc.recipes)
+    # A duplicate recipe id would collide two process columns and trip the optimizer's
+    # duplicate-pid assertion, so filter rather than trust the caller.
+    added = [r for r in extra if r not in have]
     return solve(
-        Scenario(
-            game=state.game,
-            recipes=[*baseline_recipes, *extra],
-            buildings_available=state.unlocked_building_ids | _needed_buildings(state, extra),
-            **obj.scenario_kwargs,
+        replace(
+            sc,
+            recipes=[*sc.recipes, *added],
+            buildings_available=(sc.buildings_available or set()) | _needed_buildings(state, added),
         )
     )
 
@@ -142,7 +194,7 @@ def _needed_buildings(state: WorldState, recipe_ids: list[str]) -> set[str]:
 
 
 def _own_output_objective(
-    game: GameData, recipes: list[Recipe], resource_caps: dict[str, float], rate: float = 300.0
+    game: GameData, recipes: list[Recipe], rate: float = _TARGET_RATE
 ) -> tuple[Objective, str] | None:
     """An objective measured on what the candidate ITSELF makes.
 
@@ -158,21 +210,17 @@ def _own_output_objective(
     if not products:
         return None
     item = max(products, key=lambda i: products[i])
-    caps = dict(resource_caps)
-    caps.setdefault("Desc_Water_C", 24000.0)
     return (
         Objective(
             key="own_output_machines",
             description=f"fewest machines for {rate:g}/min {game.item_name(item)}",
             unit="machines",
             higher_is_better=False,
-            scenario_kwargs=dict(
+            build_kwargs=dict(
                 objective="min_machines",
-                exports=(item,),
+                exports=[item],
                 export_minimums={item: rate},
-                raw_caps=caps,
                 allow_sinks=True,
-                grid_import_mw=1e6,
             ),
         ),
         item,
@@ -182,17 +230,37 @@ def _own_output_objective(
 def evaluate_candidates(
     state: WorldState,
     schematic_ids: list[str],
-    resource_caps: dict[str, float],
+    sources: list[str] | None = None,
     objectives: list[Objective] | None = None,
-) -> tuple[list[CandidateVerdict], dict[str, float | None]]:
-    """Return one verdict per candidate, plus the baseline values."""
+) -> Evaluation:
+    """Return one verdict per candidate, plus the baseline they are measured against.
+
+    ``sources`` is plan_factory's selector list, not a resource-cap table: the two
+    tools must be talking about the same nodes for their numbers to be comparable.
+    """
     game = state.game
-    baseline_recipes = [r.cls for r in state.unlocked_recipes("part")]
-    objs = objectives or standard_objectives(game, state, resource_caps)
+    objs = objectives or standard_objectives()
+
+    requests = {obj.key: _request(state, sources, obj) for obj in objs}
+    sel = next(iter(requests.values())).selection
+    if sel.errors and not sel.nodes:
+        # select_nodes already declines to widen (DESIGN 7.3), so the danger is not a
+        # whole-map answer -- it is that the empty scope still SOLVES. build_scenario
+        # always grants water pumps, so a typo'd region yields a feasible baseline of
+        # 0 MW and a 0 delta on every option: a confident "neither is worth anything"
+        # that reads as a verdict rather than as a misspelling. Refuse instead.
+        raise ValueError("no sources selected: " + "; ".join([*sel.errors, SELECTOR_HELP]))
 
     base_values: dict[str, float | None] = {}
     for obj in objs:
-        base_values[obj.key] = obj.value_of(_solve_with(state, baseline_recipes, [], obj))
+        base_values[obj.key] = obj.value_of(_solve_with(requests[obj.key].scenario, state, []))
+
+    notes: list[str] = []
+    # A basket with no fuel or coal generates nothing, so every power delta is 0 for a
+    # reason that has nothing to do with the candidates. Say so rather than let four
+    # zeroes read as four verdicts.
+    if "net_mw" in base_values and not base_values["net_mw"]:
+        notes.append("this basket generates no power on its own -- power deltas will read 0")
 
     verdicts: list[CandidateVerdict] = []
     for sid in schematic_ids:
@@ -221,7 +289,7 @@ def evaluate_candidates(
 
         extra = [r.cls for r in new]
         for obj in objs:
-            after = obj.value_of(_solve_with(state, baseline_recipes, extra, obj))
+            after = obj.value_of(_solve_with(requests[obj.key].scenario, state, extra))
             before = base_values[obj.key]
             if after is None or before is None:
                 v.deltas[obj.key] = None
@@ -231,11 +299,12 @@ def evaluate_candidates(
 
         # Plus an objective on the candidate's own product, so it is judged on what
         # it is actually for.
-        own = _own_output_objective(game, new, resource_caps)
+        own = _own_output_objective(game, new)
         if own is not None:
             obj, item = own
-            before = obj.value_of(_solve_with(state, baseline_recipes, [], obj))
-            after = obj.value_of(_solve_with(state, baseline_recipes, extra, obj))
+            sc = _request(state, sources, obj).scenario
+            before = obj.value_of(_solve_with(sc, state, []))
+            after = obj.value_of(_solve_with(sc, state, extra))
             v.own_output_item = game.item_name(item)
             if before is None and after is not None:
                 v.notes.append(f"makes {game.item_name(item)} possible where it was not")
@@ -247,12 +316,18 @@ def evaluate_candidates(
         verdicts.append(v)
 
     verdicts.sort(key=lambda x: -max((d or 0.0) for d in x.deltas.values() or [0.0]))
-    return verdicts, base_values
+    return Evaluation(
+        verdicts=verdicts,
+        baseline=base_values,
+        basket=sel.description,
+        selector_errors=list(sel.errors),
+        notes=notes,
+    )
 
 
 def advise_hard_drive(
     state: WorldState,
-    resource_caps: dict[str, float],
+    sources: list[str] | None = None,
     hard_drive_id: int | None = None,
 ) -> list[dict]:
     """Compare the options on one pending drive, or summarise every drive."""
@@ -265,13 +340,25 @@ def advise_hard_drive(
     out: list[dict] = []
     for offer in offers:
         ids = [opt["schematic"] for opt in offer.options]
-        verdicts, base = evaluate_candidates(state, ids, resource_caps)
-        best = verdicts[0] if verdicts else None
+        ev = evaluate_candidates(state, ids, sources)
+        # Only a candidate the player can actually research may be recommended.
+        # Ranking alone would let a dependency-blocked option become the headline
+        # advice purely because it scored well, and 24 of the 109 alternates are
+        # blocked on this save.
+        best = next((v for v in ev.verdicts if not v.dependency_missing), None)
         out.append(
             {
                 "hard_drive_id": offer.hard_drive_id,
                 "rerolls_left": offer.rerolls_left,
-                "baseline": base,
+                "baseline": ev.baseline,
+                "basket": ev.basket,
+                # Named so the user can check the comparison the baseline invites,
+                # rather than being left to assume the two tools agree.
+                "baseline_note": (
+                    "net_mw is plan_factory(objective=max_mw, same sources, exports=[MW])"
+                ),
+                "notes": ev.notes,
+                "selector_errors": ev.selector_errors,
                 "options": [
                     {
                         "name": v.name,
@@ -283,11 +370,17 @@ def advise_hard_drive(
                         "notes": v.notes,
                         "blocked_by": v.dependency_missing,
                     }
-                    for v in verdicts
+                    for v in ev.verdicts
                 ],
-                "suggestion": best.name
-                if best and best.any_gain
-                else "neither moves any objective",
+                "suggestion": (
+                    best.name
+                    if best and best.any_gain
+                    else (
+                        "every option that moves a metric is dependency-blocked"
+                        if any(v.any_gain and v.dependency_missing for v in ev.verdicts)
+                        else "neither moves any objective"
+                    )
+                ),
             }
         )
     return out

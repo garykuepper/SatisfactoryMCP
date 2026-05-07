@@ -465,8 +465,15 @@ def solve(sc: Scenario) -> Solution:
             )
         c[col_e(export_items.index(sc.target_item))] = -1.0
     elif sc.objective == "min_raw":
+        # Raw material arrives two ways and both must be priced. `raw_caps` gives
+        # free-standing raw variables, but the normal path is extractor PROCESSES --
+        # and build_scenario only ever populates the latter. Counting raw_ alone made
+        # min_raw minimise an empty row, so it silently returned 0 for every input.
         for j in range(nR):
             c[col_r(j)] = 1.0
+        for i, p in enumerate(procs):
+            if p.kind == "extractor":
+                c[col_p(i)] = sum(rate for rate in p.rates.values() if rate > 0)
     elif sc.objective == "min_machines":
         for i in range(nP):
             c[col_p(i)] = 1.0
@@ -498,6 +505,11 @@ def solve(sc: Scenario) -> Solution:
     # gives no benefit at all (throughput is linear in machines x clock), so it is
     # never selected and needs no penalty.
     machine_priced = sc.machine_cost_mw > 0 and sc.objective in ("max_mw", "min_power")
+    # Keep the pure goal so the reported objective_value is not contaminated by the
+    # penalty. Reading the penalised value as the objective understated max_mw by
+    # ~5000 MW and made a per-unit cost derived from it wrong -- two separate tools
+    # tripped on exactly this.
+    c_goal = c.copy()
     if machine_priced:
         for i in range(nP):
             c[col_p(i)] += sc.machine_cost_mw
@@ -592,6 +604,8 @@ def solve(sc: Scenario) -> Solution:
         export_items[j]: round(float(x[col_e(j)]), 4) for j in range(nE) if x[col_e(j)] > _EPS
     }
     sunk = {sink_items[j]: round(float(x[col_s(j)]), 4) for j in range(nS) if x[col_s(j)] > _EPS}
+    pure_goal = float(c_goal @ x)
+    machine_penalty = round(float((c - c_goal) @ x), 4)
     grid_draw = round(float(x[col_grid]), 2)
     net_mw = exports.get(MW, 0.0) - grid_draw
 
@@ -638,7 +652,7 @@ def solve(sc: Scenario) -> Solution:
 
     return Solution(
         status="optimal",
-        objective_value=round(-goal if sc.objective.startswith("max") else goal, 4),
+        objective_value=round(-pure_goal if sc.objective.startswith("max") else pure_goal, 4),
         net_mw=net_mw,
         processes=out_procs,
         raw_used=raw_used,
@@ -646,6 +660,7 @@ def solve(sc: Scenario) -> Solution:
         sunk=sunk,
         machines_total=round(machines_total, 3),
         grid_import_mw=grid_draw,
+        machine_penalty_mw=machine_penalty,
         logistics=logistics,
         warnings=warnings,
         binding=binding,

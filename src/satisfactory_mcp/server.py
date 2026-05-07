@@ -17,7 +17,7 @@ from . import config, render
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
-from .planning import advisor
+from .planning import advisor, byproducts, compare
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
 from .planning.layout import build_layout
@@ -779,6 +779,8 @@ def plan_factory(
     allow_sinks: bool = True,
     clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
@@ -831,6 +833,8 @@ def plan_factory(
         allow_sinks=allow_sinks,
         clocks=clocks,
         machine_cost_mw=machine_cost_mw,
+        exclude_recipes=exclude_recipes,
+        only_recipes=only_recipes,
     )
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
@@ -862,7 +866,9 @@ def plan_factory(
         )
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
-    notes = [*sel.errors, *sol.warnings]
+    notes = [*sel.errors, *req.recipe_errors, *sol.warnings]
+    if req.excluded:
+        notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:
         notes.append(f"GUARD FAILED: free-lunch audit returned {audit_val} MW, not 0")
     for b in sol.binding[:6]:
@@ -948,6 +954,8 @@ def plan_layout(
     detail: str = "floors",
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
     belt_tier: str = "Mk5",
     pipe_tier: str = "Mk2",
     save: str | None = None,
@@ -998,6 +1006,8 @@ def plan_layout(
         allow_sinks=allow_sinks,
         belt_ipm=belt_ipm,
         pipe_m3min=pipe_m3min,
+        exclude_recipes=exclude_recipes,
+        only_recipes=only_recipes,
     )
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
@@ -1159,6 +1169,8 @@ def diff_vs_save(
     allow_sinks: bool = True,
     clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 20,
@@ -1202,6 +1214,8 @@ def diff_vs_save(
         allow_sinks=allow_sinks,
         clocks=clocks,
         machine_cost_mw=machine_cost_mw,
+        exclude_recipes=exclude_recipes,
+        only_recipes=only_recipes,
     )
     sel = req.selection
     if sel.errors and not sel.nodes:
@@ -1398,24 +1412,17 @@ def advise_hard_drive_pick(
     Each option is solved for and against across several objectives, because a
     recipe can be worthless for power yet excellent for parts. Deltas are reported
     per objective and never collapsed into one score.
+
+    ``sources`` is plan_factory's selector list and means the same thing here, so the
+    baseline printed is the same quantity plan_factory reports for the same nodes.
     """
-    g = game()
     try:
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    table = nodes_mod.load_nodes()
-    sel = select_nodes(sources, table.nodes, resolve_resource=_item_id)
-    rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
-    caps: dict[str, float] = {}
-    for r in rows:
-        if r["kind"] == "node" and r["rate"] > 0 and r["reachable"]:
-            caps[r["resource"]] = caps.get(r["resource"], 0.0) + r["rate"]
-    caps["Desc_Water_C"] = 24000.0
-
     try:
-        results = advisor.advise_hard_drive(st, caps, hard_drive_id)
+        results = advisor.advise_hard_drive(st, sources, hard_drive_id)
     except ValueError as exc:
         return str(exc)
     if not results:
@@ -1442,8 +1449,9 @@ def advise_hard_drive_pick(
             [
                 f"# hard drive {res['hard_drive_id']}, rerolls left {res['rerolls_left']}",
                 f"# {st.age_note}",
-                f"# resource basket: {sel.description} at 100% clock",
+                f"# sources: {res['basket']}",
                 "# baseline: " + render.kv([(k, render.num(v)) for k, v in base.items()]),
+                f"# {res['baseline_note']}",
                 f"# suggestion: {res['suggestion']}",
             ]
         ),
@@ -1460,10 +1468,94 @@ def advise_hard_drive_pick(
             rows_out,
         ),
         [
+            *res.get("selector_errors", []),
+            *res.get("notes", []),
             "deltas are marginal value vs this world's current recipes",
             "a 0 delta means the player already has a route that dominates it",
         ],
     )
+
+
+@mcp.tool(structured_output=False)
+def explain_byproducts(
+    objective: str = "max_mw",
+    target_item: str | None = None,
+    item: str | None = None,
+    sources: list[str] | None = None,
+    exports: list[str] | None = None,
+    export_minimums: dict[str, float] | None = None,
+    allow_sinks: bool = True,
+    exclude_recipes: list[str] | None = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 12,
+) -> str:
+    """Explain which byproducts stall a plan, and what can legally consume them.
+
+    Every item balance is an equality, so a byproduct with no consumer makes a plan
+    INFEASIBLE rather than silently vanishing. This says WHICH item is stuck, whether
+    it can be sunk (solids only -- a fluid must be consumed exactly or packaged
+    first), and which recipes would absorb it, split into ones this world has
+    unlocked and ones it does not.
+
+    Pass ``item`` to focus on one byproduct instead of the whole plan.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    return byproducts.explain(
+        g,
+        st,
+        objective=objective,
+        target_item=target_item,
+        item=_item_id(item) if item else None,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        allow_sinks=allow_sinks,
+        exclude_recipes=exclude_recipes,
+        limit=render.clamp(limit, default=12),
+    )
+
+
+@mcp.tool(structured_output=False)
+def compare_recipe_options(
+    item: str,
+    rate: float = 100.0,
+    per_resource: str | None = None,
+    outlets: list[str] | None = None,
+    allow_sinks: bool = True,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 10,
+) -> str:
+    """Rank whole ROUTES to make an item by what each actually costs.
+
+    Not a recipe list -- alternates_for_item already does that. Each route is solved
+    end to end with the LP, so the comparison is Crude -> Alt HOR -> Diluted Fuel
+    against Crude -> Fuel, priced in raw resource per unit, whole buildings, net
+    power, and byproducts needing an outlet.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    iid = _item_id(item)
+    if iid is None:
+        return f"no item matching {item!r}"
+    result = compare.compare_routes(
+        g,
+        st,
+        iid,
+        rate=rate,
+        allow_sinks=allow_sinks,
+        outlets=outlets,
+        per_resource=_item_id(per_resource) if per_resource else None,
+    )
+    return compare.render_comparison(result, limit=render.clamp(limit, default=10))
 
 
 # ============================================================ resources
