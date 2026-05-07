@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -211,6 +211,9 @@ def extract(path: str) -> dict:
         # everything. Fluids are raw litres here; the server scales them.
         "inventories": {"player": {}, "storage": {}, "machine": {}},
         "node_state": {},
+        # Char_Player_C carries the pawn's transform. BP_PlayerState_C sits at the
+        # origin and is NOT a position -- reading it would put every player at (0,0).
+        "players": [],
         "warnings": [],
     }
     counts: dict[str, int] = {}
@@ -289,6 +292,18 @@ def extract(path: str) -> dict:
             fluid = ref_class(p.get("mFluidDescriptor"))
             if fluid:
                 out["pipe_networks"].append({"instance": instance, "fluid": fluid})
+            continue
+
+        if cls == "Char_Player_C":
+            out["players"].append(
+                {
+                    "instance": instance,
+                    "pos": pos_of(header),
+                    # Present only while the player is holding it; useful as a hint
+                    # that this pawn is the active one in a co-op save.
+                    "has_build_gun": "mBuildGun" in p,
+                }
+            )
             continue
 
         # ---- resource nodes ------------------------------------------------

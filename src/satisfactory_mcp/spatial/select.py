@@ -12,6 +12,7 @@ Supported selectors (prefix optional where unambiguous)::
     grid:X3Y4                                       exact 1.024 km biome grid cell
     node:BP_ResourceNode26_99                       one specific node, by instance
     near:<x_m>,<y_m>,<radius_m>                      circle, metres
+    near:me,<radius_m>                               circle around the player
     bbox:<x1>,<y1>,<x2>,<y2>                         rectangle, metres
     resource:Crude Oil                              filter: resource type
     purity:pure|normal|impure                       filter: purity
@@ -81,11 +82,17 @@ def select_nodes(
     resolve_resource=None,
     origin: tuple[float, float] | None = None,
     half_angle: float = 60.0,
+    player: tuple[float, float] | None = None,
 ) -> Selection:
     """Apply a source spec to ``nodes``.
 
     ``resolve_resource`` maps a display name to an item id; when omitted, a
     ``resource:`` selector must already use the class id.
+
+    ``origin`` turns direction selectors into cones from that point; leaving it None
+    keeps them as map hemispheres, which is the better reading of "what oil is in the
+    north". ``player`` is separate and deliberately narrow -- it only resolves
+    ``near:me``, so supplying it can never silently reinterpret a direction.
     """
     sel = Selection()
     if spec is None:
@@ -188,6 +195,27 @@ def select_nodes(
 
         # ---- circle ----------------------------------------------------
         if prefix == "near":
+            parts = [x.strip() for x in value.split(",")]
+            if parts and parts[0].casefold() == "me":
+                # "where I am standing" is the most natural scope a player has, and
+                # it is the one thing the map alone cannot supply.
+                if player is None:
+                    sel.errors.append(
+                        "near:me needs a player position, and none was found in the save"
+                    )
+                    continue
+                radius_txt = parts[1] if len(parts) > 1 else ""
+                try:
+                    radius = float(radius_txt)
+                except ValueError:
+                    sel.errors.append(f"near:me expects a radius in metres, got {value!r}")
+                    continue
+                cx, cy = player
+                hits = [n for n in nodes if geo.distance_m((n["x"], n["y"]), (cx, cy)) <= radius]
+                location_seen = True
+                picked.update({n["instance"]: n for n in hits})
+                sel.described.append(f"within {radius:g}m of you ({len(hits)} nodes)")
+                continue
             nums = _numbers(value, 3)
             if nums is None:
                 sel.errors.append(f"near: expects <x_m>,<y_m>,<radius_m>, got {value!r}")

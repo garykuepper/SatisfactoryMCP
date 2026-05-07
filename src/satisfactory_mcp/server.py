@@ -50,6 +50,12 @@ def _item_id(query: str) -> str | None:
     return resolve_item(game(), query)
 
 
+def _player_xy(st) -> tuple[float, float] | None:
+    """Player XY for the near:me selector, or None if the save has no pawn."""
+    here = st.player_position() if st else None
+    return (here[0], here[1]) if here else None
+
+
 # ============================================================ game data
 
 
@@ -537,7 +543,7 @@ def search_resource_nodes(
     except Exception:
         pass
 
-    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id)
+    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, player=_player_xy(st))
     if sel.errors and not sel.nodes:
         return render.envelope("# no nodes selected", "", [*sel.errors, SELECTOR_HELP])
 
@@ -683,7 +689,7 @@ def rank_build_sites(
         )
 
     spec = [*(sources or []), f"resource:{rid}"]
-    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id)
+    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id, player=_player_xy(st))
     if sel.errors and not sel.nodes:
         return render.envelope("# no candidates", "", [*sel.errors, SELECTOR_HELP])
 
@@ -765,6 +771,92 @@ def rank_build_sites(
     )
 
 
+@mcp.tool(structured_output=False)
+def whereami(
+    radius_m: float = 500.0,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 8,
+) -> str:
+    """Where the player is standing, and what is around them.
+
+    Position comes from the Char_Player_C pawn in the save, so it is wherever you
+    were when it was written -- an autosave can be several minutes stale. Use
+    ``near:me,<radius>`` as a source selector in the planning tools to scope work to
+    here.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    here = st.player_position()
+    if here is None:
+        return "no player pawn in this save, so there is no position to report"
+    x, y, z = here
+    rm = regions_mod.load_regions()
+    label = rm.label_for(x, y)
+
+    table = nodes_mod.load_nodes()
+    near = nodes_mod.annotate(
+        table.filter(center=(x, y), radius_m=radius_m),
+        g,
+        st.projection,
+        st.unlocked_building_ids,
+    )
+    near.sort(key=lambda n: geo.distance_m((n["x"], n["y"]), (x, y)))
+    rows = [
+        (
+            g.item_name(n["resource"]),
+            n["purity"],
+            render.num(n["rate"]),
+            f"{geo.distance_m((n['x'], n['y']), (x, y)):.0f}m",
+            geo.direction_of(n["x"], n["y"], x, y),
+            "tapped" if n["tapped"] else ("LOCKED" if not n["reachable"] else "free"),
+        )
+        for n in near[: render.clamp(limit, default=8)]
+    ]
+
+    builds = [r for r in st._all_records() if r.get("pos")]
+    closest = min(
+        builds,
+        key=lambda r: geo.distance_m((r["pos"][0], r["pos"][1]), (x, y)),
+        default=None,
+    )
+    notes = [f"use near:me,{radius_m:g} as a source selector to plan around here"]
+    if closest is not None:
+        d = geo.distance_m((closest["pos"][0], closest["pos"][1]), (x, y))
+        name = g.buildings[closest["cls"]].name if closest["cls"] in g.buildings else closest["cls"]
+        notes.append(f"nearest building: {name} at {d:.0f}m")
+    if len(st.players) > 1:
+        notes.append(f"{len(st.players)} pawns in this save; showing the one holding a build gun")
+
+    return render.envelope(
+        "\n".join(
+            [
+                f"# {st.age_note}",
+                render.kv(
+                    [
+                        ("x,y,z(m)", f"{x / 100:.0f},{y / 100:.0f},{z / 100:.0f}"),
+                        ("region", label.describe()),
+                        ("grid", geo.grid_cell(x, y)),
+                        ("from_map_centre", geo.direction_of(x, y)),
+                    ]
+                ),
+                f"# {len(near)} node(s) within {radius_m:g}m",
+            ]
+        ),
+        render.table(
+            ("resource", "purity", "rate", "dist", "dir", "status"),
+            rows,
+            total=len(near),
+            limit=limit,
+        ),
+        notes,
+    )
+
+
 # ============================================================ planning
 
 
@@ -778,6 +870,7 @@ def plan_factory(
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
     clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
@@ -803,6 +896,11 @@ def plan_factory(
     result is reported as 53 machines at 99.6%. That is exact, always a clean ratio,
     and provably the power-optimal way to run that throughput, so ordinary ratio
     underclocking is automatic and needs no parameter.
+
+    ``extractor_clocks`` overclocks the SOURCE NODES only, e.g. [1.0, 1.5, 2.0, 2.5].
+    That is the usual play: a node set is fixed, so speed is the only way to get more
+    out of it, whereas overclocking production machines mostly burns power. Each
+    machine above 100% needs Power Shards, which nothing here counts.
 
     ``clocks`` is only for asking a different question: passing [0.5, 1.0] lets the
     solver SPREAD throughput over more machines to save power, which is real but not
@@ -832,6 +930,7 @@ def plan_factory(
         only_free_nodes=only_free_nodes,
         allow_sinks=allow_sinks,
         clocks=clocks,
+        extractor_clocks=extractor_clocks,
         machine_cost_mw=machine_cost_mw,
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
@@ -1168,6 +1267,7 @@ def diff_vs_save(
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
     clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
@@ -1213,6 +1313,7 @@ def diff_vs_save(
         only_free_nodes=only_free_nodes,
         allow_sinks=allow_sinks,
         clocks=clocks,
+        extractor_clocks=extractor_clocks,
         machine_cost_mw=machine_cost_mw,
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,

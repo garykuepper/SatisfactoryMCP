@@ -100,6 +100,7 @@ def build_scenario(
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
     clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
     belt_ipm: float = 780.0,
     pipe_m3min: float = 600.0,
@@ -109,13 +110,30 @@ def build_scenario(
     """Translate tool arguments into a Scenario, its node scope and a plan id."""
     export_ids = []
     for name in exports or [MW]:
-        export_ids.append(MW if name in (MW, "MW", "power") else (resolve_item(game, name) or name))
+        # Accept MW, mw, power, Power interchangeably: both words turn up in the
+        # same conversation and neither is more correct.
+        export_ids.append(
+            MW
+            if name == MW or str(name).strip().casefold() in ("mw", "power")
+            else (resolve_item(game, name) or name)
+        )
     minimums = {}
     for name, value in (export_minimums or {}).items():
         minimums[resolve_item(game, name) or name] = float(value)
 
     table = nodes_mod.load_nodes()
-    sel = select_nodes(sources, table.nodes, resolve_resource=lambda q: resolve_item(game, q))
+    # The player position goes in as `player`, NOT as `origin`. origin would also
+    # turn every direction selector into a cone from the player, so "north" would
+    # quietly stop meaning the northern half of the map and start meaning "north of
+    # where I am standing" -- a different question, and one that silently changed
+    # every plan scoped by direction.
+    here = state.player_position()
+    sel = select_nodes(
+        sources,
+        table.nodes,
+        resolve_resource=lambda q: resolve_item(game, q),
+        player=(here[0], here[1]) if here else None,
+    )
     rows = nodes_mod.annotate(sel.nodes, game, state.projection, state.unlocked_building_ids)
     rows = [r for r in rows if r["reachable"]]
     if only_free_nodes:
@@ -175,6 +193,7 @@ def build_scenario(
         extractor_nodes=ext,
         allow_sinks=allow_sinks,
         clocks=tuple(clocks) if clocks else (1.0,),
+        extractor_clocks=tuple(extractor_clocks) if extractor_clocks else None,
         machine_cost_mw=machine_cost_mw,
         belt_ipm=belt_ipm,
         pipe_m3min=pipe_m3min,
@@ -209,6 +228,7 @@ def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
             "only_free_nodes": only_free_nodes,
             "allow_sinks": sc.allow_sinks,
             "clocks": list(sc.clocks),
+            "extractor_clocks": list(sc.extractor_clocks or ()),
             "machine_cost_mw": sc.machine_cost_mw,
             "belt_ipm": sc.belt_ipm,
             "pipe_m3min": sc.pipe_m3min,

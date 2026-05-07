@@ -311,6 +311,30 @@ class WorldState:
         out.sort(key=lambda o: (o.hard_drive_id is None, o.hard_drive_id))
         return out
 
+    # ---- where the player is -------------------------------------------
+
+    @cached_property
+    def players(self) -> list[dict]:
+        """Player pawns with positions.
+
+        Read from Char_Player_C, never BP_PlayerState_C: the state actor sits at the
+        world origin, so using it would place every player at (0, 0).
+        """
+        return [p for p in self.projection.get("players", ()) if p.get("pos")]
+
+    def player_position(self) -> tuple[float, float, float] | None:
+        """Where the player is, in centimetres. None if the save has no pawn.
+
+        With several pawns (co-op, or a stale disconnected one) the one holding a
+        build gun wins, since that is the one actually being played.
+        """
+        if not self.players:
+            return None
+        armed = [p for p in self.players if p.get("has_build_gun")]
+        pick = (armed or self.players)[0]
+        x, y, z = pick["pos"]
+        return (float(x), float(y), float(z))
+
     def spare_hard_drives(self) -> int:
         """Unanalysed drives on hand."""
         return int(self.stock().get("Desc_HardDrive_C", 0))

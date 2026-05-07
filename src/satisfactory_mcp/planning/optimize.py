@@ -33,10 +33,37 @@ from scipy.optimize import LinearConstraint, milp
 from ..docs.constants import AWESOME_SINK_MW
 from ..docs.model import GameData
 
-__all__ = ["MW", "Process", "Scenario", "Solution", "free_lunch_audit", "solve"]
+__all__ = [
+    "MW",
+    "Process",
+    "Scenario",
+    "Solution",
+    "free_lunch_audit",
+    "normalise_objective",
+    "solve",
+]
 
 MW = "__MW__"
 _EPS = 1e-7
+
+#: "power" reads more naturally than "mw" in a sentence, and both show up in the
+#: same conversation, so either spelling is accepted everywhere an objective or an
+#: export is named.
+_OBJECTIVE_ALIASES = {
+    "max_power": "max_mw",
+    "maximise_power": "max_mw",
+    "maximize_power": "max_mw",
+    "max_watts": "max_mw",
+    "min_mw": "min_power",
+    "minimise_power": "min_power",
+    "minimize_power": "min_power",
+}
+
+
+def normalise_objective(objective: str) -> str:
+    """Canonical objective name, accepting the power/mw spellings interchangeably."""
+    key = (objective or "").strip().casefold()
+    return _OBJECTIVE_ALIASES.get(key, key)
 
 
 @dataclass
@@ -62,6 +89,10 @@ class Process:
     clock: float = 1.0
     sloops: int = 0
     max_count: float | None = None
+    #: Processes sharing a group draw on the SAME physical machines, so their counts
+    #: must sum under one cap. Without it, offering a node set at two clock speeds
+    #: would let the solver mine every node twice.
+    group: str | None = None
 
     def net(self, item: str) -> float:
         return self.rates.get(item, 0.0)
@@ -96,6 +127,13 @@ class Scenario:
     #: machine_cost_mw. Overclock modes are not offered by default because they
     #: consume Power Shards, which nothing here counts.
     clocks: tuple[float, ...] = (1.0,)
+    #: Clock modes offered to EXTRACTORS only, when they should differ from the rest.
+    #:
+    #: Overclocking miners and pumps is the standard play -- they are capped by how
+    #: many nodes exist, so the only way to get more from a fixed node is to run it
+    #: faster -- while overclocking production machines usually just burns power.
+    #: None means extractors use `clocks` like everything else.
+    extractor_clocks: tuple[float, ...] | None = None
     sloop_budget: int = 0
     max_machines: float | None = None
     #: What one machine costs, in MW, when the objective is power.
@@ -124,6 +162,9 @@ class Scenario:
     #: Ignored (forced to 0) when MW is an export, since a power plant that imports
     #: power to export it is unbounded.
     grid_import_mw: float | None = None
+
+    def __post_init__(self) -> None:
+        self.objective = normalise_objective(self.objective)
 
 
 @dataclass
@@ -209,10 +250,13 @@ def extractor_processes(sc: Scenario) -> list[Process]:
             continue
         if sc.buildings_available is not None and building not in sc.buildings_available:
             continue
-        for clock in sc.clocks:
+        for clock in sc.extractor_clocks or sc.clocks:
+            if clock > b.max_clock + 1e-9:
+                continue  # beyond what power shards can reach for this building
             rate = b.extract_rate(purity, clock)
             out.append(
                 Process(
+                    group=f"x:{building}:{resource}:{purity}",
                     pid=f"x:{building}:{resource}:{purity}@{clock:g}",
                     kind="extractor",
                     label=f"{b.name} on {purity} {g.item_name(resource)}",
@@ -400,9 +444,26 @@ def solve(sc: Scenario) -> Solution:
 
     lb = np.zeros(n)
     ub = np.full(n, np.inf)
+    grouped: dict[str, list[int]] = {}
     for i, p in enumerate(procs):
-        if p.max_count is not None:
+        if p.max_count is None:
+            continue
+        if p.group is None:
             ub[col_p(i)] = p.max_count
+        else:
+            grouped.setdefault(p.group, []).append(i)
+    # A group is one set of physical machines offered at several clocks. Capping each
+    # mode separately would let the solver run the same nodes once per mode.
+    for members in grouped.values():
+        cap = min(procs[i].max_count for i in members)
+        if len(members) == 1:
+            ub[col_p(members[0])] = cap
+            continue
+        row = np.zeros(n)
+        for i in members:
+            row[col_p(i)] = 1.0
+            ub[col_p(i)] = cap
+        constraints.append(LinearConstraint(row, -np.inf, cap))
     for j, item in enumerate(raw_items):
         ub[col_r(j)] = sc.raw_caps[item]
     for j, item in enumerate(export_items):

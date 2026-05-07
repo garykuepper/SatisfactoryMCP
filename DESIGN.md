@@ -817,6 +817,33 @@ preference. Note the direction — the loop is 9× more expensive than resin rou
 isolation, but once cheap resin is exhausted it beats scaling resin production, so the solver was right
 to use it at the margin.
 
+### 8.9 Player position, node overclocking, and spelling
+
+**Player position** comes from the `Char_Player_C` pawn's transform, never from
+`BP_PlayerState_C` — that actor sits at the world origin, so reading it would report every player at
+(0, 0). With several pawns the one holding a build gun wins, since that is the one being played.
+Exposed as `whereami` and as the `near:me,<radius>` selector.
+
+> **The trap, which I walked into.** The player position must be passed to `select_nodes` as `player`,
+> *not* as `origin`. `origin` also turns direction selectors into cones, so supplying it silently
+> changed `"north"` from *the northern half of the map* into *a 60° cone from wherever the player is
+> standing* — quietly altering every plan scoped by direction. Seven unrelated tests caught it.
+> `test_supplying_a_player_never_reinterprets_a_direction` pins it.
+
+**`extractor_clocks`** overclocks source nodes only. This is the usual play: a node set is fixed, so
+running it faster is the only way to get more from it, whereas overclocking production machines mostly
+burns power. On Spire Coast, `[1.0, 1.5, 2.0, 2.5]` takes 43,092 MW to **107,258 MW**.
+
+> **Its trap: clock modes of one node set share physical machines.** Each mode is its own column, so
+> capping them individually would let the solver mine every node once *per mode* — four nodes offered at
+> two clocks would silently become eight. `Process.group` ties them together under one shared
+> constraint. Modes above a building's `max_clock` are dropped rather than invented.
+
+**`power` and `mw` are interchangeable** in objectives (`max_power` = `max_mw`, `min_mw` = `min_power`)
+and in exports (`MW`, `mw`, `power`, `Power`). Both words turn up in the same conversation and neither is
+more correct. Normalisation happens in `Scenario.__post_init__`, so exactly one spelling reaches the
+dispatch — otherwise `max_power` would fall through to the unknown-objective branch.
+
 ### 8.7 Degeneracy
 
 `min_raw` LPs are **degenerate** — equally optimal vertices give materially different raw vectors (water
