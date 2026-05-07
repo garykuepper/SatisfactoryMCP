@@ -197,6 +197,16 @@ Reasons (licensing is *not* one of them, since this isn't distributed):
 
 Subprocess overhead measured at **~60 ms**, and only on cache miss.
 
+> **The sidecar must never inherit the server's stdin.** `subprocess.run(capture_output=True)`
+> redirects stdout and stderr but leaves stdin inherited — and the MCP server's stdin *is* the client's
+> JSON-RPC pipe. Handing that to a child means anything touching it blocks for ever, and could consume
+> bytes the client sent to the server. The symptom was maximally unhelpful: every save-reading tool hung
+> until its 180 s timeout, with no error, no log and no partial output, and **only** when launched as a
+> real MCP server. Calling the same functions directly always worked, because then stdin is a terminal.
+> Fixed with `stdin=subprocess.DEVNULL`; `tests/test_sidecar_spawn.py` pins it, along with the
+> neighbouring trap that `sys.executable` must be an interpreter and never the console script, which
+> would spawn a second MCP server that waits on stdin and emits nothing.
+
 ---
 
 ## 5. Normalization contract

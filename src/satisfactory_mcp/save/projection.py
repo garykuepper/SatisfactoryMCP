@@ -60,7 +60,18 @@ def ticks_to_epoch_seconds(ticks: int | None) -> float | None:
 def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
     cmd = [sys.executable, str(config.sidecar_path()), *args]
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, text=False)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            # DEVNULL, not inherit. capture_output only redirects stdout/stderr, so
+            # without this the sidecar inherits the MCP server's stdin -- which is the
+            # client's JSON-RPC pipe. Anything that touches it blocks for ever and can
+            # steal bytes from the protocol stream.
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+            text=False,
+        )
     except subprocess.TimeoutExpired as exc:
         raise SaveError(f"sidecar timed out after {timeout}s") from exc
     out = proc.stdout.decode("utf-8", errors="replace").strip()
