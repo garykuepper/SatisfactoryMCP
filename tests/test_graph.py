@@ -298,3 +298,87 @@ def test_exclusions_are_applied_after_expanding(graph, game, projection):
         ["product:Concrete", "-label:steel factory"], graph, game, projection, store, expand=True
     )
     assert not set(STEEL) & set(picked)
+
+
+# ------------------------------------------------------------- structures
+
+
+def _slab_projection():
+    """Two platforms sharing a footprint at different heights, plus a detached one."""
+    tiles = []
+    for gx in range(3):
+        for gy in range(3):
+            tiles.append([0, gx * 800, gy * 800, 0])  # ground floor
+            tiles.append([0, gx * 800, gy * 800, 1200])  # upper floor, 12 m up
+    for gx in range(2):  # detached, 40 m east
+        tiles.append([0, 4000 + gx * 800, 0, 0])
+    ramp = [1, 3200, 0, 600]  # bridges nothing on its own
+    return {
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C", "Build_Ramp_8x4_01_C"],
+            "instances": [*tiles, ramp],
+        },
+        "machines": [
+            {
+                "instance": "L:P.Build_FoundryMk1_C_1",
+                "recipe": "Recipe_IngotSteel_C",
+                "pos": [800, 800, 100],
+            },
+            {
+                "instance": "L:P.Build_FoundryMk1_C_2",
+                "recipe": "Recipe_IngotSteel_C",
+                "pos": [800, 800, 1300],
+            },
+            {
+                "instance": "L:P.Build_SmelterMk1_C_3",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [4000, 0, 100],
+            },
+            {
+                "instance": "L:P.Build_SmelterMk1_C_4",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [90000, 90000, 0],
+            },  # out in a field, on no foundation
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+
+
+def test_stacked_floors_are_one_structure():
+    """A multi-storey factory is one build. Without this the tor factory reads as three
+    platforms that merely share a footprint."""
+    from satisfactory_mcp.graph.structure import build_structures
+
+    sx = build_structures(_slab_projection())
+    assert len(sx.slabs) == 2, [s.tiles for s in sx.slabs]
+    upper = sx.slab_of["Build_FoundryMk1_C_2"]
+    lower = sx.slab_of["Build_FoundryMk1_C_1"]
+    assert upper == lower
+    assert sx.slabs[upper].storeys > 1
+
+
+def test_a_detached_platform_stays_detached():
+    from satisfactory_mcp.graph.structure import build_structures
+
+    sx = build_structures(_slab_projection())
+    assert sx.slab_of["Build_SmelterMk1_C_3"] != sx.slab_of["Build_FoundryMk1_C_1"]
+
+
+def test_ground_built_machines_belong_to_no_slab():
+    """Two of the player's twelve factories are built straight on the ground, which is
+    why slabs are a candidate signal and never the arbiter."""
+    from satisfactory_mcp.graph.structure import build_structures
+
+    sx = build_structures(_slab_projection())
+    assert "Build_SmelterMk1_C_4" not in sx.slab_of
+    assert all("Build_SmelterMk1_C_4" not in g for g in sx.groups())
+
+
+def test_no_structures_block_degrades_to_empty_rather_than_raising():
+    """Projections from schema 6 and earlier have no structures at all."""
+    from satisfactory_mcp.graph.structure import build_structures
+
+    sx = build_structures({"machines": []})
+    assert sx.slabs == [] and sx.slab_of == {}
+    assert sx.groups() == []

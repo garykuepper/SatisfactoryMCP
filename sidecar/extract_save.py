@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -202,6 +202,7 @@ def extract(path: str) -> dict:
         "unlock_flags": {},
         "building_counts": {},
         "lightweight_counts": {},
+        "structures": {"classes": [], "instances": []},
         "machines": [],
         "extractors": [],
         "generators": [],
@@ -328,6 +329,7 @@ def extract(path: str) -> dict:
             # Holds Build_* classes that appear in NO actor header, so a
             # header-only census undercounts what is actually built.
             out["lightweight_counts"] = _lightweight(obj)
+            out["structures"] = _structures(obj)
             continue
         if cls == "FGPipeNetwork":
             fluid = ref_class(p.get("mFluidDescriptor"))
@@ -515,6 +517,53 @@ def _lightweight(obj) -> dict:
 
     walk(getattr(obj, "actorSpecificInfo", None))
     return out
+
+
+def _structures(obj) -> dict:
+    """Transforms of every lightweight buildable -- foundations, ramps, walls, catwalks.
+
+    These carry the one signal power and belts both lack: what the player physically
+    BUILT AS ONE THING. Measured on the reference save, foundation slabs split into 101
+    pieces where power gives 9 and belts give 35, and every named factory lands on its
+    own dominant slab.
+
+    ``actorSpecificInfo`` is a list of ``[buildClassPath, [instance, ...]]`` pairs, and
+    each instance is ``[rotationQuaternion, position, ...]`` -- so unlike the class
+    census above, the transform is the SECOND element, not derivable from the count.
+
+    Interned and rounded to whole centimetres: 8,372 pieces cost 198 KB this way
+    against roughly 1.2 MB emitted naively, and sub-centimetre precision is meaningless
+    for deciding whether two 8 m foundations touch.
+
+    The slab geometry is deliberately NOT computed here. It lives behind a subprocess
+    and a cache, so freezing the link distance in the sidecar would mean a 3-minute
+    re-parse to tune a threshold.
+    """
+    classes: list[str] = []
+    index: dict[str, int] = {}
+    instances: list[list[int]] = []
+
+    for entry in getattr(obj, "actorSpecificInfo", None) or []:
+        if not (isinstance(entry, list) and len(entry) == 2):
+            continue
+        cls_path, items = entry
+        cls = ref_class(cls_path) or str(cls_path).rsplit(".", 1)[-1]
+        if not isinstance(items, list):
+            continue
+        ci = index.get(cls)
+        if ci is None:
+            ci = index[cls] = len(classes)
+            classes.append(cls)
+        for inst in items:
+            if not (isinstance(inst, list) and len(inst) >= 2):
+                continue
+            pos = inst[1]
+            try:
+                instances.append([ci, int(pos[0]), int(pos[1]), int(pos[2])])
+            except (TypeError, ValueError, IndexError):
+                continue
+
+    return {"classes": classes, "instances": instances}
 
 
 def inventory_bucket(instance: str) -> str:

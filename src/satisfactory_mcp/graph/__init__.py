@@ -10,6 +10,7 @@ from .identity import Candidate, bases, describe, lines_within, product_clusters
 from .labels import Label, LabelStore
 from .model import Edge, FactoryGraph, kind_of
 from .select import SelectorError, select_machines
+from .structure import Slab, Structures, build_structures
 
 __all__ = [
     "Candidate",
@@ -18,8 +19,11 @@ __all__ = [
     "Label",
     "LabelStore",
     "SelectorError",
+    "Slab",
+    "Structures",
     "bases",
     "build_graph",
+    "build_structures",
     "describe",
     "kind_of",
     "lines_within",

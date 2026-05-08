@@ -11,6 +11,7 @@ can say which machines they mean without listing 50 instance ids. Hence selector
     near:steel@150                within 150 m of an existing label's centroid
     base:0                        power island, largest first
     line:3                        material component, largest first
+    slab:2                        foundation platform, largest first
     label:steel factory           what a label already covers
     all                           every machine
 
@@ -41,7 +42,7 @@ __all__ = ["SELECTOR_HELP", "SelectorError", "select_machines"]
 
 SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
-    "near:<x,y@radius_m or label@radius_m> | base:<n> | line:<n> | "
+    "near:<x,y@radius_m or label@radius_m> | base:<n> | line:<n> | slab:<n> | "
     "label:<name> | all. Terms are ANDed; comma-separated values inside one term "
     "are ORed; prefix a term with '-' to exclude it"
 )
@@ -165,6 +166,7 @@ def _resolve(
     game: GameData,
     projection: dict,
     store: LabelStore | None,
+    structures=None,
 ) -> set[str]:
     if term.casefold() in ("all", "*"):
         return set(graph.machines())
@@ -193,6 +195,10 @@ def _resolve(
         return _indexed(bases(graph), value, "base")
     if kind == "line":
         return _indexed(graph.machine_components("material"), value, "line")
+    if kind == "slab":
+        if structures is None:
+            raise SelectorError("slab: needs the structure layer; re-read the save")
+        return _indexed(structures.groups(), value, "slab")
     if kind == "label":
         label = store.find(value) if store else None
         if label is None:
@@ -226,6 +232,7 @@ def select_machines(
     store: LabelStore | None = None,
     split: bool = False,
     expand: bool = False,
+    structures=None,
 ) -> list[str]:
     """Intersect the positive terms, then subtract the negated ones.
 
@@ -248,7 +255,9 @@ def select_machines(
         if not term:
             continue
         negate = term.startswith("-")
-        resolved = _resolve(term[1:].strip() if negate else term, graph, game, projection, store)
+        resolved = _resolve(
+            term[1:].strip() if negate else term, graph, game, projection, store, structures
+        )
         if negate:
             exclude |= resolved
         elif include is None:

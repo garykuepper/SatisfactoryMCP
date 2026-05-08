@@ -48,6 +48,13 @@ class WorldState:
         return build_graph(self.projection)
 
     @cached_property
+    def structures(self):
+        """Foundation slabs -- what was physically built as one platform."""
+        from ..graph.structure import build_structures
+
+        return build_structures(self.projection)
+
+    @cached_property
     def labels(self):
         """Persisted factory names for this world."""
         from ..graph.labels import LabelStore

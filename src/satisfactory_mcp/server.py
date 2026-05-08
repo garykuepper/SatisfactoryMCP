@@ -453,16 +453,16 @@ def factory_map(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 12,
-    show: Annotated[str, Field(description="candidates | named | unlabelled | all")] = "all",
+    show: Annotated[str, Field(description="candidates | named | slabs | unlabelled | all")] = "all",
 ) -> str:
     """Proposed factories, from power islands and belt topology, plus what is named.
 
-    Two independent signals are reported rather than one answer, because neither is
-    right on its own: power islands separate outposts but leave a grown-together base
-    as one 476-machine blob, while belt components shatter that blob into fragments.
-    Where they disagree, carve the difference with `name_factory` and a `product:` or
-    `near:` selector -- that third signal is what actually matches how a base was
-    built.
+    Three independent signals are reported rather than one answer, because none is
+    right alone: power islands separate outposts but leave a grown-together base as one
+    476-machine blob; belt components shatter that blob into fragments; foundation slabs
+    are the sharpest of the three but say nothing about the ground-built parts of a
+    factory. Where they disagree, carve the difference with `name_factory` and a
+    `product:`, `near:` or `slab:` selector.
     """
     try:
         st = _state(save, world)
@@ -529,6 +529,43 @@ def factory_map(
             )
         )
 
+    if want in ("all", "slabs"):
+        sx = st.structures
+        rows = []
+        for group in sx.groups()[:n]:
+            index = sx.slab_of[group[0]]
+            slab = sx.slabs[index]
+            cand = identity.describe(group, gr, st.game, st.projection, "structure")
+            names = sorted({lbl.name for m in group if (lbl := store.label_for(m))})
+            rows.append(
+                (
+                    index,
+                    len(group),
+                    slab.tiles,
+                    f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
+                    f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
+                    ", ".join(names)[:34] or "-",
+                    cand.name_hint()[:38],
+                )
+            )
+        total = len(sx.groups())
+        chunks.append(
+            f"## foundation slabs ({len(sx.slabs)} platforms, "
+            f"{len(sx.slab_of)} machines on one)\n"
+            + render.table(
+                ("slab", "machines", "tiles", "x,y(m)", "extent", "labels", "makes"),
+                rows,
+                total=total,
+                limit=n,
+            )
+        )
+        ground = len(machines) - len(sx.slab_of)
+        if ground:
+            notes.append(
+                f"{ground} machine(s) stand on no foundation at all -- slabs cannot see "
+                "them, so this signal is a candidate and never the arbiter."
+            )
+
     if want in ("all", "unlabelled"):
         loose = identity.unassigned(gr, labelled)
         if loose:
@@ -575,7 +612,8 @@ def select_machines(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels, split=split, expand=expand
+            select, st.graph, st.game, st.projection, st.labels,
+            split=split, expand=expand, structures=st.structures,
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"
@@ -635,7 +673,8 @@ def name_factory(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels, split=split, expand=expand
+            select, st.graph, st.game, st.projection, st.labels,
+            split=split, expand=expand, structures=st.structures,
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"

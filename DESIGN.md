@@ -492,11 +492,49 @@ Three edge kinds, kept separate because **no single one identifies a factory**:
 | material | 11,554 | belts and pipes; orientable, since the connector role says `Output*` vs `Input*` | a mature base is one belt web → 35 components, 19 of them fragments |
 | power | 1,276 | wires, with **poles** and **towers** distinguished (tower wires median 208 m vs 34 m for poles, and carry no machines) | dropping towers separates outposts but leaves the base as **one 476-machine island** |
 | transport | 0 here | trains, drones, trucks | modelled from the start: a transport link is a deliberate connection **between** factories, so it belongs on a boundary |
+| structure | 8,372 pieces | foundations, ramps, walls, catwalks — full transforms from `FGLightweightBuildableSubsystem` | 128 of 563 machines are ground-built and sit on no slab at all |
+
+**Slabs are the sharpest signal we have** (§6.2a), but only the fourth one — not a replacement.
 
 `build_graph` seeds nodes from `machines`/`extractors`/`generators` as well as from the edge list.
 The interned actor list is derived from *edges*, so the **6 of 563** machines wired to nothing would
 otherwise be absent from the graph entirely — and an isolated machine is exactly what a coverage
 report exists to surface.
+
+### 6.2a Foundation slabs — the fourth signal
+
+A player builds a platform, then fills it. Belts and wires cross between platforms freely
+— that is what they are for — but a foundation is only ever placed against another one
+deliberately. Snapping is a build-time UI concept and is **not serialized**, so adjacency
+is recovered geometrically: two 8 m foundations that touch have centres 800 cm apart.
+
+Three link rules, each measured against the player's twelve named factories. *Purity* is
+the share of a label's machines landing on its single dominant slab; a *collision* is one
+slab claimed by two different factories.
+
+| bridging rule | slabs | purity | collisions |
+|---|---|---|---|
+| nothing | 90 | 0.68 | none |
+| **ramps + stairs** | **42** | **0.99** | **none** |
+| catwalks only | 85 | 0.78 | none |
+| all walkways | 46 | 0.90 | tier 1&2 welded to the tor factory |
+
+**Catwalks are excluded, and that is the whole trick.** Ramps connect the floors of one
+structure; catwalks are the long walkways a player runs *between* distant platforms.
+Chaining catwalks scores well and is still wrong, because the one thing it merges is two
+genuinely separate factories. An over-segmented slab can be merged by naming; an
+over-merged one cannot be split.
+
+`LINK_Z = 1600` cm (four storeys) is a measured knee, not a guess: purity runs 0.84 at
+450 cm, 0.85 at 900, 0.94 at 1200, 0.99 at 1600, with no collision at any of them. Past
+1600 purity stops improving and only merge risk grows.
+
+**Walls are not used, and this was checked rather than argued:** of 1,937 wall pieces,
+**zero** touch more than one slab. A wall spans a foundation edge, so two foundations
+sharing a wall are already face-adjacent.
+
+**Slabs are not the arbiter.** 128 of 563 machines stand on no foundation — the concrete
+setup and the copper setup are built straight on the ground and have no slab at all.
 
 ### 6.2 Identifying factories — measured, not assumed
 
