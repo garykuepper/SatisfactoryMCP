@@ -515,9 +515,16 @@ slab claimed by two different factories.
 | bridging rule | slabs | purity | collisions |
 |---|---|---|---|
 | nothing | 90 | 0.68 | none |
-| **ramps + stairs** | **42** | **0.99** | **none** |
+| walls only | 71 | 0.99 | none |
+| ramps + stairs | 42 | 0.99 | none |
+| **ramps + stairs + walls** | **41** | **0.99** | **none** |
 | catwalks only | 85 | 0.78 | none |
-| all walkways | 46 | 0.90 | tier 1&2 welded to the tor factory |
+| plus catwalks | 46 | 0.90 | tier 1&2 welded to the tor factory |
+
+**Bridges must be chained, not tested pairwise.** Asking whether a *single* piece touches
+two slabs finds nothing — the real shape is `slab → wall → wall → slab`. Tested as single
+pieces, 0 of 1,937 walls touch two slabs; tested as chains, they join four pairs. Bridging
+pieces therefore enter the union as nodes in their own right.
 
 **Catwalks are excluded, and that is the whole trick.** Ramps connect the floors of one
 structure; catwalks are the long walkways a player runs *between* distant platforms.
@@ -527,11 +534,18 @@ over-merged one cannot be split.
 
 `LINK_Z = 1600` cm (four storeys) is a measured knee, not a guess: purity runs 0.84 at
 450 cm, 0.85 at 900, 0.94 at 1200, 0.99 at 1600, with no collision at any of them. Past
-1600 purity stops improving and only merge risk grows.
+1600 purity stops improving and only merge risk grows. This is what merges a factory
+built on stacked decks — before it, the tor factory read as three platforms that merely
+shared a footprint, and the speedwire factory as two.
 
-**Walls are not used, and this was checked rather than argued:** of 1,937 wall pieces,
-**zero** touch more than one slab. A wall spans a foundation edge, so two foundations
-sharing a wall are already face-adjacent.
+**`slab:n` means the slab's own index**, the one `factory_map` prints. Slabs are numbered
+by tile count while their machine groups sort by machine count; indexing the wrong list
+silently returns a different platform.
+
+**Walls are included on the same evidence.** Alone they take 90 slabs to 71; added to
+ramps and stairs, 42 to 41, purity unchanged and still no collision. They buy little here
+because ramps already cover most of the same joins, but they are structurally the right
+kind of edge and cost nothing.
 
 **Slabs are not the arbiter.** 128 of 563 machines stand on no foundation — the concrete
 setup and the copper setup are built straight on the ground and have no slab at all.

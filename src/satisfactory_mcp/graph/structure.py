@@ -25,9 +25,11 @@ each measured rather than assumed:
 * **stacked floors** -- overlapping in XY within ``LINK_Z``. A multi-storey factory is
   one structure. Without this the tor factory reads as three separate platforms that
   happen to share a footprint.
-* **ramps and stairs** -- these join the union as nodes of their own, so a run of them
-  bridges a gap no single 8 m piece could span. They are vertical circulation WITHIN one
-  build.
+* **ramps, stairs and walls** -- these join the union as nodes of their own, so a RUN of
+  them bridges a gap no single 8 m piece could span. Chaining is the whole point: asking
+  only whether one piece touches two slabs finds nothing, because the interesting case is
+  slab -> wall -> wall -> slab. Tested as single pieces, zero of 1,937 walls touch two
+  slabs; tested as chains, they join four pairs.
 
 **Catwalks are excluded, and that is the whole trick.** Scored against the player's own
 twelve factories, where purity is the share of a label's machines landing on its single
@@ -36,10 +38,12 @@ dominant slab, and a collision is one slab claimed by two different factories:
 =================  =====  ======  ==========================================
 bridging rule      slabs  purity  collisions
 =================  =====  ======  ==========================================
-nothing               90    0.68  none
-**ramps + stairs**    42  **0.99**  **none**
-catwalks only         85    0.78  none
-all walkways          46    0.90  tier 1&2 welded to the tor factory
+nothing                    90    0.68  none
+walls only                 71    0.99  none
+ramps + stairs             42    0.99  none
+**ramps + stairs + walls** 41  **0.99**  **none**
+catwalks only              85    0.78  none
+plus catwalks              46    0.90  tier 1&2 welded to the tor factory
 =================  =====  ======  ==========================================
 
 Ramps connect the floors of one structure; catwalks are the long walkways a player runs
@@ -47,11 +51,10 @@ BETWEEN distant platforms. Chaining catwalks scores the highest purity of any ru
 still wrong, because the one thing it merges is two genuinely separate factories. An
 over-segmented slab can be merged by naming; an over-merged one cannot be split.
 
-Walls are not used either, and this was checked rather than argued: of the 1,937 wall
-pieces on the reference save, **zero** touch more than one slab. A wall spans the edge of
-a foundation, so two foundations sharing a wall are already face-adjacent and the wall
-adds no connectivity that the tiles did not already have. Walls would matter for a
-different question this does not answer -- whether a factory is enclosed.
+Walls earn their place on the same evidence. Alone they take 90 slabs down to 71; added
+to ramps and stairs they take 42 to 41, with purity unchanged at 0.987 and still no
+collision. They buy little on this save because ramps already cover most of the same
+joins, but they are structurally the right kind of edge and they cost nothing.
 
 **Not every factory sits on foundations.** Two of the player's twelve -- the concrete
 setup and the copper setup -- are built straight on the ground and have no slab at all.
@@ -79,8 +82,8 @@ LINK_Z = 1600.0
 #: How far under a machine to look for the tile it stands on, in cm.
 STAND_ON = 600.0
 
-#: Bridging pieces. Catwalks are POINTEDLY absent -- see the module docstring.
-_WALKWAY = ("Ramp", "Stair")
+#: Connective tissue. Catwalks are POINTEDLY absent -- see the module docstring.
+_BRIDGE = ("Ramp", "Stair", "Wall")
 _FOUNDATION = ("Foundation", "Platform")
 
 _CELL = 800.0
@@ -180,7 +183,7 @@ def build_structures(
         point = (float(row[1]), float(row[2]), float(row[3]))
         if any(k in cls for k in _FOUNDATION):
             tiles.append(point)
-        elif any(k in cls for k in _WALKWAY):
+        elif any(k in cls for k in _BRIDGE):
             walkways.append(point)
 
     if not tiles:

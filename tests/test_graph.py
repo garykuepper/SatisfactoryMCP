@@ -382,3 +382,70 @@ def test_no_structures_block_degrades_to_empty_rather_than_raising():
     sx = build_structures({"machines": []})
     assert sx.slabs == [] and sx.slab_of == {}
     assert sx.groups() == []
+
+
+def test_walls_bridge_slabs_only_when_chained():
+    """Two platforms joined by a run of walls. Asking whether any SINGLE wall touches
+    both finds nothing -- the real shape is slab -> wall -> wall -> slab. On the
+    reference save that distinction is 0 joins against 4."""
+    from satisfactory_mcp.graph.structure import build_structures
+
+    left = [[0, 0, 0, 0], [0, 800, 0, 0]]
+    right = [[0, 3200, 0, 0], [0, 4000, 0, 0]]
+    walls = [[1, 1400, 0, 0], [1, 2000, 0, 0], [1, 2600, 0, 0]]
+    classes = ["Build_Foundation_8x1_01_C", "Build_Wall_8x4_01_C"]
+    machines = [
+        {"instance": f"L:P.Build_FoundryMk1_C_{i}", "recipe": "Recipe_IngotSteel_C", "pos": p}
+        for i, p in enumerate([[0, 0, 100], [4000, 0, 100]])
+    ]
+    base = {"machines": machines, "extractors": [], "generators": []}
+
+    apart = build_structures(
+        {**base, "structures": {"classes": classes, "instances": [*left, *right]}}
+    )
+    assert len(apart.slabs) == 2
+
+    joined = build_structures(
+        {**base, "structures": {"classes": classes, "instances": [*left, *right, *walls]}}
+    )
+    assert len(joined.slabs) == 1, "a run of walls is a structural connection"
+    assert len(set(joined.slab_of.values())) == 1
+
+
+def test_slab_selector_uses_the_index_factory_map_prints():
+    """Slabs are numbered by tile count; groups() is ordered by machine count. Indexing
+    into the wrong one silently returns a different platform -- it once re-anchored the
+    speedwire factory onto the aluminium site."""
+    from satisfactory_mcp.graph.structure import build_structures
+
+    projection = {
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            # A big platform carrying one machine, and a small one carrying three.
+            "instances": [[0, x * 800, 0, 0] for x in range(6)]
+            + [[0, 40000 + x * 800, 0, 0] for x in range(2)],
+        },
+        "machines": [
+            {
+                "instance": "L:P.Build_FoundryMk1_C_1",
+                "recipe": "Recipe_IngotSteel_C",
+                "pos": [0, 0, 100],
+            },
+            *[
+                {
+                    "instance": f"L:P.Build_SmelterMk1_C_{i}",
+                    "recipe": "Recipe_IngotIron_C",
+                    "pos": [40000 + i * 100, 0, 100],
+                }
+                for i in range(3)
+            ],
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    sx = build_structures(projection)
+    big, small = sx.slabs[0], sx.slabs[1]
+    assert big.tiles > small.tiles
+    # groups() puts the 3-machine platform first, so the two orderings disagree here.
+    assert len(sx.groups()[0]) == 3
+    assert len(sx.machines_on(0)) == 1, "slab 0 is the one with the most TILES"

@@ -198,7 +198,19 @@ def _resolve(
     if kind == "slab":
         if structures is None:
             raise SelectorError("slab: needs the structure layer; re-read the save")
-        return _indexed(structures.groups(), value, "slab")
+        # The slab's OWN index, which is what factory_map prints. Indexing into a list
+        # ordered by machine count instead would silently return a different platform:
+        # slabs are numbered by tile count, and the two orderings do not agree.
+        try:
+            index = int(value)
+        except ValueError as exc:
+            raise SelectorError(f"slab:{value!r} needs an integer index") from exc
+        if not 0 <= index < len(structures.slabs):
+            raise SelectorError(f"slab:{index} out of range (0..{len(structures.slabs) - 1})")
+        hits = set(structures.machines_on(index))
+        if not hits:
+            raise SelectorError(f"slab:{index} is a platform with no machines standing on it")
+        return hits
     if kind == "label":
         label = store.find(value) if store else None
         if label is None:
