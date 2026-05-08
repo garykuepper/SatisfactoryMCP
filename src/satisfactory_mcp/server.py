@@ -17,6 +17,7 @@ from . import config, render
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
+from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .planning import advisor, byproducts, compare
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
@@ -428,6 +429,310 @@ def factory_sites(save: str | None = None, world: str | None = None, limit: Limi
             limit=limit,
         ),
     )
+
+
+# ============================================================ factories
+
+
+def _cand_row(c, store, labelled: set[str]) -> tuple:
+    named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
+    covered = sum(1 for m in c.machines if m in labelled)
+    return (
+        c.source,
+        c.size,
+        f"{int(c.centroid[0] / 100)},{int(c.centroid[1] / 100)}",
+        f"{c.spread_m:.0f}m",
+        f"{covered}/{c.size}" if covered else "-",
+        ", ".join(sorted(named))[:40] or "-",
+        c.name_hint()[:44],
+    )
+
+
+@mcp.tool(structured_output=False)
+def factory_map(
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 12,
+    show: Annotated[str, Field(description="candidates | named | unlabelled | all")] = "all",
+) -> str:
+    """Proposed factories, from power islands and belt topology, plus what is named.
+
+    Two independent signals are reported rather than one answer, because neither is
+    right on its own: power islands separate outposts but leave a grown-together base
+    as one 476-machine blob, while belt components shatter that blob into fragments.
+    Where they disagree, carve the difference with `name_factory` and a `product:` or
+    `near:` selector -- that third signal is what actually matches how a base was
+    built.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from .graph import identity
+
+    gr = st.graph
+    store = st.labels
+    base_c, line_c = identity.candidates(gr, st.game, st.projection)
+    labelled = store.assigned()
+    machines = set(gr.machines())
+    n = render.clamp(limit)
+
+    want = show.casefold()
+    chunks: list[str] = []
+    notes: list[str] = []
+
+    if want in ("all", "named") and store.labels:
+        rows = []
+        for label in sorted(store.labels, key=lambda x: -len(x.anchors)):
+            alive = set(label.anchors) & machines
+            cand = identity.describe(sorted(alive), gr, st.game, st.projection, "label")
+            rows.append(
+                (
+                    label.name,
+                    len(label.anchors),
+                    f"{len(alive)}/{len(label.anchors)}",
+                    f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
+                    f"{cand.spread_m:.0f}m",
+                    cand.name_hint()[:44],
+                )
+            )
+        chunks.append(
+            "## named\n"
+            + render.table(("name", "machines", "alive", "x,y(m)", "spread", "makes"), rows)
+        )
+        for issue in store.review(machines):
+            notes.append(
+                f"{issue['name']}: {issue['missing']} anchor machine(s) gone "
+                f"(recall {issue['recall']}) -- {issue['status']}"
+            )
+
+    if want in ("all", "candidates"):
+        rows = [_cand_row(c, store, labelled) for c in base_c[:n]]
+        chunks.append(
+            "## power islands (bases)\n"
+            + render.table(
+                ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
+                rows,
+                total=len(base_c),
+                limit=n,
+            )
+        )
+        fresh = [c for c in line_c if not set(c.machines) <= labelled]
+        rows = [_cand_row(c, store, labelled) for c in fresh[:n]]
+        chunks.append(
+            "## belt components (lines), unnamed first\n"
+            + render.table(
+                ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
+                rows,
+                total=len(fresh),
+                limit=n,
+            )
+        )
+
+    if want in ("all", "unlabelled"):
+        loose = identity.unassigned(gr, labelled)
+        if loose:
+            grouped = identity.describe(loose, gr, st.game, st.projection, "unlabelled")
+            top = ", ".join(f"{name} {count}" for name, count in grouped.products.most_common(12))
+            chunks.append(f"## unlabelled: {len(loose)} machine(s)\n{top or '(no recipes set)'}")
+
+    if base_c and base_c[0].size > 100:
+        notes.append(
+            f"the largest power island holds {base_c[0].size} machines across "
+            f"{base_c[0].spread_m:.0f}m -- that is a grown-together base, not one factory. "
+            "Carve it with name_factory(select=['product:Steel Ingot','near:x,y@150'])."
+        )
+
+    return render.envelope(
+        f"# {st.age_note}\n# {len(machines)} machines; {len(base_c)} power island(s), "
+        f"{len(line_c)} belt component(s); {len(store.labels)} named, "
+        f"{len(labelled & machines)} machine(s) covered",
+        "\n\n".join(chunks),
+        notes,
+    )
+
+
+@mcp.tool(structured_output=False)
+def select_machines(
+    select: Annotated[list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")],
+    save: str | None = None,
+    world: str | None = None,
+    split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+) -> str:
+    """Preview which machines a selector picks, before naming them.
+
+    Worth running first on anything product-based: 17 machines make Concrete on the
+    reference save, but 15 of them are a construction feed inside the steel site and
+    only one is the player's "concrete setup".
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from .graph import identity
+    from .graph import select as gsel
+
+    try:
+        picked = gsel.select_machines(
+            select, st.graph, st.game, st.projection, st.labels, split=split
+        )
+    except gsel.SelectorError as exc:
+        return f"! {exc}"
+    if not picked:
+        return "! that selector matched no machines"
+
+    cand = identity.describe(picked, st.graph, st.game, st.projection, "selector")
+    groups = identity.cluster_machines(picked, st.projection)
+    parts = [
+        render.kv(
+            [
+                ("machines", cand.size),
+                ("at", f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}"),
+                ("spread", f"{cand.spread_m:.0f}m"),
+                ("clusters", len(groups)),
+            ]
+        ),
+        "products: " + (", ".join(f"{k} {v}" for k, v in cand.products.most_common(10)) or "-"),
+        "buildings: " + ", ".join(f"{v}x {k.replace('Build_', '')}" for k, v in cand.buildings.most_common(8)),
+    ]
+    if len(groups) > 1:
+        sub = identity.describe(groups[0], st.graph, st.game, st.projection, "selector")
+        parts.append(
+            f"! {len(groups)} separate sites {[len(g) for g in groups]}; the largest is "
+            f"{sub.size} at {int(sub.centroid[0] / 100)},{int(sub.centroid[1] / 100)}. "
+            "Pass split=true to keep only that one."
+        )
+    clashes = {lbl.name for m in picked if (lbl := st.labels.label_for(m))}
+    if clashes:
+        parts.append("already named: " + ", ".join(sorted(clashes)))
+    return render.envelope(f"# {st.age_note}", "\n".join(parts))
+
+
+@mcp.tool(structured_output=False)
+def name_factory(
+    name: str,
+    select: Annotated[list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")],
+    notes: str = "",
+    save: str | None = None,
+    world: str | None = None,
+    split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+    dry_run: bool = False,
+) -> str:
+    """Name a set of machines and persist it for this world.
+
+    The label stores the machine instance ids, which are stable across saves, so it
+    survives moving machines, adding to the factory, and autosave rotation. Calling
+    this again with the same name re-anchors it to the current selection.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from .graph import identity
+    from .graph import select as gsel
+
+    try:
+        picked = gsel.select_machines(
+            select, st.graph, st.game, st.projection, st.labels, split=split
+        )
+    except gsel.SelectorError as exc:
+        return f"! {exc}"
+    if not picked:
+        return "! that selector matched no machines; nothing named"
+
+    store = st.labels
+    stolen: dict[str, int] = {}
+    for machine in picked:
+        other = store.label_for(machine)
+        if other and other.name.casefold() != name.strip().casefold():
+            stolen[other.name] = stolen.get(other.name, 0) + 1
+
+    cand = identity.describe(picked, st.graph, st.game, st.projection, "label")
+    existing = store.find(name)
+    verb = "would name" if dry_run else ("re-anchored" if existing else "named")
+    head = (
+        f"{verb} {cand.size} machine(s) as {name!r} at "
+        f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)} "
+        f"(spread {cand.spread_m:.0f}m): {cand.name_hint()}"
+    )
+    warn = [f"overlaps {other!r} on {n} machine(s)" for other, n in sorted(stolen.items())]
+    if existing and not dry_run:
+        kept = len(set(existing.anchors) & set(picked))
+        warn.append(
+            f"was {len(existing.anchors)} machine(s), {kept} kept, "
+            f"{len(existing.anchors) - kept} dropped"
+        )
+
+    if dry_run:
+        return render.envelope(f"# {head}", "", warn + ["dry run: nothing written"])
+
+    when = st.header.get("save_datetime") or st.header.get("filename") or ""
+    label = store.put(name, picked, notes=notes, when=str(when))
+    label.centroid = cand.centroid
+    label.signature = dict(cand.buildings)
+    path = store.save()
+    return render.envelope(f"# {head}", f"stored in {path}", warn)
+
+
+@mcp.tool(structured_output=False)
+def list_factories(save: str | None = None, world: str | None = None) -> str:
+    """Named factories for this world, with how much of each is still standing."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from .graph import identity
+
+    store = st.labels
+    if not store.labels:
+        return render.envelope(
+            f"# {st.age_note}\n# no factories named yet for world {store.world_id!r}",
+            "Run factory_map to see candidates, then name_factory to persist one.",
+        )
+    machines = set(st.graph.machines())
+    rows = []
+    for label in sorted(store.labels, key=lambda x: -len(x.anchors)):
+        alive = sorted(set(label.anchors) & machines)
+        cand = identity.describe(alive, st.graph, st.game, st.projection, "label")
+        rows.append(
+            (
+                label.name,
+                len(label.anchors),
+                f"{len(alive)}/{len(label.anchors)}",
+                f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
+                f"{cand.spread_m:.0f}m",
+                cand.name_hint()[:40],
+                label.notes[:40],
+            )
+        )
+    loose = len(identity.unassigned(st.graph, store.assigned()))
+    return render.envelope(
+        f"# {st.age_note}\n# {len(store.labels)} named, {loose} machine(s) unlabelled",
+        render.table(
+            ("name", "anchors", "alive", "x,y(m)", "spread", "makes", "notes"), rows
+        ),
+        [
+            f"{d['name']}: {d['status']} (recall {d['recall']})"
+            for d in store.review(machines)
+        ],
+    )
+
+
+@mcp.tool(structured_output=False)
+def forget_factory(name: str, save: str | None = None, world: str | None = None) -> str:
+    """Delete a factory label. The machines themselves are untouched."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    store = st.labels
+    label = store.find(name)
+    if label is None:
+        known = ", ".join(x.name for x in store.labels) or "(none)"
+        return f"! no label named {name!r}. Known: {known}"
+    store.remove(label.name)
+    store.save()
+    return f"forgot {label.name!r} ({len(label.anchors)} machine(s) released)"
 
 
 # ============================================================ spatial

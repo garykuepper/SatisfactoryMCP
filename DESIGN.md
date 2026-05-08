@@ -471,6 +471,71 @@ Normative gotchas:
 `Build_*` classes that appear in **no** actor header — 103 classes are built, not the 86 visible via
 headers alone.
 
+### 6.1 The factory graph — a first-class structure
+
+Schema **6** adds a `graph` block to the projection, interned to keep it small (553 KB total for
+6,100 actors / 11,554 material edges / 1,276 power edges):
+
+```json
+"graph": {
+  "actors":   ["Build_ConstructorMk1_C_2147441119", ...],   // short instance names
+  "roles":    ["Output1", "Input1", "ConveyorAny0", ...],
+  "material": [[i, j, role_i, role_j], ...],
+  "power":    [[i, j], ...]
+}
+```
+
+Three edge kinds, kept separate because **no single one identifies a factory**:
+
+| layer | count | what it is | why it is not enough |
+|---|---|---|---|
+| material | 11,554 | belts and pipes; orientable, since the connector role says `Output*` vs `Input*` | a mature base is one belt web → 35 components, 19 of them fragments |
+| power | 1,276 | wires, with **poles** and **towers** distinguished (tower wires median 208 m vs 34 m for poles, and carry no machines) | dropping towers separates outposts but leaves the base as **one 476-machine island** |
+| transport | 0 here | trains, drones, trucks | modelled from the start: a transport link is a deliberate connection **between** factories, so it belongs on a boundary |
+
+`build_graph` seeds nodes from `machines`/`extractors`/`generators` as well as from the edge list.
+The interned actor list is derived from *edges*, so the **6 of 563** machines wired to nothing would
+otherwise be absent from the graph entirely — and an isolated machine is exactly what a coverage
+report exists to surface.
+
+### 6.2 Identifying factories — measured, not assumed
+
+Checked against the player's own list of what they built on a 316-hour save:
+
+- **material components** → 35 pieces. Splits one Christmas factory into a Tree Branch line and a
+  Candy Cane line. Too fine.
+- **power islands, towers removed** → 9, one holding 476 machines across 2,603 m. Separates outposts
+  cleanly, does not subdivide the base at all. Too coarse.
+- **spatial clustering alone** → chains through shared infrastructure; merged an oil plant 900 m out
+  into the base. Wrong shape.
+
+What works is the signal the first two lack: **what a machine makes**. Steel (50 machines, 95 m) and
+Tier 1&2 (98 machines, 307 m) are one belt-connected mass and one power island, but they sit 600 m
+apart and make different things. A grown-together base defeats topology; it does not defeat geometry
+plus recipe.
+
+So bases and lines are offered as **candidates**, never as an answer — `factory_map` prints both and
+flags where they disagree. Product alone over-collects too: 17 machines make Concrete, 15 of them a
+construction feed inside the steel site.
+
+### 6.3 Labels — anchor sets matched by recall
+
+A label stores the **set of machine instance ids** it was created from (verified stable: 365/365 kept
+id and position across two saves). Matching is **recall**, `|anchors ∩ candidate| / |anchors|`, not
+Jaccard — Jaccard punishes growth, and extending a factory is the most common thing that happens to
+one. Match at ≥ 0.5, re-anchor at ≥ 0.8 with no competing label.
+
+Labels attach to **arbitrary machine sets**, not to a base or a line, because a real factory is
+sometimes several components (Christmas) and sometimes part of one (steel inside the base).
+
+Persisted per world under `saveIdentifier` in `user_data_dir/labels/`, deliberately **not** under
+`cache_dir` (which `cache_prune` wipes) and **not** in the repo.
+
+Selection uses a small query language (`graph/select.py`): `product:`, `recipe:`, `building:`,
+`near:x,y@m` or `near:<label>@m`, `base:n`, `line:n`, `label:`, `all`. Terms are ANDed, commas inside
+one term are ORed, a leading `-` excludes. Intersection rather than union because carving is
+subtractive in practice — the player starts from something too big and narrows it.
+
 ---
 
 ## 7. Spatial model
@@ -914,6 +979,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
+**Factories:** `factory_map`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`

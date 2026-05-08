@@ -6,7 +6,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from platformdirs import user_cache_dir
+from platformdirs import user_cache_dir, user_data_dir
 
 PKG_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PKG_ROOT.parents[1]
@@ -58,5 +58,18 @@ def cache_dir() -> Path:
     LOCALAPPDATA, not APPDATA: this must not roam.
     """
     d = Path(user_cache_dir("satisfactory-mcp", appauthor=False))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@lru_cache(maxsize=1)
+def labels_dir() -> Path:
+    """Factory names the player typed. NOT the cache, and NOT the repo.
+
+    Deliberately separate from ``cache_dir``: cache_prune deletes everything under
+    that tree, and a hand-written name is not regenerable. Out of the repo because it
+    belongs to a save file, not to the source.
+    """
+    d = Path(user_data_dir("satisfactory-mcp", appauthor=False)) / "labels"
     d.mkdir(parents=True, exist_ok=True)
     return d

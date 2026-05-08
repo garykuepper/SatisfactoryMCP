@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -214,10 +214,30 @@ def extract(path: str) -> dict:
         # Char_Player_C carries the pawn's transform. BP_PlayerState_C sits at the
         # origin and is NOT a position -- reading it would put every player at (0,0).
         "players": [],
+        # Connectivity, interned so the projection stays small: ~11.5k material edges
+        # and ~1.3k power edges would be megabytes as repeated instanceNames.
+        "graph": {"actors": [], "roles": [], "material": [], "power": []},
         "warnings": [],
     }
     counts: dict[str, int] = {}
     n_objects = 0
+
+    # --- connectivity interning -------------------------------------------
+    actor_ix: dict[str, int] = {}
+    role_ix: dict[str, int] = {}
+    material_edges: list[list[int]] = []
+    wire_ends: dict[str, list[tuple[str, str]]] = {}
+
+    def actor_id(name: str) -> int:
+        short = name.rsplit(".", 1)[-1]
+        if short not in actor_ix:
+            actor_ix[short] = len(actor_ix)
+        return actor_ix[short]
+
+    def role_id(name: str) -> int:
+        if name not in role_ix:
+            role_ix[name] = len(role_ix)
+        return role_ix[name]
 
     for type_path, header, obj in iter_objects(save):
         n_objects += 1
@@ -230,6 +250,27 @@ def extract(path: str) -> dict:
         if "mInventoryStacks" in p:
             bucket = inventory_bucket(str(instance))
             _accumulate_inventory(p["mInventoryStacks"], out["inventories"][bucket])
+
+        # Factory connections live on COMPONENTS. instanceName is
+        # "<...>.Build_X_C_123.Output1", so the owner is the second-to-last segment
+        # and the connector role is the last -- the role is what orients the edge.
+        target = p.get("mConnectedComponent")
+        target_path = ref_path(target)
+        if target_path and "." in instance:
+            material_edges.append(
+                [
+                    actor_id(instance.rsplit(".", 2)[-2]),
+                    actor_id(target_path.rsplit(".", 2)[-2]),
+                    role_id(instance.rsplit(".", 1)[-1]),
+                    role_id(target_path.rsplit(".", 1)[-1]),
+                ]
+            )
+        for wire in p.get("mWires") or []:
+            wire_path = ref_path(wire)
+            if wire_path and "." in instance:
+                wire_ends.setdefault(wire_path, []).append(
+                    (instance.rsplit(".", 2)[-2], instance.rsplit(".", 1)[-1])
+                )
 
         if not cls:
             continue
@@ -346,6 +387,20 @@ def extract(path: str) -> dict:
             record["fuel"] = ref_class(p.get("mCurrentFuelClass"))
             out["generators"].append(record)
 
+    # A power wire always joins exactly two connections; anything else is a
+    # half-built or orphaned line and is dropped rather than guessed at.
+    power_edges = [
+        [actor_id(a[0]), actor_id(b[0])]
+        for ends in wire_ends.values()
+        if len(ends) == 2
+        for a, b in [ends]
+    ]
+    out["graph"] = {
+        "actors": [name for name, _ in sorted(actor_ix.items(), key=lambda kv: kv[1])],
+        "roles": [name for name, _ in sorted(role_ix.items(), key=lambda kv: kv[1])],
+        "material": material_edges,
+        "power": power_edges,
+    }
     out["building_counts"] = dict(sorted(counts.items()))
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])

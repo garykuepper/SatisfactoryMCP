@@ -33,6 +33,28 @@ class WorldState:
         return self.projection.get("header", {})
 
     @property
+    def world_id(self) -> str:
+        """Stable per-world key. Labels hang off this, so it must survive autosave
+        rotation and renaming -- which saveIdentifier does and the filename does not."""
+        h = self.header
+        return h.get("save_identifier") or f"session:{h.get('session_name') or '?'}"
+
+    @cached_property
+    def graph(self):
+        """The factory graph. Built once per state, since identity, health and layout
+        all want it."""
+        from ..graph.build import build_graph
+
+        return build_graph(self.projection)
+
+    @cached_property
+    def labels(self):
+        """Persisted factory names for this world."""
+        from ..graph.labels import LabelStore
+
+        return LabelStore.load(self.world_id, self.header.get("session_name") or "")
+
+    @property
     def age_note(self) -> str:
         """Human-readable provenance. Always shown: autosaves rotate every ~5 min
         and can catch the factory mid-restructure."""
