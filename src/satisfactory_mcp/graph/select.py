@@ -203,6 +203,21 @@ def _resolve(
     raise SelectorError(f"unknown selector {kind!r}. Use one of: {SELECTOR_HELP}")
 
 
+def expand_to_components(machines: set[str], graph: FactoryGraph) -> set[str]:
+    """Pull in every machine belted or piped to one already selected.
+
+    The complement of ``split``: some factories are defined by what feeds them rather
+    than by what they make. The player's concrete setup is one miner into storage into
+    one constructor into storage -- a self-contained 10-actor component that no product
+    or radius term describes, but that the belt layer delimits exactly.
+    """
+    out = set(machines)
+    for comp in graph.machine_components("material"):
+        if out & set(comp):
+            out |= set(comp)
+    return out
+
+
 def select_machines(
     selectors: list[str],
     graph: FactoryGraph,
@@ -210,6 +225,7 @@ def select_machines(
     projection: dict,
     store: LabelStore | None = None,
     split: bool = False,
+    expand: bool = False,
 ) -> list[str]:
     """Intersect the positive terms, then subtract the negated ones.
 
@@ -217,6 +233,10 @@ def select_machines(
     escape hatch for a product that is made in several places at once -- 17 machines
     make Concrete across three sites, and a bare ``product:Concrete`` would name all
     of them as one factory.
+
+    With ``expand`` the result grows to whole material components first. Exclusions are
+    applied AFTER expanding, so ``-label:x`` still keeps a neighbouring factory out of
+    the result rather than being undone by the expansion that follows it.
     """
     if not selectors:
         raise SelectorError("no selector given. " + SELECTOR_HELP)
@@ -238,6 +258,8 @@ def select_machines(
 
     if include is None:
         raise SelectorError("only exclusions given; add something to start from, e.g. 'all'")
+    if expand:
+        include = expand_to_components(include, graph)
     result = include - exclude
     if split and result:
         groups = cluster_machines(sorted(result), projection)

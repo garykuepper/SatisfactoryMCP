@@ -558,6 +558,7 @@ def select_machines(
     save: str | None = None,
     world: str | None = None,
     split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+    expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
 ) -> str:
     """Preview which machines a selector picks, before naming them.
 
@@ -574,7 +575,7 @@ def select_machines(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels, split=split
+            select, st.graph, st.game, st.projection, st.labels, split=split, expand=expand
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"
@@ -616,6 +617,7 @@ def name_factory(
     save: str | None = None,
     world: str | None = None,
     split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+    expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
     dry_run: bool = False,
 ) -> str:
     """Name a set of machines and persist it for this world.
@@ -633,7 +635,7 @@ def name_factory(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels, split=split
+            select, st.graph, st.game, st.projection, st.labels, split=split, expand=expand
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"

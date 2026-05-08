@@ -278,3 +278,23 @@ def test_label_files_are_not_written_into_the_cache():
 
     assert config.cache_dir() not in config.labels_dir().parents
     assert config.labels_dir() != config.cache_dir()
+
+
+def test_expand_pulls_in_the_whole_belt_component(graph, game, projection):
+    """Some factories are defined by what feeds them. The player's concrete setup is a
+    miner into storage into one constructor -- no product or radius term describes it,
+    but the belt component delimits it exactly."""
+    picked = _sel(["product:Concrete"], graph, game, projection, expand=True)
+    assert set(STEEL) <= set(picked), "the belt web reaches the foundries"
+    assert ORPHAN not in picked, "an unconnected machine has no component to expand into"
+
+
+def test_exclusions_are_applied_after_expanding(graph, game, projection):
+    """Otherwise expansion would silently undo the exclusion that was the whole point
+    of writing '-label:...'."""
+    store = LabelStore(world_id="TESTWORLD")
+    store.put("steel factory", STEEL)
+    picked = _sel(
+        ["product:Concrete", "-label:steel factory"], graph, game, projection, store, expand=True
+    )
+    assert not set(STEEL) & set(picked)

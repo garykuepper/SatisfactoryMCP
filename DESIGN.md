@@ -536,6 +536,17 @@ Selection uses a small query language (`graph/select.py`): `product:`, `recipe:`
 one term are ORed, a leading `-` excludes. Intersection rather than union because carving is
 subtractive in practice — the player starts from something too big and narrows it.
 
+Two orthogonal modifiers, because a factory is delimited from either end:
+
+- `split` keeps only the largest spatial cluster — the escape hatch when one product is made in
+  several places (17 concrete machines across 3 sites).
+- `expand` grows the result to whole material components — the escape hatch when a factory is defined
+  by **what feeds it**. The concrete setup is one limestone miner → storage → constructor → storage,
+  a self-contained 10-actor component that no product or radius term describes.
+
+Exclusions apply **after** expanding, or `-label:x` would be silently undone by the expansion
+following it.
+
 ---
 
 ## 7. Spatial model
