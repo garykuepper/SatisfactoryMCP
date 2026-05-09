@@ -55,6 +55,13 @@ class WorldState:
         return build_structures(self.projection)
 
     @cached_property
+    def proposals(self):
+        """Coherence-scored factory proposals. ~0.3 s, so built once per state."""
+        from ..graph.cohere import propose
+
+        return propose(self.graph, self.game, self.projection, self.structures)
+
+    @cached_property
     def labels(self):
         """Persisted factory names for this world."""
         from ..graph.labels import LabelStore

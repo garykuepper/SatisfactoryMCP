@@ -646,11 +646,22 @@ and every merge is qualitatively right.
 Attachment runs *after* linkage, so an absorbed dependent may sit beyond the span cap — a
 miner feeding a plant from 400 m is still that plant's.
 
+**`proposal:n` closes the loop.** The workflow is propose-then-name, so a proposal has to
+be selectable. Reconstructing one by hand from a centroid and a radius does not work: on
+the real save, `near:-442,-1406@120` around a 15-machine proposal picked up **137**
+machines, 82 of them belonging to the factory next door.
+
 **A proposal is not a claim that something is a factory.** The space-elevator-parts area is
 a temporary setup the player throws up to hand-build parts; it is neither part of tier 1&2
-nor a factory in its own right. Keeping it a separate, unnamed proposal is the correct
-outcome for exactly that reason — the tool proposes, the player names, and what goes
-unnamed stays visible in the coverage report rather than being silently filed somewhere.
+nor a factory in its own right. Keeping it a separate proposal is the correct outcome for
+exactly that reason — the tool proposes, the player names, and what goes unnamed stays
+visible in the coverage report rather than being silently filed somewhere.
+
+Naming is also how a player records that something is *deliberately* not a factory. The
+label carries `notes`, so "kept around to hand-build parts and mess with — idle is expected
+here" is a durable statement that survives into every later report. `factory_health` will
+need exactly that distinction: 304 of 580 machines are idle on this save, and idleness in a
+scratch area is not a fault.
 
 **Caveat no internal cross-validation removes:** one save, one player's building style.
 LOO tests generalisation across *that player's* factories, not across players. The
@@ -671,7 +682,7 @@ Persisted per world under `saveIdentifier` in `user_data_dir/labels/`, deliberat
 `cache_dir` (which `cache_prune` wipes) and **not** in the repo.
 
 Selection uses a small query language (`graph/select.py`): `product:`, `recipe:`, `building:`,
-`near:x,y@m` or `near:<label>@m`, `base:n`, `line:n`, `label:`, `all`. Terms are ANDed, commas inside
+`near:x,y@m` or `near:<label>@m`, `base:n`, `line:n`, `slab:n`, `proposal:n`, `label:`, `all`. Terms are ANDed, commas inside
 one term are ORed, a leading `-` excludes. Intersection rather than union because carving is
 subtractive in practice — the player starts from something too big and narrows it.
 

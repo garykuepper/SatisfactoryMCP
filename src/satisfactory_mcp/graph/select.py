@@ -12,6 +12,7 @@ can say which machines they mean without listing 50 instance ids. Hence selector
     base:0                        power island, largest first
     line:3                        material component, largest first
     slab:2                        foundation platform, largest first
+    proposal:7                    the nth cluster from propose_factories
     label:steel factory           what a label already covers
     all                           every machine
 
@@ -43,6 +44,7 @@ __all__ = ["SELECTOR_HELP", "SelectorError", "select_machines"]
 SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
     "near:<x,y@radius_m or label@radius_m> | base:<n> | line:<n> | slab:<n> | "
+    "proposal:<n> | "
     "label:<name> | all. Terms are ANDed; comma-separated values inside one term "
     "are ORed; prefix a term with '-' to exclude it"
 )
@@ -167,6 +169,7 @@ def _resolve(
     projection: dict,
     store: LabelStore | None,
     structures=None,
+    proposals=None,
 ) -> set[str]:
     if term.casefold() in ("all", "*"):
         return set(graph.machines())
@@ -211,6 +214,16 @@ def _resolve(
         if not hits:
             raise SelectorError(f"slab:{index} is a platform with no machines standing on it")
         return hits
+    if kind == "proposal":
+        if proposals is None:
+            raise SelectorError("proposal: needs the proposal list; re-read the save")
+        try:
+            index = int(value)
+        except ValueError as exc:
+            raise SelectorError(f"proposal:{value!r} needs an integer index") from exc
+        if not 0 <= index < len(proposals):
+            raise SelectorError(f"proposal:{index} out of range (0..{len(proposals) - 1})")
+        return set(proposals[index].machines)
     if kind == "label":
         label = store.find(value) if store else None
         if label is None:
@@ -245,6 +258,7 @@ def select_machines(
     split: bool = False,
     expand: bool = False,
     structures=None,
+    proposals=None,
 ) -> list[str]:
     """Intersect the positive terms, then subtract the negated ones.
 
@@ -268,7 +282,13 @@ def select_machines(
             continue
         negate = term.startswith("-")
         resolved = _resolve(
-            term[1:].strip() if negate else term, graph, game, projection, store, structures
+            term[1:].strip() if negate else term,
+            graph,
+            game,
+            projection,
+            store,
+            structures,
+            proposals,
         )
         if negate:
             exclude |= resolved

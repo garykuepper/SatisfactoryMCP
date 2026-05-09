@@ -618,3 +618,33 @@ def test_a_dependent_that_manufactures_is_a_factory_not_an_outlier():
     # Drop the guard and the same wiring cluster is swallowed, which is the bug.
     swallowed = attach_dependents(clusters, graph, manufacturing=set())
     assert len(swallowed) == 1
+
+
+def test_proposal_selector_names_exactly_what_was_proposed():
+    """The workflow is propose-then-name, so a proposal has to be selectable. Rebuilding
+    it by hand from a centroid and a radius does not work: on the real save,
+    near:-442,-1406@120 around a 15-machine proposal picked up 137 machines, 82 of them
+    belonging to the factory next door."""
+    from satisfactory_mcp.graph.cohere import Proposal
+    from satisfactory_mcp.graph.select import select_machines
+
+    proposals = [
+        Proposal(machines=sorted(STEEL)),
+        Proposal(machines=sorted(STEEL_CONCRETE)),
+    ]
+    graph = build_graph(_slab_projection())
+    picked = select_machines(
+        ["proposal:1"], graph, None, _slab_projection(), None, proposals=proposals
+    )
+    assert picked == sorted(STEEL_CONCRETE)
+
+
+def test_proposal_selector_reports_a_bad_index():
+    from satisfactory_mcp.graph.cohere import Proposal
+    from satisfactory_mcp.graph.select import SelectorError, select_machines
+
+    graph = build_graph(_slab_projection())
+    with pytest.raises(SelectorError, match="out of range"):
+        select_machines(["proposal:9"], graph, None, {}, None, proposals=[Proposal(machines=["a"])])
+    with pytest.raises(SelectorError, match="needs the proposal list"):
+        select_machines(["proposal:0"], graph, None, {}, None)

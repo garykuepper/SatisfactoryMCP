@@ -614,8 +614,12 @@ def propose_factories(
     from .graph import cohere, identity
 
     store = st.labels
-    proposals = cohere.propose(
-        st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m
+    proposals = (
+        st.proposals
+        if max_span_m == cohere.MAX_SPAN_M
+        else cohere.propose(
+            st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m
+        )
     )
     rows = []
     shown = 0
@@ -689,6 +693,7 @@ def select_machines(
         picked = gsel.select_machines(
             select, st.graph, st.game, st.projection, st.labels,
             split=split, expand=expand, structures=st.structures,
+            proposals=st.proposals,
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"
@@ -750,6 +755,7 @@ def name_factory(
         picked = gsel.select_machines(
             select, st.graph, st.game, st.projection, st.labels,
             split=split, expand=expand, structures=st.structures,
+            proposals=st.proposals,
         )
     except gsel.SelectorError as exc:
         return f"! {exc}"
