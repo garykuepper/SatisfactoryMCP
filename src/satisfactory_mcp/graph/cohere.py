@@ -58,7 +58,7 @@ from ..docs.model import GameData
 from .model import FactoryGraph
 from .structure import Structures
 
-__all__ = ["MAX_SPAN_M", "WEIGHTS", "Proposal", "propose"]
+__all__ = ["MAX_SPAN_M", "MIN_EXCLUSIVITY", "WEIGHTS", "Proposal", "propose"]
 
 #: Signal weights. Deliberately round: see the ablation above, they are not load-bearing.
 WEIGHTS = {
@@ -76,6 +76,16 @@ PRIOR = 1.0
 #: Proximity threshold for the ``near`` signal, in metres.
 NEAR_M = 100.0
 
+#: A dependent is absorbed when this share of everything it reaches over belts and pipes
+#: lies in one other cluster. A water-pump farm scores 94%: 16 of the 17 machines its
+#: pipes reach are the coal generators it exists to feed.
+MIN_EXCLUSIVITY = 0.8
+
+#: ...but only if it is at most this fraction of the cluster absorbing it. THE guard that
+#: makes this "absorb a dependent" rather than "merge two peers": without it, precision
+#: falls from 1.000 to 0.709 as large factories that mostly feed each other get welded.
+MAX_DEPENDENT_RATIO = 0.5
+
 #: No proposal may span more than this. THE load-bearing constant -- removing it drops
 #: precision from 1.000 to 0.776. Note it also caps a proposal's diameter, so a genuinely
 #: sprawling factory (the player's oil setup spans 381 m) is proposed in pieces.
@@ -91,6 +101,10 @@ class Proposal:
     cohesion: float = 0.0
     evidence: Counter = field(default_factory=Counter)
     seeded_by: str = ""
+    #: Sizes of the pieces this was assembled from, largest first. More than one entry
+    #: means dependents were absorbed -- "47 = 32 + 6 + 6 + 2 + 1" is a coal plant that
+    #: reclaimed its water pumps and its miners.
+    parts: list[int] = field(default_factory=list)
 
     @property
     def size(self) -> int:
@@ -149,6 +163,80 @@ def _feature_fn(
     return features
 
 
+def attach_dependents(
+    clusters: list[list[str]],
+    graph: FactoryGraph,
+    min_exclusivity: float = MIN_EXCLUSIVITY,
+    max_ratio: float = MAX_DEPENDENT_RATIO,
+    rounds: int = 3,
+) -> list[list[str]]:
+    """Absorb clusters whose entire material existence serves one other cluster.
+
+    Complete linkage cannot express this, and the coal plant is the proof. Its water
+    pumps sit 21-184 m away, inside the span cap, and 94% of what their pipes reach is
+    that plant -- but the plant is fed by TWO separate pipe networks, so every pump
+    against a generator in the other network scores negative, and complete linkage takes
+    the MINIMUM over cross pairs. One blind pair vetoes the merge.
+
+    Exclusivity is a property of a cluster, not of a pair, so it cannot be a feature; it
+    has to be a second pass. Asymmetric on purpose: a pump farm belongs to the plant it
+    feeds, but a plant does not belong to its pumps.
+    """
+    adjacency = graph.adjacency("material")
+    groups = [list(c) for c in clusters]
+
+    def reaches(seed: list[str]) -> set[str]:
+        seen, frontier, out = set(seed), list(seed), set()
+        while frontier:
+            nxt = []
+            for node in frontier:
+                for edge in adjacency.get(node, ()):
+                    other = edge.other(node)
+                    if other in seen:
+                        continue
+                    seen.add(other)
+                    nxt.append(other)
+                    if graph.is_machine(other):
+                        out.add(other)
+            frontier = nxt
+        return out
+
+    for _ in range(rounds):
+        owner = {m: k for k, c in enumerate(groups) for m in c}
+        wanted: dict[int, int] = {}
+        for k, members in enumerate(groups):
+            outside = reaches(members) - set(members)
+            targets = Counter(owner[m] for m in outside if m in owner)
+            targets.pop(k, None)
+            if not targets:
+                continue
+            best, hits = targets.most_common(1)[0]
+            if hits / len(outside) < min_exclusivity:
+                continue
+            if len(members) > max_ratio * len(groups[best]):
+                continue
+            wanted[k] = best
+        if not wanted:
+            break
+        parent = list(range(len(groups)))
+
+        def find(x: int, parent: list[int] = parent) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for child, host in wanted.items():
+            a, b = find(child), find(host)
+            if a != b:
+                parent[a] = b
+        merged: dict[int, list[str]] = defaultdict(list)
+        for k, members in enumerate(groups):
+            merged[find(k)] += members
+        groups = list(merged.values())
+    return groups
+
+
 def propose(
     graph: FactoryGraph,
     game: GameData,
@@ -158,6 +246,7 @@ def propose(
     weights: dict[str, float] | None = None,
     max_span_m: float = MAX_SPAN_M,
     prior: float = PRIOR,
+    attach: bool = True,
 ) -> list[Proposal]:
     """Agglomerate machines into proposed factories, most cohesive first.
 
@@ -230,20 +319,30 @@ def propose(
             a, b = (min(i, k), max(i, k)), (min(j, k), max(j, k))
             link[a] = min(link.get(a, math.inf), link.get(b, math.inf))
 
+    linked = [[pool[x] for x in clusters[i]] for i in sorted(alive)]
+    seeds = {frozenset(c): seeded[i] for i, c in zip(sorted(alive), linked, strict=False)}
+    pieces = {frozenset(c): len(c) for c in linked}
+    final = attach_dependents(linked, graph) if attach else linked
+
     out: list[Proposal] = []
-    for i in sorted(alive):
-        members = [pool[x] for x in clusters[i]]
+    for members in final:
+        held = frozenset(members)
+        parts = sorted(
+            (n for c, n in pieces.items() if c <= held), reverse=True
+        ) or [len(members)]
         evidence: Counter = Counter()
-        for x, a in enumerate(clusters[i]):
-            for b in clusters[i][x + 1 :]:
+        ids = [index[m] for m in members]
+        for x, a in enumerate(ids):
+            for b in ids[x + 1 :]:
                 for name in fired.get((min(a, b), max(a, b)), ()):
                     evidence[name] += 1
         out.append(
             Proposal(
                 machines=sorted(members),
-                cohesion=0.0 if cohesion[i] == math.inf else cohesion[i],
+                cohesion=0.0,
                 evidence=evidence,
-                seeded_by=seeded[i],
+                seeded_by=next((s for c, s in seeds.items() if c <= held), ""),
+                parts=parts,
             )
         )
     out.sort(key=lambda p: -p.size)

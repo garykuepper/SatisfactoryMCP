@@ -59,14 +59,19 @@ class Candidate:
     def name_hint(self) -> str:
         """A name from what it makes, since that is how a player refers to it.
 
-        Falls back to the building mix for generators, which have no recipe at all --
-        a coal plant would otherwise render as a blank.
+        Products only lead when they describe most of the cluster. Generators and
+        extractors run no recipe, so a coal plant that has absorbed its water pumps and
+        one stray concrete constructor has exactly ONE product across 47 machines -- and
+        rendering that as "Concrete" would be a worse name than no name at all.
         """
-        if self.products:
+        if self.products and sum(self.products.values()) * 2 >= self.size:
             return " + ".join(n for n, _ in self.products.most_common(2))
         if self.buildings:
             top, count = self.buildings.most_common(1)[0]
-            return f"{count}x {top.replace('Build_', '').replace('_C', '')}"
+            hint = f"{count}x {top.replace('Build_', '').replace('_C', '')}"
+            if self.products:
+                hint += f" + {self.products.most_common(1)[0][0]}"
+            return hint
         return "unnamed"
 
 

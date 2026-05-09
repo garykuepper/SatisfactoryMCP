@@ -521,3 +521,66 @@ def test_proposals_carry_the_evidence_that_made_them(graph, game, projection):
     assert multi, "expected at least one machine to join another"
     assert all(p.evidence for p in multi)
     assert set(multi[0].evidence) <= set(cohere.WEIGHTS)
+
+
+def test_exclusive_dependents_are_absorbed_across_a_pipe_boundary():
+    """The coal plant case. Its water pumps are 21-184 m away, inside the span cap, and
+    94% of what their pipes reach is that plant -- but the plant runs on TWO separate
+    pipe networks, so every pump against a generator in the other network scores
+    negative and complete linkage takes the MINIMUM. One blind pair vetoes the merge.
+    Exclusivity is a property of a cluster, not of a pair, so it needs a second pass."""
+    from satisfactory_mcp.graph.cohere import attach_dependents
+    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+
+    gens_a = [f"Build_GeneratorCoal_C_{i}" for i in range(3)]
+    gens_b = [f"Build_GeneratorCoal_C_{10 + i}" for i in range(3)]
+    pumps = [f"Build_WaterPump_C_{20 + i}" for i in range(2)]
+    cls = {n: n.rsplit("_", 1)[0] for n in gens_a + gens_b + pumps}
+    graph = FactoryGraph(cls=cls)
+    # Pumps share a pipe network with gens_a only; gens_b is a second, separate network.
+    for p in pumps:
+        for g in gens_a:
+            graph.material.append(Edge(a=p, b=g))
+    for x, y in pairwise(gens_b):
+        graph.material.append(Edge(a=x, b=y))
+
+    plant = gens_a + gens_b
+    out = attach_dependents([plant, list(pumps)], graph)
+    assert len(out) == 1, "the pumps exist only to feed that plant"
+    assert set(out[0]) == set(plant) | set(pumps)
+
+
+def test_a_peer_is_not_absorbed_however_exclusive():
+    """The size guard. Without it precision falls 1.000 -> 0.709, because two large
+    factories that mostly feed each other get welded into one."""
+    from satisfactory_mcp.graph.cohere import attach_dependents
+    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+
+    left = [f"Build_SmelterMk1_C_{i}" for i in range(4)]
+    right = [f"Build_ConstructorMk1_C_{10 + i}" for i in range(4)]
+    cls = {n: n.rsplit("_", 1)[0] for n in left + right}
+    graph = FactoryGraph(cls=cls)
+    for a in left:
+        for b in right:
+            graph.material.append(Edge(a=a, b=b))  # 100% exclusive, both directions
+
+    out = attach_dependents([list(left), list(right)], graph)
+    assert len(out) == 2, "equals stay equals; only dependents are absorbed"
+
+
+def test_name_hint_does_not_let_one_recipe_outvote_a_power_plant():
+    """32 generators run no recipe. One absorbed concrete constructor must not rename
+    the coal plant to 'Concrete'."""
+    from collections import Counter
+
+    from satisfactory_mcp.graph.identity import Candidate
+
+    cand = Candidate(
+        machines=[f"m{i}" for i in range(33)],
+        source="test",
+        products=Counter({"Concrete": 1}),
+        buildings=Counter({"Build_GeneratorCoal_C": 32, "Build_ConstructorMk1_C": 1}),
+    )
+    hint = cand.name_hint()
+    assert hint.startswith("32x GeneratorCoal")
+    assert "Concrete" in hint, "the stray recipe is still worth mentioning, just not first"

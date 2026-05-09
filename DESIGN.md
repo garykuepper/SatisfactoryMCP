@@ -606,8 +606,35 @@ Two results against intuition:
    Complete linkage requires *every* cross pair to clear the bar. The power-island veto
    was measured redundant and is not applied.
 
-`MAX_SPAN_M = 250` caps a proposal's diameter, so a genuinely sprawling factory (the oil
-setup spans 381 m) is proposed in pieces. That is the deliberate trade for precision 1.000.
+`MAX_SPAN_M = 250` caps *linkage* distance, so a genuinely sprawling factory is proposed
+in pieces. That is the deliberate trade for precision 1.000.
+
+**Exclusive dependents are absorbed in a second pass**, because exclusivity is a property
+of a cluster and no pairwise score can express it. The coal plant is the proof: its water
+pumps sit 21–184 m away, well inside the span cap, and 94 % of everything their pipes
+reach is that plant — but the plant runs on **two separate pipe networks**, so every pump
+against a generator in the *other* network scores negative, and complete linkage takes the
+minimum over cross pairs. One blind pair vetoed the merge.
+
+A cluster is absorbed when ≥ `MIN_EXCLUSIVITY` (0.8) of the machines it reaches over
+material edges lie in one other cluster, **and** it is at most `MAX_DEPENDENT_RATIO` (0.5)
+of that cluster's size. The size guard is not optional:
+
+| variant | clusters | precision | recall |
+|---|---|---|---|
+| no attachment | 40 | 1.000 | 0.972 |
+| exclusivity ≥ 0.9, no size guard | 26 | **0.709** | 0.972 |
+| exclusivity ≥ 0.8, no size guard | 21 | **0.711** | 0.979 |
+| **exclusivity ≥ 0.8, ratio ≤ 0.5** | **30** | **1.000** | 0.972 |
+
+Without it, two large factories that mostly feed each other are welded together. With it,
+the coal plant becomes `32 + 6 + 6 + 2 + 1` — its generators, both water-pump farms, its
+miners and a stray constructor. Recall against the twelve labels cannot move, because none
+of the absorbed machines was ever labelled; the evidence is that precision holds at 1.000
+and every merge is qualitatively right.
+
+Attachment runs *after* linkage, so an absorbed dependent may sit beyond the span cap — a
+miner feeding a plant from 400 m is still that plant's.
 
 **Caveat no internal cross-validation removes:** one save, one player's building style.
 LOO tests generalisation across *that player's* factories, not across players. The

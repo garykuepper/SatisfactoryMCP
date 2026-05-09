@@ -633,6 +633,7 @@ def propose_factories(
                 pr.size,
                 f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
                 f"{cand.spread_m:.0f}m",
+                "+".join(str(x) for x in pr.parts) if len(pr.parts) > 1 else pr.size,
                 "+".join(n for n, _ in pr.evidence.most_common(3)),
                 ", ".join(names)[:26] or "-",
                 cand.name_hint()[:34],
@@ -644,15 +645,20 @@ def propose_factories(
         f"# {st.age_note}\n# {len(proposals)} proposal(s) over "
         f"{len(st.graph.machines())} machines; {covered} already named",
         render.table(
-            ("#", "machines", "x,y(m)", "spread", "evidence", "labels", "makes"),
+            ("#", "machines", "x,y(m)", "spread", "parts", "evidence", "labels", "makes"),
             rows,
             total=total,
             limit=limit,
         ),
         [
             (
-                f"no proposal may span more than {max_span_m:.0f}m, so a sprawling "
-                "factory is offered in pieces -- raise max_span_m if yours is bigger"
+                f"clusters only LINK within {max_span_m:.0f}m, so a sprawling factory is "
+                "offered in pieces -- raise max_span_m if yours is bigger"
+            ),
+            (
+                "a 'parts' column with more than one number means dependents were "
+                "absorbed: a cluster whose belts and pipes lead almost only into one "
+                "other factory joins it, however far away it sits"
             ),
         ],
     )
