@@ -58,7 +58,14 @@ from ..docs.model import GameData
 from .model import FactoryGraph
 from .structure import Structures
 
-__all__ = ["MAX_SPAN_M", "MIN_EXCLUSIVITY", "WEIGHTS", "Proposal", "propose"]
+__all__ = [
+    "MAX_DEPENDENT_RECIPES",
+    "MAX_SPAN_M",
+    "MIN_EXCLUSIVITY",
+    "WEIGHTS",
+    "Proposal",
+    "propose",
+]
 
 #: Signal weights. Deliberately round: see the ablation above, they are not load-bearing.
 WEIGHTS = {
@@ -81,10 +88,20 @@ NEAR_M = 100.0
 #: pipes reach are the coal generators it exists to feed.
 MIN_EXCLUSIVITY = 0.8
 
-#: ...but only if it is at most this fraction of the cluster absorbing it. THE guard that
-#: makes this "absorb a dependent" rather than "merge two peers": without it, precision
-#: falls from 1.000 to 0.709 as large factories that mostly feed each other get welded.
+#: ...but only if it is at most this fraction of the cluster absorbing it. Without this,
+#: precision falls from 1.000 to 0.709 as large factories that mostly feed each other get
+#: welded together.
 MAX_DEPENDENT_RATIO = 0.5
+
+#: ...and only if it MANUFACTURES almost nothing. Infrastructure -- miners, water pumps,
+#: generators -- runs no recipe at all, so a cluster with several machines actually making
+#: something is a factory in its own right and is never absorbed however exclusively it
+#: feeds one. Size alone cannot express this: the player's space-elevator-parts area is 15
+#: machines against a 110-machine host, comfortably inside the size ratio, but 3 of those
+#: 15 manufacture (Automated Wiring, Computer) and the other 12 are biomass burners and
+#: miners powering them. Every correctly absorbed dependent measured on the reference save
+#: has 0 or 1.
+MAX_DEPENDENT_RECIPES = 2
 
 #: No proposal may span more than this. THE load-bearing constant -- removing it drops
 #: precision from 1.000 to 0.776. Note it also caps a proposal's diameter, so a genuinely
@@ -166,8 +183,10 @@ def _feature_fn(
 def attach_dependents(
     clusters: list[list[str]],
     graph: FactoryGraph,
+    manufacturing: set[str] | None = None,
     min_exclusivity: float = MIN_EXCLUSIVITY,
     max_ratio: float = MAX_DEPENDENT_RATIO,
+    max_recipes: int = MAX_DEPENDENT_RECIPES,
     rounds: int = 3,
 ) -> list[list[str]]:
     """Absorb clusters whose entire material existence serves one other cluster.
@@ -181,8 +200,13 @@ def attach_dependents(
     Exclusivity is a property of a cluster, not of a pair, so it cannot be a feature; it
     has to be a second pass. Asymmetric on purpose: a pump farm belongs to the plant it
     feeds, but a plant does not belong to its pumps.
+
+    ``manufacturing`` is the set of machines running a recipe. A candidate dependent with
+    more than ``max_recipes`` of them is a factory rather than an outlier and is left
+    alone, whatever its exclusivity or size.
     """
     adjacency = graph.adjacency("material")
+    makes = manufacturing or set()
     groups = [list(c) for c in clusters]
 
     def reaches(seed: list[str]) -> set[str]:
@@ -214,6 +238,8 @@ def attach_dependents(
             if hits / len(outside) < min_exclusivity:
                 continue
             if len(members) > max_ratio * len(groups[best]):
+                continue
+            if sum(1 for m in members if m in makes) > max_recipes:
                 continue
             wanted[k] = best
         if not wanted:
@@ -322,7 +348,12 @@ def propose(
     linked = [[pool[x] for x in clusters[i]] for i in sorted(alive)]
     seeds = {frozenset(c): seeded[i] for i, c in zip(sorted(alive), linked, strict=False)}
     pieces = {frozenset(c): len(c) for c in linked}
-    final = attach_dependents(linked, graph) if attach else linked
+    manufacturing = {
+        r["instance"].rsplit(".", 1)[-1]
+        for r in projection.get("machines", ())
+        if r.get("recipe")
+    }
+    final = attach_dependents(linked, graph, manufacturing) if attach else linked
 
     out: list[Proposal] = []
     for members in final:

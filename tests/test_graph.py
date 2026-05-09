@@ -584,3 +584,37 @@ def test_name_hint_does_not_let_one_recipe_outvote_a_power_plant():
     hint = cand.name_hint()
     assert hint.startswith("32x GeneratorCoal")
     assert "Concrete" in hint, "the stray recipe is still worth mentioning, just not first"
+
+
+def test_a_dependent_that_manufactures_is_a_factory_not_an_outlier():
+    """The size ratio is not enough. The player's space-elevator-parts area is 15
+    machines feeding a 110-machine host almost exclusively -- inside both the
+    exclusivity and the size guard -- but 3 of those 15 make Automated Wiring and
+    Computer, and the other 12 are the biomass burners powering them. Infrastructure
+    runs no recipe; something that manufactures is its own factory."""
+    from satisfactory_mcp.graph.cohere import attach_dependents
+    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+
+    host = [f"Build_ConstructorMk1_C_{i}" for i in range(20)]
+    wiring = [f"Build_AssemblerMk1_C_{20 + i}" for i in range(3)]
+    burners = [f"Build_GeneratorBiomass_C_{30 + i}" for i in range(2)]
+    pumps = [f"Build_WaterPump_C_{40 + i}" for i in range(2)]
+    cls = {n: n.rsplit("_", 1)[0] for n in host + wiring + burners + pumps}
+    graph = FactoryGraph(cls=cls)
+    for group in (wiring + burners, pumps):
+        for a in group:
+            for b in host:
+                graph.material.append(Edge(a=a, b=b))
+
+    clusters = [list(host), wiring + burners, list(pumps)]
+    # Only the assemblers run a recipe; burners, pumps and the host's neighbours do not.
+    out = attach_dependents(clusters, graph, manufacturing=set(wiring))
+    assert any(set(c) == set(wiring) | set(burners) for c in out), (
+        "a cluster that manufactures must survive as its own proposal"
+    )
+    assert any(set(pumps) <= set(c) and set(host) <= set(c) for c in out), (
+        "pure infrastructure is still absorbed"
+    )
+    # Drop the guard and the same wiring cluster is swallowed, which is the bug.
+    swallowed = attach_dependents(clusters, graph, manufacturing=set())
+    assert len(swallowed) == 1

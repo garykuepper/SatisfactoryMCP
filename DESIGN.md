@@ -618,7 +618,17 @@ minimum over cross pairs. One blind pair vetoed the merge.
 
 A cluster is absorbed when ≥ `MIN_EXCLUSIVITY` (0.8) of the machines it reaches over
 material edges lie in one other cluster, **and** it is at most `MAX_DEPENDENT_RATIO` (0.5)
-of that cluster's size. The size guard is not optional:
+of that cluster's size, **and** at most `MAX_DEPENDENT_RECIPES` (2) of its machines run a
+recipe at all.
+
+That third guard is what size cannot express. The player's space-elevator-parts area is 15
+machines feeding a 110-machine host almost exclusively — inside both the exclusivity and
+the size guard — but 3 of those 15 manufacture (Automated Wiring, Computer) and the other
+12 are the biomass burners and miners powering them. Infrastructure runs *no* recipe:
+every correctly absorbed dependent measured on the reference save has 0 or 1. Something
+that manufactures stands on its own.
+
+The size guard is not optional either:
 
 | variant | clusters | precision | recall |
 |---|---|---|---|
@@ -635,6 +645,12 @@ and every merge is qualitatively right.
 
 Attachment runs *after* linkage, so an absorbed dependent may sit beyond the span cap — a
 miner feeding a plant from 400 m is still that plant's.
+
+**A proposal is not a claim that something is a factory.** The space-elevator-parts area is
+a temporary setup the player throws up to hand-build parts; it is neither part of tier 1&2
+nor a factory in its own right. Keeping it a separate, unnamed proposal is the correct
+outcome for exactly that reason — the tool proposes, the player names, and what goes
+unnamed stays visible in the coverage report rather than being silently filed somewhere.
 
 **Caveat no internal cross-validation removes:** one save, one player's building style.
 LOO tests generalisation across *that player's* factories, not across players. The
