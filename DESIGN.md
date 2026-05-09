@@ -570,6 +570,50 @@ So bases and lines are offered as **candidates**, never as an answer — `factor
 flags where they disagree. Product alone over-collects too: 17 machines make Concrete, 15 of them a
 construction feed inside the steel site.
 
+### 6.2b One coherence score over every signal
+
+Each signal fails alone, so combine them: score every machine pair on shared slab,
+proximity, belt component, shared product and supply link, then agglomerate. Validated
+**leave-one-factory-out** — weights fitted on eleven factories, the twelfth scored:
+
+> **precision 1.000, recall 0.945.** Ten of twelve recovered exactly. Precision was 1.000
+> on *every* fold: it never merges two factories, it only splits one.
+
+Clustering all 563 machines rather than only the labelled ones: **precision 1.000, recall
+0.972**, 40 proposals, 0.3 s.
+
+**The weights are barely load-bearing, and saying so matters more than the score.**
+Ablated on the 382 labelled machines:
+
+| variant | clusters | precision | recall | F1 |
+|---|---|---|---|---|
+| fitted log-odds | 15 | 1.000 | 0.973 | 0.986 |
+| round numbers | 15 | 1.000 | 0.973 | 0.986 |
+| every weight = 1 | 20 | 1.000 | 0.926 | 0.961 |
+| **slab weight = 0** | 15 | 1.000 | 0.973 | 0.986 |
+| random ±50%, worst of 12 | — | — | — | 0.967 |
+| no power-island veto | 15 | 1.000 | 0.973 | 0.986 |
+| **no distance cap** | 14 | **0.776** | 0.973 | 0.863 |
+| **single linkage (same score)** | 8 | **0.353** | 0.995 | **0.521** |
+
+Two results against intuition:
+
+1. Rounding the weights changes nothing, perturbing them 50 % costs 0.02 F1, and deleting
+   the *strongest* signal costs nothing — the others separate the same pairs. The weights
+   are kept for the evidence report, not because the arithmetic needs them.
+2. **The linkage rule and the distance cap are everything.** The identical score under
+   single linkage collapses to F1 0.521: one adjacent pair chains a base into a blob.
+   Complete linkage requires *every* cross pair to clear the bar. The power-island veto
+   was measured redundant and is not applied.
+
+`MAX_SPAN_M = 250` caps a proposal's diameter, so a genuinely sprawling factory (the oil
+setup spans 381 m) is proposed in pieces. That is the deliberate trade for precision 1.000.
+
+**Caveat no internal cross-validation removes:** one save, one player's building style.
+LOO tests generalisation across *that player's* factories, not across players. The
+insensitivity to weights is the real reassurance — a result that survives ±50 % on every
+parameter is not resting on a fit.
+
 ### 6.3 Labels — anchor sets matched by recall
 
 A label stores the **set of machine instance ids** it was created from (verified stable: 365/365 kept
@@ -1042,7 +1086,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
-**Factories:** `factory_map`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
+**Factories:** `factory_map`, `propose_factories`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`

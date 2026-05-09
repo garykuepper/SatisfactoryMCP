@@ -6,6 +6,7 @@ layout and diff all want it, and each was re-deriving fragments of it.
 """
 
 from .build import build_graph
+from .cohere import Proposal, propose
 from .identity import Candidate, bases, describe, lines_within, product_clusters
 from .labels import Label, LabelStore
 from .model import Edge, FactoryGraph, kind_of
@@ -18,6 +19,7 @@ __all__ = [
     "FactoryGraph",
     "Label",
     "LabelStore",
+    "Proposal",
     "SelectorError",
     "Slab",
     "Structures",
@@ -28,5 +30,6 @@ __all__ = [
     "kind_of",
     "lines_within",
     "product_clusters",
+    "propose",
     "select_machines",
 ]

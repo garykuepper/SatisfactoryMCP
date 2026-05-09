@@ -449,3 +449,75 @@ def test_slab_selector_uses_the_index_factory_map_prints():
     # groups() puts the 3-machine platform first, so the two orderings disagree here.
     assert len(sx.groups()[0]) == 3
     assert len(sx.machines_on(0)) == 1, "slab 0 is the one with the most TILES"
+
+
+# ---------------------------------------------------------------- cohere
+
+
+def test_complete_linkage_refuses_to_chain(graph, game, projection):
+    """THE reason this is not a threshold plus connected components. The steel and iron
+    sites are belt-connected and 800 m apart; single linkage welds them through the
+    concrete machines sitting between, complete linkage does not. Measured on the real
+    save the same score scores F1 0.521 chained against 0.987 unchained."""
+    from satisfactory_mcp.graph import cohere
+    from satisfactory_mcp.graph.structure import build_structures
+
+    props = cohere.propose(graph, game, projection, build_structures(projection))
+    for p in props:
+        assert not (set(STEEL) & set(p.machines) and set(IRON) & set(p.machines))
+
+
+def test_the_span_cap_bounds_a_proposal(graph, game, projection):
+    """The one load-bearing constant: removing it drops precision 1.000 -> 0.776."""
+    import math
+
+    from satisfactory_mcp.graph import cohere
+    from satisfactory_mcp.graph.structure import build_structures
+
+    pos = {
+        r["instance"].rsplit(".", 1)[-1]: r["pos"] for r in projection["machines"] if r.get("pos")
+    }
+    props = cohere.propose(graph, game, projection, build_structures(projection), max_span_m=50.0)
+    for p in props:
+        pts = [pos[m][:2] for m in p.machines if m in pos]
+        span = max((math.dist(a, b) for a in pts for b in pts), default=0.0) / 100.0
+        assert span <= 50.0 + 1e-6, f"{p.machines} spans {span:.0f}m"
+
+
+def test_every_machine_lands_in_exactly_one_proposal(graph, game, projection):
+    from satisfactory_mcp.graph import cohere
+    from satisfactory_mcp.graph.structure import build_structures
+
+    props = cohere.propose(graph, game, projection, build_structures(projection))
+    seen = [m for p in props for m in p.machines]
+    assert sorted(seen) == sorted(graph.machines())
+    assert len(seen) == len(set(seen))
+
+
+def test_weakening_the_weights_only_ever_refines(graph, game, projection):
+    """The ablation's real claim. Flattening every weight to 1 costs 0.025 F1 on the
+    real save (0.986 -> 0.961) and takes 15 clusters to 20 -- it splits, it never merges.
+    That is the direction that matters: precision stayed 1.000 under both. A partition
+    that got COARSER as evidence got weaker would mean the score is not doing what it
+    claims."""
+    from satisfactory_mcp.graph import cohere
+    from satisfactory_mcp.graph.structure import build_structures
+
+    sx = build_structures(projection)
+    base = [set(p.machines) for p in cohere.propose(graph, game, projection, sx)]
+    flat = cohere.propose(graph, game, projection, sx, weights=dict.fromkeys(cohere.WEIGHTS, 1.0))
+    for p in flat:
+        assert any(set(p.machines) <= b for b in base), (
+            f"{sorted(p.machines)} is not contained in any strongly-weighted cluster"
+        )
+
+
+def test_proposals_carry_the_evidence_that_made_them(graph, game, projection):
+    from satisfactory_mcp.graph import cohere
+    from satisfactory_mcp.graph.structure import build_structures
+
+    props = cohere.propose(graph, game, projection, build_structures(projection))
+    multi = [p for p in props if p.size > 1]
+    assert multi, "expected at least one machine to join another"
+    assert all(p.evidence for p in multi)
+    assert set(multi[0].evidence) <= set(cohere.WEIGHTS)
