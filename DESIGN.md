@@ -722,7 +722,18 @@ Two implementation notes that were both bugs first:
 
 - **The boundary walk must pass through logistics.** A material edge runs
   machine → belt → machine, so a walk that stops at the first non-machine finds no links
-  at all and every factory looks isolated.
+  at all and every factory looks isolated. `links` counts *machines reached on the far
+  side*, not edges, and is asymmetric on purpose: from a 15-machine copper setup you reach
+  16 tor-factory machines on the shared belt web, but walking back the first copper machine
+  blocks the rest.
+- **`links` is only as good as the labels.** Before re-anchoring, every factory reported
+  its neighbours as `(unlabelled)` — 92 boundary links in total — because the labels
+  under-covered their own sites (the steel *label* was 50 machines against a 108-machine
+  site). Re-anchoring the eight clean cases to their proposals took coverage from 397 to
+  **511 of 563** machines and unlabelled links from 92 to **3**. Three labels were
+  deliberately left alone: `biofuel setup` (its proposal lumps 3 biofuel machines with a
+  separate 12-machine iron line), `aluminium setup` (split across two proposals whose union
+  already equals the label), and the three that already matched exactly.
 - **Rates are nameplate at each machine's saved clock**, applied per machine, never to a
   factory total. Paused machines contribute no flow but are still members and are listed
   under `issues`. Anything whose building class cannot be resolved is reported rather than

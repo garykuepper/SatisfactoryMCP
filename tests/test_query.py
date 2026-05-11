@@ -145,3 +145,14 @@ def test_every_advertised_aspect_is_handled(game):
     src = server.factory_query.__doc__ or ""
     for aspect in ASPECTS:
         assert aspect in src, f"{aspect} is offered but undocumented"
+
+
+def test_links_count_machines_reached_not_edges(game):
+    """Deliberately asymmetric. From a small set you reach many machines of a big
+    neighbour; walking back, the first machine of the small set blocks the rest. Calling
+    the column 'connections' invited reading it as an edge count, which it is not."""
+    projection = _projection()
+    view = _view(game, projection)
+    back = _view(game, projection, machines=(OUTSIDER,), name="outsider")
+    assert sum(view.links.values()) == 1
+    assert sum(back.links.values()) >= 1

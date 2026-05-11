@@ -780,8 +780,10 @@ def factory_query(
         elif aspect == "links":
             chunks.append(
                 "## material links across the boundary\n"
+                "# machines reached on the far side, not an edge count -- asymmetric by\n"
+                "# nature, since the first machine of a small set blocks the rest\n"
                 + render.table(
-                    ("other side", "connections"), view.links.most_common(n),
+                    ("other side", "machines reached"), view.links.most_common(n),
                     total=len(view.links), limit=n,
                 )
             )

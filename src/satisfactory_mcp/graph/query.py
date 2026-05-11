@@ -73,7 +73,10 @@ class FactoryView:
     generation_mw: float = 0.0
     #: (node instance, resource, purity, extractor class, clock, resources_left)
     nodes: list[tuple] = field(default_factory=list)
-    #: other factory/label name -> number of material edges crossing the boundary
+    #: other factory/label name -> how many of ITS machines this set can reach without
+    #: passing through a third machine. Asymmetric on purpose: from a 15-machine copper
+    #: setup you reach 16 tor-factory machines on the shared belt web, but walking back
+    #: from the tor factory the first copper machine blocks the rest.
     links: Counter = field(default_factory=Counter)
     issues: list[str] = field(default_factory=list)
     centroid: tuple[float, float] = (0.0, 0.0)
