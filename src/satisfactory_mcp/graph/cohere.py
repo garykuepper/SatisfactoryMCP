@@ -51,7 +51,7 @@ parameter is not resting on a fit.
 from __future__ import annotations
 
 import math
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
@@ -62,6 +62,7 @@ __all__ = [
     "MAX_DEPENDENT_RECIPES",
     "MAX_SPAN_M",
     "MIN_EXCLUSIVITY",
+    "NEAREST_MARGIN",
     "WEIGHTS",
     "Proposal",
     "propose",
@@ -102,6 +103,14 @@ MAX_DEPENDENT_RATIO = 0.5
 #: miners powering them. Every correctly absorbed dependent measured on the reference save
 #: has 0 or 1.
 MAX_DEPENDENT_RECIPES = 2
+
+#: A dependent is also absorbed when the cluster its belts reach FIRST is this many times
+#: nearer, in material hops, than the runner-up. Exclusivity alone cannot attribute a
+#: remote miner: the four mines feeding the steel factory reach it in 26-43 hops and the
+#: tor factory in 88-123, but steel and tor are belt-connected to EACH OTHER downstream,
+#: so counting every reachable machine dilutes exclusivity to 0.55. First arrival is
+#: unambiguous, and the measured margins are 42-69 hops.
+NEAREST_MARGIN = 2.0
 
 #: No proposal may span more than this. THE load-bearing constant -- removing it drops
 #: precision from 1.000 to 0.776. Note it also caps a proposal's diameter, so a genuinely
@@ -187,6 +196,7 @@ def attach_dependents(
     min_exclusivity: float = MIN_EXCLUSIVITY,
     max_ratio: float = MAX_DEPENDENT_RATIO,
     max_recipes: int = MAX_DEPENDENT_RECIPES,
+    nearest_margin: float = NEAREST_MARGIN,
     rounds: int = 3,
 ) -> list[list[str]]:
     """Absorb clusters whose entire material existence serves one other cluster.
@@ -201,9 +211,21 @@ def attach_dependents(
     has to be a second pass. Asymmetric on purpose: a pump farm belongs to the plant it
     feeds, but a plant does not belong to its pumps.
 
+    Two ways to qualify, because one rule cannot attribute both a pump farm and a remote
+    mine:
+
+    * **exclusivity** -- most of what it reaches is one cluster. Good for something
+      embedded in the factory it serves.
+    * **nearest consumer** -- the cluster it reaches FIRST is ``nearest_margin`` times
+      nearer in hops than the next. Good for something at the far end of a long belt,
+      where exclusivity fails for a reason that has nothing to do with the miner: the
+      four mines feeding the steel factory reach it in 26-43 hops and the tor factory in
+      88-123, but steel and tor are belt-connected to each other downstream, so counting
+      everything reachable dilutes exclusivity to 0.55.
+
     ``manufacturing`` is the set of machines running a recipe. A candidate dependent with
     more than ``max_recipes`` of them is a factory rather than an outlier and is left
-    alone, whatever its exclusivity or size.
+    alone, whatever its exclusivity or nearness.
     """
     adjacency = graph.adjacency("material")
     makes = manufacturing or set()
@@ -225,21 +247,51 @@ def attach_dependents(
             frontier = nxt
         return out
 
+    def first_arrival(seed: list[str], owner: dict[str, int], self_id: int) -> dict[int, int]:
+        """Hop depth at which each other cluster is first reached."""
+        held = set(seed)
+        seen = set(seed)
+        queue = deque((m, 0) for m in seed)
+        out: dict[int, int] = {}
+        while queue:
+            node, depth = queue.popleft()
+            if node not in held and graph.is_machine(node):
+                target = owner.get(node)
+                if target is not None and target != self_id and target not in out:
+                    out[target] = depth
+            for edge in adjacency.get(node, ()):
+                other = edge.other(node)
+                if other not in seen:
+                    seen.add(other)
+                    queue.append((other, depth + 1))
+        return out
+
     for _ in range(rounds):
         owner = {m: k for k, c in enumerate(groups) for m in c}
         wanted: dict[int, int] = {}
         for k, members in enumerate(groups):
-            outside = reaches(members) - set(members)
+            if sum(1 for m in members if m in makes) > max_recipes:
+                continue
+            held = set(members)
+            outside = reaches(members) - held
+            if not outside:
+                continue
             targets = Counter(owner[m] for m in outside if m in owner)
             targets.pop(k, None)
             if not targets:
                 continue
+
             best, hits = targets.most_common(1)[0]
             if hits / len(outside) < min_exclusivity:
-                continue
+                # Not embedded in one cluster -- but it may still sit at the end of a
+                # belt that plainly leads somewhere. Fall back to first arrival.
+                order = sorted(first_arrival(members, owner, k).items(), key=lambda kv: kv[1])
+                if not order:
+                    continue
+                if len(order) > 1 and order[1][1] < order[0][1] * nearest_margin:
+                    continue  # too close to call
+                best = order[0][0]
             if len(members) > max_ratio * len(groups[best]):
-                continue
-            if sum(1 for m in members if m in makes) > max_recipes:
                 continue
             wanted[k] = best
         if not wanted:

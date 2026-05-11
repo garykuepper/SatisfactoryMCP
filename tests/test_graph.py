@@ -660,3 +660,61 @@ def test_index_selectors_are_documented_as_volatile():
     for token in ("base:", "line:", "slab:", "proposal:"):
         assert token in INDEX_WARNING
     assert server.GRAPH_INDEX_WARNING is INDEX_WARNING
+
+
+def test_a_remote_mine_is_attributed_to_the_factory_its_belt_reaches_first():
+    """Exclusivity cannot attribute a remote extractor. The four mines feeding the steel
+    factory reach it in 26-43 hops and the tor factory in 88-123 -- but steel and tor are
+    belt-connected to EACH OTHER downstream, so counting every reachable machine dilutes
+    exclusivity to 0.55 and the mine is left orphaned. First arrival is unambiguous."""
+    from satisfactory_mcp.graph.cohere import attach_dependents
+    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+
+    near_plant = [f"Build_FoundryMk1_C_{i}" for i in range(4)]
+    far_plant = [f"Build_AssemblerMk1_C_{10 + i}" for i in range(4)]
+    mine = ["Build_MinerMk2_C_50"]
+    belt = [f"Build_ConveyorBeltMk1_C_{100 + i}" for i in range(6)]
+    cls = {n: n.rsplit("_", 1)[0] for n in near_plant + far_plant + mine + belt}
+    graph = FactoryGraph(cls=cls)
+    # mine -> long belt -> near_plant, and near_plant -> far_plant downstream.
+    chain = [*mine, *belt, near_plant[0]]
+    for a, b in pairwise(chain):
+        graph.material.append(Edge(a=a, b=b))
+    for a, b in pairwise(near_plant):
+        graph.material.append(Edge(a=a, b=b))
+    # A long belt between the two plants. The margin can only be met when the plants are
+    # farther from EACH OTHER than the mine is from the nearer one -- on the real save,
+    # 34 hops to steel against another 54 on to the tor factory.
+    trunk = [f"Build_ConveyorBeltMk1_C_{200 + i}" for i in range(8)]
+    cls.update({n: n.rsplit("_", 1)[0] for n in trunk})
+    graph.cls.update({n: n.rsplit("_", 1)[0] for n in trunk})
+    for a, b in pairwise([near_plant[-1], *trunk, far_plant[0]]):
+        graph.material.append(Edge(a=a, b=b))
+    for a, b in pairwise(far_plant):
+        graph.material.append(Edge(a=a, b=b))
+
+    clusters = [list(near_plant), list(far_plant), list(mine)]
+    out = attach_dependents(clusters, graph, manufacturing=set(near_plant + far_plant))
+    home = next(c for c in out if mine[0] in c)
+    assert set(near_plant) <= set(home), "the mine belongs to the plant its belt reaches"
+    assert not set(far_plant) & set(home), "not to everything downstream of that plant"
+
+
+def test_a_mine_between_two_equally_close_factories_is_left_alone():
+    """The margin guard. When first arrival is a near tie there is no honest answer, and
+    an unattributed miner in the coverage report beats a wrong attribution."""
+    from satisfactory_mcp.graph.cohere import attach_dependents
+    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+
+    left = [f"Build_FoundryMk1_C_{i}" for i in range(4)]
+    right = [f"Build_AssemblerMk1_C_{10 + i}" for i in range(4)]
+    mine = ["Build_MinerMk2_C_50"]
+    cls = {n: n.rsplit("_", 1)[0] for n in left + right + mine}
+    graph = FactoryGraph(cls=cls)
+    graph.material.append(Edge(a=mine[0], b=left[0]))
+    graph.material.append(Edge(a=mine[0], b=right[0]))
+
+    out = attach_dependents(
+        [list(left), list(right), list(mine)], graph, manufacturing=set(left + right)
+    )
+    assert any(c == mine for c in out), "a tie must stay unattributed"

@@ -643,8 +643,26 @@ miners and a stray constructor. Recall against the twelve labels cannot move, be
 of the absorbed machines was ever labelled; the evidence is that precision holds at 1.000
 and every merge is qualitatively right.
 
+**Exclusivity alone cannot attribute a remote mine**, so there is a second way to
+qualify. The four mines feeding the steel factory reach it in 26–43 hops and the tor
+factory in 88–123 — but steel and tor are belt-connected to *each other* downstream, so
+counting every reachable machine dilutes exclusivity to 0.55 and the mine is orphaned.
+First arrival is unambiguous: a dependent is absorbed by the cluster it reaches first when
+that cluster is `NEAREST_MARGIN` (2×) nearer in hops than the runner-up. Measured margins
+were 42–69 hops. This takes 31 proposals to 26 with precision still 1.000, the steel
+factory reclaiming its 8 miners and the second oil site its pump.
+
+The margin has a readable meaning: it fires only when the two factories are farther from
+*each other* than the mine is from the nearer one. A mine genuinely between two consumers
+stays unattributed, which is the honest answer — an orphan in the coverage report beats a
+wrong attribution.
+
 Attachment runs *after* linkage, so an absorbed dependent may sit beyond the span cap — a
 miner feeding a plant from 400 m is still that plant's.
+
+**What stays unattributed is now a real finding, not a gap.** Five extractor clusters
+reach *no* machine at all: their belt or pipe ends in a container. Nothing in the material
+graph can attribute those, and guessing by proximity would be invention.
 
 **Index selectors are snapshot-scoped.** `base:`, `line:`, `slab:` and `proposal:` are
 positions in size-ordered lists rebuilt from the save on every call, so building anything
