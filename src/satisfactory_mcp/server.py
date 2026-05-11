@@ -17,6 +17,7 @@ from . import config, render
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
+from .graph.query import ASPECTS as QUERY_ASPECTS
 from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .planning import advisor, byproducts, compare
@@ -590,6 +591,213 @@ def factory_map(
         f"{len(labelled & machines)} machine(s) covered",
         "\n\n".join(chunks),
         notes,
+    )
+
+
+def _resolve_factory(st, factory: str):
+    """A label name, a selector, or a proposal index -- in that order.
+
+    Label first because that is what a player types. Falling through to the selector
+    grammar means ``factory_query("proposal:3", ...)`` works before anything is named.
+    """
+    from .graph import select as gsel
+
+    label = st.labels.find(factory)
+    if label is not None:
+        alive = set(st.graph.machines())
+        return label.name, [m for m in label.anchors if m in alive]
+    try:
+        picked = gsel.select_machines(
+            [factory],
+            st.graph,
+            st.game,
+            st.projection,
+            st.labels,
+            structures=st.structures,
+            proposals=st.proposals,
+        )
+    except gsel.SelectorError as exc:
+        known = ", ".join(x.name for x in st.labels.labels) or "(none named yet)"
+        raise gsel.SelectorError(f"{exc}. Named factories: {known}") from exc
+    return factory, picked
+
+
+@mcp.tool(structured_output=False)
+def factory_query(
+    factory: Annotated[str, Field(description="a label name, or any selector e.g. 'proposal:3'")],
+    of: Annotated[
+        str, Field(description="comma-separated: " + ", ".join(QUERY_ASPECTS))
+    ] = "summary",
+    limit: Limit = 15,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Ask one thing about one factory: what it makes, needs, draws, or touches.
+
+    `of` accepts several at once, e.g. "balance,power,links".
+
+    - **summary** size, position, top recipes, net power
+    - **balance** per-item produced vs consumed vs net -- the sign is the point
+    - **outputs** net surplus: it leaves the factory, or it backs up
+    - **inputs** net deficit: it has to be fed in from outside
+    - **machines** every machine with its building, recipe and clock
+    - **recipes** / **buildings** counts
+    - **power** draw vs generation at saved clocks
+    - **nodes** resource nodes its extractors sit on
+    - **links** which other factories it exchanges material with
+    - **issues** paused, recipe-less, or unresolved machines
+
+    Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
+    starved factory still reports its full rate.
+    """
+    from .graph.query import build_view
+    from .graph.select import SelectorError
+
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    try:
+        name, machines = _resolve_factory(st, factory)
+    except SelectorError as exc:
+        return f"! {exc}"
+    if not machines:
+        return f"! {factory!r} resolved to no machines that still exist in this save"
+
+    view = build_view(name, machines, st.graph, st.game, st.projection, st.labels)
+    asked = [a.strip().casefold() for a in of.split(",") if a.strip()]
+    unknown = [a for a in asked if a not in QUERY_ASPECTS]
+    if unknown:
+        return f"! unknown aspect(s) {unknown}. Choose from: {', '.join(QUERY_ASPECTS)}"
+
+    n = render.clamp(limit)
+    chunks: list[str] = []
+    g = st.game
+
+    def bname(cls: str) -> str:
+        b = g.buildings.get(cls)
+        return b.name if b else cls.replace("Build_", "").replace("_C", "")
+
+    for aspect in asked:
+        if aspect == "summary":
+            head = render.kv(
+                [
+                    ("machines", view.size),
+                    ("at", f"{int(view.centroid[0] / 100)},{int(view.centroid[1] / 100)}"),
+                    ("spread", f"{view.spread_m:.0f}m"),
+                    ("draw", f"{view.draw_mw:.0f} MW"),
+                    ("generation", f"{view.generation_mw:.0f} MW" if view.generation_mw else ""),
+                    ("recipes", len(view.recipes)),
+                    ("issues", len(view.issues) or ""),
+                ]
+            )
+            makes = ", ".join(f"{k} {v:.0f}/min" for k, v in view.outputs()[:5]) or "-"
+            needs = ", ".join(f"{k} {v:.0f}/min" for k, v in view.inputs()[:5]) or "-"
+            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}")
+        elif aspect == "balance":
+            rows = []
+            for item in sorted(view.flows, key=lambda k: -abs(view.net(k))):
+                f = view.flows[item]
+                net = view.net(item)
+                verdict = (
+                    "surplus" if net > 1e-6 else "needs feeding" if net < -1e-6 else "internal"
+                )
+                rows.append(
+                    (item, render.num(f["produced"]), render.num(f["consumed"]), f"{net:+.1f}", verdict)
+                )
+            chunks.append(
+                "## balance (items/min at saved clocks)\n"
+                + render.table(("item", "made", "used", "net", ""), rows[:n], total=len(rows), limit=n)
+            )
+        elif aspect in ("outputs", "inputs"):
+            data = view.outputs() if aspect == "outputs" else view.inputs()
+            chunks.append(
+                f"## {aspect}\n"
+                + render.table(
+                    ("item", "per min"),
+                    [(k, render.num(v)) for k, v in data[:n]],
+                    total=len(data),
+                    limit=n,
+                )
+            )
+        elif aspect == "machines":
+            rows = [
+                (m.instance, bname(m.building), m.recipe or "-", f"{m.clock:.0%}",
+                 "paused" if m.paused else "")
+                for m in sorted(view.machines, key=lambda x: (x.building, x.recipe))
+            ]
+            chunks.append(
+                "## machines\n"
+                + render.table(
+                    ("instance", "building", "recipe", "clock", ""),
+                    rows[:n],
+                    total=len(rows),
+                    limit=n,
+                )
+            )
+        elif aspect == "recipes":
+            chunks.append(
+                "## recipes\n"
+                + render.table(
+                    ("recipe", "machines"), view.recipes.most_common(n),
+                    total=len(view.recipes), limit=n,
+                )
+            )
+        elif aspect == "buildings":
+            chunks.append(
+                "## buildings\n"
+                + render.table(
+                    ("building", "count"),
+                    [(bname(c), v) for c, v in view.buildings.most_common(n)],
+                    total=len(view.buildings),
+                    limit=n,
+                )
+            )
+        elif aspect == "power":
+            chunks.append(
+                "## power (nameplate at saved clocks)\n"
+                + render.kv(
+                    [
+                        ("draw", f"{view.draw_mw:.1f} MW"),
+                        ("generation", f"{view.generation_mw:.1f} MW"),
+                        ("net", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                    ]
+                )
+            )
+        elif aspect == "nodes":
+            chunks.append(
+                "## resource nodes\n"
+                + render.table(
+                    ("node", "resource", "purity", "extractor", "clock", "left"),
+                    [
+                        (a, b, c, bname(d), f"{e:.0%}", f if f is not None else "-")
+                        for a, b, c, d, e, f in view.nodes[:n]
+                    ],
+                    total=len(view.nodes),
+                    limit=n,
+                )
+            )
+        elif aspect == "links":
+            chunks.append(
+                "## material links across the boundary\n"
+                + render.table(
+                    ("other side", "connections"), view.links.most_common(n),
+                    total=len(view.links), limit=n,
+                )
+            )
+        elif aspect == "issues":
+            body = render.bullets(view.issues[:n]) if view.issues else "none"
+            chunks.append(f"## issues ({len(view.issues)})\n{body}")
+
+    notes = []
+    loose = view.links.get("(unlabelled)")
+    if loose:
+        notes.append(
+            f"{loose} connection(s) cross into machines no label covers -- "
+            "run propose_factories to see what they are"
+        )
+    return render.envelope(
+        f"# {st.age_note}\n# {name}: {view.size} machines", "\n\n".join(chunks), notes
     )
 
 

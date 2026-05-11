@@ -692,6 +692,47 @@ LOO tests generalisation across *that player's* factories, not across players. T
 insensitivity to weights is the real reassurance — a result that survives ±50 % on every
 parameter is not resting on a fit.
 
+### 6.2c Querying a factory
+
+One tool, not eight: every question shares the same two steps — resolve a machine set,
+then read something off it. `factory_query(factory, of=...)` takes a label name, a
+selector, or a proposal index, and `of` accepts several aspects at once.
+
+```
+factory_query("steel factory", of="summary,balance")
+  -> makes: Steel Ingot 405/min, Steel Beam 81/min, Steel Pipe 60/min, EIB 48/min
+     needs: Coal 975/min, Iron Ingot 840/min, Concrete 288/min, Iron Ore 135/min
+```
+
+The **balance** table is what earns the tool. Production minus consumption across the set,
+where the sign is the answer:
+
+- **positive** — surplus: it leaves, or it backs up
+- **negative** — has to be fed in from outside
+- **zero with non-zero production** — made *and* consumed inside, the signature of a
+  self-contained line
+
+A per-machine listing says a Foundry runs Solid Steel Ingot. Only the balance says the
+steel factory needs 975 Coal/min fed in.
+
+Aspects: `summary`, `balance`, `inputs`, `outputs`, `machines`, `recipes`, `buildings`,
+`power`, `nodes`, `links`, `issues`.
+
+Two implementation notes that were both bugs first:
+
+- **The boundary walk must pass through logistics.** A material edge runs
+  machine → belt → machine, so a walk that stops at the first non-machine finds no links
+  at all and every factory looks isolated.
+- **Rates are nameplate at each machine's saved clock**, applied per machine, never to a
+  factory total. Paused machines contribute no flow but are still members and are listed
+  under `issues`. Anything whose building class cannot be resolved is reported rather than
+  silently contributing 0 MW — an understated draw with no explanation is worse than an
+  error.
+
+This is explicitly **not** throughput. A starved factory reports its full rate; measuring
+what actually flows needs the productivity fields, and conflating the two would make a
+starved factory look healthy.
+
 ### 6.3 Labels — anchor sets matched by recall
 
 A label stores the **set of machine instance ids** it was created from (verified stable: 365/365 kept
@@ -1164,7 +1205,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
-**Factories:** `factory_map`, `propose_factories`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
+**Factories:** `factory_map`, `propose_factories`, `factory_query`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
