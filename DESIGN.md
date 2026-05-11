@@ -646,6 +646,12 @@ and every merge is qualitatively right.
 Attachment runs *after* linkage, so an absorbed dependent may sit beyond the span cap — a
 miner feeding a plant from 400 m is still that plant's.
 
+**Index selectors are snapshot-scoped.** `base:`, `line:`, `slab:` and `proposal:` are
+positions in size-ordered lists rebuilt from the save on every call, so building anything
+reshuffles them. A stale index once re-anchored the speedwire factory onto the aluminium
+site. Every tool that prints an index now says so. A *label* is durable because it holds
+machine ids — the index is only ever a way of pointing at them once.
+
 **`proposal:n` closes the loop.** The workflow is propose-then-name, so a proposal has to
 be selectable. Reconstructing one by hand from a centroid and a radius does not work: on
 the real save, `near:-442,-1406@120` around a 15-machine proposal picked up **137**

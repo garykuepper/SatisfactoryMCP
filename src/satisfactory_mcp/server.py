@@ -17,6 +17,7 @@ from . import config, render
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
+from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .planning import advisor, byproducts, compare
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
@@ -573,6 +574,9 @@ def factory_map(
             top = ", ".join(f"{name} {count}" for name, count in grouped.products.most_common(12))
             chunks.append(f"## unlabelled: {len(loose)} machine(s)\n{top or '(no recipes set)'}")
 
+    if want in ("all", "candidates", "slabs"):
+        notes.append(GRAPH_INDEX_WARNING)
+
     if base_c and base_c[0].size > 100:
         notes.append(
             f"the largest power island holds {base_c[0].size} machines across "
@@ -664,6 +668,7 @@ def propose_factories(
                 "absorbed: a cluster whose belts and pipes lead almost only into one "
                 "other factory joins it, however far away it sits"
             ),
+            GRAPH_INDEX_WARNING,
         ],
     )
 

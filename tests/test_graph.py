@@ -648,3 +648,15 @@ def test_proposal_selector_reports_a_bad_index():
         select_machines(["proposal:9"], graph, None, {}, None, proposals=[Proposal(machines=["a"])])
     with pytest.raises(SelectorError, match="needs the proposal list"):
         select_machines(["proposal:0"], graph, None, {}, None)
+
+
+def test_index_selectors_are_documented_as_volatile():
+    """base:/line:/slab:/proposal: are positions in size-ordered lists rebuilt per call.
+    A stale index once re-anchored the speedwire factory onto the aluminium site, so the
+    tools that print indices must say so."""
+    from satisfactory_mcp import server
+    from satisfactory_mcp.graph.select import INDEX_WARNING
+
+    for token in ("base:", "line:", "slab:", "proposal:"):
+        assert token in INDEX_WARNING
+    assert server.GRAPH_INDEX_WARNING is INDEX_WARNING

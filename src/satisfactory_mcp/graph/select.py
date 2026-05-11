@@ -39,7 +39,18 @@ from .identity import bases, cluster_machines
 from .labels import LabelStore
 from .model import FactoryGraph
 
-__all__ = ["SELECTOR_HELP", "SelectorError", "select_machines"]
+__all__ = ["INDEX_WARNING", "SELECTOR_HELP", "SelectorError", "select_machines"]
+
+#: ``base:``, ``line:``, ``slab:`` and ``proposal:`` are POSITIONS in lists that are
+#: recomputed from the save every call, and every one of those lists is ordered by size.
+#: Build a foundation or a machine and the numbering shifts. Read an index and name it in
+#: the same breath; never store one. A LABEL is durable because it holds machine ids --
+#: the index is only ever a way of pointing at them once.
+INDEX_WARNING = (
+    "base:/line:/slab:/proposal: indices are positions in size-ordered lists rebuilt "
+    "from this save -- they shift when you build. Name what you select now; do not "
+    "reuse an index later."
+)
 
 SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
