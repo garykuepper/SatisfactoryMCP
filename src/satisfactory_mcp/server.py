@@ -804,6 +804,157 @@ def factory_query(
 
 
 @mcp.tool(structured_output=False)
+def factory_health(
+    factory: Annotated[
+        str, Field(description="a label name, any selector, or 'all' for every named factory")
+    ] = "all",
+    limit: Limit = 15,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Measured uptime per machine, and WHY each stopped one is stopped.
+
+    The only measured numbers in this MCP. Every manufacturing building keeps a fixed
+    300-second productivity window; uptime is seconds-producing over that window.
+
+    States, worst first: `paused`, `dead node` (extractor bound to no resource --
+    a game update removed it), `no recipe`, `blocked` (output stack full),
+    `starved` (input empty), `stalled` (has input, output has room, still not running --
+    usually power), `intermittent`, `saturated`, `unmonitored`.
+
+    **Blocked is not automatically a fault.** A base whose output nobody consumes fills
+    its buffers and stops, which is what a mature factory at rest looks like. Starved,
+    stalled and no-recipe are the actionable ones.
+    """
+    from .graph.health import STATES, assess, summarise
+    from .graph.select import SelectorError
+
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    alive = set(st.graph.machines())
+    n = render.clamp(limit)
+
+    if factory.strip().casefold() in ("all", "*"):
+        if not st.labels.labels:
+            return "! nothing named yet -- run propose_factories, then name_factory"
+        rows, notes = [], []
+        for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
+            report = assess(label.name, [m for m in label.anchors if m in alive], st.game, st.projection)
+            mean = report.mean_uptime
+            actionable = sum(
+                report.by_state[s]
+                for s in ("dead node", "no recipe", "starved", "stalled")
+            )
+            rows.append(
+                (
+                    label.name,
+                    len(report.machines),
+                    "-" if mean is None else f"{mean:.0%}",
+                    report.by_state["blocked"] or "",
+                    report.by_state["starved"] or "",
+                    report.by_state["stalled"] or "",
+                    report.by_state["no recipe"] or "",
+                    report.by_state["dead node"] or "",
+                    report.by_state["paused"] or "",
+                    actionable or "",
+                )
+            )
+        # Sort on the accumulated values, not on a column position: inserting a column
+        # once silently reordered this table by the wrong field.
+        rows.sort(key=lambda r: (-(r[-1] or 0), r[2]))
+        blocked_total = sum(r[3] or 0 for r in rows)
+        if blocked_total:
+            notes.append(
+                f"{blocked_total} machine(s) are blocked -- their output stack is full. "
+                "That is what a factory nobody is drawing from looks like, not a fault. "
+                "Look at starved/stalled/no-recipe first."
+            )
+        return render.envelope(
+            f"# {st.age_note}\n# uptime measured over a 300s window per machine",
+            render.table(
+                ("factory", "n", "uptime", "blocked", "starved", "stalled", "no recipe",
+                 "dead node", "paused", "todo"),
+                rows[:n],
+                total=len(rows),
+                limit=n,
+            ),
+            notes,
+        )
+
+    try:
+        name, machines = _resolve_factory(st, factory)
+    except SelectorError as exc:
+        return f"! {exc}"
+    if not machines:
+        return f"! {factory!r} resolved to no machines that still exist in this save"
+
+    report = assess(name, machines, st.game, st.projection)
+    chunks = [summarise(report)]
+
+    worst = report.worst(n)
+    if worst:
+        chunks.append(
+            "## needs attention\n"
+            + render.table(
+                ("instance", "state", "uptime", "recipe", "cause"),
+                [
+                    (
+                        m.instance,
+                        m.state,
+                        "-" if m.uptime is None else f"{m.uptime:.0%}",
+                        m.recipe or m.building.replace("Build_", "").replace("_C", ""),
+                        ", ".join(m.cause),
+                    )
+                    for m in worst
+                ],
+                total=sum(1 for m in report.machines if m.needs_attention),
+                limit=n,
+            )
+        )
+    if report.blocked_on:
+        chunks.append(
+            "## output backing up\n"
+            + render.table(
+                ("item", "machines blocked"), report.blocked_on.most_common(n)
+            )
+        )
+    if report.starved_of:
+        chunks.append(
+            "## inputs not arriving\n"
+            + render.table(
+                ("ingredient", "machines starved"), report.starved_of.most_common(n)
+            )
+        )
+
+    notes = []
+    if report.by_state["blocked"]:
+        notes.append(
+            f"{report.by_state['blocked']} blocked: output stack full, so its consumer "
+            "is the bottleneck -- or nothing is drawing from it at all"
+        )
+    if report.by_state["dead node"]:
+        notes.append(
+            f"{report.by_state['dead node']} extractor(s) sit on NO resource node -- "
+            "the node was removed, so they can never produce and must be rebuilt elsewhere"
+        )
+    if report.by_state["stalled"]:
+        notes.append(
+            f"{report.by_state['stalled']} stalled: has input, output has room, still "
+            "not producing. Check power before anything else"
+        )
+    if report.by_state["unmonitored"]:
+        notes.append(
+            f"{report.by_state['unmonitored']} machine(s) keep no productivity monitor, "
+            "so their uptime is unknown rather than zero"
+        )
+    assert STATES
+    return render.envelope(f"# {st.age_note}\n# {name}", "\n\n".join(chunks), notes)
+
+
+@mcp.tool(structured_output=False)
 def propose_factories(
     save: str | None = None,
     world: str | None = None,

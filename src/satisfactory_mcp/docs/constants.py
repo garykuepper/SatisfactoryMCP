@@ -43,3 +43,19 @@ AWESOME_SINK_MW: float = 30.0
 
 #: Somersloop amplification is capped at 2x output for 4x power on every building.
 MAX_PRODUCTION_BOOST: float = 2.0
+
+
+#: Stack sizes by the enum Docs.json reports. Not derivable from the dump -- the JSON
+#: gives only the symbol, so the numbers are game knowledge and belong in this register.
+#: Needed to answer "is this machine's output backed up", which is what separates a
+#: STARVED machine from a BLOCKED one; those need opposite fixes.
+STACK_SIZE: dict[str, int] = {
+    "SS_ONE": 1,
+    "SS_SMALL": 50,
+    "SS_MEDIUM": 100,
+    "SS_BIG": 200,
+    "SS_HUGE": 500,
+    # Fluid buffers are quoted in litres in the save, and a machine's fluid buffer holds
+    # 50 m3. Verified against observed values: Wire 500 = SS_HUGE, Iron Rod 200 = SS_BIG.
+    "SS_FLUID": 50_000,
+}

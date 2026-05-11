@@ -744,6 +744,49 @@ This is explicitly **not** throughput. A starved factory reports its full rate; 
 what actually flows needs the productivity fields, and conflating the two would make a
 starved factory look healthy.
 
+### 6.2d Health — the only measured numbers in this MCP
+
+Every manufacturing buildable keeps a **productivity monitor**. Schema 8 emits it, plus
+per-machine input/output/fuel buffers. Field semantics, verified rather than assumed:
+
+| field | finding |
+|---|---|
+| `mLastProductivityMeasurementDuration` | **300.00 s on all 580** carriers — a fixed window, so the ratio needs no normalisation |
+| `mLastProductivityMeasurementProduceDuration` | **absent when zero**; UE omits defaults, so missing is a real zero (377 of 580 idle) |
+| `mCurrentProductivityMeasurement*` | a *partial* window still filling — mixing it with the last complete one compares a 3-minute sample to a 5-minute one |
+| `mTimeSinceStartStopProducing` | **FLT_MAX on 256 of 580** as a "never flipped" sentinel. Not a duration; averaging it poisons any statistic. Unused |
+
+Uptime says a machine is stopped but never why, and the fixes are opposite. The buffers
+settle it. **Every rule below was wrong before it was measured:**
+
+- **Starvation is a missing *ingredient*, not an empty input.** Black Powder takes Coal
+  and Sulfur; the assembler that motivated this held 100 Sulfur and no Coal. An
+  empty-input test called it well-fed and filed eight machines as unexplained stalls.
+  Comparing the buffer against the recipe names the missing item.
+- **Blocked is checked before starved.** A blocked machine's input backs up too — the
+  sample reads input 100/100 Iron Ingot, output 199/200 Iron Plate. Reading the input
+  first calls it well-fed and misses that nothing is taking its plates.
+- **A nearly full stack counts as backed up** (`FULL_FRACTION = 0.95`). Demanding exactly
+  100% hides a bottleneck that has just ticked one item forward.
+- **An absent intake inventory is not an empty one.** A miner draws from its node and has
+  no `InputInventory` at all; treating that as "no input items" reported every idle miner
+  as starved.
+- **`dead node` is its own state.** An extractor whose `mExtractableResource` is *absent*
+  is bound to nothing and can never produce — three miners on this save, left behind when
+  a game update removed their resource node. Distinct from a water pump, whose node *is*
+  set but points at an `FGWaterVolume` that is not a purity-table key; that one works fine.
+- **Generators keep a `FuelInventory`, not an `InputInventory`.** Without capturing it a
+  starved coal plant shows no evidence either way.
+
+`STACK_SIZE` joins §5.6's register: Docs.json gives only the enum symbol (`SS_BIG`), so
+the numbers are game knowledge. Verified against observed buffers — Wire 500 = `SS_HUGE`,
+Iron Rod 200 = `SS_BIG`.
+
+**Blocked is not automatically a fault.** 319 of 563 machines on the reference save are
+blocked, because a base whose output nobody consumes fills its buffers and stops. That is
+what a mature factory at rest looks like. The overview therefore ranks by a `todo` column
+counting only `dead node`, `no recipe`, `starved` and `stalled`.
+
 ### 6.3 Labels — anchor sets matched by recall
 
 A label stores the **set of machine instance ids** it was created from (verified stable: 365/365 kept
@@ -1216,7 +1259,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
-**Factories:** `factory_map`, `propose_factories`, `factory_query`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
+**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`

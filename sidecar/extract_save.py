@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -226,6 +226,9 @@ def extract(path: str) -> dict:
     # --- connectivity interning -------------------------------------------
     actor_ix: dict[str, int] = {}
     role_ix: dict[str, int] = {}
+    uptime: dict[str, dict] = {}
+    buffers: dict[str, dict] = {}
+    record_by_instance: dict[str, dict] = {}
     material_edges: list[list[int]] = []
     wire_ends: dict[str, list[tuple[str, str]]] = {}
 
@@ -251,6 +254,40 @@ def extract(path: str) -> dict:
         if "mInventoryStacks" in p:
             bucket = inventory_bucket(str(instance))
             _accumulate_inventory(p["mInventoryStacks"], out["inventories"][bucket])
+            # Input/OutputInventory belong to the OWNING machine and are what tell a
+            # starved machine from a backed-up one. Keyed by owner, not by component.
+            role = str(instance).rsplit(".", 1)[-1]
+            if role in ("InputInventory", "OutputInventory", "FuelInventory"):
+                # The OWNER's full instanceName, which is what the actor record uses.
+                # rsplit(".", 2)[-2] would give the bare short name and never match.
+                owner = str(instance).rpartition(".")[0]
+                # A generator has no InputInventory -- its intake is FuelInventory.
+                # Without this a starved coal plant shows no evidence either way.
+                side = {"InputInventory": "in", "OutputInventory": "out"}.get(role, "fuel")
+                totals: dict = {}
+                _accumulate_inventory(p["mInventoryStacks"], totals)
+                # Per ITEM, not just a total. "Is the output backed up" needs the item's
+                # stack size, which only the docs know, so the class has to survive.
+                buffers.setdefault(owner, {})[side] = {
+                    "items": totals,
+                    "slots": len(p["mInventoryStacks"] or []),
+                }
+
+        # Productivity. The window is a fixed 300 s, so produce/window is a clean
+        # fraction. ProduceDuration is ABSENT when zero -- UE omits defaults -- so a
+        # missing value is a real zero, not missing data.
+        if "mLastProductivityMeasurementDuration" in p:
+            window = p.get("mLastProductivityMeasurementDuration") or 0.0
+            produce = p.get("mLastProductivityMeasurementProduceDuration", 0.0) or 0.0
+            cur_window = p.get("mCurrentProductivityMeasurementDuration", 0.0) or 0.0
+            cur_produce = p.get("mCurrentProductivityMeasurementProduceDuration", 0.0) or 0.0
+            uptime[str(instance)] = {
+                "window_s": round(float(window), 2),
+                "produce_s": round(float(produce), 2),
+                "cur_window_s": round(float(cur_window), 2),
+                "cur_produce_s": round(float(cur_produce), 2),
+                "producing": truthy(p.get("mIsProducing", 0)),
+            }
 
         # Factory connections live on COMPONENTS. instanceName is
         # "<...>.Build_X_C_123.Output1", so the owner is the second-to-last segment
@@ -379,6 +416,15 @@ def extract(path: str) -> dict:
                 record["production_boost"] = p[key]
                 record["production_boost_field"] = key
 
+        # Uptime lives on the actor's OWN properties, so it is available now.
+        live = uptime.get(str(instance))
+        if live:
+            record["uptime"] = live
+        # Buffers do NOT: they are components, and components are visited after the
+        # actor they belong to in the same pass, so `buffers` is still empty here.
+        # Attached in a post-pass below.
+        record_by_instance[str(instance)] = record
+
         if any(h in cls for h in _MANUFACTURER_HINTS):
             record["recipe"] = ref_class(p.get("mCurrentRecipe"))
             out["machines"].append(record)
@@ -388,6 +434,12 @@ def extract(path: str) -> dict:
         elif any(h in cls for h in _GENERATOR_HINTS):
             record["fuel"] = ref_class(p.get("mCurrentFuelClass"))
             out["generators"].append(record)
+
+    # Buffers, now that every component has been seen.
+    for owner, sides in buffers.items():
+        record = record_by_instance.get(owner)
+        if record is not None:
+            record["buffers"] = sides
 
     # A power wire always joins exactly two connections; anything else is a
     # half-built or orphaned line and is dropped rather than guessed at.
