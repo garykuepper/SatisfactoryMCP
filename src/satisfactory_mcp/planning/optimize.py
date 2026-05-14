@@ -377,8 +377,12 @@ def solve(sc: Scenario) -> Solution:
     g = sc.game
     procs = build_processes(sc)
     if not procs:
+        # `warnings=` by name, not by position. The tenth positional field is
+        # machine_penalty_mw, so every early return here used to file its reason
+        # under a float and hand the caller an INFEASIBLE with no reason attached --
+        # which is precisely the bare INFEASIBLE that made diagnosing one expensive.
         return Solution(
-            "infeasible", 0.0, 0.0, [], {}, {}, {}, 0.0, 0.0, ["no processes available"]
+            "infeasible", 0.0, 0.0, [], {}, {}, {}, 0.0, 0.0, warnings=["no processes available"]
         )
 
     items = sorted({i for p in procs for i in p.rates})
@@ -507,7 +511,7 @@ def solve(sc: Scenario) -> Solution:
                 {},
                 0.0,
                 0.0,
-                ["objective max_mw requires __MW__ in exports"],
+                warnings=["objective max_mw requires __MW__ in exports"],
             )
         c[col_e(export_items.index(MW))] = -1.0
     elif sc.objective == "max_item":
@@ -522,7 +526,7 @@ def solve(sc: Scenario) -> Solution:
                 {},
                 0.0,
                 0.0,
-                [f"objective max_item requires {sc.target_item!r} in exports"],
+                warnings=[f"objective max_item requires {sc.target_item!r} in exports"],
             )
         c[col_e(export_items.index(sc.target_item))] = -1.0
     elif sc.objective == "min_raw":
@@ -553,7 +557,7 @@ def solve(sc: Scenario) -> Solution:
             {},
             0.0,
             0.0,
-            [f"unknown objective {sc.objective!r}"],
+            warnings=[f"unknown objective {sc.objective!r}"],
         )
 
     # ---- price machines when the objective is power --------------------
@@ -587,7 +591,7 @@ def solve(sc: Scenario) -> Solution:
             {},
             0.0,
             0.0,
-            [f"phase 1 infeasible: {res.message}"],
+            warnings=[f"phase 1 infeasible: {res.message}"],
         )
     goal = float(c @ res.x)
 
@@ -681,12 +685,16 @@ def solve(sc: Scenario) -> Solution:
     logistics = _logistics(sc, procs, x, col_p, raw_used)
     heavy = [entry for entry in logistics if (entry["lines"] or 0) > 1]
     if heavy:
+        # Truncated because a warning is one line, but say so: an unmarked cut here
+        # reads as "these four are all of them", and the fifth pipe is still real.
+        more = "" if len(heavy) <= 4 else f", and {len(heavy) - 4} more"
         warnings.append(
             "multi-line logistics: "
             + ", ".join(
                 f"{e['name']} {e['rate']:g}{e['unit']} needs {e['lines']} {e['carrier']}s"
                 for e in heavy[:4]
             )
+            + more
         )
 
     if sunk:

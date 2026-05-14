@@ -22,12 +22,12 @@ from .graph.query import ASPECTS as QUERY_ASPECTS
 from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .graph.select import SelectorError
-from .planning import advisor, byproducts, compare
+from .planning import advisor, byproducts, compare, supply
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
 from .planning.layout import build_layout
 from .planning.optimize import MW, free_lunch_audit, solve
-from .planning.scenario import build_scenario, resolve_item
+from .planning.scenario import EXPORT_HELP, build_scenario, resolve_item
 from .save import projection as proj
 from .save.state import WorldState, load_state
 from .spatial import geo
@@ -1860,6 +1860,10 @@ def plan_factory(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
+    logistics_items: Annotated[
+        list[str] | None,
+        Field(description="items whose belt/pipe rows to pin, whatever their volume"),
+    ] = None,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
@@ -1897,8 +1901,24 @@ def plan_factory(
 
     objective: max_mw | max_item | min_raw | min_machines | min_power.
     Every item is balanced as an EQUALITY, so a byproduct with no consumer makes the
-    plan infeasible rather than silently vanishing. ``exports`` is the whitelist of
-    what may leave; default is power only, which is often infeasible for crude oil.
+    plan infeasible rather than silently vanishing.
+
+    ``exports`` is the whitelist of what may leave, and the single most load-bearing
+    argument here; default is power only, which is often infeasible for crude oil::
+
+        exports=["MW"]                        power out, plant must be self-powered
+        exports=["Plastic", "Rubber"]         items out, NO power export
+        exports=["MW", "Plastic", "Rubber"]   both -- MW must be listed explicitly
+
+    Two things worth reading twice. The power token is **MW** (``mw``, ``power`` and
+    ``Power`` all work too), not the item name of anything. And ``exports``
+    **replaces** the default rather than extending it: naming an item drops MW, which
+    is deliberate, because exporting MW also forbids drawing from the existing grid.
+    A token matching no item is refused by name rather than solved around.
+
+    ``logistics_items`` pins named items into the belt/pipe table however small their
+    flow, as rows ADDED to the ``limit`` biggest by volume. Without it, a two-item
+    question can fall off the bottom of a big plan's flow table.
     """
     g = game()
     try:
@@ -1929,6 +1949,8 @@ def plan_factory(
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
+    if req.export_errors:
+        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
 
     audit_ok, audit_val = free_lunch_audit(sc)
     sol = solve(sc)
@@ -1938,6 +1960,7 @@ def plan_factory(
             "",
             [
                 *sol.warnings,
+                *supply.describe(supply.diagnose(req, g, st.unlocked_building_ids), g),
                 (
                     "with equality balances, infeasible usually means a byproduct has "
                     "no consumer and no legal sink -- try adding it to exports"
@@ -1980,7 +2003,29 @@ def plan_factory(
     water_extractors = sum(
         p["machines"] for p in sol.processes if p["building_id"] == "Build_WaterPump_C"
     )
-    top_flows = [e for e in sol.logistics if e["rate"] > 0][:6]
+    # Rows rank by volume, and a two-item question usually lives in the tail: at the
+    # old hard cap of 6, Plastic and Rubber fell off the bottom of a large oil plan --
+    # the exact pair that plan existed to size. So the cap is the caller's `limit`,
+    # and named items are pinned above it whatever they rank.
+    flows = [e for e in sol.logistics if e["rate"] > 0]
+    pin: list[str] = []
+    for name in logistics_items or []:
+        item_id = resolve_item(g, name)
+        if item_id is None:
+            notes.append(f"logistics_items: no item matches {name!r}")
+        elif not any(e["item"] == item_id for e in flows):
+            notes.append(f"logistics: nothing moves {g.item_name(item_id)} in this plan")
+        else:
+            pin.append(item_id)
+    # Pins are ADDITIVE to the limit, not carved out of it: naming two small items
+    # must not silently drop two big ones, or the fix trades one blind spot for another.
+    rest = [e for e in flows if e["item"] not in pin]
+    top_flows = [e for e in flows if e["item"] in pin] + rest[: render.clamp(limit, default=15)]
+    if len(top_flows) < len(flows):
+        notes.append(
+            f"logistics: showing {len(top_flows)} of {len(flows)} flows by volume "
+            "-- raise limit, or name items in logistics_items to pin them"
+        )
     logistics_block = ""
     if top_flows:
         logistics_block = "\n# logistics (lines at Mk5 belt / Mk2 pipe)\n" + render.table(
@@ -2130,6 +2175,8 @@ def plan_layout(
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
+    if req.export_errors:
+        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
 
     sol = solve(sc)
     if not sol.ok:
@@ -2378,6 +2425,8 @@ def diff_vs_save(
     sel = req.selection
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
+    if req.export_errors:
+        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
 
     sol = solve(req.scenario)
     if not sol.ok:

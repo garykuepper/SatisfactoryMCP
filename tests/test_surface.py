@@ -130,6 +130,68 @@ def test_response_fits_the_context_budget(name, kwargs):
     assert len(out) < BUDGET, f"{name} returned {len(out)} chars"
 
 
+# --------------------------------------------------------- logistics rows
+
+#: The plan that found the bug: plastic and rubber are the whole point of it, and both
+#: sit near the bottom of a flow table ranked by volume.
+OIL_PLAN = dict(
+    objective="max_mw",
+    sources=["region:Spire Coast"],
+    exports=["MW", "Plastic", "Rubber"],
+    export_minimums={"Plastic": 300.0, "Rubber": 300.0},
+)
+
+
+def _logistics_items(text: str) -> list[str]:
+    """Item column of the logistics table, in order."""
+    block = text[text.index("# logistics") :].splitlines()[2:]
+    return [line.split("\t")[0] for line in block if "\t" in line]
+
+
+def test_logistics_honours_the_limit_it_is_given():
+    """It ignored `limit` entirely and truncated at a hardcoded 6."""
+    assert len(_logistics_items(srv.plan_factory(limit=3, **OIL_PLAN))) == 3
+    assert len(_logistics_items(srv.plan_factory(limit=12, **OIL_PLAN))) > 6
+
+
+def test_a_named_item_survives_truncation_by_volume():
+    """THE correction. Plastic is 7th by volume in this plan, so at the old cap of 6
+    it was invisible -- and it is one of the two items the plan exists to size."""
+    unpinned = _logistics_items(srv.plan_factory(limit=6, **OIL_PLAN))
+    assert "Plastic" not in unpinned
+
+    pinned = _logistics_items(srv.plan_factory(limit=3, logistics_items=["Plastic"], **OIL_PLAN))
+    assert pinned[0] == "Plastic"
+
+
+def test_pinning_never_costs_a_row_that_was_already_shown():
+    """Pinning is additive: asking for two small items must not push two big ones out,
+    or the fix would trade one blind spot for another."""
+    plain = _logistics_items(srv.plan_factory(limit=6, **OIL_PLAN))
+    pinned = _logistics_items(
+        srv.plan_factory(limit=6, logistics_items=["Plastic", "Rubber"], **OIL_PLAN)
+    )
+    assert set(plain) <= set(pinned)
+
+
+def test_an_unknown_logistics_item_is_reported_not_ignored():
+    out = srv.plan_factory(limit=6, logistics_items=["Nonsuch"], **OIL_PLAN)
+    assert "no item matches 'Nonsuch'" in out
+
+
+def test_truncated_logistics_says_how_many_it_hid():
+    out = srv.plan_factory(limit=3, **OIL_PLAN)
+    assert "showing 3 of" in out
+
+
+def test_an_unknown_export_token_is_refused_by_name():
+    """Four INFEASIBLE calls came out of a mangled export whitelist, so the tool now
+    refuses rather than solving a question nobody asked."""
+    out = srv.plan_factory(objective="max_mw", sources=["region:Spire Coast"], exports=["Plastik"])
+    assert "Plastik" in out
+    assert "REPLACES the default" in out
+
+
 def test_prompts_render_with_arguments():
     res = _run(
         srv.mcp.get_prompt("design_factory", {"target_item": "Rubber", "rate_per_min": "120"})

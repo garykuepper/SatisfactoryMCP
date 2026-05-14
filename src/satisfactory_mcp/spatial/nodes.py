@@ -10,7 +10,13 @@ from .. import config
 from ..docs.model import GameData
 from . import geo
 
-__all__ = ["EXTRACTOR_FOR_KIND", "NodeTable", "load_nodes", "occupancy"]
+__all__ = [
+    "EXTRACTOR_FOR_KIND",
+    "NodeTable",
+    "blocking_buildings",
+    "load_nodes",
+    "occupancy",
+]
 
 #: Extractor class -> what it can tap. A well satellite needs a Well Extractor AND
 #: a Pressurizer on its parent core, so it is not interchangeable with a plain node.
@@ -19,6 +25,14 @@ EXTRACTOR_FOR_KIND = {
     "well_sat": ("Build_FrackingExtractor_C",),
     "geyser": (),
 }
+
+#: What a node needs BESIDES an extractor, and cannot work without. The Pressurizer
+#: produces nothing itself, so it never appears in EXTRACTOR_FOR_KIND -- but with no
+#: Pressurizer on the core every satellite of that well yields exactly zero.
+EXTRA_FOR_KIND = {"well_sat": ("Build_FrackingSmasher_C",)}
+
+#: A geyser is not extracted at all; it is a placement target for this generator.
+GEYSER_CONSUMER = "Build_GeneratorGeoThermal_C"
 
 
 @dataclass
@@ -140,10 +154,55 @@ def reachable(node: dict, unlocked_buildings: set[str] | None) -> bool:
         return True
     kind = node["kind"]
     if kind == "geyser":
-        return "Build_GeneratorGeoThermal_C" in unlocked_buildings
-    if kind == "well_sat":
-        return {"Build_FrackingSmasher_C", "Build_FrackingExtractor_C"} <= unlocked_buildings
+        return GEYSER_CONSUMER in unlocked_buildings
+    if not set(EXTRA_FOR_KIND.get(kind, ())) <= unlocked_buildings:
+        return False
     return any(cls in unlocked_buildings for cls in EXTRACTOR_FOR_KIND.get(kind, ()))
+
+
+def _can_tap(building, resource: str, game: GameData) -> bool:
+    """Whether this extractor could tap this resource, unlocks aside.
+
+    Mirrors the rule build_scenario applies when it turns nodes into extractor
+    columns, and must keep mirroring it: a building with no `mAllowedResourceForms`
+    of its own is a solid miner, so a fluid node is not its to take.
+    """
+    if building is None or not building.base_extract_rate:
+        return False
+    if building.allowed_resources:
+        return resource in building.allowed_resources
+    item = game.items.get(resource)
+    return item is not None and not item.is_fluid
+
+
+def blocking_buildings(
+    node: dict, game: GameData, unlocked_buildings: set[str] | None
+) -> tuple[str, ...]:
+    """Building classes that must be unlocked before this node yields anything.
+
+    Empty when nothing is in the way. `reachable` is a bool, so it can only say a
+    node is out of reach -- and "unreachable" is not an answer a player can act on,
+    whereas "build a Resource Well Pressurizer" is.
+
+    It is also strictly sharper than `reachable`, in one direction that matters:
+    `reachable` asks whether any extractor of the right KIND is unlocked and never
+    whether that extractor can tap this particular RESOURCE, so an unlocked Miner
+    Mk2 makes a crude oil node read as reachable while nothing on the map can pump
+    it. That gap is exactly where a plan goes infeasible with no explanation.
+    """
+    if unlocked_buildings is None:
+        return ()
+    kind = node["kind"]
+    if kind == "geyser":
+        return () if GEYSER_CONSUMER in unlocked_buildings else (GEYSER_CONSUMER,)
+    options = tuple(
+        cls
+        for cls in EXTRACTOR_FOR_KIND.get(kind, ())
+        if _can_tap(game.buildings.get(cls), node["resource"], game)
+    )
+    missing = () if any(cls in unlocked_buildings for cls in options) else options
+    extra = tuple(c for c in EXTRA_FOR_KIND.get(kind, ()) if c not in unlocked_buildings)
+    return missing + extra
 
 
 def annotate(

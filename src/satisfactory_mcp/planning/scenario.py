@@ -28,7 +28,22 @@ from .optimize import MW, Scenario
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
     from ..save.state import WorldState
 
-__all__ = ["PlanRequest", "build_scenario", "match_recipes", "resolve_item"]
+__all__ = [
+    "EXPORT_HELP",
+    "PlanRequest",
+    "build_scenario",
+    "match_recipes",
+    "resolve_item",
+]
+
+#: Quoted verbatim whenever an export token is refused. Both facts here cost a real
+#: session four INFEASIBLE calls: the caller wrote "Power" expecting an alias (it is
+#: one, and always was) and then assumed listing an item ADDED to the default.
+EXPORT_HELP = (
+    "exports takes item names or class ids, plus MW/mw/power/Power for grid output. "
+    "It REPLACES the default [MW] rather than extending it -- list MW yourself to "
+    "export power as well as items."
+)
 
 #: Extractors are tried best-first: the first one that can tap a node wins it.
 _EXTRACTOR_PREFERENCE = (
@@ -53,6 +68,27 @@ def resolve_item(game: GameData, query: str) -> str | None:
         return exact[0]
     partial = [c for c, i in game.items.items() if q in i.name.casefold()]
     return partial[0] if partial else None
+
+
+def _export_token(game: GameData, name: str) -> tuple[str | None, str | None]:
+    """Resolve one export token to an item id, or say why it cannot be.
+
+    Returns ``(id, None)`` or ``(None, error)``. MW, mw, power and Power all mean the
+    grid pseudo-item: both words turn up in the same conversation and neither is more
+    correct.
+
+    An UNRESOLVABLE token used to become the raw string, which then entered the LP as
+    an item id that no process ever produces and no balance row can satisfy -- so the
+    plan came back as a bare INFEASIBLE with nothing pointing at the typo. Naming the
+    token is the same call as `recipe_errors`: a silently mangled export whitelist
+    describes a different factory from the one that was asked for.
+    """
+    if name == MW or str(name).strip().casefold() in ("mw", "power"):
+        return MW, None
+    resolved = resolve_item(game, name)
+    if resolved is None:
+        return None, f"no item matches {name!r}"
+    return resolved, None
 
 
 def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
@@ -87,6 +123,16 @@ class PlanRequest:
     #: forbade, which is worse than refusing.
     excluded: list[str] = field(default_factory=list)
     recipe_errors: list[str] = field(default_factory=list)
+    #: Export / export_minimum tokens that resolve to no item, same call as
+    #: recipe_errors. The token is dropped rather than passed through, so the
+    #: scenario stays solvable and the caller is told what was ignored.
+    export_errors: list[str] = field(default_factory=list)
+    #: Every in-scope node BEFORE the reachable/tapped filters, which is what makes
+    #: "why can this plan not get Nitrogen Gas" answerable. `node_rows` cannot: it is
+    #: the post-filter set the diff joins against, so an unreachable node is gone
+    #: from it precisely when it is the interesting one.
+    scoped_nodes: list[dict] = field(default_factory=list)
+    only_free_nodes: bool = False
 
 
 def build_scenario(
@@ -107,19 +153,32 @@ def build_scenario(
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
 ) -> PlanRequest:
-    """Translate tool arguments into a Scenario, its node scope and a plan id."""
-    export_ids = []
+    """Translate tool arguments into a Scenario, its node scope and a plan id.
+
+    ``exports`` REPLACES the default ``[MW]``; it does not extend it. That is
+    deliberate and load-bearing: `grid_import_mw` below is derived from the export
+    set, so exporting MW also forbids drawing from the existing grid (a power plant
+    that imports power to export it is unbounded). Auto-appending MW would therefore
+    silently force every item plan to be self-powered, which is a different question
+    from the one asked. `EXPORT_HELP` says so to the caller.
+    """
+    export_ids: list[str] = []
+    export_errors: list[str] = []
     for name in exports or [MW]:
-        # Accept MW, mw, power, Power interchangeably: both words turn up in the
-        # same conversation and neither is more correct.
-        export_ids.append(
-            MW
-            if name == MW or str(name).strip().casefold() in ("mw", "power")
-            else (resolve_item(game, name) or name)
-        )
+        resolved, err = _export_token(game, name)
+        if resolved is None:
+            export_errors.append(f"exports: {err}")
+            continue
+        export_ids.append(resolved)
     minimums = {}
     for name, value in (export_minimums or {}).items():
-        minimums[resolve_item(game, name) or name] = float(value)
+        # Same resolution as exports, aliases included: a minimum keyed "MW" that
+        # never matched the power pseudo-item was a floor the LP silently ignored.
+        resolved, err = _export_token(game, name)
+        if resolved is None:
+            export_errors.append(f"export_minimums: {err}")
+            continue
+        minimums[resolved] = float(value)
 
     table = nodes_mod.load_nodes()
     # The player position goes in as `player`, NOT as `origin`. origin would also
@@ -134,8 +193,10 @@ def build_scenario(
         resolve_resource=lambda q: resolve_item(game, q),
         player=(here[0], here[1]) if here else None,
     )
-    rows = nodes_mod.annotate(sel.nodes, game, state.projection, state.unlocked_building_ids)
-    rows = [r for r in rows if r["reachable"]]
+    scoped = nodes_mod.annotate(sel.nodes, game, state.projection, state.unlocked_building_ids)
+    # Keep the pre-filter set: what got dropped here, and why, is the whole answer to
+    # "this plan cannot get Nitrogen Gas".
+    rows = [r for r in scoped if r["reachable"]]
     if only_free_nodes:
         rows = [r for r in rows if not r["tapped"]]
 
@@ -209,6 +270,9 @@ def build_scenario(
         plan_id=_plan_id(sc, only_free_nodes),
         excluded=sorted(set(excluded)),
         recipe_errors=recipe_errors,
+        export_errors=export_errors,
+        scoped_nodes=scoped,
+        only_free_nodes=only_free_nodes,
     )
 
 

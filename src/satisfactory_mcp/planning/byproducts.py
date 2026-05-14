@@ -445,7 +445,7 @@ def analyse(
     procs = build_processes(sc)
     produced, consumed = _flows(procs)
     terminal = _terminal(sc)
-    notes = list(req.selection.errors)
+    notes = [*req.selection.errors, *req.export_errors]
     if req.selection.errors and not req.selection.nodes:
         # A typo'd selector and a genuinely stuck byproduct look identical from the
         # solved plan -- both give nothing -- so the two must never be confused.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning.optimize import solve
+from satisfactory_mcp.planning.optimize import MW, solve
 from satisfactory_mcp.planning.scenario import build_scenario, match_recipes
 
 pytestmark = pytest.mark.integration
@@ -140,6 +140,56 @@ def test_only_recipes_then_exclude_applies_in_order(game, state):
     names = {game.recipes[r].name for r in req.scenario.recipes}
     assert "Alternate: Diluted Fuel" in names
     assert "Alternate: Diluted Packaged Fuel" not in names
+
+
+# ---------------------------------------------------------------- exports
+
+
+def test_an_unknown_export_is_named_rather_than_returning_infeasible(game, state):
+    """THE correction. An unresolvable token used to become the raw string, entering
+    the LP as an item no process makes and no balance row can satisfy -- so the plan
+    came back as a bare INFEASIBLE with nothing pointing at the typo."""
+    req = build_scenario(game, state, sources=["region:Spire Coast"], exports=["Plastik"])
+    assert req.export_errors
+    assert "Plastik" in req.export_errors[0]
+    assert "Plastik" not in req.scenario.exports
+
+
+def test_an_unknown_export_minimum_is_named_too(game, state):
+    """A floor keyed to a nonexistent item is unsatisfiable by construction, which is
+    the same bare INFEASIBLE one step further along."""
+    req = build_scenario(
+        game, state, sources=["region:Spire Coast"], export_minimums={"Plastik": 300.0}
+    )
+    assert req.export_errors
+    assert "export_minimums" in req.export_errors[0]
+    assert not req.scenario.export_minimums
+
+
+def test_a_minimum_on_power_resolves_to_the_power_pseudo_item(game, state):
+    """Aliases have to apply on both sides. A minimum keyed "MW" that never matched
+    __MW__ was a floor the LP silently ignored."""
+    req = build_scenario(
+        game, state, sources=["region:Spire Coast"], exports=["MW"], export_minimums={"MW": 500.0}
+    )
+    assert req.scenario.export_minimums == {MW: 500.0}
+    assert not req.export_errors
+
+
+def test_exports_replace_the_default_and_that_is_load_bearing(game, state):
+    """Kept as replace, not extend, for a measurable reason: exporting MW also forbids
+    drawing from the existing grid, so silently appending it would turn every item
+    plan into a self-powered one -- a different question from the one asked."""
+    items_only = build_scenario(game, state, sources=["region:Spire Coast"], exports=["Plastic"])
+    assert MW not in items_only.scenario.exports
+    assert items_only.scenario.grid_import_mw == 1e6
+
+    with_power = build_scenario(
+        game, state, sources=["region:Spire Coast"], exports=["MW", "Plastic"]
+    )
+    assert MW in with_power.scenario.exports
+    # None here means "no import allowed", which solve() enforces as a 0 MW cap.
+    assert with_power.scenario.grid_import_mw is None
 
 
 # ---------------------------------------------------------------- plan id

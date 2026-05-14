@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 19 tools, 3 resources, 3 prompts, 185 tests passing. See README.md for usage.
+**Status:** implemented. 19 tools, 3 resources, 3 prompts, 402 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -170,7 +170,7 @@ SatisfactoryMcp/
       cache.py
       model.py
     spatial/  geo.py  nodes.py  regions.py  select.py
-    planning/ optimize.py  advisor.py
+    planning/ optimize.py  advisor.py  supply.py
     render.py          # ALL formatting: TSV, envelopes, truncation
   sidecar/
     extract_save.py    # imports sav_parse, emits JSON projection on stdout
@@ -996,6 +996,59 @@ Naive calculators return row 1 — 10 refineries and *no machines consuming the 
 Residue*. In game the pipe fills and the line stalls. The correct answer needs **17–25% more buildings**,
 and it can say "impossible", which a naive model never does.
 
+### 8.2a Naming what an infeasible plan cannot get
+
+`plan_factory` already names buildings the world has not built (`must build first: Blender`). It said
+nothing about the resource end, and that asymmetry was expensive: a rocket-fuel plan returned a bare
+INFEASIBLE, `explain_byproducts` correctly reported no byproduct was stuck, and the real cause —
+**Nitrogen Gas exists only as resource-well satellites, and this world has no Pressurizer** — had to be
+recovered by hand by cross-referencing a node scan against a recipe. `planning/supply.py` closes it.
+
+Three things had to be fixed for an INFEASIBLE response to say anything at all:
+
+1. **Every early `Solution("infeasible", …)` filed its reason under the wrong field.** The tenth
+   positional field is `machine_penalty_mw`, not `warnings`, so `"phase 1 infeasible: …"` went into a
+   float and the caller got an INFEASIBLE with no reason attached. This is most of what "bare INFEASIBLE"
+   actually was. Now passed by keyword.
+2. **An export or target nothing in scope can make is named without any probe.** An export with no
+   producing column cannot be exported at any rate, and the distinction is the one a player acts on:
+   *no unlocked recipe makes it* versus *its recipe needs a machine you have not unlocked*.
+3. **Missing raw supply is decided by the LP, never a graph walk** — the same rule §8.2 and
+   `byproducts.py` follow. A backward walk from the target over-reports (every raw input of every route,
+   including routes the plan would never take), and a forward "what can I make" closure under-reports,
+   because Recycled Plastic and Recycled Rubber each need the other's product yet the *pair* net-creates
+   both from Fuel. So one probe re-solves with a free supply of every resource the scope cannot extract,
+   and `raw_used` names the ones the plan actually wanted. **One extra solve, on the infeasible path only.**
+
+Both outcomes are reported, and the negative one is worth as much:
+
+| probe | reported |
+|---|---|
+| solves | every resource it drew on is *a* cause — the only change was making it available |
+| still infeasible | raw supply is **not** the problem; something else is binding |
+
+Measured on the reference save: max Steel Ingot ≥ 100/min scoped to `resource:Iron Ore` is infeasible,
+and the probe names **Coal — no node in scope (62 elsewhere on the map)**. Forcing 10⁷ Steel Ingot on
+Spire Coast is also infeasible, and there the probe correctly declines to blame supply.
+
+**What it cannot prove.** It does not apportion blame: two missing resources that are jointly needed are
+both listed, with no claim about which is *the* blocker, and a resource the probe used because it was
+merely cheap is still listed. The probe's own draw rate is deliberately **not** printed — it maximises
+against an unlimited supply, so quoting it would read as a requirement it never established.
+
+The *why* beside each resource is a separate, purely factual read of the node table, in this order: no
+node in scope (with the map-wide count) → nodes in scope but none reachable → reachable but all tapped
+(`only_free_nodes`) → reachable and free but modelled by no extractor (well satellites and geysers,
+which `build_scenario` never turns into extractor columns). If none of those hold it says the cause is
+not established rather than inventing one.
+
+`nodes.blocking_buildings` supplies the actionable half — *which* building to go and unlock. It is
+strictly sharper than the `reachable` flag in one direction that matters: `reachable` asks only whether
+an extractor of the right **kind** is unlocked and never whether it can tap that **resource**, so an
+unlocked Miner Mk2 makes a crude oil node read as reachable while nothing on the map can pump it. It
+also names the Pressurizer, which appears in no extractor table because it extracts nothing, and
+without which every satellite of a well yields exactly zero.
+
 ### 8.3 Guards
 
 Both run on **every** solve:
@@ -1046,6 +1099,15 @@ lines it implies at the current tier. A throughput *cap* would be wrong — para
 the game has no global limit — but a plan that silently needs 7 Mk2 pipes of water is not a plan. Water
 is modelled as unlimited, which on this map it effectively is, so the extractor count and pipe count are
 surfaced explicitly rather than hiding inside a ratio.
+
+> **The table must be askable, because volume order buries the question.** The rows rank by flow, and
+> the table used to truncate at a hardcoded 6 while ignoring the tool's own `limit`. On the reference
+> Spire Coast plan that cut it at Polymer Resin: **Plastic ranks 7th** — one of the two items that plan
+> exists to size — so the answer was invisible and had to be reconstructed by multiplying machine counts
+> by recipe rates. It now honours `limit`, and `logistics_items=["Plastic", "Rubber"]` pins named items
+> whatever they rank. Pins are **added to** the limit rather than carved out of it: naming two small
+> items must not push two big ones out, or one blind spot is simply traded for another. Anything hidden
+> is counted in the note, and the multi-line warning says how many flows it did not list.
 
 **Somersloops remain dormant** by explicit decision. The machinery exists (`Process.sloops`,
 `Scenario.sloop_budget`, per-building boost multipliers) but nothing populates the budget, so no sloop
@@ -1209,7 +1271,23 @@ burns power. On Spire Coast, `[1.0, 1.5, 2.0, 2.5]` takes 43,092 MW to **107,258
 **`power` and `mw` are interchangeable** in objectives (`max_power` = `max_mw`, `min_mw` = `min_power`)
 and in exports (`MW`, `mw`, `power`, `Power`). Both words turn up in the same conversation and neither is
 more correct. Normalisation happens in `Scenario.__post_init__`, so exactly one spelling reaches the
-dispatch — otherwise `max_power` would fall through to the unknown-objective branch.
+dispatch — otherwise `max_power` would fall through to the unknown-objective branch. The same resolution
+now applies to `export_minimums` keys, where a minimum written `"MW"` never matched the power
+pseudo-item and was a floor the LP silently ignored.
+
+**An export token that resolves to no item is refused by name.** It used to pass through as the raw
+string, which entered the LP as an item id nothing produces and no balance row can satisfy — a bare
+INFEASIBLE with nothing pointing at the typo. This is the same call `recipe_errors` makes for a ban that
+matched nothing: a silently mangled export whitelist describes a different factory from the one asked
+for, and §8.2 makes `exports` the most load-bearing argument in the model.
+
+> **`exports` REPLACES the default `[MW]`; it does not extend it. Kept, and now documented.** The reason
+> is mechanical rather than stylistic: `grid_import_mw` is derived from the export set, because a power
+> plant that imports power to export it is unbounded — so exporting MW also forbids drawing from the
+> existing grid. Auto-appending MW would therefore silently force *every* item plan to be self-powered,
+> which is a different question from the one asked. It cost a real session four INFEASIBLE calls anyway,
+> so the tool docstring now spells out all three shapes (`["MW"]`, `["Plastic", "Rubber"]`,
+> `["MW", "Plastic", "Rubber"]`) and every refusal quotes `EXPORT_HELP`.
 
 ### 8.7 Degeneracy
 
@@ -1290,9 +1368,11 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 ```
 plan_factory(objective="max_mw", target_item=None, sources=[...],
              exports=["__MW__"], export_minimums={}, only_free_nodes=False,
-             allow_sinks=True, save=None, world=None, limit=15)
+             allow_sinks=True, save=None, world=None, limit=15,
+             logistics_items=None)
   -> summary (net_MW, machines, grid_import, exports, raw, sunk)
      + warnings/binding first, then a process table with a BUILD marker
+     + a logistics table of `limit` flows, plus any logistics_items pinned
 
 search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
                       only_free=False, group="field"|"node", limit=25)
