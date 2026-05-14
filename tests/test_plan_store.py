@@ -141,3 +141,55 @@ def test_kwargs_filters_out_anything_no_longer_accepted():
     """A plan saved by an older build must not blow up a newer build_scenario call."""
     plan = Plan(name="p", args={"objective": "max_mw", "retired_knob": 7})
     assert plan.kwargs() == {"objective": "max_mw"}
+
+
+# ----------------------------------------------------------------- scoping
+
+
+def _diff_index(state, request, scope=None):
+    from satisfactory_mcp.planning.diff import _index
+
+    return _index(state, request, scope)
+
+
+def test_scoping_limits_what_counts_as_already_built(game, state):
+    """Unscoped, "you already have 12 of these" counts machines on the far side of the
+    map that are busy doing something else -- the wrong answer to "how far along is the
+    aluminium setup"."""
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    request = build_scenario(game, state, objective="max_mw", exports=["MW"])
+    everything = _diff_index(state, request)
+    total = sum(len(v) for v in everything.by_recipe.values())
+    assert total > 0
+
+    first = next(iter(everything.by_recipe.values()))[0]
+    only_one = _diff_index(state, request, {first["instance"].rsplit(".", 1)[-1]})
+    assert sum(len(v) for v in only_one.by_recipe.values()) == 1
+
+
+def test_an_empty_scope_means_nothing_is_already_built(game, state):
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    request = build_scenario(game, state, objective="max_mw", exports=["MW"])
+    index = _diff_index(state, request, set())
+    assert not index.by_recipe
+    assert not index.idle
+    assert not index.by_generator
+    assert not index.by_extractor_class
+
+
+def test_a_node_tapped_by_another_factory_is_neither_reusable_nor_free(game, state):
+    """It must drop out of BOTH. Left in `tapped` it would read as already built for
+    this plan; moved to `free` it would plan a second miner onto an occupied node."""
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    request = build_scenario(game, state, objective="max_mw", exports=["MW"])
+    unscoped = _diff_index(state, request)
+    scoped = _diff_index(state, request, set())
+
+    assert sum(len(v) for v in unscoped.tapped.values()) > 0
+    assert not scoped.tapped, "no in-scope extractor taps anything"
+    before = sum(len(v) for v in unscoped.free.values())
+    after = sum(len(v) for v in scoped.free.values())
+    assert after == before, "tapped nodes must not become free just because we narrowed"

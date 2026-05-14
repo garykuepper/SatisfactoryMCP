@@ -21,6 +21,7 @@ from .docs.normalize import normalize
 from .graph.query import ASPECTS as QUERY_ASPECTS
 from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
+from .graph.select import SelectorError
 from .planning import advisor, byproducts, compare
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
@@ -652,7 +653,6 @@ def factory_query(
     starved factory still reports its full rate.
     """
     from .graph.query import build_view
-    from .graph.select import SelectorError
 
     try:
         st = _state(save, world)
@@ -2294,6 +2294,10 @@ def diff_vs_save(
     limit: Limit = 20,
     show_cost: bool = True,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+    factory: Annotated[
+        str | None,
+        Field(description="only count this factory's machines as already built"),
+    ] = None,
 ) -> str:
     """What to change to get from the factory you have to the one plan_factory plans.
 
@@ -2372,7 +2376,28 @@ def diff_vs_save(
             ],
         )
 
-    rep = build_diff(g, st, sol, req)
+    # A plan saved with for_factory carries its own scope, so `diff_vs_save(plan=...)`
+    # already answers "how far along is THAT factory" without naming it again.
+    scope_name = factory
+    if scope_name is None and plan:
+        stored = st.plans.find(plan)
+        scope_name = (stored.factory or None) if stored else None
+
+    scope = None
+    if scope_name:
+        try:
+            resolved_name, machines = _resolve_factory(st, scope_name)
+        except SelectorError as exc:
+            return f"! {exc}"
+        if not machines:
+            return f"! {scope_name!r} resolved to no machines that still exist in this save"
+        scope = set(machines)
+        plan_notes.append(
+            f"scoped to {resolved_name!r} ({len(scope)} machines): everything outside it "
+            "counts as not built, and nodes tapped by other factories are unavailable"
+        )
+
+    rep = build_diff(g, st, sol, req, scope=scope)
     pw = st.power_report()
 
     rows = []
@@ -2496,7 +2521,7 @@ def diff_vs_save(
     if plan_name:
         plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
 
-    return render.envelope(summary, "\n".join(parts), notes)
+    return render.envelope(summary, "\n".join(parts), [*plan_notes, *notes])
 
 
 @mcp.tool(structured_output=False)

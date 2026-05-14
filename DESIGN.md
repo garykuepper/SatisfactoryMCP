@@ -1350,6 +1350,21 @@ by an older build cannot break a newer `build_scenario`.
 Stored per world under `saveIdentifier` in `user_data_dir/plans/`, beside the labels and
 for the same reason.
 
+**Scoping.** `diff_vs_save(factory=...)` — or a plan saved with `for_factory` — limits
+what counts as *already built* to that factory's machines. Unscoped, "you already have 12
+of these" counts constructors on the far side of the map that are busy doing something
+else, which is the wrong answer to "how far along is the aluminium setup". On the
+reference save, scoping an aluminium plan moves `to_place` from 156–167 to 188.
+
+Node handling is the subtle part. A node tapped by a *different* factory drops out of
+**both** the reusable and the free set:
+
+- left in `tapped` it would read as already built for this plan;
+- moved to `free` it would plan a second miner onto an occupied node.
+
+`extractor_on` is deliberately left un-scoped, because occupancy is a fact about the world
+rather than about the factory being asked.
+
 ### 10.2 Context budget
 
 The binding constraint. All 291 automatable recipes in optimal TSV = 25,313 chars (~7k tokens). **No tool

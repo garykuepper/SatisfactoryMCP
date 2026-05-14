@@ -218,10 +218,24 @@ class _SaveIndex:
     extractor_on: dict[str, dict]
 
 
-def _index(state: WorldState, request: PlanRequest) -> _SaveIndex:
+def _index(
+    state: WorldState, request: PlanRequest, scope: set[str] | None = None
+) -> _SaveIndex:
+    """What the save already offers this plan.
+
+    ``scope`` restricts reuse to one factory's machines. Without it, "you already have
+    12 of these" counts constructors on the far side of the map that are busy doing
+    something else, which is the wrong answer to "how far along is the aluminium setup".
+    """
+
+    def inside(record: dict) -> bool:
+        return scope is None or record["instance"].rsplit(".", 1)[-1] in scope
+
     by_recipe: dict[tuple[str, str], list[dict]] = {}
     idle: dict[str, list[dict]] = {}
     for m in state.projection.get("machines", ()):
+        if not inside(m):
+            continue
         recipe = m.get("recipe")
         if recipe:
             by_recipe.setdefault((m["cls"], recipe), []).append(m)
@@ -231,13 +245,20 @@ def _index(state: WorldState, request: PlanRequest) -> _SaveIndex:
 
     by_generator: dict[str, list[dict]] = {}
     for entry in state.projection.get("generators", ()):
-        by_generator.setdefault(entry["cls"], []).append(entry)
+        if inside(entry):
+            by_generator.setdefault(entry["cls"], []).append(entry)
 
     by_extractor_class: dict[str, list[dict]] = {}
     extractor_on: dict[str, dict] = {}
+    in_scope_nodes: set[str] = set()
     for entry in state.projection.get("extractors", ()):
-        by_extractor_class.setdefault(entry["cls"], []).append(entry)
+        if inside(entry):
+            by_extractor_class.setdefault(entry["cls"], []).append(entry)
+            if entry.get("node"):
+                in_scope_nodes.add(entry["node"])
         if entry.get("node"):
+            # Kept whole: a node tapped by ANOTHER factory is still occupied, and the
+            # plan must not be told it is free.
             extractor_on[entry["node"]] = entry
 
     # The one exact machine match available: annotate() resolved node -> extractor from
@@ -249,6 +270,11 @@ def _index(state: WorldState, request: PlanRequest) -> _SaveIndex:
         if row["kind"] != "node" or row["rate"] <= 0:
             continue
         if row["tapped"]:
+            # Only a node this factory taps counts as already built for it. One tapped
+            # by a different factory is neither reusable NOR free -- it drops out of
+            # both, because offering it as free would plan a second miner onto it.
+            if scope is not None and row["instance"] not in in_scope_nodes:
+                continue
             tapped.setdefault((row["tapped_by"], row["resource"], row["purity"]), []).append(row)
         else:
             free.setdefault((row["resource"], row["purity"]), []).append(row)
@@ -580,9 +606,13 @@ def build_diff(
     state: WorldState,
     sol: Solution,
     request: PlanRequest,
+    scope: set[str] | None = None,
 ) -> DiffReport:
-    """Match a solved plan against the save and derive the actions to reach it."""
-    index = _index(state, request)
+    """Match a solved plan against the save and derive the actions to reach it.
+
+    ``scope`` limits what counts as already built to one factory's machines.
+    """
+    index = _index(state, request, scope)
     anchor = _anchor(index)
     groups = _group_processes(sol)
 
