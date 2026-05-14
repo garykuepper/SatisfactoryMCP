@@ -885,24 +885,27 @@ need the wiki Region column, which isn't shipped locally — recorded as a limit
 Also: 200 m single-linkage recovers the real oil fields, but one cluster merges 6 well satellites with a
 standalone node 85 m away — so **node kind must never be inferred from one cluster member**.
 
-### 7.2a Nearest-node lookup
+### 7.2a Node lookup — one tool, three modes
 
-`search_resource_nodes` answers "what exists in this region / of this purity" and sorts by
-**yield**. It cannot answer "what is closest" — there is no distance column and no way to
-ask for the nearest *n* without guessing a radius. `find_resource_node` fills that:
+`search_resource_nodes` answers three different questions through a `mode` parameter,
+rather than splitting into separate tools that share 90% of their body:
 
-```
-find_resource_node(near, resource=None, limit=10, only_unused=False, purity=None, kind=None)
-```
+| mode | ranks by | answers |
+|---|---|---|
+| `fields` (default) | yield | "where is there a lot of iron" — 200 m clusters |
+| `nodes` | yield | "which individual nodes", with ids reusable as selectors |
+| `nearest` | **distance** | "what is closest" — requires `near` |
 
 `near` takes a coordinate in metres, `me` for the player pawn, or **the name of a labelled
-factory** — the last is the reason the tool has this shape. "The nearest free coal to the
+factory**. The last is the reason the mode has this shape: "the nearest free coal to the
 coal powerplant" is the question actually asked, and hand-copying a centroid out of another
-tool's output is how the wrong coordinate gets used.
+tool's output is how the wrong coordinate gets used. Supplying `near` in any mode adds a
+distance column headed with the origin's name, so the number is never ambiguous.
 
-Output is distance-ordered with the distance shown, plus purity, rate, `tapped`/`free`/
-`LOCKED` and region. `node_id` feeds straight back into `search_resource_nodes` as
-`node:<id>`.
+`group="node"` predates `mode` and still resolves — a stored call must not break.
+
+`mode="nearest"` without `near` is an **error**, not a silent fall back to yield order:
+answering a different question than the one asked is worse than refusing.
 
 ### 7.3 Source selectors
 
@@ -1279,7 +1282,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
-**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `find_resource_node`, `rank_build_sites`
+**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`

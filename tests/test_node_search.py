@@ -1,0 +1,150 @@
+"""search_resource_nodes in mode="nearest", and how its origin is resolved.
+
+Distance ranking lives in the same tool as the yield-ranked field and node views: one
+surface, three modes. The location grammar is the part worth pinning. Accepting a factory
+name is the reason the mode has this shape -- "the nearest free coal to the coal
+powerplant" is the question actually asked, and hand-copying a centroid out of another
+tool's output is how the wrong coordinate gets used.
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from satisfactory_mcp import server as srv
+from satisfactory_mcp.graph.labels import LabelStore
+from satisfactory_mcp.save.state import WorldState
+
+pytestmark = pytest.mark.integration
+
+
+class _Fake(WorldState):
+    """A WorldState with labels we control, rather than whatever is on this machine."""
+
+    def __init__(self, projection, game, labels):
+        super().__init__(projection=projection, game=game)
+        self._labels = labels
+
+    @property
+    def labels(self):  # type: ignore[override]
+        return self._labels
+
+
+def _state_with_label(game, name="probe", positions=((1000.0, 2000.0), (3000.0, 4000.0))):
+    machines = [
+        {
+            "instance": f"L:P.Build_SmelterMk1_C_{i}",
+            "cls": "Build_SmelterMk1_C",
+            "recipe": "Recipe_IngotIron_C",
+            "pos": [x, y, 0.0],
+        }
+        for i, (x, y) in enumerate(positions)
+    ]
+    projection = {"machines": machines, "extractors": [], "generators": [], "players": []}
+    store = LabelStore(world_id="TEST")
+    store.put(name, [m["instance"].rsplit(".", 1)[-1] for m in machines])
+    return _Fake(projection, game, store)
+
+
+def test_a_coordinate_is_read_as_metres(game):
+    """Every coordinate in this MCP is quoted in metres; the save stores centimetres.
+    Getting this wrong silently searches 100x too far away."""
+    origin, where = srv._origin_for(_state_with_label(game), "-1069,-1273")
+    assert origin == (-106_900.0, -127_300.0)
+    assert where == "-1069,-1273"
+
+
+def test_a_factory_name_resolves_to_its_centroid(game):
+    st = _state_with_label(game)
+    origin, where = srv._origin_for(st, "probe")
+    assert origin == (2000.0, 3000.0)
+    assert where == "probe"
+
+
+def test_an_unknown_location_lists_what_is_known(game):
+    st = _state_with_label(game, name="steel factory")
+    with pytest.raises(ValueError, match="steel factory"):
+        srv._origin_for(st, "nowhere")
+
+
+def test_a_bad_coordinate_is_rejected_rather_than_guessed(game):
+    with pytest.raises(ValueError, match="x,y pair"):
+        srv._origin_for(_state_with_label(game), "12,north")
+
+
+def test_me_needs_a_player_pawn(game):
+    st = _state_with_label(game)
+    with pytest.raises(ValueError, match="no player pawn"):
+        srv._origin_for(st, "me")
+
+
+def _rows(out: str) -> list[dict]:
+    """Parse the tab table by HEADER, not by column position.
+
+    The merged tool keeps a `grid` column the standalone one did not have, so
+    index-based parsing silently read the wrong field and compared a coordinate against
+    "X3Y2".
+    """
+    lines = [x for x in out.splitlines() if "\t" in x]
+    if not lines:
+        return []
+    headers = lines[0].split("\t")
+    return [dict(zip(headers, line.split("\t"), strict=False)) for line in lines[1:]]
+
+
+def _dist(row: dict) -> int:
+    return int(row[next(k for k in row if k.startswith("dist"))].rstrip("m"))
+
+
+def test_nodes_come_back_nearest_first(game):
+    """The whole point of the mode: the other two rank by yield."""
+    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=8)
+    assert not out.startswith("! ")
+    distances = [_dist(r) for r in _rows(out)]
+    assert distances, out
+    assert distances == sorted(distances), distances
+
+
+def test_distance_is_measured_from_the_given_origin(game):
+    """A node's reported distance must match its reported coordinate."""
+    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=3)
+    rows = _rows(out)
+    assert rows
+    for row in rows:
+        x_m, y_m = (float(v) for v in row["x,y(m)"].split(","))
+        assert _dist(row) == pytest.approx(math.dist((x_m, y_m), (0, 0)), abs=2)
+
+
+def test_the_distance_column_names_the_origin(game):
+    """So a reader of the table knows what the number is measured from."""
+    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=2)
+    assert any(k.startswith("dist to ") for k in _rows(out)[0])
+
+
+def test_nearest_without_an_origin_says_so(game):
+    """Silently falling back to yield order would answer a different question."""
+    out = srv.search_resource_nodes(resource="Coal", mode="nearest")
+    assert out.startswith("! mode='nearest' needs near=")
+
+
+def test_an_unknown_mode_lists_the_modes(game):
+    out = srv.search_resource_nodes(resource="Coal", mode="bogus")
+    assert "fields, nodes, nearest" in out
+
+
+def test_the_old_group_argument_still_works(game):
+    """`group` predates `mode` and meant the same thing; a stored call must not break."""
+    old = srv.search_resource_nodes(resource="Coal", group="node", limit=3)
+    new = srv.search_resource_nodes(resource="Coal", mode="nodes", limit=3)
+    assert old == new
+
+
+def test_only_free_narrows_the_nearest_list(game):
+    everything = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=25)
+    free_only = srv.search_resource_nodes(
+        resource="Coal", mode="nearest", near="0,0", limit=25, only_free=True
+    )
+    assert "tapped" in everything
+    assert "tapped" not in free_only
