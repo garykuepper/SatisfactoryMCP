@@ -1365,6 +1365,26 @@ Node handling is the subtle part. A node tapped by a *different* factory drops o
 `extractor_on` is deliberately left un-scoped, because occupancy is a fact about the world
 rather than about the factory being asked.
 
+**`plan_layout(factory=...)` scopes differently, because a layout has no coordinates.**
+`build_layout` is abstract on purpose — blocks, buses and floors with sizes in metres —
+since a player places machines themselves and a solver inventing positions would be both
+wrong and unwelcome. So scoping cannot mean placing blocks. It answers the two questions
+the abstract layout leaves open once you know *where* it goes:
+
+- **Does it fit?** The structure layer knows the slab's tile count and extent; the layout
+  knows its peak-floor footprint. The gap is foundations to pour. A shortfall is reported
+  as a number, not a failure — floors stack, so building up may resolve it, and the note
+  says so when the factory is already multi-storey.
+- **What already stands there?** A block matched by (building, recipe) against machines in
+  that factory is not work. On the reference save an aluminium layout reads *"106 tiles
+  across 1 platform, 135×135m; layout needs 338 at its widest floor — needs 232 more tiles,
+  or a floor above. 1 block standing, 36 to build."*
+
+Two honesty constraints. The standing count is **consumed as it matches**, or one smelter
+would satisfy every Iron Ingot block in a split process. And a standing machine is reported
+as *present*, never as *correct* — it may be on a different clock or feeding something
+else.
+
 ### 10.2 Context budget
 
 The binding constraint. All 291 automatable recipes in optimal TSV = 25,313 chars (~7k tokens). **No tool

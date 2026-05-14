@@ -2071,6 +2071,10 @@ def plan_layout(
     world: str | None = None,
     limit: Limit = 20,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+    factory: Annotated[
+        str | None,
+        Field(description="fit the layout against this factory's existing platform"),
+    ] = None,
 ) -> str:
     """Turn a plan into a buildable schematic: blocks, buses and floors.
 
@@ -2271,6 +2275,32 @@ def plan_layout(
 
     if plan_name:
         plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
+
+    scope_name = factory
+    if scope_name is None and plan:
+        stored = st.plans.find(plan)
+        scope_name = (stored.factory or None) if stored else None
+    if scope_name:
+        from .planning.fit import assess_fit
+
+        try:
+            resolved_name, machines = _resolve_factory(st, scope_name)
+        except SelectorError as exc:
+            return f"! {exc}"
+        fit = assess_fit(resolved_name, machines, lay, st.structures, st.projection)
+        still = ", ".join(fit.to_build[:8]) if fit.to_build else ""
+        head = [
+            f"## fit against {resolved_name}",
+            fit.headline(),
+            (
+                f"blocks: {len(fit.standing)} standing ({fit.machines_standing} machines), "
+                f"{len(fit.to_build)} to build ({fit.machines_to_build} machines)"
+            ),
+        ]
+        if still:
+            head.append(f"still to build: {still}")
+        body = "\n".join(head) + "\n\n" + body
+        plan_notes = [*plan_notes, *fit.notes]
 
     return render.envelope(summary, body, [*plan_notes, *notes])
 
