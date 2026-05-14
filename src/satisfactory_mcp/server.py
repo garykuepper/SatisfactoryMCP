@@ -7,6 +7,7 @@ measured ~1.96x wire-size tax for no benefit.
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from typing import Annotated
 
@@ -1449,6 +1450,150 @@ def search_resource_nodes(
         body,
         notes,
     )
+
+
+def _origin_for(st, near: str) -> tuple[tuple[float, float], str]:
+    """Resolve a location: "x,y" in metres, "me", or the name of a named factory.
+
+    A factory name is the useful one now that factories exist -- "nearest coal to the
+    coal powerplant" is the question actually being asked, and hand-copying a centroid
+    out of another tool's output is how the wrong coordinate gets used.
+    """
+    text = near.strip()
+    if "," in text:
+        try:
+            x_m, y_m = (float(v) for v in text.split(",", 1))
+        except ValueError as exc:
+            raise ValueError(f"{near!r} is not an x,y pair in metres") from exc
+        return (x_m * 100.0, y_m * 100.0), f"{int(x_m)},{int(y_m)}"
+
+    if text.casefold() in ("me", "player", "here"):
+        here = _player_xy(st)
+        if here is None:
+            raise ValueError("this save has no player pawn, so 'me' cannot be resolved")
+        return here, "you"
+
+    label = st.labels.find(text) if st else None
+    if label is None:
+        known = ", ".join(x.name for x in st.labels.labels) if st else ""
+        raise ValueError(
+            f"{near!r} is neither an x,y pair, 'me', nor a named factory"
+            + (f". Named: {known}" if known else "")
+        )
+    pos = {}
+    for key in ("machines", "extractors", "generators"):
+        for record in st.projection.get(key, ()):
+            if record.get("pos"):
+                pos[record["instance"].rsplit(".", 1)[-1]] = record["pos"]
+    points = [pos[m][:2] for m in label.anchors if m in pos]
+    if not points:
+        raise ValueError(f"{label.name!r} has no machines left to centre on")
+    return (
+        (sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points)),
+        label.name,
+    )
+
+
+@mcp.tool(structured_output=False)
+def find_resource_node(
+    near: Annotated[
+        str, Field(description="'x,y' in metres, 'me' for the player, or a named factory")
+    ],
+    resource: str | None = None,
+    limit: Limit = 10,
+    only_unused: Annotated[bool, Field(description="hide nodes an extractor already sits on")] = False,
+    purity: Annotated[str | None, Field(description="impure | normal | pure")] = None,
+    kind: Annotated[str | None, Field(description="node | fracking | geyser")] = None,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """The nearest resource nodes to a point, ordered by distance.
+
+    Use this when the question is "what is closest"; use `search_resource_nodes` when it
+    is "what exists in this region / of this purity", which sorts by yield instead and
+    can group nodes into fields.
+
+    `near` accepts a coordinate, `me`, or the name of a factory you have labelled --
+    "the nearest free coal to the coal powerplant" needs no coordinates at all.
+    """
+    g = game()
+    table = nodes_mod.load_nodes()
+    try:
+        st = _state(save, world)
+    except Exception:
+        st = None
+
+    try:
+        origin, where = _origin_for(st, near)
+    except ValueError as exc:
+        return f"! {exc}"
+
+    rows = table.nodes
+    if resource:
+        item = _item_id(resource)
+        if item is None:
+            return f"! no resource matches {resource!r}"
+        rows = [r for r in rows if r["resource"] == item]
+        if not rows:
+            return f"! no nodes of {g.item_name(item)} exist on the map"
+    if purity:
+        rows = [r for r in rows if r["purity"] == purity.strip().casefold()]
+    if kind:
+        rows = [r for r in rows if r["kind"] == kind.strip().casefold()]
+    if not rows:
+        return "! nothing matches those filters"
+
+    annotated = nodes_mod.annotate(
+        rows, g, st.projection if st else None, st.unlocked_building_ids if st else None
+    )
+    if only_unused:
+        annotated = [r for r in annotated if not r["tapped"]]
+        if not annotated:
+            return render.envelope(
+                f"# every matching node near {where} already has an extractor on it",
+                "",
+                ["drop only_unused to see them anyway"],
+            )
+
+    for r in annotated:
+        r["_d"] = math.dist((r["x"], r["y"]), origin) / 100.0
+    annotated.sort(key=lambda r: r["_d"])
+
+    rm = regions_mod.load_regions()
+    n = render.clamp(limit)
+    mixed = len({r["resource"] for r in annotated}) > 1
+    body = render.table(
+        ("node_id", "resource" if mixed else "purity", "dist", "x,y(m)", "rate", "status", "region"),
+        [
+            (
+                r["instance"].rsplit(".", 1)[-1],
+                g.item_name(r["resource"]) if mixed else r["purity"],
+                f"{r['_d']:.0f}m",
+                f"{int(r['x'] / 100)},{int(r['y'] / 100)}",
+                render.num(r["rate"]),
+                "tapped" if r["tapped"] else ("LOCKED" if not r["reachable"] else "free"),
+                rm.label_for_node(r).name or "-",
+            )
+            for r in annotated[:n]
+        ],
+        total=len(annotated),
+        limit=n,
+    )
+
+    notes = []
+    if st is None:
+        notes.append("no save read: tapped/free unknown, everything shown as free")
+    elif not only_unused:
+        taken = sum(1 for r in annotated[:n] if r["tapped"])
+        if taken:
+            notes.append(f"{taken} of the {min(n, len(annotated))} shown already have an "
+                         "extractor -- pass only_unused=true to skip them")
+    if any(not r["reachable"] for r in annotated[:n]):
+        notes.append("LOCKED means this world has not unlocked an extractor for that node")
+    notes.append("node_id feeds straight back into search_resource_nodes as node:<id>")
+
+    head = f"# nearest {g.item_name(_item_id(resource)) if resource else 'resource'} nodes to {where}"
+    return render.envelope(f"{head}\n# {len(annotated)} match(es), distances from {where}", body, notes)
 
 
 @mcp.tool(structured_output=False)
