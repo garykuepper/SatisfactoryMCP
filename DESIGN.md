@@ -1284,7 +1284,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
+**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `list_plans`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -1310,6 +1310,45 @@ search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
 Also required and absent from the first draft: a **power target** must be expressible (the driving use
 case is MW, not an item), and generator fuel throughput needs `mEnergyValue` with its per-litre /
 per-item split.
+
+### 10.1a Plan persistence
+
+`diff_vs_save` re-solves rather than taking a plan handle, which means retyping fifteen
+arguments to ask "how far along am I". Plans are now nameable:
+
+```
+plan_factory(..., save_as="north oil", plan_notes_text="...", for_factory="oil setup")
+plan_factory(plan="north oil")            # recall and re-solve
+diff_vs_save(plan="north oil")            # diff without retyping
+plan_layout(plan="north oil")
+list_plans() / forget_plan(name)
+```
+
+**The request is stored, never the solution.** A solve depends on the unlocked recipe
+set, which nodes are free and which buildings exist — all of which move as the game is
+played. A stored solution would keep answering about a world that no longer exists, and
+would do it silently. Storing arguments and re-solving on recall always answers about the
+world as it is now.
+
+That gives `plan_id` a second job. It already hashes the arguments *together with* the
+save-derived solve inputs (§ scenario), so recording it at save time and comparing on
+recall detects exactly the interesting case: **the plan did not change, the world did.**
+`list_plans` reports that as `world moved`.
+
+**The defaults trap.** MCP fills declared defaults in before a tool sees them, so
+`objective` always arrives as `"max_mw"` and a naive merge would clobber every recalled
+plan with it. `PLAN_DEFAULTS` records each argument's declared default, and a supplied
+value counts as an override only when it *differs* from it. The honest cost: a recall
+cannot explicitly reset an argument back to its default — re-save the plan for that.
+
+Overrides are applied but **not persisted**, and the response says so. Stored args are
+filtered to those that shape the solve — not `limit` (presentation) or `save`/`world`
+(which file was read, not what was asked) — and defaults are dropped, so a stored plan
+reads as the request that was made. `Plan.kwargs()` filters unknown keys so a plan saved
+by an older build cannot break a newer `build_scenario`.
+
+Stored per world under `saveIdentifier` in `user_data_dir/plans/`, beside the labels and
+for the same reason.
 
 ### 10.2 Context budget
 

@@ -62,6 +62,13 @@ class WorldState:
         return propose(self.graph, self.game, self.projection, self.structures)
 
     @cached_property
+    def plans(self):
+        """Named plans saved for this world."""
+        from ..planning.store import PlanStore
+
+        return PlanStore.load(self.world_id, self.header.get("session_name") or "")
+
+    @cached_property
     def labels(self):
         """Persisted factory names for this world."""
         from ..graph.labels import LabelStore

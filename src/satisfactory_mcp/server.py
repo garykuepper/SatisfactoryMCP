@@ -1732,6 +1732,117 @@ def whereami(
 # ============================================================ planning
 
 
+#: The declared default of every stored planning argument. Needed because MCP fills
+#: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
+#: a naive merge would clobber every recalled plan with it. A supplied value counts as an
+#: override only when it DIFFERS from the default here.
+#:
+#: The cost is one honest limitation: recalling a plan cannot explicitly reset a
+#: parameter back to its default. Edit the plan (save_as over the same name) for that.
+PLAN_DEFAULTS: dict = {
+    "objective": "max_mw",
+    "target_item": None,
+    "sources": None,
+    "exports": None,
+    "export_minimums": None,
+    "only_free_nodes": False,
+    "allow_sinks": True,
+    "clocks": None,
+    "extractor_clocks": None,
+    "machine_cost_mw": 5.0,
+    "exclude_recipes": None,
+    "only_recipes": None,
+}
+
+
+def _plan_kwargs(st, plan: str | None, supplied: dict) -> tuple[dict, str, list[str]]:
+    """Merge a stored plan's arguments with anything explicitly overridden this call.
+
+    Returns (kwargs, resolved plan name, notes).
+    """
+    clean = {k: v for k, v in supplied.items() if k in PLAN_DEFAULTS}
+    if not plan:
+        return clean, "", []
+    stored = st.plans.find(plan)
+    if stored is None:
+        known = ", ".join(x.name for x in st.plans.plans) or "(none saved yet)"
+        raise KeyError(f"no saved plan named {plan!r}. Saved: {known}")
+
+    overrides = {k: v for k, v in clean.items() if v != PLAN_DEFAULTS.get(k)}
+    merged = {**PLAN_DEFAULTS, **stored.kwargs(), **overrides}
+    notes = []
+    if stored.notes:
+        notes.append(f"{stored.name}: {stored.notes}")
+    changed = sorted(k for k, v in overrides.items() if stored.kwargs().get(k) != v)
+    if changed:
+        notes.append(
+            f"plan {stored.name!r} overridden this call: {', '.join(changed)} "
+            "(not saved -- pass save_as to keep it)"
+        )
+    return merged, stored.name, notes
+
+
+@mcp.tool(structured_output=False)
+def list_plans(save: str | None = None, world: str | None = None) -> str:
+    """Plans saved for this world, and whether the world has moved under them."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    if not st.plans.plans:
+        return render.envelope(
+            f"# no plans saved for world {st.plans.world_id!r}",
+            "Pass save_as=<name> to plan_factory to store one.",
+        )
+    rows = []
+    for stored in st.plans.plans:
+        try:
+            req = build_scenario(st.game, st, **stored.kwargs())
+            drift = "" if req.plan_id == stored.plan_id else "world moved"
+        except Exception as exc:  # a stored plan can outlive the thing it referenced
+            drift = f"broken: {type(exc).__name__}"
+        args = stored.args
+        rows.append(
+            (
+                stored.name,
+                args.get("objective", "max_mw"),
+                args.get("target_item") or "-",
+                ",".join(args.get("sources") or [])[:28] or "whole map",
+                stored.factory or "-",
+                drift,
+                stored.notes[:30],
+            )
+        )
+    return render.envelope(
+        f"# {st.age_note}\n# {len(rows)} saved plan(s)",
+        render.table(
+            ("name", "objective", "target", "sources", "factory", "status", "notes"), rows
+        ),
+        [
+            (
+                "'world moved' means the plan is unchanged but the solve inputs are not "
+                "-- an unlock, a freed node or a new building. Re-run it to see how"
+            )
+        ],
+    )
+
+
+@mcp.tool(structured_output=False)
+def forget_plan(name: str, save: str | None = None, world: str | None = None) -> str:
+    """Delete a saved plan. Nothing in the world is touched."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    stored = st.plans.find(name)
+    if stored is None:
+        known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+        return f"! no saved plan named {name!r}. Saved: {known}"
+    st.plans.remove(stored.name)
+    st.plans.save()
+    return f"forgot plan {stored.name!r}"
+
+
 @mcp.tool(structured_output=False)
 def plan_factory(
     objective: str = "max_mw",
@@ -1749,6 +1860,10 @@ def plan_factory(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
+    plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+    save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
+    plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
+    for_factory: Annotated[str, Field(description="factory label this plan is for")] = "",
 ) -> str:
     """Optimise a factory with an LP over this world's unlocked recipes.
 
@@ -1791,9 +1906,7 @@ def plan_factory(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    req = build_scenario(
-        g,
-        st,
+    supplied = dict(
         objective=objective,
         target_item=target_item,
         sources=sources,
@@ -1807,6 +1920,12 @@ def plan_factory(
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
     )
+    try:
+        plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
+    except KeyError as exc:
+        return f"! {exc.args[0]}"
+
+    req = build_scenario(g, st, **plan_kwargs)
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
@@ -1902,6 +2021,25 @@ def plan_factory(
             ),
         ]
     )
+    if plan_name:
+        summary = f"# recalled plan {plan_name!r}\n" + summary
+    notes = [*plan_notes, *notes]
+
+    if save_as:
+        stored = st.plans.put(
+            save_as,
+            plan_kwargs,
+            req.plan_id,
+            notes=plan_notes_text,
+            factory=for_factory,
+            when=str(st.header.get("save_datetime") or st.header.get("filename") or ""),
+        )
+        path = st.plans.save()
+        notes.append(
+            f"saved as {stored.name!r} (plan_id {req.plan_id}) in {path}. "
+            f"Recall with plan={stored.name!r} on plan_factory, plan_layout or diff_vs_save"
+        )
+
     return render.envelope(
         summary,
         render.table(
@@ -1932,6 +2070,7 @@ def plan_layout(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 20,
+    plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
 ) -> str:
     """Turn a plan into a buildable schematic: blocks, buses and floors.
 
@@ -1965,9 +2104,9 @@ def plan_layout(
     belt_ipm = belts.get(belt_tier, 780.0)
     pipe_m3min = pipes.get(pipe_tier, 600.0)
 
-    req = build_scenario(
-        g,
-        st,
+    # plan_layout declares fewer knobs than plan_factory; only the ones it has are
+    # offered as overrides, and the rest come from the stored plan untouched.
+    supplied = dict(
         objective=objective,
         target_item=target_item,
         sources=sources,
@@ -1975,11 +2114,15 @@ def plan_layout(
         export_minimums=export_minimums,
         only_free_nodes=only_free_nodes,
         allow_sinks=allow_sinks,
-        belt_ipm=belt_ipm,
-        pipe_m3min=pipe_m3min,
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
     )
+    try:
+        plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
+    except KeyError as exc:
+        return f"! {exc.args[0]}"
+
+    req = build_scenario(g, st, **plan_kwargs)
     sel, sc = req.selection, req.scenario
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
@@ -2126,7 +2269,10 @@ def plan_layout(
         )
         notes.append('detail="blocks" for every module, detail="buses" for item flows')
 
-    return render.envelope(summary, body, notes)
+    if plan_name:
+        plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
+
+    return render.envelope(summary, body, [*plan_notes, *notes])
 
 
 @mcp.tool(structured_output=False)
@@ -2147,6 +2293,7 @@ def diff_vs_save(
     world: str | None = None,
     limit: Limit = 20,
     show_cost: bool = True,
+    plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
 ) -> str:
     """What to change to get from the factory you have to the one plan_factory plans.
 
@@ -2174,9 +2321,7 @@ def diff_vs_save(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    req = build_scenario(
-        g,
-        st,
+    supplied = dict(
         objective=objective,
         target_item=target_item,
         sources=sources,
@@ -2190,6 +2335,12 @@ def diff_vs_save(
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
     )
+    try:
+        plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
+    except KeyError as exc:
+        return f"! {exc.args[0]}"
+
+    req = build_scenario(g, st, **plan_kwargs)
     sel = req.selection
     if sel.errors and not sel.nodes:
         return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
@@ -2341,6 +2492,9 @@ def diff_vs_save(
             f"against {render.num(rep.headroom_mw)} MW of headroom, so place it in "
             f">={rep.slices} proportional slices."
         )
+
+    if plan_name:
+        plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
 
     return render.envelope(summary, "\n".join(parts), notes)
 

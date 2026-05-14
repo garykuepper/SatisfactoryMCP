@@ -63,6 +63,15 @@ def cache_dir() -> Path:
 
 
 @lru_cache(maxsize=1)
+def plans_dir() -> Path:
+    """Named plans the player saved. Same reasoning as labels_dir: not regenerable,
+    not the cache, not the repo."""
+    d = Path(user_data_dir("satisfactory-mcp", appauthor=False)) / "plans"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@lru_cache(maxsize=1)
 def labels_dir() -> Path:
     """Factory names the player typed. NOT the cache, and NOT the repo.
 
