@@ -112,6 +112,16 @@ class Scenario:
     exports: tuple[str, ...] = (MW,)
     export_minimums: dict[str, float] = field(default_factory=dict)
     raw_caps: dict[str, float] = field(default_factory=dict)
+    #: Per-resource weight in the ``min_raw`` objective. Missing means 1.0.
+    #:
+    #: Exists because ``min_raw`` otherwise sums every resource with weight one and
+    #: therefore trades crude against water. Water is effectively unlimited on this
+    #: map, so that trade is always the wrong way round -- measured at 0.94 m3 crude
+    #: per Plastic with zero water, when 0.33 crude plus water was available. A
+    #: weight of 0 makes a resource free, which only makes sense as the first half
+    #: of a lexicographic pair: minimise the priced resources, then pin them and
+    #: minimise the free one, or the free one comes back at its cap.
+    raw_weights: dict[str, float] = field(default_factory=dict)
     extractor_nodes: dict[tuple[str, str, str], int] = field(default_factory=dict)
     allow_sinks: bool = True
     #: Extra discrete clock modes to offer the solver as CHOICES.
@@ -535,10 +545,14 @@ def solve(sc: Scenario) -> Solution:
         # and build_scenario only ever populates the latter. Counting raw_ alone made
         # min_raw minimise an empty row, so it silently returned 0 for every input.
         for j in range(nR):
-            c[col_r(j)] = 1.0
+            c[col_r(j)] = sc.raw_weights.get(raw_items[j], 1.0)
         for i, p in enumerate(procs):
             if p.kind == "extractor":
-                c[col_p(i)] = sum(rate for rate in p.rates.values() if rate > 0)
+                c[col_p(i)] = sum(
+                    rate * sc.raw_weights.get(item, 1.0)
+                    for item, rate in p.rates.items()
+                    if rate > 0
+                )
     elif sc.objective == "min_machines":
         for i in range(nP):
             c[col_p(i)] = 1.0

@@ -35,7 +35,7 @@ The game install and save directory are auto-detected. Override with `SATISFACTO
 **Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`
 **Map** — `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
-**Planning** — `plan_factory`, `plan_layout`, `diff_vs_save`, `explain_byproducts`, `compare_recipe_options`
+**Planning** — `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `explain_byproducts`, `compare_recipe_options`
 **MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest save is

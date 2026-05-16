@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 19 tools, 3 resources, 3 prompts, 402 tests passing. See README.md for usage.
+**Status:** implemented. __TOOLS__ tools, 3 resources, 3 prompts, __TESTS__ tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -165,12 +165,13 @@ SatisfactoryMcp/
       uestruct.py      # UE struct-string parser
       normalize.py     # -> items / recipes / buildings / schematics
       model.py         # dataclasses
+      search.py        # recipe search + the consumes/produces reverse index
     save/
       projection.py    # invokes sidecar, validates, caches
       cache.py
       model.py
     spatial/  geo.py  nodes.py  regions.py  select.py
-    planning/ optimize.py  advisor.py  supply.py
+    planning/ optimize.py  advisor.py  supply.py  bom.py  fit.py  store.py
     render.py          # ALL formatting: TSV, envelopes, truncation
   sidecar/
     extract_save.py    # imports sav_parse, emits JSON projection on stdout
@@ -1295,6 +1296,12 @@ for, and §8.2 makes `exports` the most load-bearing argument in the model.
 −57.78 vs −46.67 on the same objective). Either apply a documented lexicographic tie-break or label
 reported raw vectors as one of several optima. Never present a degenerate component as *the* number.
 
+`Scenario.raw_weights` is the mechanism: a per-resource weight in the `min_raw` objective, defaulting to
+1.0 and applied to both the raw columns and the extractor columns. A weight of 0 only makes sense as the
+first half of a lexicographic pair — minimise the priced resources, then pin them and minimise the free
+one, or the free one comes back at its stand-in cap. `bom` uses it for water ([§10.1c](#101c-bom--the-flattened-bill));
+`compare_recipe_options` predates it and pins its primary resource by cap instead.
+
 ---
 
 ## 9. Hard-drive advisor
@@ -1362,7 +1369,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `list_plans`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
+**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -1378,6 +1385,13 @@ search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
                       only_free=False, group="field"|"node", limit=25)
   -> per-field clusters (region, grid, centre, purity mix, total/free, spread)
      or per-node rows whose ids feed straight back in as node: selectors
+
+search_recipes(query="", consumes=None, produces=None, kind="part"|"building"|"manual"|"all",
+               only_alternates=False, include_events=False, save=None, limit=10, offset=0)
+  -> a census over ALL 872 recipes broken down by kind and HAVE/LOCKED, then rows
+
+bom(item, qty=60, allow_sinks=True, outlets=[], exclude_recipes=[], only_recipes=[], limit=20)
+  -> raw totals + one row per item: made/min, used/min, the recipe chosen, machines, building
 ```
 
 `warnings` and `binding_constraints` come **first** — that's where the insight is ("Blender unlocked but
@@ -1386,6 +1400,8 @@ search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
 **No `plan_chain` by recursive expansion.** It is unsound on this user's own recipe set: Recycled Plastic
 (30 Rubber + 30 Fuel → 60 Plastic) and Recycled Rubber (30 Plastic + 30 Fuel → 60 Rubber) form a genuine
 2-cycle and **both are unlocked**. There is no correct depth limit. The LP is the only engine.
+`bom` ([§10.1c](#101c-bom--the-flattened-bill)) is the sanctioned answer to the question `plan_chain`
+was meant to answer, and it is a presentation layer over `solve`.
 
 Also required and absent from the first draft: a **power target** must be expressible (the driving use
 case is MW, not an item), and generator fuel throughput needs `mEnergyValue` with its per-litre /
@@ -1464,6 +1480,100 @@ Two honesty constraints. The standing count is **consumed as it matches**, or on
 would satisfy every Iron Ingot block in a split process. And a standing machine is reported
 as *present*, never as *correct* — it may be on a different clock or feeding something
 else.
+
+### 10.1b Reverse recipe lookup — "what consumes X", and proving the list is closed
+
+`search_recipes` matched recipe **names** only, so "what eats Rubber" had no answer. What actually
+happened was that candidate consumers were recalled from memory and checked one at a time — roughly
+eight speculative calls, and at the end of them still no way to say the list was complete. The worry
+was specific and correct: *"if some Tier 7-9 building eats rubber, I'd have missed it."*
+
+**A parameter on `search_recipes`, not a new tool**, for the same reason `search_resource_nodes` took a
+`mode` instead of splitting ([§7.2a](#72a-node-lookup--one-tool-three-modes)): the body is ~90 % shared —
+filter, sort, page, render, HAVE/LOCKED — and only the predicate differs. §10.3's rule against duplicate
+surfaces applies with more force here, since a `consumers_of_item` tool would sit directly beside
+`alternates_for_item` and make tool selection worse. `produces=` comes along free and is the only way to
+ask which **build-gun** recipe makes a Blender, which `alternates_for_item` is part-only by construction.
+
+Completeness is bought with one rule: **the census is counted over all 872 recipes, never over the page.**
+`kind`, `include_events`, `limit` and `offset` decide what is *shown*; they never move the header counts.
+So the default part-only view of Rubber still opens with
+
+```
+# 26 recipe(s) consume Rubber: 15 part [5 HAVE, 10 LOCKED], 7 building [6 HAVE, 1 LOCKED],
+  4 manual [3 HAVE, 1 LOCKED]. Counted over all 872 recipes; kind/limit change the rows, never these totals.
+! kind='part' hides 7 building and 4 manual recipe(s) that also consume Rubber -- pass kind='all'
+```
+
+Measured on the reference save, and this is exactly the case the worry named: the seven building
+recipes eating Rubber are the **Fuel-Powered Generator (50/build)**, **Resource Well Pressurizer (100)**,
+**Blueprint Designer Mk.2 (100)**, **Fluid Truck Station (20)**, **Packager (10)**, **Valve (4)** and
+**Power Pole Mk.3 (3)**. A part-only answer misses eleven of twenty-six consumers. Plastic is worse:
+10 part against **10 building**, all ten unlocked.
+
+**Build costs must never render as rates.** `mManufactoringDuration` is 1.0 on all 547 building recipes,
+so `amount × 60 / duration` turns the Fuel-Powered Generator's 50 Rubber into 3,000/min and The HUB's
+20 Iron Ore into 1,200/min. Part rows carry `/min`, building rows `/build`, manual rows `/craft`, and the
+suffix is on the cell rather than the header because `kind="all"` mixes them in one table.
+
+FICSMAS recipes stay hidden by default and are **counted anyway** — 12 event recipes consume a FICSMAS
+Gift, and a total that quietly dropped them is a total nobody can rely on.
+
+### 10.1c `bom` — the flattened bill
+
+`bom(item, qty)` gives the total raw and intermediate rates for `qty` per minute of an item. It was hand-
+multiplied off a recipe tree before, which is precisely what an LP does better.
+
+**It is a presentation layer over the existing solve, not a second engine**, and the choice is forced
+rather than aesthetic: §10.1's ban on recursive expansion applies verbatim, because Recycled Plastic and
+Recycled Rubber are a real 2-cycle and both unlocked. `build_scenario` builds the request exactly as
+`plan_factory` would, then `min_raw` runs with **`extractor_nodes={}`** and every resource given an
+unlimited raw cap — a bill is the chain, not the mine, and charging extraction would make it depend on
+which nodes happen to be free. That is the same construction `compare_recipe_options` uses.
+
+The cycle is not merely survived, it is **reported**. For 60 Plastic/min the bill builds 75.56 Plastic of
+capacity and recirculates 15.56 back through Recycled Rubber; a Plastic line reading 75.56 for a 60 export
+looks like an error until the response says `production loop: Plastic <-> Rubber`. Detection is mutual
+reachability over the chosen processes only, which is cheap at a couple of dozen items.
+
+**Water gets a documented lexicographic tie-break**, which §8.7 demands as the alternative to labelling
+a degenerate vector. A bare `min_raw` sums every resource with weight one and therefore trades crude
+against water. Measured on 60 Plastic/min:
+
+| | Crude Oil | Water |
+|---|---|---|
+| bare `min_raw` | **56.25** m³/min | 0 |
+| water priced last | **20.00** m³/min | 66.67 m³/min |
+
+Water is effectively unlimited on this map, so the unweighted answer overstates the scarce input by
+**2.8×**. `Scenario.raw_weights` exists for this: phase 1 minimises every other resource with water free,
+phase 2 pins those and minimises water alone. Two solves. Whatever degeneracy survives is labelled in the
+response rather than presented as the number, and `only_recipes` / `exclude_recipes` let a caller pin the
+chain and get arithmetic instead of an optimum.
+
+Two traps, both bugs first:
+
+- **The phase-2 caps need 5e-5 of headroom.** `Solution.raw_used` is rounded to 4 dp, so a draw of
+  13.33333 is reported as 13.3333 and a cap derived from it sits *below* what the chain needs. Phase 2
+  went infeasible on Reinforced Iron Plate and silently threw the tie-break away. Same rounding, same
+  fix as `compare_recipe_options`.
+- **A column at 1e-6 machine-equivalents is not a building.** `ceil` turns one into a whole Smelter with
+  a recipe name against it, so the bill claimed two routes to Iron Ingot where the flow ran entirely
+  through one, and named two alternates carrying no flow. Processes below 1e-4 of the plan's largest are
+  dropped; the threshold is relative so a bill for 0.1/min is not filtered away.
+
+**Verified by hand.** Pinned to the base chain, 10 Reinforced Iron Plate/min:
+
+```
+raw 120 Iron Ore -- 14 machines, 78 MW
+Iron Ingot  120  (4 Smelters)   Screws 120 (3)   Iron Plate 60 (3)   Iron Rod 30 (2)   RIP 10 (2 Assemblers)
+```
+
+6 Plate + 12 Screws per plate → 60 Plate + 120 Screws → 90 + 30 = 120 Iron Ingot → **120 Iron Ore**, i.e.
+12 ore per plate; power is 4×4 + 8×4 + 2×15 = 78 MW. Solver and paper agree exactly. Left to choose,
+this save's alternates route the same 10 plates through Stitched Iron Plate and the Pure ingot recipes for
+**26.92 Iron Ore + 13.33 Copper Ore + 24.27 Water** — a 4.5× swing on iron, which is why every row names
+its recipe.
 
 ### 10.2 Context budget
 
