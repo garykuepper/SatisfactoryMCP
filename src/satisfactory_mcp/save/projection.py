@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .. import config
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

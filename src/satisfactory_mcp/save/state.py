@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
+from typing import ClassVar
 
 from ..docs.model import GameData, Recipe, Schematic
 from ..spatial import geo
@@ -288,6 +289,165 @@ class WorldState:
             "highest_complete_tier": max(complete) if complete else None,
             "purchased_schematics": len(self.purchased_schematic_ids),
             "available_recipes": len(self.available_recipe_ids),
+        }
+
+    #: EGamePhase -> GP_Project_Assembly_Phase_N.
+    #:
+    #: The keys of mGamePhaseCosts are the DEPRECATED EGamePhase enum
+    #: (FGGamePhaseManager.h: "The old enum that defined the phases of the game.
+    #: Replaced by UFGGamePhase. DEPRECATED Only kept for save compatibility"), while
+    #: mCurrentGamePhase / mTargetGamePhase point at UFGGamePhase assets named
+    #: GP_Project_Assembly_Phase_N. Nothing in Docs.json joins them: the assets do not
+    #: ship there at all (0 occurrences of "GP_Project" in the 10 MB dump; the only
+    #: "EGP_" string in it is an EGP_Victory schematic dependency), and the field that
+    #: WOULD join them, UFGGamePhase::mGamePhase, lives on those unshipped assets.
+    #: The save cannot join them directly either -- the manager's own legacy scalar
+    #: mGamePhase is absent, i.e. UE-default EGP_NA, whose declaration comment reads
+    #: "Added N/A to have a state that indicates we have migrated the save".
+    #:
+    #: EGP_EndGame -> Phase_3 is nonetheless MEASURED, from two save epochs of the same
+    #: world. At 180-244 h the save reads mTargetGamePhase = Phase_3 with
+    #: mTargetGamePhasePaidOffCosts = {SpaceElevatorPart_2: 2500} -- exactly one item
+    #: paid. The EGP_EndGame entry of the deprecated array at the same instant reads
+    #: {Part_2: 0 remaining, Part_4: 500, Part_5: 100}: the same three items, with the
+    #: same single one settled. No other key mentions Part_2 as outstanding, and
+    #: nothing can have been paid into a phase that was never the target.
+    #:
+    #: The other three follow by enum order (EarlyGame 0 < MidGame 1 < LateGame 2 <
+    #: EndGame 3 < FoodCourt 4, declared in the shipped header) anchored on that pin,
+    #: the four stored keys being contiguous in it. Corroborated but NOT relied on: the
+    #: vendored wiki-derived PROJECT_ASSEMBLY_COSTS table lists Phase 1-4 item sets that
+    #: match these four keys exactly and in order.
+    #: ClassVar, not a field: a bare dict annotation on a dataclass is a mutable
+    #: default and raises at class-creation time.
+    EGP_TO_PHASE: ClassVar[dict[str, str]] = {
+        "EGP_MidGame": "GP_Project_Assembly_Phase_1",
+        "EGP_LateGame": "GP_Project_Assembly_Phase_2",
+        "EGP_EndGame": "GP_Project_Assembly_Phase_3",
+        "EGP_FoodCourt": "GP_Project_Assembly_Phase_4",
+    }
+
+    def phase_requirements(self) -> dict:
+        """Space Elevator deliveries, live record first and deprecated record labelled.
+
+        Two sources disagree and only one is alive:
+
+        * ``mCurrentGamePhase`` / ``mTargetGamePhase`` / ``mTargetGamePhasePaidOffCosts``
+          are the live ones. Deliveries go to the TARGET phase
+          (``PayOffOnTargetGamePhase``, ``GetTargetGamePhaseCosts``), so "what do I owe"
+          is the target's cost minus what is paid off.
+        * ``mGamePhaseCosts`` is deprecated and **frozen**. Byte-identical across all 29
+          parseable saves of the reference world, 180 h to 316 h, spanning the session
+          where the player finished Phase 3 -- it still bills them 500 Modular Engine
+          and 100 Adaptive Control Unit for it.
+
+        The frozen table is still the only source of per-phase item lists, because the
+        UFGGamePhase assets that hold ``mCosts`` do not ship in Docs.json. It is
+        trustworthy for exactly one row: the phase that has never been targeted, whose
+        untouched snapshot still equals its full cost. Every row is returned with a
+        ``stale`` flag saying which case it is, rather than being silently filtered.
+        """
+        p = self.projection.get("progression", {}) or {}
+        current = p.get("game_phase") or ""
+        target = p.get("target_phase") or ""
+        # Absent means empty, not missing: UE omits empty SaveGame TArrays. Empty is
+        # the informative answer here -- nothing has been delivered to the target yet.
+        paid = {k: v for k, v in (p.get("paid_off_target") or {}).items() if v}
+
+        rows = []
+        for egp, costs in (p.get("phase_costs_remaining") or {}).items():
+            phase = self.EGP_TO_PHASE.get(egp)
+            outstanding = {i: a for i, a in costs.items() if a}
+            done = sorted(i for i, a in costs.items() if not a)
+            if phase is None:
+                stale = "unmapped"
+            elif phase == target and not paid:
+                # Never delivered into, so the frozen snapshot is still the true cost.
+                stale = "usable"
+            elif not outstanding:
+                # All zeros. Frozen or not, "nothing outstanding" is what the live
+                # pointers say too for any phase at or below the current one.
+                stale = "complete"
+            else:
+                stale = "stale"
+            rows.append(
+                {
+                    "egp": egp,
+                    "phase": phase,
+                    "outstanding": outstanding,
+                    "complete": done,
+                    "stale": stale,
+                }
+            )
+        rows.sort(key=lambda r: r["phase"] or "~")
+        return {
+            "current_phase": current,
+            "target_phase": target,
+            "paid_off_target": paid,
+            "phases": rows,
+        }
+
+    # ---- overclocking ----------------------------------------------------
+
+    def shard_budget(self) -> dict:
+        """Power Shards held, committed and free.
+
+        Committed shards are READ, never derived. Every buildable carries an
+        ``InventoryPotential`` component holding the shards actually slotted into it,
+        and that is the only faithful count: a shard raises the maximum clock, it does
+        not set it, so a building may hold more shards than its current clock needs. On
+        the reference save 39 of 41 overclocked buildings hold exactly
+        ``shards_for_clock``, and two hold 3 while running at 2.0 -- deriving from clock
+        would report 95 spent where 97 are.
+
+        "Free" excludes machine inventories on purpose (see ``stock``): the 97 in
+        InventoryPotential components are all inside machines, so counting the raw
+        ``inventories["machine"]`` total as shards on hand overstates the free pool by
+        more than 4x on this save.
+        """
+        from ..docs.constants import POTENTIAL_SHARD_SLOTS, shards_for_clock
+
+        shard_items = self.game.clock_shards()
+        per_shard = max(shard_items.values()) if shard_items else 0.0
+        stock = self.stock()
+        free = sum(stock.get(item, 0.0) for item in shard_items)
+
+        committed = 0
+        holders: list[dict] = []
+        for record in self._all_records():
+            slotted = sum(
+                n
+                for item, n in (record.get("potential_slots") or {}).items()
+                if item in shard_items
+            )
+            clock = float(record.get("clock") or 1.0)
+            needed = shards_for_clock(clock, per_shard)
+            if not slotted and not needed:
+                continue
+            committed += slotted
+            holders.append(
+                {
+                    "instance": record["instance"].rsplit(".", 1)[-1],
+                    "cls": record.get("cls", "?"),
+                    "clock": clock,
+                    "slotted": slotted,
+                    "needed": needed,
+                    #: A slot filled but not being used by the current clock.
+                    "idle": max(0, slotted - needed),
+                }
+            )
+        holders.sort(key=lambda h: (-h["slotted"], h["cls"]))
+        return {
+            "shard_items": shard_items,
+            "free": free,
+            "committed": committed,
+            "owned": free + committed,
+            "holders": holders,
+            "slots_per_building": POTENTIAL_SHARD_SLOTS,
+            #: Buildings whose InventoryPotential is unreadable get no entry at all, so
+            #: a projection predating schema 9 reports 0 committed rather than a wrong
+            #: number. Flagged so a caller can tell the two apart.
+            "measured": any("potential_slots" in r for r in self._all_records()),
         }
 
     # ---- MAM / hard drives ---------------------------------------------

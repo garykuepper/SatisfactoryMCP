@@ -125,6 +125,9 @@ def _build_items(dump: DocsDump) -> dict[str, Item]:
                 sink_points=_i(c.get("mResourceSinkPoints")),
                 can_be_discarded=_b(c.get("mCanBeDiscarded"), True),
                 is_resource=native == "FGResourceDescriptor",
+                # Absent on all but the two FGPowerShardDescriptor classes, so the
+                # default 0.0 is the right answer everywhere else.
+                extra_potential=_f(c.get("mExtraPotential")),
             )
     return items
 

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 19 tools, 3 resources, 3 prompts, 185 tests passing. See README.md for usage.
+**Status:** implemented. 34 tools, 3 resources, 3 prompts, 400 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -409,7 +409,7 @@ unit-tested. Nothing else may be hardcoded.
 | constant | value | justification |
 |---|---|---|
 | `PURITY_MULT` | `{impure: 0.5, normal: 1.0, pure: 2.0}` | Every extractor's `mDescription` states the base rate as the *normal* rate, and the computed base matches exactly. |
-| `POTENTIAL_SHARD_SLOTS` | `3` → max clock 2.5 | `Desc_CrystalShard_C.mExtraPotential = 0.5` is in Docs; the slot count is not (`mPotentialShardSlots = 0` everywhere). `[WIKI]` for the 2.5 figure. |
+| `POTENTIAL_SHARD_SLOTS` | `3` → max clock 2.5 | `Desc_CrystalShard_C.mExtraPotential = 0.5` is in Docs; the slot count is not (`mPotentialShardSlots = 0` everywhere). `[WIKI]` for the 3. Corroborated by the save: 447 buildings carry an `InventoryPotential`, 41 are non-empty, and their contents are exactly `{1: 6, 2: 16, 3: 19}` — **none holds 4**, and the highest clock in the world is 2.5. |
 | `BELT_SPEED_TO_IPM` | `0.5` | Cross-checked against belt `mDescription` at build time. |
 | `FLUIDS_CANNOT_BE_SUNK` | `True` | Physical rule that contradicts the data. **Confirmed by the user.** |
 
@@ -424,6 +424,19 @@ unit-tested. Nothing else may be hardcoded.
 > conservative direction — a plan that never relies on dumping a fluid cannot stall on one.
 > The AWESOME Sink itself draws **30 MW** and must be charged in the power balance.
 
+**The shard maths lives with the constant, not next to it.** `max_clock()` and `shards_for_clock()`
+are in `constants.py` because they are the only two places `POTENTIAL_SHARD_SLOTS` meets data:
+`max_clock = 1 + slots × mExtraPotential` and `shards = min(slots, ceil((clock − 1) / mExtraPotential))`.
+Writing `2.5` as a literal anywhere would bury the one game-knowledge input inside a derived number.
+Two traps, both found by measurement:
+
+- **Round before ceiling.** Saved clocks are floats and 2.0 arrives as 1.9999999 often enough that a
+  bare `ceil()` bills a 200% machine for a third shard.
+- **`Desc_WAT1_C` (the Somersloop) shares the `FGPowerShardDescriptor` native class.** Selecting the
+  class counts Somersloops as overclocking capacity. It has `mExtraPotential = 0` and
+  `mExtraProductionBoost = 1`, so filtering on `extra_potential > 0` separates them without either
+  class ever being named in code.
+
 ---
 
 ## 6. Save projection
@@ -434,7 +447,7 @@ The sidecar emits a flat JSON projection — never the parse tree. Verified prop
 |---|---|---|
 | unlocked recipes ★ | `FGRecipeManager` | `mAvailableRecipes` (405) |
 | purchased schematics | `BP_SchematicManager_C` | `mPurchasedSchematics` (226) |
-| game phase | `BP_GamePhaseManager_C` | `mCurrentGamePhase`, `mTargetGamePhase`, `mGamePhaseCosts` (**remaining** amounts) |
+| game phase ★ | `BP_GamePhaseManager_C` | `mCurrentGamePhase`, `mTargetGamePhase`, `mTargetGamePhasePaidOffCosts`. `mGamePhaseCosts` is **deprecated and frozen** — see [§6.4](#64-space-elevator-phases--two-records-and-only-one-is-alive) |
 | hard-drive offers ★ | `BP_ResearchManager_C` | `mUnclaimedHardDriveData`, `mLastUsedHardDriveID` |
 | research in progress | `BP_ResearchManager_C` | `mSavedOngoingResearch` — **seconds remaining**, absent when empty |
 | misc unlocks | `BP_UnlockSubsystem_C` | `mIsMapUnlocked`, `mIsBuildingOverclockUnlocked`, `mNumTotalInventorySlots`, … |
@@ -442,6 +455,7 @@ The sidecar emits a flat JSON projection — never the parse tree. Verified prop
 | lifetime stats | `FGStatisticsSubsystem` | `mItemsPickedUp` — **nested**, see below |
 | machine recipe | manufacturers | `mCurrentRecipe` |
 | clock speed | clockable buildings | `mCurrentPotential`, `mPendingPotential` |
+| installed shards ★ | every buildable | `InventoryPotential` component's `mInventoryStacks` — see [§6.5](#65-power-shards--committed-is-read-never-derived) |
 | paused | buildings | `mIsProductionPaused` |
 | extractor → node | extractors | `mExtractableResource` → node `instanceName` |
 | pipe network fluid | `FGPipeNetwork` | `mFluidDescriptor` (19 objects) |
@@ -815,6 +829,90 @@ Two orthogonal modifiers, because a factory is delimited from either end:
 
 Exclusions apply **after** expanding, or `-label:x` would be silently undone by the expansion
 following it.
+
+### 6.4 Space Elevator phases — two records, and only one is alive
+
+`phase_requirements` exists because the obvious field is a trap. The save carries **two** accounts of
+Space Elevator progress and they disagree.
+
+| record | property | status |
+|---|---|---|
+| live | `mCurrentGamePhase`, `mTargetGamePhase` (→ `UFGGamePhase` assets), `mTargetGamePhasePaidOffCosts` | authoritative |
+| legacy | `mGamePhaseCosts`, keyed by the `EGamePhase` enum | **deprecated and frozen** |
+
+`FGGamePhaseManager.h` is unambiguous about the second one. The enum is *"The old enum that defined the
+phases of the game. Replaced by UFGGamePhase. **DEPRECATED Only kept for save compatibility**"*, and the
+array is *"**DEPRECATED Only kept for save compatibility**"* too.
+
+> **Measured: the legacy array is not merely deprecated, it is dead.** Parsed across all **29 parseable
+> saves of the reference world**, 180 h to 316 h of play, `mGamePhaseCosts` is byte-identical in every
+> one — including across the session (between 244.0 h and 251.0 h) where `mCurrentGamePhase` advanced
+> `Phase_2 → Phase_3` and `mTargetGamePhase` `Phase_3 → Phase_4`. Completing an entire Space Elevator
+> phase moved nothing in it. It still bills the player **500 Modular Engine and 100 Adaptive Control
+> Unit** for a phase they finished ~70 hours of play ago.
+
+Deliveries go to the **target** phase, not the current one — `PayOffOnTargetGamePhase`,
+`GetTargetGamePhaseCosts` — so "what do I owe" is the target's cost minus `mTargetGamePhasePaidOffCosts`.
+On the reference save that array is **absent, i.e. empty**: nothing at all has been delivered toward
+Phase 4.
+
+**The EGP_* → GP_Project_Assembly_Phase_N mapping.** The legacy array is still the *only* source of
+per-phase item lists, because the `UFGGamePhase` assets that hold `mCosts` do not ship in Docs.json, so
+the keys have to be mapped. Establishing that mapping was the hard part:
+
+- **Not in Docs.json.** `"GP_Project"` occurs **0 times** in the 10 MB dump, and the only `"EGP_"` string
+  in it is one `EGP_Victory` schematic dependency. The field that *would* join them,
+  `UFGGamePhase::mGamePhase` (`Category=Legacy`), lives on those unshipped assets.
+- **Not joinable in the save either.** `BP_GamePhaseManager_C` carries exactly three properties. The
+  manager's own legacy scalar `mGamePhase` is **absent**, i.e. UE-default `EGP_NA`, whose declaration
+  comment reads *"Added N/A to have a state that indicates we have migrated the save"*.
+- **But one anchor is measurable.** At 180–244 h the same world reads `mTargetGamePhase = Phase_3` with
+  `mTargetGamePhasePaidOffCosts = {Desc_SpaceElevatorPart_2_C: 2500}` — exactly one item settled. The
+  `EGP_EndGame` row of the legacy array describes those same three items with that same one at zero
+  remaining, and nothing can be paid into a phase that was never the target. **`EGP_EndGame` →
+  `GP_Project_Assembly_Phase_3`, from the save.**
+- The other three follow **by enum order** (`EarlyGame 0 < MidGame 1 < LateGame 2 < EndGame 3 <
+  FoodCourt 4`, declared in the shipped header) anchored on that pin, the four stored keys being
+  contiguous in it. Corroborated but not relied on: the vendored wiki-derived `PROJECT_ASSEMBLY_COSTS`
+  table lists Phase 1–4 item sets matching these four keys exactly and in order.
+
+So `EGP_MidGame → 1`, `EGP_LateGame → 2`, **`EGP_EndGame → 3` (measured)**, `EGP_FoodCourt → 4`. The
+three derived ones are labelled `[UNVERIFIED]` in the tool output, and an unrecognised key is reported
+as `unmapped` rather than dropped — a silently missing phase reads as a phase with nothing outstanding.
+
+**Frozen does not mean wrong for every row.** A phase that has never been delivered into cannot have
+drifted, so its snapshot still equals its full cost. That is a checkable condition, not an assumption,
+and it is what makes the Phase 4 numbers (Assembly Director System 4000, Magnetic Field Generator 4000,
+Thermal Propulsion Rocket 1000, Nuclear Pasta 1000) usable while the Phase 3 numbers are not. Every row
+is emitted with a `trust` column — `complete` / `usable` / `stale` / `unmapped` — rather than filtered.
+
+### 6.5 Power Shards — committed is read, never derived
+
+Every buildable carries an **`InventoryPotential`** component holding the shards physically slotted into
+it. 447 exist on the reference save and 41 are non-empty. That component is the only faithful record of
+a spent shard, and schema 9 emits it per machine as `potential_slots`.
+
+> **A shard raises the *maximum* clock; it does not set the clock.** The player slots shards and then
+> drags the slider anywhere below the new ceiling, so installed ≥ required. Measured: 39 of the 41
+> overclocked buildings hold exactly `ceil((clock − 1) / 0.5)` shards, and **two hold 3 while running at
+> clock 2.0** — a filled slot with the slider pulled back. Deriving committed shards from clocks gives
+> **95**; reading the slots gives **97**. The 2 are really spent and really unavailable.
+
+> **The 97 shards in `inventories["machine"]` are not shards on hand.** Every one of them is in an
+> `InventoryPotential`, i.e. already installed. Reading that bucket as the free pool overstates it by
+> more than **4×**: the player can actually spend **22**, all in the Dimensional Depot. `stock()` already
+> excludes machine inventories for exactly this class of reason (§ its docstring), so free/committed/owned
+> are 22 / 97 / 119.
+
+Cross-check that the two halves agree: 41 buildings have `clock > 1.0`, 41 hold shards, and they are the
+same 41 — no underclocked building holds one, and 5 of the 46 clocked buildings are *under*clocked (down
+to 0.333), so treating any `clock != 1.0` as an overclock would invent shards for them.
+
+**Why a tool and not an aspect.** `factory_query` is factory-scoped by construction and needs a selector;
+"how many shards do I have, and can I afford to overclock twelve machines" is world-scoped and takes a
+*hypothetical* (`plan_machines`, `plan_clock`) that no existing tool's signature accommodates, while
+`world_summary` and `power_report` are fixed parameterless dashboards. A shard budget is a planning
+question, so it gets its own entry point.
 
 ---
 
@@ -1280,7 +1378,7 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 ### 10.1 Tools
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
-**Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`
+**Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`, `phase_requirements`, `power_shards`
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
 **Layout:** `plan_layout`
@@ -1584,9 +1682,16 @@ fitting, foundation alignment to the world grid.
 `Han Solo`, 315 h, vanilla, `saveVersion 60` / `buildVersion 495413`.
 **Snapshot only** — this is a live rotating autosave; every count drifts.
 
-**Progression:** Game phase 3 of 5 (target 4). Tier 6 fully complete; **tier 7 is 3/5** (Hazmat Suit and
-Hoverpack outstanding). Phase 5 costs are absent from the save entirely. 226 purchased schematics,
-**405 available recipes**, 60 inventory slots.
+**Progression:** Current game phase `GP_Project_Assembly_Phase_3`, target `Phase_4`, and
+`mTargetGamePhasePaidOffCosts` is empty — **nothing delivered toward Phase 4 yet**, so the whole of
+Assembly Director System 4000 / Magnetic Field Generator 4000 / Thermal Propulsion Rocket 1000 /
+Nuclear Pasta 1000 is outstanding. The deprecated `mGamePhaseCosts` array *also* claims 500 Modular
+Engine and 100 Adaptive Control Unit are owed on Phase 3; that is **frozen and wrong** ([§6.4](#64-space-elevator-phases--two-records-and-only-one-is-alive)).
+Tier 6 fully complete; **tier 7 is 3/5** (Hazmat Suit and Hoverpack outstanding). Phase 5 costs are
+absent from the save entirely. 226 purchased schematics, **405 available recipes**, 60 inventory slots.
+
+**Power Shards: 22 free, 97 committed, 119 owned.** The 97 are read from the `InventoryPotential` of the
+41 overclocked buildings; 2 of those hold a shard their current clock does not use.
 
 **Alternates: 30 recipes unlocked** of 109. Oil-relevant **held**: Recycled Plastic, Recycled Rubber,
 **Diluted Fuel** (Blender), **Diluted Packaged Fuel**, **Heavy Oil Residue**, **Polymer Resin**, plus

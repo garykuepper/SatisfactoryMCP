@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -228,6 +228,8 @@ def extract(path: str) -> dict:
     role_ix: dict[str, int] = {}
     uptime: dict[str, dict] = {}
     buffers: dict[str, dict] = {}
+    #: owner instanceName -> {itemClass: count} slotted into its InventoryPotential.
+    potential: dict[str, dict] = {}
     record_by_instance: dict[str, dict] = {}
     material_edges: list[list[int]] = []
     wire_ends: dict[str, list[tuple[str, str]]] = {}
@@ -272,6 +274,18 @@ def extract(path: str) -> dict:
                     "items": totals,
                     "slots": len(p["mInventoryStacks"] or []),
                 }
+            elif role == "InventoryPotential":
+                # The overclock slot inventory: what is physically plugged into the
+                # building. This is the ONLY record of a committed Power Shard, and it
+                # cannot be reconstructed from the clock. A shard raises the MAXIMUM
+                # potential; the slider is then set anywhere below it, so two buildings
+                # on this save hold 3 shards while running at 2.0. Deriving from clock
+                # would report 95 committed shards where 97 are actually spent.
+                # Every building has this component (447 of them); 41 are non-empty.
+                totals = {}
+                _accumulate_inventory(p["mInventoryStacks"], totals)
+                if totals:
+                    potential[str(instance).rpartition(".")[0]] = totals
 
         # Productivity. The window is a fixed 300 s, so produce/window is a clean
         # fraction. ProduceDuration is ABSENT when zero -- UE omits defaults -- so a
@@ -333,6 +347,13 @@ def extract(path: str) -> dict:
                 p.get("mTargetGamePhase") or ""
             )
             out["progression"]["phase_costs_remaining"] = _phase_costs(p.get("mGamePhaseCosts"))
+            # THE live delivery record, and the only one. mGamePhaseCosts above is
+            # marked DEPRECATED in FGGamePhaseManager.h and is provably frozen (see
+            # _phase_costs). Absent means empty -- nothing delivered toward the target
+            # phase yet -- which is a real answer, not missing data.
+            out["progression"]["paid_off_target"] = _cost_amounts(
+                p.get("mTargetGamePhasePaidOffCosts")
+            )
             continue
         if cls == "BP_ResearchManager_C":
             out["research"]["unclaimed_hard_drives"] = _hard_drives(
@@ -441,6 +462,12 @@ def extract(path: str) -> dict:
         if record is not None:
             record["buffers"] = sides
 
+    # Slotted shards, same post-pass reason: InventoryPotential is a component.
+    for owner, slotted in potential.items():
+        record = record_by_instance.get(owner)
+        if record is not None:
+            record["potential_slots"] = slotted
+
     # A power wire always joins exactly two connections; anything else is a
     # half-built or orphaned line and is dropped rather than guessed at.
     power_edges = [
@@ -479,9 +506,21 @@ def _stored_items(raw) -> dict:
 
 
 def _phase_costs(raw) -> dict:
-    """mGamePhaseCosts: remaining delivery amounts per phase (not totals).
+    """mGamePhaseCosts: remaining delivery amounts per phase. DEPRECATED AND FROZEN.
 
-    Only 4 phases are stored while the game has 5, so Phase 5 can never be reported.
+    FGGamePhaseManager.h calls both this array and the EGamePhase enum it is keyed by
+    "DEPRECATED Only kept for save compatibility". That is not a warning about a future
+    removal -- the field is already dead, and it is emitted here only so the server can
+    show it next to the live record and say so.
+
+    Measured across all 29 parseable saves of the reference world: the array is
+    byte-identical at 180 h and at 316 h, spanning the play session (between 244.0 h and
+    251.0 h) where mCurrentGamePhase advanced Phase_2 -> Phase_3 and mTargetGamePhase
+    Phase_3 -> Phase_4. Completing an entire Space Elevator phase moved nothing in it.
+    It still claims 500 Modular Engine and 100 Adaptive Control Unit outstanding on a
+    phase the player finished 70 hours ago.
+
+    Only 4 phases are stored while the game has more, so later phases never appear.
     """
     out: dict = {}
     for entry in raw if isinstance(raw, list) else []:
