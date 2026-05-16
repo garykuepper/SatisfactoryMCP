@@ -1,11 +1,17 @@
 """The only values in this project that are NOT read from game data.
 
-Every other rate, power figure and capacity is a cited Docs.json field. These four
-are not present in Docs.json at all, so they are pinned here, justified, and
+Every other rate, power figure and capacity is a cited Docs.json field. The values
+here are not present in Docs.json at all, so they are pinned here, justified, and
 unit-tested. Do not add to this list without the same treatment.
+
+The two functions at the bottom are not extra constants: they are the *only* places
+POTENTIAL_SHARD_SLOTS is combined with data, kept here so the one game-knowledge
+number stays next to the arithmetic that depends on it.
 """
 
 from __future__ import annotations
+
+import math
 
 #: Extraction rate multiplier by node purity.
 #:
@@ -20,7 +26,42 @@ PURITY_MULT: dict[str, float] = {"impure": 0.5, "normal": 1.0, "pure": 2.0}
 #: ``Desc_CrystalShard_C.mExtraPotential = 0.5`` IS in Docs.json, but the slot count
 #: is not: ``mPotentialShardSlots`` is 0 and ``mOverridePotentialShardSlots`` is False
 #: on every building, i.e. the field is simply unpopulated in the dump. [WIKI] for 3.
+#:
+#: Corroborated on the reference save, which is the strongest evidence available
+#: without extracting the paks. Every building carries an ``InventoryPotential``
+#: component holding the shards actually slotted into it; 447 exist, 41 are non-empty,
+#: and across those 41 the counts are exactly {1: 6, 2: 16, 3: 19}. **No building holds
+#: 4**, and the highest clock observed is 2.5 = 1.0 + 3 x 0.5. A save cannot prove an
+#: upper bound the player never tried to exceed, so this stays [WIKI]-tagged -- but the
+#: cap and the observed maximum agree.
 POTENTIAL_SHARD_SLOTS: int = 3
+
+
+#: Max clock a building can be set to, from the slot count and the shard's own
+#: ``mExtraPotential``. Only the slot count above is game knowledge; the 0.5 is data.
+#: Kept as a formula rather than a literal 2.5 so a patch to mExtraPotential flows
+#: through, and so the one hardcoded input stays visible at the point of use.
+def max_clock(extra_potential_per_shard: float) -> float:
+    return 1.0 + POTENTIAL_SHARD_SLOTS * extra_potential_per_shard
+
+
+#: Shards a building needs slotted to be *allowed* to run at ``clock``.
+#:
+#: A shard raises the building's MAXIMUM potential, it does not set the clock: the
+#: player slots shards and then drags the slider anywhere up to the new maximum. So
+#: this is a lower bound on what is installed, never an equality -- measured on the
+#: reference save, 39 of 41 overclocked buildings hold exactly this many and **two
+#: hold 3 shards while running at clock 2.0**, a spare slot filled with the slider
+#: pulled back. Deriving committed shards from clocks would therefore have leaked
+#: those 2; ``InventoryPotential`` is read directly instead.
+def shards_for_clock(clock: float, extra_potential_per_shard: float) -> int:
+    if extra_potential_per_shard <= 0 or clock <= 1.0:
+        return 0
+    # round() before ceil(): saved clocks are floats, and 2.0 arrives as 1.9999999
+    # often enough that a bare ceil() would demand a fourth shard for a 200% machine.
+    need = math.ceil(round((clock - 1.0) / extra_potential_per_shard, 6))
+    return min(need, POTENTIAL_SHARD_SLOTS)
+
 
 #: Conveyor ``mSpeed`` -> items/min. Cross-checked against each belt's own
 #: ``mDescription`` prose at build time, so the assertion is self-contained.

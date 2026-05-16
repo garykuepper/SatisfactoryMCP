@@ -39,6 +39,12 @@ class Item:
     sink_points: int
     can_be_discarded: bool
     is_resource: bool
+    #: ``mExtraPotential``: how much max clock ONE of these adds when slotted into a
+    #: building's InventoryPotential. 0.5 for the Power Shard, 0 for everything else
+    #: including the Somersloop, which shares the same native class but boosts
+    #: production rather than clock. Reading it is what lets the shard maths avoid
+    #: naming ``Desc_CrystalShard_C`` anywhere.
+    extra_potential: float = 0.0
 
     @property
     def is_fluid(self) -> bool:
@@ -244,6 +250,13 @@ class GameData:
     def item_name(self, cls: str) -> str:
         it = self.items.get(cls)
         return it.name if it else cls
+
+    def clock_shards(self) -> dict[str, float]:
+        """Item class -> max-clock added per unit slotted, for every shard that
+        overclocks. Derived, not listed: ``FGPowerShardDescriptor`` holds two classes
+        and only the Power Shard has ``mExtraPotential > 0``, so filtering on the field
+        excludes the Somersloop without either class being named in code."""
+        return {c: it.extra_potential for c, it in self.items.items() if it.extra_potential > 0}
 
     def part_recipes(self) -> list[Recipe]:
         return [r for r in self.recipes.values() if r.kind == "part"]
