@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from . import config, render
+from .docs import search
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
@@ -23,6 +24,7 @@ from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .graph.select import SelectorError
 from .planning import advisor, byproducts, compare
+from .planning import bom as bom_mod
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
 from .planning.layout import build_layout
@@ -165,39 +167,66 @@ def alternates_for_item(
 @mcp.tool(structured_output=False)
 def search_recipes(
     query: str = "",
+    consumes: str | None = None,
+    produces: str | None = None,
+    kind: str = "part",
     only_alternates: bool = False,
+    include_events: bool = False,
+    save: str | None = None,
     limit: Limit = 10,
     offset: int = 0,
 ) -> str:
-    """Search automatable recipes by name."""
+    """Search recipes by name, or by what they consume/produce. Marks HAVE/LOCKED.
+
+    ``consumes="Rubber"`` is the reverse lookup: every recipe that eats an item.
+    ``kind`` is "part" (default), "building" (build-gun costs), "manual" or "all" --
+    and the header counts EVERY kind over the whole recipe table whatever ``kind``
+    is set to, so a part-only view still says how many buildings eat the item.
+    """
     g = game()
-    q = query.casefold()
-    hits = [
-        r
-        for r in g.automatable()
-        if (not q or q in r.name.casefold()) and (not only_alternates or r.is_alternate)
-    ]
-    hits.sort(key=lambda r: (not r.is_alternate, r.name))
-    page = hits[offset : offset + render.clamp(limit)]
-    rows = [
-        (
-            r.name,
-            g.machine(r).name if g.machine(r) else "-",
-            render.flows((g.item_name(f.item), f.per_min, False) for f in r.ingredients),
-            render.flows((g.item_name(f.item), f.per_min, False) for f in r.products),
-        )
-        for r in page
-    ]
-    body = render.table(
-        ("recipe", "building", "in/min", "out/min"),
-        rows,
-        total=len(hits),
-        offset=offset,
-        hint="or narrow the query.",
+    notes: list[str] = []
+    consumes_id = produces_id = None
+    if consumes:
+        consumes_id = _item_id(consumes)
+        if consumes_id is None:
+            return f"no item matching {consumes!r}"
+    if produces:
+        produces_id = _item_id(produces)
+        if produces_id is None:
+            return f"no item matching {produces!r}"
+    if consumes_id and produces_id:
+        notes.append("consumes and produces are ANDed: this is the loop test, not a union")
+
+    have: set[str] | None = None
+    try:
+        have = _state(save).available_recipe_ids
+    except Exception:
+        pass
+
+    hits, census = search.search(
+        g,
+        query=query,
+        consumes=consumes_id,
+        produces=produces_id,
+        kind=kind,
+        only_alternates=only_alternates,
+        include_events=include_events,
+        unlocked=have,
     )
-    return render.envelope(
-        f"# {len(hits)} recipe(s){' (alternates only)' if only_alternates else ''}",
-        body + "\n" + render.ids_footer((r.name, r.cls) for r in page),
+    subject = "matching " + repr(query) if query else "in the game"
+    column = ""
+    if consumes_id:
+        subject = f"consume {g.item_name(consumes_id)}"
+        column = f"uses {g.item_name(consumes_id)}"
+    elif produces_id:
+        subject = f"produce {g.item_name(produces_id)}"
+        column = f"makes {g.item_name(produces_id)}"
+    if query and (consumes_id or produces_id):
+        subject += f" and match {query!r}"
+    if only_alternates:
+        subject += " (alternates only)"
+    return search.render_search(
+        g, hits, census, subject, column, limit=limit, offset=offset, kind=kind, notes=notes
     )
 
 
@@ -2738,6 +2767,46 @@ def compare_recipe_options(
         per_resource=_item_id(per_resource) if per_resource else None,
     )
     return compare.render_comparison(result, limit=render.clamp(limit, default=10))
+
+
+@mcp.tool(structured_output=False)
+def bom(
+    item: str,
+    qty: float = 60.0,
+    allow_sinks: bool = True,
+    outlets: list[str] | None = None,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 20,
+) -> str:
+    """Flattened bill of materials: total raw and intermediate rates for qty/min of an item.
+
+    ``qty`` is a RATE, per minute. Solved by the LP, never by expanding the recipe
+    tree: Recycled Plastic and Recycled Rubber form a real 2-cycle, so an expansion
+    has no correct depth limit. Every row names the recipe chosen for that item,
+    because alternates change the totals materially.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    try:
+        result = bom_mod.build_bom(
+            g,
+            st,
+            item,
+            qty=qty,
+            allow_sinks=allow_sinks,
+            outlets=outlets,
+            exclude_recipes=exclude_recipes,
+            only_recipes=only_recipes,
+        )
+    except ValueError as exc:
+        return str(exc)
+    return bom_mod.render_bom(result, limit=render.clamp(limit, default=20))
 
 
 # ============================================================ resources
