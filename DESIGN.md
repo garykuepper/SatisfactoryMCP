@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 473 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 476 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1074,23 +1074,32 @@ Fragment format, read off a working link the player supplied:
  ^zoom ^x    ^y     ^group    ^sublayers, semicolon-separated
 ```
 
-**Coordinates are save centimetres.** Not proven from the site — it returns **403** to
-automated fetches (retried after the user disabled a VPN; the fetch originates elsewhere,
-so that was never the cause) — but strongly corroborated: the supplied coordinate falls
-inside the measured content bbox (§7.1) and resolves to the northern oil region, which is
-what its oil layers show. Every other tool quotes metres, so the conversion lives in
-`maplink.map_url` and nowhere else; a metre value passed by mistake lands 1/100th of the
-way across the map, near the origin, which looks plausible and is wrong.
+**Coordinates are save centimetres.** Corroborated rather than stated by the site: the
+supplied coordinate falls inside the measured content bbox (§7.1) and resolves to the
+northern oil region, which is what its oil layers show. Every other tool quotes metres, so
+the conversion lives in `maplink.map_url` and nowhere else; a metre value passed by mistake
+lands 1/100th of the way across the map, near the origin, which looks plausible and is
+wrong.
 
-**Only the Crude Oil tokens are verified.** They appear in the supplied link, and the
-generator reproduces all six exactly — that equality is a test. Every other entry in
-`LAYERS` follows the one pattern that link demonstrates — `<resource><Purity>` for nodes,
-`<resource>Well<Purity>` for wells — and is surfaced as `[UNVERIFIED]`. The failure mode is
-the mild one: a wrong token still opens the map in the right place, with that overlay
-simply not enabled. `layers=[...]` overrides the guess.
+**Every layer token was read from the page, not inferred.** `WebFetch` gets **403** from
+this host, but `curl` from the user's own machine returns the 1.5 MB page with the
+identifiers in it. That distinction earned its keep — inferring from the single oil example
+got **two of fourteen wrong**:
 
-Which variants exist is **read from the node table**, not assumed: Coal is node-only so
-`coalWellPure` is never emitted, Nitrogen Gas and Water are well-only, Crude Oil is both.
+| guessed | actual | why the guess failed |
+|---|---|---|
+| `nitrogenWell*` | **`nitrogenGasWell*`** | the stem is the item name, not the resource word |
+| `geyser` (bare) | **`geyser{Impure,Normal,Pure}`** | our node table gives geysers no purity; this map does |
+
+Both would have opened the map at the right place with the overlay **silently missing** —
+the failure mode hardest to notice, and the reason a guess was not good enough here.
+
+Structure, all read from the page: nodes are `<stem><Purity>`; wells are
+`<stem>Well<Purity>` and exist only for `oil`, `nitrogenGas` and `water`; nitrogen and
+water are **well-only**, so a bare node token does not exist for them; oil is both.
+Collectibles are single tokens — `greenSlugs`, `yellowSlugs`, `purpleSlugs`, `hardDrives`,
+`mercerSpheres`, `somersloops`. There are 51 layer *groups*, of which `gameLayer` carries
+the resource markers.
 
 ### 7.3 Source selectors
 

@@ -1684,16 +1684,6 @@ def show_on_map(
          for r in table.by_resource(res)}
     )
     tokens = layers or maplink.layers_for(resources, kinds or None)
-    if resources and not layers:
-        unverified = [r for r in resources if r not in maplink.VERIFIED_RESOURCES]
-        if unverified:
-            notes.append(
-                "[UNVERIFIED] layer token(s) for "
-                + ", ".join(g.item_name(r) for r in unverified)
-                + " are inferred from the one confirmed example (Crude Oil). If an "
-                "overlay does not appear, the link still opens at the right place -- "
-                "pass layers=[...] with the site's own names"
-            )
 
     url = maplink.map_url(origin[0], origin[1], tokens, zoom=zoom)
     body = url

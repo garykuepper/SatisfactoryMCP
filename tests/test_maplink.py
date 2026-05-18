@@ -1,8 +1,9 @@
 """Deep links into satisfactory-calculator.com's interactive map.
 
-The whole module rests on one working link the player supplied. The site returns 403 to
-automated fetches, so nothing could be read from it -- which makes it important to be
-precise about which parts are known and which are inferred.
+The fragment format comes from one working link the player supplied; the layer tokens were
+read from the page itself. WebFetch gets 403 from this host, but curl from the user's own
+machine returns it. That distinction mattered: inferring the tokens from the single oil
+example got two of them wrong.
 """
 
 from __future__ import annotations
@@ -63,15 +64,52 @@ def test_every_purity_is_included():
     assert {"ironImpure", "ironNormal", "ironPure"} <= set(tokens)
 
 
-def test_geysers_have_no_purity_variants():
-    assert maplink.layers_for(["Desc_Geyser_C"]) == ["geyser"]
+def test_geysers_do_take_purities_on_this_map():
+    """Our node table gives geysers no purity, so a bare "geyser" token was guessed. The
+    page has geyserImpure/Normal/Pure -- a guess that would have opened the map correctly
+    with the overlay silently missing, which is the failure mode hardest to notice."""
+    assert maplink.layers_for(["Desc_Geyser_C"]) == [
+        "geyserImpure",
+        "geyserNormal",
+        "geyserPure",
+    ]
 
 
-def test_only_crude_oil_is_claimed_as_verified():
-    """The supplied link proves oil and nothing else. Marking more as known would be
-    inventing confidence."""
-    assert maplink.VERIFIED_RESOURCES == {"Desc_LiquidOil_C"}
-    assert set(maplink.LAYERS) - maplink.VERIFIED_RESOURCES
+def test_nitrogen_carries_the_gas_in_its_stem():
+    """Inferring from oil gave nitrogenWell*; the page says nitrogenGasWell*. No amount
+    of pattern-matching on "oil" would have produced it."""
+    tokens = maplink.layers_for(["Desc_NitrogenGas_C"])
+    assert tokens == [
+        "nitrogenGasWellImpure",
+        "nitrogenGasWellNormal",
+        "nitrogenGasWellPure",
+    ]
+
+
+def test_a_well_only_resource_has_no_bare_node_token():
+    """Nitrogen and water exist only as wells, so nitrogenGasImpure is not a layer."""
+    for cls in ("Desc_NitrogenGas_C", "Desc_Water_C"):
+        assert all("Well" in tok for tok in maplink.layers_for([cls])), cls
+
+
+def test_a_node_only_resource_has_no_well_token():
+    """Coal has no wells; asking for them anyway must not invent coalWellPure."""
+    assert maplink.layers_for(["Desc_Coal_C"], ["node", "well"]) == [
+        "coalImpure",
+        "coalNormal",
+        "coalPure",
+    ]
+
+
+def test_collectible_tokens_are_the_ones_the_page_uses():
+    assert set(maplink.COLLECTIBLES.values()) == {
+        "greenSlugs",
+        "yellowSlugs",
+        "purpleSlugs",
+        "hardDrives",
+        "mercerSpheres",
+        "somersloops",
+    }
 
 
 def test_an_unknown_resource_contributes_no_token_rather_than_a_guess():

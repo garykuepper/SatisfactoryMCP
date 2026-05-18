@@ -5,25 +5,25 @@ The fragment format, read off a working link the player supplied::
     #4.75;40351;-208857|gameLayer|oilWellPure;oilNormal;oilWellNormal;oilImpure;...
      ^zoom ^x    ^y     ^group    ^sublayers, semicolon-separated
 
-**Coordinates are save centimetres.** Not proven from the site -- it returns 403 to
-automated fetches, so nothing here could be read from it -- but strongly corroborated:
-that example falls inside this project's measured content bbox and resolves to the
+**Coordinates are save centimetres.** Corroborated rather than stated by the site: the
+supplied coordinate falls inside this project's measured content bbox and resolves to the
 northern oil region, which is what its oil layers are showing. Every other tool in this
 MCP quotes metres, so the conversion happens here and nowhere else.
 
-**Only the oil tokens are verified.** They appear in the supplied link. Everything else in
-``LAYERS`` is inferred from the one pattern that link demonstrates --
-``<resource><Purity>`` for nodes and ``<resource>Well<Purity>`` for resource wells -- and
-is marked ``[UNVERIFIED]`` wherever it is surfaced. A wrong token does not break the link;
-the map opens at the right place with that overlay simply not enabled, which is the
-failure mode to prefer. Callers can pass ``layers`` explicitly to override the guess.
+**Every token below was READ from the page, not inferred.** ``WebFetch`` gets 403 from
+this host, but ``curl`` from the user's own machine returns the 1.5 MB page, and the layer
+identifiers are in it. That mattered: inferring from the single oil example got two of
+them wrong. Nitrogen is ``nitrogenGasWell*``, not ``nitrogenWell*``; and geysers carry
+purity variants (``geyserImpure`` ...) where a bare ``geyser`` was guessed. Both would
+have produced a link that opened correctly with the overlay silently missing -- the
+failure mode that is hardest to notice.
 """
 
 from __future__ import annotations
 
 from urllib.parse import quote
 
-__all__ = ["BASE", "LAYERS", "VERIFIED_RESOURCES", "layers_for", "map_url"]
+__all__ = ["BASE", "COLLECTIBLES", "LAYERS", "layers_for", "map_url"]
 
 BASE = "https://satisfactory-calculator.com/en/interactive-map"
 
@@ -31,8 +31,9 @@ BASE = "https://satisfactory-calculator.com/en/interactive-map"
 #: resource markers live on.
 GROUP = "gameLayer"
 
-#: Resource class -> the site's token for it. Oil is READ from the player's link; the
-#: rest follow its pattern and are unverified guesses.
+#: Resource class -> the site's token, read from the interactive map page itself.
+#: The wells carry their own stems: oil is ``oilWell*`` but nitrogen is
+#: ``nitrogenGasWell*``, which no amount of pattern-matching on "oil" would have produced.
 LAYERS: dict[str, str] = {
     "Desc_LiquidOil_C": "oil",
     "Desc_OreIron_C": "iron",
@@ -45,38 +46,54 @@ LAYERS: dict[str, str] = {
     "Desc_OreBauxite_C": "bauxite",
     "Desc_OreUranium_C": "uranium",
     "Desc_SAM_C": "sam",
-    "Desc_NitrogenGas_C": "nitrogen",
+    "Desc_NitrogenGas_C": "nitrogenGas",
     "Desc_Water_C": "water",
+    #: Geysers DO take purities on this map, despite having no purity in our node table.
     "Desc_Geyser_C": "geyser",
 }
 
-#: The only entry the supplied link proves. Everything else is inference.
-VERIFIED_RESOURCES = frozenset({"Desc_LiquidOil_C"})
+#: Resources whose markers are wells rather than nodes, so the token carries ``Well``.
+#: Read off the page: only these three have Well variants, and oil has BOTH.
+WELL_STEMS = frozenset({"oil", "nitrogenGas", "water"})
+
+#: Resources that appear ONLY as wells, so a bare ``<stem><Purity>`` token does not exist.
+WELL_ONLY = frozenset({"nitrogenGas", "water"})
+
+#: Collectibles, each a single token with no purity. Also read from the page.
+COLLECTIBLES: dict[str, str] = {
+    "slugs_green": "greenSlugs",
+    "slugs_yellow": "yellowSlugs",
+    "slugs_purple": "purpleSlugs",
+    "hard_drives": "hardDrives",
+    "mercer_spheres": "mercerSpheres",
+    "somersloops": "somersloops",
+}
 
 _PURITIES = ("Impure", "Normal", "Pure")
 
 
 def layers_for(resources: list[str], kinds: list[str] | None = None) -> list[str]:
-    """Sublayer tokens for a set of resource classes, both node and well variants.
+    """Sublayer tokens for a set of resource classes.
 
     Every purity is included rather than only the one being looked at: a link that opens
-    the map showing one impure node and hiding the pure one next to it answers a narrower
+    the map showing one impure node and hiding the pure one beside it answers a narrower
     question than the player asked.
+
+    ``kinds`` filters to ``node`` or ``well`` when the caller knows which exist -- the
+    node table does -- but the stems themselves decide what is possible: nitrogen and
+    water have no bare node token, and coal has no well token, whatever is asked for.
     """
-    kinds = kinds or ["node", "well"]
+    wanted = set(kinds or ("node", "well"))
     out: list[str] = []
     for cls in resources:
-        token = LAYERS.get(cls)
-        if not token:
-            continue
-        if token == "geyser":
-            out.append("geyser")
+        stem = LAYERS.get(cls)
+        if not stem:
             continue
         for purity in _PURITIES:
-            if "node" in kinds:
-                out.append(f"{token}{purity}")
-            if "well" in kinds:
-                out.append(f"{token}Well{purity}")
+            if "node" in wanted and stem not in WELL_ONLY:
+                out.append(f"{stem}{purity}")
+            if "well" in wanted and stem in WELL_STEMS:
+                out.append(f"{stem}Well{purity}")
     return list(dict.fromkeys(out))
 
 
