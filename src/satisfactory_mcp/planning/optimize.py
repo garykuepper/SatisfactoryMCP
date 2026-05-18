@@ -427,7 +427,21 @@ def solve(sc: Scenario) -> Solution:
     rhs: list[float] = []
 
     # ---- per-item equality balance (the crux) --------------------------
-    for item in items + [i for i in raw_items if i not in items]:
+    # Every EXPORT gets a row, including one that no process touches. Without it the
+    # export column exists with nothing tying it to production, and an unconstrained
+    # column is not merely useless -- it is wrong in two different ways. `max_item` on
+    # an unmakeable target pushes it up forever and HiGHS reports UNBOUNDED, which
+    # surfaces as a bare INFEASIBLE. Worse, an `export_minimums` floor is then satisfied
+    # out of thin air: min_power with a 100/min floor on Nitrogen Gas SUCCEEDED and
+    # reported `exports: Nitrogen Gas=100` on a world with no recipe and no node for it.
+    # With the row, such an export is pinned to 0 and a floor above 0 is honestly
+    # infeasible.
+    #
+    # MW is excluded on purpose: it balances on the power row below, and a second row
+    # here would constrain generation to zero.
+    balanced = items + [i for i in raw_items if i not in items]
+    balanced += [i for i in export_items if i != MW and i not in items and i not in raw_items]
+    for item in balanced:
         row = np.zeros(n)
         for i, p in enumerate(procs):
             row[col_p(i)] = p.net(item)

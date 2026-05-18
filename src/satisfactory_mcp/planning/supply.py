@@ -40,7 +40,7 @@ from ..spatial import nodes as nodes_mod
 from .optimize import MW, build_processes, solve
 from .scenario import PlanRequest
 
-__all__ = ["MissingRaw", "SupplyReport", "describe", "diagnose"]
+__all__ = ["MissingRaw", "SupplyReport", "describe", "diagnose", "unmakeable"]
 
 _EPS = 1e-6
 
@@ -160,7 +160,7 @@ def _explain(
     return out
 
 
-def _unmakeable(req: PlanRequest, game: GameData) -> list[str]:
+def unmakeable(req: PlanRequest, game: GameData) -> list[str]:
     """Exports and targets that no column in this scope produces, and why.
 
     This is the locked half of ``must build first: Blender``, and it needs no probe:
@@ -220,7 +220,7 @@ def diagnose(
     """
     table = table or nodes_mod.load_nodes()
     sc = req.scenario
-    unmakeable = _unmakeable(req, game)
+    unmakeable_now = unmakeable(req, game)
     supplied = _supplied(req)
     # Desc_Geyser_C is a placement target, not an item -- it is in no recipe and so
     # can be no plan's missing input.
@@ -228,12 +228,12 @@ def diagnose(
         r for r in {n["resource"] for n in table.nodes} - supplied if r in game.items
     )
     if not candidates:
-        return SupplyReport(unmakeable=unmakeable)
+        return SupplyReport(unmakeable=unmakeable_now)
 
     probe = replace(sc, raw_caps={**sc.raw_caps, **{c: _FREE_SUPPLY for c in candidates}})
     sol = solve(probe)
     report = SupplyReport(
-        candidates=tuple(candidates), solves=1, rescued=sol.ok, unmakeable=unmakeable
+        candidates=tuple(candidates), solves=1, rescued=sol.ok, unmakeable=unmakeable_now
     )
     if not sol.ok:
         return report

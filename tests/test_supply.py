@@ -145,3 +145,92 @@ def test_an_export_nothing_can_make_is_named_without_a_probe(game, state):
     assert "Cooling System" in lines
     assert "none of them unlocked" in lines
     assert "Cooling System" in "\n".join(supply.describe(report, game))
+
+
+# ------------------------------------------- unconstrained export columns
+
+
+def _nitrogen(game) -> str:
+    """An item this world can neither craft nor extract: no unlocked recipe, and its
+    nodes need a Resource Well Pressurizer that is not built."""
+    return next(k for k in game.items if game.item_name(k) == "Nitrogen Gas")
+
+
+def test_an_export_nothing_produces_is_pinned_to_zero(game, state):
+    """The invariant the fix establishes: export columns come from what you ASKED for,
+    balance rows came only from what your processes TOUCH, so an export neither produced
+    nor raw got a column with no row and the LP could set it freely.
+
+    Verified NOT to discriminate on its own -- min_power has no incentive to raise that
+    column, so it reads 0 with or without the fix. The two tests below are the ones that
+    fail without it; this one pins the intended behaviour so a later change cannot quietly
+    start reporting a non-zero export here.
+    """
+    from satisfactory_mcp.planning.optimize import solve
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    item = _nitrogen(game)
+    req = build_scenario(game, state, objective="min_power", exports=["Nitrogen Gas", "MW"])
+    sol = solve(req.scenario)
+    assert sol.ok, "a plan that simply cannot export it is still a valid plan"
+    assert sol.exports.get(item, 0.0) == 0.0, sol.exports
+
+
+def test_a_floor_on_an_unmakeable_export_is_infeasible_not_conjured(game, state):
+    """The dangerous half. `export_minimums` sets a lower bound on that same
+    unconstrained column, so the floor was satisfied out of thin air: min_power with a
+    100/min floor SUCCEEDED and reported exports: Nitrogen Gas=100 on a world with no
+    recipe and no reachable node for it. A confidently wrong plan beats a bare
+    INFEASIBLE for damage."""
+    from satisfactory_mcp.planning.optimize import solve
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    req = build_scenario(
+        game,
+        state,
+        objective="min_power",
+        exports=["Nitrogen Gas", "MW"],
+        export_minimums={"Nitrogen Gas": 100},
+    )
+    sol = solve(req.scenario)
+    assert not sol.ok, f"a floor above an impossible zero must not solve: {sol.exports}"
+
+
+def test_max_item_on_an_unmakeable_target_is_bounded(game, state):
+    """Unbounded, not infeasible: the objective pushed the free column up forever and
+    HiGHS returned UNBOUNDED, which surfaced to the user as a bare INFEASIBLE."""
+    from satisfactory_mcp.planning.optimize import solve
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    req = build_scenario(
+        game, state, objective="max_item", target_item="Nitrogen Gas", exports=["Nitrogen Gas"]
+    )
+    sol = solve(req.scenario)
+    assert sol.ok
+    assert sol.objective_value == 0.0
+
+
+def test_the_reason_is_stated_even_when_the_plan_succeeds(game, state):
+    """Zero output is a quiet answer. The same naming the infeasible path does must
+    run here, or a pinned-to-zero export looks like an ordinary empty result."""
+    from satisfactory_mcp.planning import supply
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    req = build_scenario(game, state, objective="min_power", exports=["Nitrogen Gas", "MW"])
+    lines = supply.unmakeable(req, game)
+    assert any("Nitrogen Gas" in line for line in lines), lines
+    assert any("none of them unlocked" in line for line in lines), lines
+
+
+def test_power_keeps_its_own_balance_and_is_not_double_rowed(game, state):
+    """MW is excluded from the new rows on purpose: it balances on the power row. A
+    second row would force generation to zero and every power plan to 0 MW."""
+    from satisfactory_mcp.planning.optimize import solve
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    req = build_scenario(
+        game, state, objective="max_mw", sources=["region:Spire Coast"], exports=["MW"]
+    )
+    sol = solve(req.scenario)
+    assert sol.ok
+    assert sol.net_mw > 0, "exporting power must still be possible"

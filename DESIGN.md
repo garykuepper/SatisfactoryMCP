@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 35 tools, 3 resources, 3 prompts, 447 tests passing. See README.md for usage.
+**Status:** implemented. 35 tools, 3 resources, 3 prompts, 452 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1147,6 +1147,32 @@ an extractor of the right **kind** is unlocked and never whether it can tap that
 unlocked Miner Mk2 makes a crude oil node read as reachable while nothing on the map can pump it. It
 also names the Pressurizer, which appears in no extractor table because it extracts nothing, and
 without which every satellite of a well yields exactly zero.
+
+### 8.2b Every export needs a balance row
+
+Export **columns** come from what you asked for; balance **rows** came only from items
+some process touches. An export that is neither produced nor raw therefore got a column
+with nothing tying it to production, and an unconstrained column is wrong in two ways:
+
+| call | before | after |
+|---|---|---|
+| `max_item` on an unmakeable target | objective pushes the free column up forever → HiGHS **UNBOUNDED** → surfaces as a bare INFEASIBLE | bounded, objective 0, reason stated |
+| `export_minimums` floor on an unmakeable export | floor is a lower bound on that free column, so it is met **out of thin air** — `min_power` reported `exports: Nitrogen Gas=100` on a world with no recipe and no reachable node | honestly INFEASIBLE, with the cause named |
+
+The second is the serious one: a confidently wrong plan does more damage than a bare
+INFEASIBLE, which is what the whole diagnostic work above was fixing.
+
+`MW` is excluded from the new rows on purpose — it balances on the power row, and a
+second row there would force generation to zero.
+
+**The fix needed a companion.** Pinning the export to 0 turns a loud failure into a quiet
+one, so `supply.unmakeable()` — previously reachable only on the infeasible path — now
+also runs when the plan *succeeds*, appending "…it is pinned to 0 in this plan". That
+branch needs no LP probe, so it is free.
+
+Test note: of the three regression tests, two fail without the fix. The third (no floor,
+`min_power`) reads 0 either way because nothing rewards raising that column; its docstring
+says so rather than implying it catches the bug.
 
 ### 8.3 Guards
 

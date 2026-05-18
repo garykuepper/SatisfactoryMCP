@@ -2050,6 +2050,12 @@ def plan_factory(
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
     notes = [*sel.errors, *req.recipe_errors, *sol.warnings]
+    # A SUCCESSFUL plan can still be answering a question it cannot answer. An export
+    # nothing produces is now pinned to zero rather than conjured, but zero output is a
+    # quiet answer, so the reason is said out loud on this path too -- not only when the
+    # solve fails. Costs nothing: this branch of the diagnostic runs no probe.
+    for line in supply.unmakeable(req, g):
+        notes.append(line + " -- it is pinned to 0 in this plan")
     if req.excluded:
         notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:
