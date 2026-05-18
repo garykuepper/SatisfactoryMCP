@@ -172,7 +172,9 @@ def build_view(
             flows[game.item_name(flow.item)]["consumed"] += flow.per_min * clock
         if game.buildings.get(record.get("cls", "")) is None:
             # Silently contributing 0 MW would understate the whole factory's draw.
-            view.issues.append(f"{short}: unknown building {record.get('cls')!r}, power not counted")
+            view.issues.append(
+                f"{short}: unknown building {record.get('cls')!r}, power not counted"
+            )
         else:
             view.draw_mw += game.recipe_power_mw(recipe, clock)
 

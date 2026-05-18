@@ -164,9 +164,7 @@ def _feature_fn(
         products[machine] = frozenset(game.item_name(f.item) for f in recipe.products)
         ingredients[machine] = frozenset(game.item_name(f.item) for f in recipe.ingredients)
 
-    component = {
-        m: k for k, comp in enumerate(graph.machine_components("material")) for m in comp
-    }
+    component = {m: k for k, comp in enumerate(graph.machine_components("material")) for m in comp}
     slab = structures.slab_of
 
     def features(a: str, b: str) -> tuple[dict[str, float], float]:
@@ -401,18 +399,14 @@ def propose(
     seeds = {frozenset(c): seeded[i] for i, c in zip(sorted(alive), linked, strict=False)}
     pieces = {frozenset(c): len(c) for c in linked}
     manufacturing = {
-        r["instance"].rsplit(".", 1)[-1]
-        for r in projection.get("machines", ())
-        if r.get("recipe")
+        r["instance"].rsplit(".", 1)[-1] for r in projection.get("machines", ()) if r.get("recipe")
     }
     final = attach_dependents(linked, graph, manufacturing) if attach else linked
 
     out: list[Proposal] = []
     for members in final:
         held = frozenset(members)
-        parts = sorted(
-            (n for c, n in pieces.items() if c <= held), reverse=True
-        ) or [len(members)]
+        parts = sorted((n for c, n in pieces.items() if c <= held), reverse=True) or [len(members)]
         evidence: Counter = Counter()
         ids = [index[m] for m in members]
         for x, a in enumerate(ids):

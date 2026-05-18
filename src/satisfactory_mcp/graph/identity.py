@@ -121,9 +121,7 @@ def describe(
     if pts:
         cx = sum(p[0] for p in pts) / len(pts)
         cy = sum(p[1] for p in pts) / len(pts)
-        spread = max(
-            (math.dist(a, b) for a in pts for b in pts), default=0.0
-        ) / 100.0
+        spread = max((math.dist(a, b) for a in pts for b in pts), default=0.0) / 100.0
     else:
         cx = cy = spread = 0.0
 
@@ -170,9 +168,7 @@ def _cluster(machines: list[str], pos: dict, link_m: float) -> list[list[str]]:
         while changed:
             changed = False
             for cand in list(remaining):
-                if any(
-                    math.dist(pos[cand][:2], pos[m][:2]) <= link_m * 100 for m in group
-                ):
+                if any(math.dist(pos[cand][:2], pos[m][:2]) <= link_m * 100 for m in group):
                     group.append(cand)
                     remaining.remove(cand)
                     changed = True
@@ -212,8 +208,7 @@ def product_clusters(
             hits.append(m)
 
     return [
-        describe(group, graph, game, projection, "product")
-        for group in _cluster(hits, pos, link_m)
+        describe(group, graph, game, projection, "product") for group in _cluster(hits, pos, link_m)
     ]
 
 

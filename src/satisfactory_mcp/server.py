@@ -487,7 +487,9 @@ def factory_map(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 12,
-    show: Annotated[str, Field(description="candidates | named | slabs | unlabelled | all")] = "all",
+    show: Annotated[
+        str, Field(description="candidates | named | slabs | unlabelled | all")
+    ] = "all",
 ) -> str:
     """Proposed factories, from power islands and belt topology, plus what is named.
 
@@ -734,11 +736,19 @@ def factory_query(
                     "surplus" if net > 1e-6 else "needs feeding" if net < -1e-6 else "internal"
                 )
                 rows.append(
-                    (item, render.num(f["produced"]), render.num(f["consumed"]), f"{net:+.1f}", verdict)
+                    (
+                        item,
+                        render.num(f["produced"]),
+                        render.num(f["consumed"]),
+                        f"{net:+.1f}",
+                        verdict,
+                    )
                 )
             chunks.append(
                 "## balance (items/min at saved clocks)\n"
-                + render.table(("item", "made", "used", "net", ""), rows[:n], total=len(rows), limit=n)
+                + render.table(
+                    ("item", "made", "used", "net", ""), rows[:n], total=len(rows), limit=n
+                )
             )
         elif aspect in ("outputs", "inputs"):
             data = view.outputs() if aspect == "outputs" else view.inputs()
@@ -753,8 +763,13 @@ def factory_query(
             )
         elif aspect == "machines":
             rows = [
-                (m.instance, bname(m.building), m.recipe or "-", f"{m.clock:.0%}",
-                 "paused" if m.paused else "")
+                (
+                    m.instance,
+                    bname(m.building),
+                    m.recipe or "-",
+                    f"{m.clock:.0%}",
+                    "paused" if m.paused else "",
+                )
                 for m in sorted(view.machines, key=lambda x: (x.building, x.recipe))
             ]
             chunks.append(
@@ -770,8 +785,10 @@ def factory_query(
             chunks.append(
                 "## recipes\n"
                 + render.table(
-                    ("recipe", "machines"), view.recipes.most_common(n),
-                    total=len(view.recipes), limit=n,
+                    ("recipe", "machines"),
+                    view.recipes.most_common(n),
+                    total=len(view.recipes),
+                    limit=n,
                 )
             )
         elif aspect == "buildings":
@@ -814,8 +831,10 @@ def factory_query(
                 "# machines reached on the far side, not an edge count -- asymmetric by\n"
                 "# nature, since the first machine of a small set blocks the rest\n"
                 + render.table(
-                    ("other side", "machines reached"), view.links.most_common(n),
-                    total=len(view.links), limit=n,
+                    ("other side", "machines reached"),
+                    view.links.most_common(n),
+                    total=len(view.links),
+                    limit=n,
                 )
             )
         elif aspect == "issues":
@@ -873,11 +892,12 @@ def factory_health(
             return "! nothing named yet -- run propose_factories, then name_factory"
         rows, notes = [], []
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
-            report = assess(label.name, [m for m in label.anchors if m in alive], st.game, st.projection)
+            report = assess(
+                label.name, [m for m in label.anchors if m in alive], st.game, st.projection
+            )
             mean = report.mean_uptime
             actionable = sum(
-                report.by_state[s]
-                for s in ("dead node", "no recipe", "starved", "stalled")
+                report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
             )
             rows.append(
                 (
@@ -906,8 +926,18 @@ def factory_health(
         return render.envelope(
             f"# {st.age_note}\n# uptime measured over a 300s window per machine",
             render.table(
-                ("factory", "n", "uptime", "blocked", "starved", "stalled", "no recipe",
-                 "dead node", "paused", "todo"),
+                (
+                    "factory",
+                    "n",
+                    "uptime",
+                    "blocked",
+                    "starved",
+                    "stalled",
+                    "no recipe",
+                    "dead node",
+                    "paused",
+                    "todo",
+                ),
                 rows[:n],
                 total=len(rows),
                 limit=n,
@@ -948,16 +978,12 @@ def factory_health(
     if report.blocked_on:
         chunks.append(
             "## output backing up\n"
-            + render.table(
-                ("item", "machines blocked"), report.blocked_on.most_common(n)
-            )
+            + render.table(("item", "machines blocked"), report.blocked_on.most_common(n))
         )
     if report.starved_of:
         chunks.append(
             "## inputs not arriving\n"
-            + render.table(
-                ("ingredient", "machines starved"), report.starved_of.most_common(n)
-            )
+            + render.table(("ingredient", "machines starved"), report.starved_of.most_common(n))
         )
 
     notes = []
@@ -1013,9 +1039,7 @@ def propose_factories(
     proposals = (
         st.proposals
         if max_span_m == cohere.MAX_SPAN_M
-        else cohere.propose(
-            st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m
-        )
+        else cohere.propose(st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m)
     )
     rows = []
     shown = 0
@@ -1067,7 +1091,9 @@ def propose_factories(
 
 @mcp.tool(structured_output=False)
 def select_machines(
-    select: Annotated[list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")],
+    select: Annotated[
+        list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")
+    ],
     save: str | None = None,
     world: str | None = None,
     split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
@@ -1088,8 +1114,14 @@ def select_machines(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels,
-            split=split, expand=expand, structures=st.structures,
+            select,
+            st.graph,
+            st.game,
+            st.projection,
+            st.labels,
+            split=split,
+            expand=expand,
+            structures=st.structures,
             proposals=st.proposals,
         )
     except gsel.SelectorError as exc:
@@ -1109,7 +1141,8 @@ def select_machines(
             ]
         ),
         "products: " + (", ".join(f"{k} {v}" for k, v in cand.products.most_common(10)) or "-"),
-        "buildings: " + ", ".join(f"{v}x {k.replace('Build_', '')}" for k, v in cand.buildings.most_common(8)),
+        "buildings: "
+        + ", ".join(f"{v}x {k.replace('Build_', '')}" for k, v in cand.buildings.most_common(8)),
     ]
     if len(groups) > 1:
         sub = identity.describe(groups[0], st.graph, st.game, st.projection, "selector")
@@ -1127,7 +1160,9 @@ def select_machines(
 @mcp.tool(structured_output=False)
 def name_factory(
     name: str,
-    select: Annotated[list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")],
+    select: Annotated[
+        list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")
+    ],
     notes: str = "",
     save: str | None = None,
     world: str | None = None,
@@ -1150,8 +1185,14 @@ def name_factory(
 
     try:
         picked = gsel.select_machines(
-            select, st.graph, st.game, st.projection, st.labels,
-            split=split, expand=expand, structures=st.structures,
+            select,
+            st.graph,
+            st.game,
+            st.projection,
+            st.labels,
+            split=split,
+            expand=expand,
+            structures=st.structures,
             proposals=st.proposals,
         )
     except gsel.SelectorError as exc:
@@ -1227,13 +1268,8 @@ def list_factories(save: str | None = None, world: str | None = None) -> str:
     loose = len(identity.unassigned(st.graph, store.assigned()))
     return render.envelope(
         f"# {st.age_note}\n# {len(store.labels)} named, {loose} machine(s) unlabelled",
-        render.table(
-            ("name", "anchors", "alive", "x,y(m)", "spread", "makes", "notes"), rows
-        ),
-        [
-            f"{d['name']}: {d['status']} (recall {d['recall']})"
-            for d in store.review(machines)
-        ],
+        render.table(("name", "anchors", "alive", "x,y(m)", "spread", "makes", "notes"), rows),
+        [f"{d['name']}: {d['status']} (recall {d['recall']})" for d in store.review(machines)],
     )
 
 
@@ -1452,7 +1488,11 @@ def search_resource_nodes(
             (
                 r["instance"].rsplit(".", 1)[-1],
                 g.item_name(r["resource"]) if mixed else r["purity"],
-                *((f"{r['_d']:.0f}m",) if show_distance else (r["purity"] if mixed else r["kind"],)),
+                *(
+                    (f"{r['_d']:.0f}m",)
+                    if show_distance
+                    else (r["purity"] if mixed else r["kind"],)
+                ),
                 r["grid"],
                 f"{int(r['x'] / 100)},{int(r['y'] / 100)}",
                 render.num(r["rate"]),
@@ -2952,7 +2992,6 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
     )
 
 
-
 @mcp.tool(structured_output=False)
 def power_shards(
     save: str | None = None,
@@ -3034,7 +3073,6 @@ def power_shards(
 # Resources are CLIENT-PULLED, so they cost zero context until something asks for
 # them. That makes them right for stable orientation data and wrong for anything
 # parameterised, which stays a tool.
-
 
 
 @mcp.resource("satisfactory://docs/summary", mime_type="text/plain")

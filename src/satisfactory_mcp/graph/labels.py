@@ -179,9 +179,7 @@ class LabelStore:
     def match(self, machines: set[str]) -> list[tuple[Label, float]]:
         """Labels present in a machine set, best recall first."""
         scored = [(x, x.recall(machines)) for x in self.labels]
-        return sorted(
-            [(x, r) for x, r in scored if r >= MATCH_THRESHOLD], key=lambda p: -p[1]
-        )
+        return sorted([(x, r) for x, r in scored if r >= MATCH_THRESHOLD], key=lambda p: -p[1])
 
     def label_for(self, machine: str) -> Label | None:
         for label in self.labels:

@@ -127,7 +127,9 @@ class PlanStore:
             self.plans.append(existing)
         # Only what actually shapes the solve, and only non-defaults, so a stored plan
         # reads as the request that was made rather than a dump of every parameter.
-        existing.args = {k: v for k, v in args.items() if k in PLAN_ARGS and v not in (None, [], {})}
+        existing.args = {
+            k: v for k, v in args.items() if k in PLAN_ARGS and v not in (None, [], {})
+        }
         existing.plan_id = plan_id
         if notes:
             existing.notes = notes

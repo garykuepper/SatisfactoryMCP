@@ -144,11 +144,7 @@ def _buffer_state(game: GameData, buffers: dict, recipe) -> tuple[tuple[str, ...
     intake = buffers.get("in")
     if intake is not None and recipe is not None:
         held = intake.get("items") or {}
-        missing = [
-            game.item_name(f.item)
-            for f in recipe.ingredients
-            if not held.get(f.item)
-        ]
+        missing = [game.item_name(f.item) for f in recipe.ingredients if not held.get(f.item)]
         return tuple(sorted(backed)), tuple(sorted(missing))
 
     # No recipe to check against: a generator is starved when its fuel buffer is empty.

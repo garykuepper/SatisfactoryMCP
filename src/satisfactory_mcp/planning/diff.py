@@ -218,9 +218,7 @@ class _SaveIndex:
     extractor_on: dict[str, dict]
 
 
-def _index(
-    state: WorldState, request: PlanRequest, scope: set[str] | None = None
-) -> _SaveIndex:
+def _index(state: WorldState, request: PlanRequest, scope: set[str] | None = None) -> _SaveIndex:
     """What the save already offers this plan.
 
     ``scope`` restricts reuse to one factory's machines. Without it, "you already have
