@@ -236,3 +236,88 @@ def test_worst_reports_only_what_needs_attention(game):
     report = _assess(game, machines=[good, bad])
     assert [m.instance for m in report.worst()] == ["Build_ConstructorMk1_C_11"]
     assert report.mean_uptime == pytest.approx(0.5)
+
+
+# ------------------------------------------------------------ power shards
+
+
+def test_slug_yields_come_from_the_recipes_not_from_memory(game):
+    """Blue 1, Yellow 2, Purple 5 are read off Power Shard (1)/(2)/(5). Hardcoding them
+    would be exactly the game-knowledge guessing this project refuses elsewhere."""
+    yields = {game.item_name(k): v for k, v in game.slug_yields().items()}
+    assert yields == {"Blue Power Slug": 1.0, "Yellow Power Slug": 2.0, "Purple Power Slug": 5.0}
+
+
+def test_the_synthetic_shard_recipe_is_not_treated_as_a_slug(game):
+    """Synthetic Power Shard also makes shards, but from Time Crystal, Dark Matter
+    Crystal, Quartz and Photonic Matter. That is a production chain, not something
+    lying in a crate, so it must not inflate the craftable pool."""
+    names = {game.item_name(k) for k in game.slug_yields()}
+    assert "Quartz Crystal" not in names
+    assert "Time Crystal" not in names
+    assert all("Slug" in n for n in names)
+
+
+def _budget(game, projection):
+    from satisfactory_mcp.save.state import WorldState
+
+    return WorldState(projection=projection, game=game).shard_budget()
+
+
+def _proj(depot=None, player=None, storage=None, machines=()):
+    return {
+        "depot": depot or {},
+        "inventories": {"player": player or {}, "storage": storage or {}, "machine": {}},
+        "machines": list(machines),
+        "extractors": [],
+        "generators": [],
+    }
+
+
+def test_slugs_in_the_depot_count_as_craftable_not_free(game):
+    """The reference save holds 93 Blue, 58 Yellow and 39 Purple in the Dimensional
+    Depot -- 404 shards against 22 already crafted. Reporting only the crafted pool
+    understated what the player could overclock with by ~19x."""
+    budget = _budget(
+        game,
+        _proj(
+            depot={
+                "Desc_Crystal_C": 93,
+                "Desc_Crystal_mk2_C": 58,
+                "Desc_Crystal_mk3_C": 39,
+                "Desc_CrystalShard_C": 22,
+            }
+        ),
+    )
+    assert budget["free"] == 22
+    assert budget["craftable"] == 404
+    assert budget["potential"] == 426
+
+
+def test_slugs_are_found_wherever_stock_looks(game):
+    """Carried, in a crate, or in the Depot -- all three are spendable, so all three
+    count."""
+    for place in ("player", "storage"):
+        budget = _budget(game, _proj(**{place: {"Desc_Crystal_mk3_C": 4}}))
+        assert budget["craftable"] == 20, place
+        assert budget["by_place"], place
+
+
+def test_shards_inside_machines_are_never_counted_as_free(game):
+    """The trap this whole area exists to avoid: the 97 shards on the reference save are
+    all in InventoryPotential components, so reading the machine bucket as stock
+    overstates the free pool more than 4x."""
+    projection = _proj()
+    projection["inventories"]["machine"] = {"Desc_CrystalShard_C": 97}
+    budget = _budget(game, projection)
+    assert budget["free"] == 0
+    assert budget["craftable"] == 0
+
+
+def test_craftable_is_reported_apart_from_free(game):
+    """Crafting is a manual step, so slugs are potential and must never be folded into
+    a number the player reads as available now."""
+    budget = _budget(game, _proj(depot={"Desc_Crystal_C": 10}))
+    assert budget["free"] == 0
+    assert budget["craftable"] == 10
+    assert budget["potential"] == 10

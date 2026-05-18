@@ -412,6 +412,47 @@ class WorldState:
         stock = self.stock()
         free = sum(stock.get(item, 0.0) for item in shard_items)
 
+        # Uncrafted slugs are latent shards. They sit wherever stock() looks -- carried,
+        # in crates, or in the Dimensional Depot -- and on the reference save the depot
+        # alone holds 93 Blue, 58 Yellow and 39 Purple, worth 404 shards against 22
+        # already crafted. Reporting only the crafted pool understates what the player
+        # can overclock with by ~19x, which is the same class of error as counting
+        # machine buffers as stock.
+        # Where they physically are. "free" pools carried + crates + Depot, which is
+        # correct for spending but hides the answer to "is that the Depot?" -- a question
+        # worth not making the player ask.
+        wanted = set(shard_items) | set(self.game.slug_yields())
+        by_place: dict[str, dict[str, float]] = {}
+        for place, source in (
+            ("carried", self._inventories.get("player", {})),
+            ("crates", self._inventories.get("storage", {})),
+            ("depot", self.projection.get("depot", {})),
+        ):
+            held = {
+                self.game.item_name(k): v for k, v in source.items() if k in wanted and v
+            }
+            if held:
+                by_place[place] = held
+
+        slugs = []
+        craftable = 0.0
+        for item, yield_each in sorted(
+            self.game.slug_yields().items(), key=lambda kv: -kv[1]
+        ):
+            held = stock.get(item, 0.0)
+            if not held:
+                continue
+            slugs.append(
+                {
+                    "item": item,
+                    "name": self.game.item_name(item),
+                    "held": held,
+                    "each": yield_each,
+                    "shards": held * yield_each,
+                }
+            )
+            craftable += held * yield_each
+
         committed = 0
         holders: list[dict] = []
         for record in self._all_records():
@@ -439,6 +480,12 @@ class WorldState:
         holders.sort(key=lambda h: (-h["slotted"], h["cls"]))
         return {
             "shard_items": shard_items,
+            "slugs": slugs,
+            "by_place": by_place,
+            #: Shards these slugs would yield once crafted. NOT free: crafting is a
+            #: manual step, so this is potential, never availability.
+            "craftable": craftable,
+            "potential": free + craftable,
             "free": free,
             "committed": committed,
             "owned": free + committed,

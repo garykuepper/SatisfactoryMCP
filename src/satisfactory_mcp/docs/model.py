@@ -258,6 +258,30 @@ class GameData:
         excludes the Somersloop without either class being named in code."""
         return {c: it.extra_potential for c, it in self.items.items() if it.extra_potential > 0}
 
+    def slug_yields(self) -> dict[str, float]:
+        """Item class -> Power Shards it crafts into, for every single-ingredient
+        shard recipe.
+
+        Derived from the recipes, never listed: the dump gives Power Shard (1), (2) and
+        (5) taking one Blue, Yellow or Purple slug, so the 1/2/5 ratios are data rather
+        than game knowledge. Restricted to ONE ingredient on purpose -- Synthetic Power
+        Shard also makes shards, but from Time Crystal, Dark Matter Crystal, Quartz and
+        Photonic Matter, which is a production chain and not something lying in a crate.
+        """
+        shard_items = set(self.clock_shards())
+        out: dict[str, float] = {}
+        for recipe in self.recipes.values():
+            if recipe.kind != "part" or len(recipe.ingredients) != 1:
+                continue
+            made = sum(f.amount for f in recipe.products if f.item in shard_items)
+            if not made:
+                continue
+            source = recipe.ingredients[0]
+            if source.item in shard_items or not source.amount:
+                continue
+            out[source.item] = max(out.get(source.item, 0.0), made / source.amount)
+        return out
+
     def part_recipes(self) -> list[Recipe]:
         return [r for r in self.recipes.values() if r.kind == "part"]
 

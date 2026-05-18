@@ -3031,6 +3031,24 @@ def power_shards(
         f"max clock is {render.num(ceiling)}. The slot count is the only hardcoded "
         "number here -- mPotentialShardSlots is 0 on every building in the dump. [WIKI]"
     )
+    if budget["slugs"]:
+        held = ", ".join(
+            f"{render.num(s['held'])} {s['name']} x{s['each']:g}" for s in budget["slugs"]
+        )
+        notes.append(
+            f"craftable = uncrafted slugs carried, in crates or in the Dimensional "
+            f"Depot: {held}. The 1/2/5 ratios come from the Power Shard (1)/(2)/(5) "
+            "recipes, not from game knowledge. Craftable is POTENTIAL, not free -- "
+            "crafting is a manual step"
+        )
+
+    if budget["by_place"]:
+        where = "; ".join(
+            f"{place}: " + ", ".join(f"{render.num(v)} {k}" for k, v in sorted(held.items()))
+            for place, held in budget["by_place"].items()
+        )
+        notes.append(f"where they are -- {where}")
+
     idle = sum(h["idle"] for h in budget["holders"])
     if idle:
         notes.append(
@@ -3042,13 +3060,26 @@ def power_shards(
     if plan_machines:
         need_each = shards_for_clock(plan_clock, per_shard)
         need = need_each * plan_machines
-        verdict = "affordable" if need <= budget["free"] else "SHORT"
-        notes.append(
+        short = need - budget["free"]
+        line = (
             f"plan: {plan_machines} machine(s) at clock {render.num(plan_clock)} needs "
-            f"{need_each} shard(s) each = {need}; free {render.num(budget['free'])} -> "
-            f"{verdict}"
-            + (f", short by {render.num(need - budget['free'])}" if need > budget["free"] else "")
+            f"{need_each} shard(s) each = {need}; free {render.num(budget['free'])}"
         )
+        if short <= 0:
+            notes.append(line + " -> affordable now")
+        elif short <= budget["craftable"]:
+            # Craftable, not free: the slugs cover it but somebody has to press craft.
+            notes.append(
+                line + f" -> SHORT by {render.num(short)}, but "
+                f"{render.num(budget['craftable'])} more are craftable from slugs you "
+                "already hold, so it is affordable after crafting"
+            )
+        else:
+            notes.append(
+                line + f" -> SHORT by {render.num(short)}; even crafting every slug "
+                f"({render.num(budget['craftable'])}) leaves you "
+                f"{render.num(need - budget['potential'])} short"
+            )
 
     rows = [
         (h["cls"], render.num(h["clock"]), h["slotted"], h["needed"], h["idle"] or "")
@@ -3059,6 +3090,8 @@ def power_shards(
         + render.kv(
             [
                 ("free", render.num(budget["free"])),
+                ("craftable_from_slugs", render.num(budget["craftable"])),
+                ("potential", render.num(budget["potential"])),
                 ("committed", budget["committed"]),
                 ("owned", render.num(budget["owned"])),
                 ("overclocked_buildings", len(budget["holders"])),
