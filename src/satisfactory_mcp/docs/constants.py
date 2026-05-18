@@ -100,3 +100,25 @@ STACK_SIZE: dict[str, int] = {
     # 50 m3. Verified against observed values: Wire 500 = SS_HUGE, Iron Rod 200 = SS_BIG.
     "SS_FLUID": 50_000,
 }
+
+
+#: Save building class -> the class Docs.json uses for the same building.
+#:
+#: The dump and the save disagree on a handful of names. Measured on the reference save,
+#: 13 classes are built that appear in NO Docs.json entry -- but almost all are world
+#: objects (BP_ResourceNode_C, BP_FrackingSatellite_C), HUB-integrated fixtures
+#: (Build_HubTerminal_C, Build_WorkBenchIntegrated_C) or fittings with no build recipe
+#: (Build_PipelineFlowIndicator_C). Those are correctly absent.
+#:
+#: Exactly ONE is a placeable building the dump names differently, and it produced a
+#: false warning: `unlocked_building_ids` is derived from build recipes, which yield
+#: Build_GeneratorBiomass_Automated_C ("Biomass Burner"), while the save stores the
+#: eight standing burners as Build_GeneratorBiomass_C. world_summary therefore reported
+#: "unlocked but never built: Biomass Burner" against 8 of them running.
+#:
+#: Build_GeneratorIntegratedBiomass_C is deliberately NOT aliased. It is the burner built
+#: into the HUB, has no build recipe of its own, and folding it in would credit the
+#: player with generators they never placed.
+BUILDING_CLASS_ALIASES: dict[str, str] = {
+    "Build_GeneratorBiomass_C": "Build_GeneratorBiomass_Automated_C",
+}

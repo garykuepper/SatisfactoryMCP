@@ -165,9 +165,19 @@ class WorldState:
         FGLightweightBuildableSubsystem holds Build_* classes that appear in no actor
         header, so a header-only count understates what exists.
         """
-        out = dict(self.projection.get("building_counts", {}))
-        for cls, n in (self.projection.get("lightweight_counts") or {}).items():
-            out[cls] = out.get(cls, 0) + n
+        from ..docs.constants import BUILDING_CLASS_ALIASES
+
+        out: dict[str, int] = {}
+        for source in (
+            self.projection.get("building_counts", {}),
+            self.projection.get("lightweight_counts") or {},
+        ):
+            for cls, n in source.items():
+                # The save and the dump disagree on a few names. Folding the save's name
+                # onto the dump's is what stops "unlocked but never built: Biomass
+                # Burner" appearing while eight of them are running.
+                key = BUILDING_CLASS_ALIASES.get(cls, cls)
+                out[key] = out.get(key, 0) + n
         return out
 
     def built(self, building_id: str) -> int:

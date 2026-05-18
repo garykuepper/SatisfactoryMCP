@@ -1608,6 +1608,103 @@ def _origin_for(st, near: str) -> tuple[tuple[float, float], str]:
 
 
 @mcp.tool(structured_output=False)
+def show_on_map(
+    target: Annotated[
+        str,
+        Field(
+            description="'x,y' in metres, 'me', a factory label, a node id, or a "
+            "resource name like 'Crude Oil'"
+        ),
+    ],
+    layers: Annotated[
+        list[str] | None,
+        Field(description="explicit sublayer tokens, overriding the guess"),
+    ] = None,
+    zoom: float = 4.75,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """A satisfactory-calculator.com map link centred on something, with layers on.
+
+    `target` accepts a coordinate in metres, `me`, one of your named factories, a node
+    id from `search_resource_nodes`, or a resource name — the last centres on that
+    resource's nodes and switches its overlays on.
+
+    Only the Crude Oil layer tokens are confirmed; the rest follow the same pattern and
+    are flagged. A wrong token still opens the map in the right place, just without that
+    overlay.
+    """
+    from .spatial import maplink
+
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception:
+        st = None
+
+    table = nodes_mod.load_nodes()
+    notes: list[str] = []
+    resources: list[str] = []
+    text = target.strip()
+
+    # A node id centres on that node and lights up its own resource.
+    by_instance = {k.rsplit(".", 1)[-1]: v for k, v in table.by_instance().items()}
+    node = by_instance.get(text)
+    if node is not None:
+        origin = (node["x"], node["y"])
+        where = f"{text} ({g.item_name(node['resource'])}, {node['purity']})"
+        resources = [node["resource"]]
+    elif (item := _item_id(text)) and item in maplink.LAYERS:
+        # A resource name: centre on its nodes so the link lands somewhere useful.
+        rows = table.by_resource(item)
+        if not rows:
+            return f"! no {g.item_name(item)} nodes on the map"
+        origin = (
+            sum(r["x"] for r in rows) / len(rows),
+            sum(r["y"] for r in rows) / len(rows),
+        )
+        where = f"all {len(rows)} {g.item_name(item)} node(s)"
+        resources = [item]
+        notes.append(
+            "centred on the centroid of every node of that resource, which may be open "
+            "water if they are spread across the map -- pass a node id or x,y to pin it"
+        )
+    else:
+        try:
+            origin, where = _origin_for(st, text)
+        except ValueError as exc:
+            return f"! {exc}"
+
+    # Which variants a resource actually HAS, read from the node table rather than
+    # assumed: Coal is node-only, so emitting coalWellPure would be a token invented for
+    # something that does not exist. Only oil, nitrogen and water have wells.
+    kinds = sorted(
+        {"well" if r["kind"].startswith("well") else "node"
+         for res in resources
+         for r in table.by_resource(res)}
+    )
+    tokens = layers or maplink.layers_for(resources, kinds or None)
+    if resources and not layers:
+        unverified = [r for r in resources if r not in maplink.VERIFIED_RESOURCES]
+        if unverified:
+            notes.append(
+                "[UNVERIFIED] layer token(s) for "
+                + ", ".join(g.item_name(r) for r in unverified)
+                + " are inferred from the one confirmed example (Crude Oil). If an "
+                "overlay does not appear, the link still opens at the right place -- "
+                "pass layers=[...] with the site's own names"
+            )
+
+    url = maplink.map_url(origin[0], origin[1], tokens, zoom=zoom)
+    body = url
+    if tokens:
+        body += "\n# layers: " + ", ".join(tokens)
+    return render.envelope(
+        f"# {where} at {int(origin[0] / 100)},{int(origin[1] / 100)} (metres)", body, notes
+    )
+
+
+@mcp.tool(structured_output=False)
 def rank_build_sites(
     resource: str,
     sources: list[str] | None = None,

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 35 tools, 4 resources, 3 prompts, 460 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 473 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1060,6 +1060,37 @@ distance column headed with the origin's name, so the number is never ambiguous.
 
 `mode="nearest"` without `near` is an **error**, not a silent fall back to yield order:
 answering a different question than the one asked is worse than refusing.
+
+### 7.2b Map deep links
+
+`show_on_map(target)` builds a satisfactory-calculator.com interactive-map link centred on
+a coordinate, `me`, a named factory, a node id, or a resource name, with the relevant
+overlays switched on.
+
+Fragment format, read off a working link the player supplied:
+
+```
+#4.75;40351;-208857|gameLayer|oilWellPure;oilNormal;oilWellNormal;oilImpure;...
+ ^zoom ^x    ^y     ^group    ^sublayers, semicolon-separated
+```
+
+**Coordinates are save centimetres.** Not proven from the site — it returns **403** to
+automated fetches (retried after the user disabled a VPN; the fetch originates elsewhere,
+so that was never the cause) — but strongly corroborated: the supplied coordinate falls
+inside the measured content bbox (§7.1) and resolves to the northern oil region, which is
+what its oil layers show. Every other tool quotes metres, so the conversion lives in
+`maplink.map_url` and nowhere else; a metre value passed by mistake lands 1/100th of the
+way across the map, near the origin, which looks plausible and is wrong.
+
+**Only the Crude Oil tokens are verified.** They appear in the supplied link, and the
+generator reproduces all six exactly — that equality is a test. Every other entry in
+`LAYERS` follows the one pattern that link demonstrates — `<resource><Purity>` for nodes,
+`<resource>Well<Purity>` for wells — and is surfaced as `[UNVERIFIED]`. The failure mode is
+the mild one: a wrong token still opens the map in the right place, with that overlay
+simply not enabled. `layers=[...]` overrides the guess.
+
+Which variants exist is **read from the node table**, not assumed: Coal is node-only so
+`coalWellPure` is never emitted, Nitrogen Gas and Water are well-only, Crude Oil is both.
 
 ### 7.3 Source selectors
 
