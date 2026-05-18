@@ -42,6 +42,8 @@ def test_tools_resources_prompts_registered():
         "satisfactory://docs/summary",
         "satisfactory://save/current",
         "satisfactory://map/regions",
+        # Player-authored labels, published as an interface rather than kept private.
+        "satisfactory://factories/labels",
     }
     assert {p.name for p in prompts} == {
         "design_factory",

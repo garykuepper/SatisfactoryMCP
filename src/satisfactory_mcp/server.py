@@ -1266,8 +1266,15 @@ def list_factories(save: str | None = None, world: str | None = None) -> str:
             )
         )
     loose = len(identity.unassigned(st.graph, store.assigned()))
+    from .graph.labels import LabelStore
+
+    # Say where the file is. Labels are the one thing here a player authored by hand,
+    # so another tool will want them, and reverse-engineering platformdirs to find them
+    # is not a reasonable ask.
     return render.envelope(
-        f"# {st.age_note}\n# {len(store.labels)} named, {loose} machine(s) unlabelled",
+        f"# {st.age_note}\n# {len(store.labels)} named, {loose} machine(s) unlabelled"
+        f"\n# stored at {LabelStore.path_for(store.world_id)}"
+        f"\n# also served as resource satisfactory://factories/labels",
         render.table(("name", "anchors", "alive", "x,y(m)", "spread", "makes", "notes"), rows),
         [f"{d['name']}: {d['status']} (recall {d['recall']})" for d in store.review(machines)],
     )
@@ -3156,6 +3163,42 @@ def current_save() -> str:
             ("alternates", len(st.unlocked_alternates)),
             ("hard_drives_pending", len(st.hard_drive_offers)),
         ]
+    )
+
+
+@mcp.resource("satisfactory://factories/labels", mime_type="application/json")
+def factory_labels() -> str:
+    """Factory labels for the current world, as the JSON another tool can consume.
+
+    Labels are the one thing in this server a player authored by hand, so they are the
+    one thing worth publishing as a stable interface rather than a private cache. The
+    file is per world, keyed by the save header's ``saveIdentifier``, and carries a
+    ``schema`` integer so a reader can refuse a shape it does not know.
+
+    ``anchors`` are machine instance names, which were verified stable across saves --
+    365 of 365 kept id and position between two files. That is what makes a label
+    portable: a consumer can join it against its own read of the same save without
+    needing anything from this server.
+    """
+    import json
+
+    from .graph.labels import SCHEMA, LabelStore
+
+    try:
+        st = _state()
+    except Exception as exc:
+        return json.dumps({"error": f"no readable save: {exc}"}, indent=1)
+
+    store = st.labels
+    return json.dumps(
+        {
+            "schema": SCHEMA,
+            "world_id": store.world_id,
+            "session_name": store.session_name,
+            "path": str(LabelStore.path_for(store.world_id)),
+            "labels": [label.to_json() for label in store.labels],
+        },
+        indent=1,
     )
 
 

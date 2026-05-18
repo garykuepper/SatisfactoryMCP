@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 35 tools, 3 resources, 3 prompts, 458 tests passing. See README.md for usage.
+**Status:** implemented. 35 tools, 4 resources, 3 prompts, 460 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -830,6 +830,40 @@ Two orthogonal modifiers, because a factory is delimited from either end:
 
 Exclusions apply **after** expanding, or `-label:x` would be silently undone by the expansion
 following it.
+
+
+#### The label file is an interface
+
+Labels are the one thing this server holds that a **player authored by hand**, so the
+file is published rather than kept private. Location, and the same JSON served as an MCP
+resource:
+
+```
+user_data_dir/satisfactory-mcp/labels/<saveIdentifier>.json
+satisfactory://factories/labels          # same content, plus its own path
+```
+
+```json
+{ "schema": 1, "world_id": "<saveIdentifier>", "session_name": "Han Solo",
+  "labels": [ { "id": "steel-factory", "name": "steel factory",
+                "anchors": ["Build_FoundryMk1_C_2147082409", "..."],
+                "notes": "...", "centroid": [x_cm, y_cm],
+                "signature": {"Build_FoundryMk1_C": 24},
+                "created": "<save filename>", "last_matched": "<save filename>" } ] }
+```
+
+`anchors` is what makes a label portable: machine instance names were verified stable
+across saves (365 of 365 kept id and position between two files), so a consumer joins
+them against **its own** read of the same save and needs nothing else from this server.
+`schema` is an integer so a reader can refuse a shape it does not know.
+
+`centroid` is in **centimetres** — save units, not the metres every tool prints — because
+it is stored data rather than presentation. `signature` is a building-class census kept
+as a re-match hint after a full rebuild; it is advisory and never used to match
+automatically.
+
+`list_factories` prints the path, because reverse-engineering platformdirs to find it is
+not a reasonable ask.
 
 ### 6.4 Space Elevator phases — two records, and only one is alive
 

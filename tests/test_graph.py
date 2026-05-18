@@ -718,3 +718,41 @@ def test_a_mine_between_two_equally_close_factories_is_left_alone():
         [list(left), list(right), list(mine)], graph, manufacturing=set(left + right)
     )
     assert any(c == mine for c in out), "a tie must stay unattributed"
+
+
+def test_the_label_file_is_a_stable_documented_shape():
+    """Labels are the one thing here a player authored by hand, so the file is an
+    interface, not a private cache. A consumer joins `anchors` against its own read of
+    the same save; nothing else from this server is needed."""
+    from satisfactory_mcp.graph.labels import SCHEMA, Label, LabelStore
+
+    store = LabelStore(world_id="TESTWORLD", session_name="Test")
+    store.put("steel factory", ["Build_FoundryMk1_C_1"], notes="ingots")
+    raw = store.labels[0].to_json()
+    assert set(raw) == {
+        "id",
+        "name",
+        "anchors",
+        "notes",
+        "centroid",
+        "signature",
+        "created",
+        "last_matched",
+    }
+    assert SCHEMA == 1
+    # Round-trips through its own serialisation, which is what a version bump must keep.
+    assert Label.from_json(raw).to_json() == raw
+
+
+def test_the_labels_resource_is_registered_and_self_locating():
+    """Finding the file must not require reverse-engineering platformdirs."""
+    import asyncio
+    import json
+
+    from satisfactory_mcp import server as srv
+
+    uris = {str(r.uri) for r in asyncio.run(srv.mcp.list_resources())}
+    assert "satisfactory://factories/labels" in uris
+
+    payload = json.loads(srv.factory_labels())
+    assert "error" in payload or {"schema", "world_id", "path", "labels"} <= set(payload)
