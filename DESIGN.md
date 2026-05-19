@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 502 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 503 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1120,11 +1120,25 @@ and simply never consulted**:
 | Oil / Water Extractor | `RF_LIQUID` | True |
 | Resource Well Extractor | `RF_LIQUID, RF_GAS` | True |
 
-Corrected: oil reads 60/120/240 by purity. The wiki was unreachable (Cloudflare 403), so
-the check was made against something better — the dump's own cycle fields. `mItemsPerCycle
-/ mExtractCycleTime × 60`, with litres converted to m³ for fluids, reproduces every parsed
-`base_extract_rate` exactly, including the Oil Extractor's 2000 L/s → 120 m³/min. A test
-pins that derivation.
+Corrected: oil reads 60/120/240 by purity, confirmed **three independent ways**.
+
+1. Our building model, `extract_rate(purity, clock)`.
+2. The dump's own cycle fields — `mItemsPerCycle / mExtractCycleTime × 60`, litres to m³
+   for fluids — which reproduces every parsed `base_extract_rate` exactly, including the
+   Oil Extractor's 2000 L/s → 120 m³/min.
+3. The wiki's Crude Oil "Resource acquisition" table (supplied by the user; the site is
+   behind a Cloudflare 403 to automated fetches):
+
+| node purity | m³/min at 100% | m³/min at 250% |
+|---|---|---|
+| Impure | 60 | 150 |
+| Normal | 120 | 300 |
+| Pure | 240 | 600 |
+
+All three agree cell-for-cell, and `node_rate` now joins them; before the fix it
+disagreed with all three by exactly 2×. Tests pin both the derivation and the published
+table, including the **250% column** — that is the figure a plan is actually built
+against, and a pure node overclocked is 600 m³/min, not 1,200.
 
 **Only the node search was affected.** `extractor_processes` builds its columns from
 `building.extract_rate(purity, clock)` with the actual building, so the LP and

@@ -189,3 +189,31 @@ def test_the_base_rates_match_the_dumps_own_cycle_fields(game):
         fluid = "RF_LIQUID" in entry.get("mAllowedResourceForms", "")
         derived = per_cycle / cycle * 60 / (1000 if fluid else 1)
         assert game.buildings[cls].base_extract_rate == derived, cls
+
+
+def test_oil_rates_match_the_published_table(game):
+    """Third independent confirmation of the same six numbers.
+
+    The wiki's Crude Oil "Resource acquisition" table gives m3/min at 100% and at 250%
+    by purity. It agrees cell-for-cell with our building model, with the derivation from
+    the dump's own cycle fields above, and -- after the miner/liquid fix -- with
+    node_rate. Before that fix node_rate disagreed with all three by exactly 2x.
+
+    The 250% column is pinned as well as the 100% one because that is the figure a plan
+    is actually built against: a pure node overclocked is 600 m3/min, not 1,200.
+    """
+    from satisfactory_mcp.spatial import nodes as nodes_mod
+
+    published = {"impure": (60.0, 150.0), "normal": (120.0, 300.0), "pure": (240.0, 600.0)}
+    pump = game.buildings["Build_OilPump_C"]
+    table = nodes_mod.load_nodes()
+
+    for purity, (at_100, at_250) in published.items():
+        assert pump.extract_rate(purity) == at_100, purity
+        assert pump.extract_rate(purity, 2.5) == at_250, purity
+        node = next(
+            n
+            for n in table.nodes
+            if n["resource"] == "Desc_LiquidOil_C" and n["kind"] == "node" and n["purity"] == purity
+        )
+        assert nodes_mod.node_rate(node, game) == at_100, purity
