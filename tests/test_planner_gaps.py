@@ -162,3 +162,74 @@ def test_folding_preserves_what_was_extracted(game, state):
     many = solve(build_scenario(game, state, extractor_clocks=[1], **kw).scenario)
     assert one.ok and many.ok
     assert one.net_mw == pytest.approx(many.net_mw, rel=1e-6)
+
+
+# ------------------------------------- follow-ups from the second report
+
+
+@pytest.mark.parametrize("cap", [5, 27, 54, 96])
+def test_the_water_cap_holds_at_every_value(game, state, cap):
+    """water_extractors=54 came back as 64. The fold pooled NODE-UNITS, sum(v*clock),
+    and re-expressed them at one mode's clock -- but the cap bounds MACHINE COUNT,
+    sum(v). Once modes mix those differ, and 54 machines' worth of units re-read at a
+    lower clock needs more machines. It only looked right at 27 because that solution
+    happened to use a single mode."""
+    req = build_scenario(
+        game,
+        state,
+        sources=SPIRE,
+        objective="max_mw",
+        exports=["MW"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        water_extractors=cap,
+    )
+    sol = solve(req.scenario)
+    assert sol.ok
+    built = sum(p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C")
+    assert built <= cap, f"cap {cap} exceeded by {built - cap}"
+
+
+def test_a_group_cap_is_reported_binding_even_when_split_across_modes(game, state):
+    """Binding was tested per process against its own max_count, but grouped modes share
+    ONE cap. A solve spreading extractors over two clocks left every column below the
+    cap and reported nothing binding -- while the cap was fully consumed."""
+    req = build_scenario(
+        game,
+        state,
+        sources=SPIRE,
+        objective="max_mw",
+        exports=["MW"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        water_extractors=8,
+    )
+    sol = solve(req.scenario)
+    assert sol.ok
+    assert any("Water Extractor" in b for b in sol.binding), sol.binding
+
+
+def test_a_negligible_process_is_unlisted_but_still_counted(game, state):
+    """A degenerate basis can leave a recipe column at 0.0001 machine-equivalents making
+    0.0017/min -- one item every ten hours. Unlike a clock-mode split there is nothing to
+    fold it into. Dropping the ROW is right; dropping the MACHINE is not, and doing both
+    silently turned a measured "9 buildings" into 8 in compare_recipe_options."""
+    from satisfactory_mcp.planning import optimize as opt
+
+    req = build_scenario(
+        game,
+        state,
+        sources=SPIRE,
+        objective="max_mw",
+        exports=["MW", "Plastic", "Rubber"],
+        export_minimums={"Plastic": 2000, "Rubber": 300},
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        water_extractors=27,
+        exclude_recipes=["Turbofuel", "Alternate: Compacted Coal", "Coal-Powered Generator"],
+    )
+    sol = solve(req.scenario)
+    assert sol.ok
+    listed = sum(p["machines"] for p in sol.processes)
+    assert listed < sol.machines_total, "the omitted machine is still in the total"
+    assert any("contribute under" in w for w in sol.warnings), sol.warnings
+    assert all(p["clock"] >= opt.NEGLIGIBLE_IPM / 1000 for p in sol.processes), (
+        "no vanishing rows survive in the table"
+    )

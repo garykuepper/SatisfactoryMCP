@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 485 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 491 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1311,9 +1311,31 @@ may split across them arbitrarily — 0.615 machine-equivalents at 100 % plus 0.
 2 % clock, reading as a real build instruction.
 
 Extractor modes of the same (building, resource, purity) are now folded before read-out.
-The fold is **exact, not cosmetic**: extraction is linear in clock, so pooling `v × clock`
-and re-emitting at one mode preserves both the rate and the node count, and `ceil` of the
-pooled value never exceeds the sum of the individual ceils.
+
+**The first fold broke the cap**, and the failure is worth recording. Two quantities have
+to be carried separately: the node cap constrains **machine count**, `sum(v)`, while
+extraction is **node-units**, `sum(v × clock)`. Pooling units and re-expressing them at one
+mode's clock preserved the rate and silently inflated the count — `water_extractors=54`
+came back as **64 machines at 149.7 %**, because 54 machines' worth of units read at a lower
+clock needs more machines. It looked correct at 27 only because that solution happened to
+use a single mode. The fold now keeps `sum(v)` as the count and lets the clock absorb the
+rate: `built = ceil(sum(v))`, `clock = units / built`.
+
+**Binding also had to move to the group.** It was tested per process against that
+process's `max_count`, but grouped modes share one cap, so a solve spreading extractors
+over two clocks left every column below its own limit and reported nothing binding — while
+the cap was fully consumed.
+
+**A negligible row is not the same problem.** A degenerate basis can leave a *recipe*
+column at 0.0001 machine-equivalents making 0.0017/min — one item every ten hours. There is
+one clock mode, so there is nothing to fold it into. The row is omitted from the build
+table (a whole machine at 0.0087 % clock reads as an instruction) but the machine is
+**still counted**: dropping both silently turned a measured "9 buildings" into 8 in
+`compare_recipe_options`. Omitting a row is presentation; changing a total is not.
+
+This is the one place the reporter's original instinct — filter below an epsilon — was
+right, and it was right for the *opposite* reason to the extractor case. The two look
+identical in the table and need opposite treatment: fold one, omit-but-count the other.
 
 ### 8.3 Guards
 

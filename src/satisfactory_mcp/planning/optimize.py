@@ -44,6 +44,12 @@ __all__ = [
 ]
 
 MW = "__MW__"
+#: A process whose every item rate is below this is omitted from the build table.
+#: One item per ten hours is not a build instruction, and a whole machine printed at
+#: 0.0087% clock reads as one. Deliberately a RATE rather than a machine count: the same
+#: fraction of a machine means very different throughput for a miner and a refinery.
+NEGLIGIBLE_IPM = 0.01
+
 _EPS = 1e-7
 
 #: "power" reads more naturally than "mw" in a sentence, and both show up in the
@@ -655,47 +661,57 @@ def solve(sc: Scenario) -> Solution:
 
     # ---- read out -----------------------------------------------------
     # Offering a node set at several clocks creates one column per mode, and the modes
-    # share a node cap, so the LP may split a solve across them arbitrarily: 0.615
+    # share ONE node cap, so the LP may split a solve across them arbitrarily: 0.615
     # machine-equivalents at 100% plus 0.0201 at 150% is the same extraction as 0.645
-    # at 100%. Left alone that prints as two rows with an IDENTICAL label, the second a
+    # at 100%. Left alone that prints two rows with an IDENTICAL label, the second a
     # whole miner at 2% clock, which reads as a real build instruction and is not one.
     #
-    # Folding is exact rather than cosmetic: extraction is linear in clock, so summing
-    # v*clock and re-emitting at the lowest offered mode preserves both the rate and the
-    # node count. Only extractor modes of the same (building, resource, purity) are
-    # merged -- recipe processes have no such duplication.
-    merged: dict[str, float] = {}
+    # TWO quantities have to be carried, and conflating them broke the cap. The node cap
+    # constrains MACHINE COUNT -- sum(v) -- while extraction is NODE-UNITS, sum(v*clock).
+    # Re-expressing pooled node-units at one mode's clock preserved the rate and silently
+    # inflated the count: water capped at 54 came back as 64 machines at 149.7%, because
+    # 54 machines' worth of units re-read at a lower clock needs more machines. It only
+    # looked right at 27 because that solution happened to use a single mode.
+    #
+    # So: keep sum(v) as the count and let the clock absorb the rate.
+    pooled: dict[str, tuple[float, float]] = {}
     for i, p in enumerate(procs):
         v = float(x[col_p(i)])
         if v > _EPS and p.kind == "extractor" and p.group:
-            merged[p.group] = merged.get(p.group, 0.0) + v * p.clock
+            count, units = pooled.get(p.group, (0.0, 0.0))
+            pooled[p.group] = (count + v, units + v * p.clock)
 
     out_procs = []
     machines_total = 0.0
     exact_mw_total = 0.0
     folded: set[str] = set()
-    for i, p in enumerate(procs):
-        v = float(x[col_p(i)])
-        if v <= _EPS:
-            continue
-        if p.kind == "extractor" and p.group:
-            if p.group in folded:
-                continue
-            # Re-express the pooled node-units at THIS process's clock, taking the row
-            # whose mode the solver actually reached first.
-            v = merged[p.group] / p.clock
-            folded.add(p.group)
+    dropped: list[tuple[str, float]] = []
 
-        # v is throughput in machine-equivalents. The build is ceil(v) whole machines
-        # all clocked to v/ceil(v) -- exact, always a clean ratio, and power-optimal
-        # for that throughput because c**k is convex, so a uniform clock beats any
-        # mix. This is why ratio underclocking needs no solver mode.
-        built = max(1, math.ceil(v - 1e-9))
-        effective_clock = p.clock * v / built
+    def emit(
+        p,
+        built: float,
+        effective_clock: float,
+        equivalents: float,
+        rate_scale: float,
+        listed: bool = True,
+    ):
+        """One build row.
+
+        ``rate_scale`` is separate from ``equivalents`` because they are different
+        quantities once clock modes are pooled: p.rates already includes p.clock, so a
+        rate needs units/p.clock, while the machine count needs sum(v). Using one for
+        both is exactly the bug that let a 54-extractor cap report 64 machines.
+        """
+        nonlocal machines_total, exact_mw_total
         exact_mw = built * p.mw_at_full * (effective_clock**p.power_exponent)
+        # Counted whether or not it is printed. Omitting a row is a PRESENTATION
+        # decision; letting it change machines_total would have silently moved a
+        # headline number compare_recipe_options ranks routes by -- it turned a
+        # measured "9 buildings" into 8.
         machines_total += built
         exact_mw_total += exact_mw
-
+        if not listed:
+            return
         out_procs.append(
             {
                 "pid": p.pid,
@@ -708,20 +724,59 @@ def solve(sc: Scenario) -> Solution:
                 "recipe": p.recipe,
                 "purity": p.purity,
                 "machines": built,
-                "machine_equivalents": round(v, 4),
+                "machine_equivalents": round(equivalents, 4),
                 "clock": round(effective_clock, 6),
                 "sloops": p.sloops,
                 # Linear power (v * p.mw) is what the LP optimised; below 100% clock
                 # it is a conservative OVER-estimate, so the exact figure is never
                 # worse than what the solve promised.
                 "mw": round(exact_mw, 2),
-                "mw_linear": round(v * p.mw, 2),
+                "mw_linear": round(rate_scale * p.mw, 2),
                 # Net per-minute item rates for the whole process. Already include
                 # clock and somersloop boost, so downstream consumers must not
                 # re-derive them from the recipe.
-                "rates": {k: round(r * v, 4) for k, r in p.rates.items() if abs(r * v) > _EPS},
+                "rates": {
+                    k: round(r * rate_scale, 4)
+                    for k, r in p.rates.items()
+                    if abs(r * rate_scale) > _EPS
+                },
             }
         )
+
+    for i, p in enumerate(procs):
+        v = float(x[col_p(i)])
+        if v <= _EPS:
+            continue
+
+        if p.kind == "extractor" and p.group:
+            if p.group in folded:
+                continue
+            folded.add(p.group)
+            count, units = pooled[p.group]
+            # ceil(sum(v)) can never exceed the cap, because the cap bounds sum(v)
+            # itself. The clock carries the extraction: built * clock == units, so the
+            # rate is unchanged, and clock <= the highest mode because units <= count
+            # times that mode.
+            built = max(1, math.ceil(count - 1e-9))
+            emit(p, built, units / built, count, units / p.clock)
+            continue
+
+        # A degenerate basis can leave a recipe column at a hair -- 0.0001
+        # machine-equivalents of Residual Rubber, making 0.0017/min, one item every ten
+        # hours. Unlike the extractor case above this is NOT a clock-mode split and
+        # cannot be folded into anything; there is one mode. It is dropped, but never
+        # silently: the omitted flow is reported, because a plan whose printed rows do
+        # not quite balance is only acceptable if it says by how much.
+        negligible = all(abs(r * v) < NEGLIGIBLE_IPM for r in p.rates.values())
+        if negligible:
+            dropped.append((p.label, max((abs(r * v) for r in p.rates.values()), default=0.0)))
+
+        # v is throughput in machine-equivalents. The build is ceil(v) whole machines
+        # all clocked to v/ceil(v) -- exact, always a clean ratio, and power-optimal
+        # for that throughput because c**k is convex, so a uniform clock beats any
+        # mix. This is why ratio underclocking needs no solver mode.
+        built = max(1, math.ceil(v - 1e-9))
+        emit(p, built, p.clock * v / built, v, v, listed=not negligible)
     out_procs.sort(key=lambda d: -abs(d["mw"]))
 
     raw_used = {raw_items[j]: round(float(x[col_r(j)]), 4) for j in range(nR) if x[col_r(j)] > _EPS}
@@ -735,12 +790,37 @@ def solve(sc: Scenario) -> Solution:
     net_mw = exports.get(MW, 0.0) - grid_draw
 
     binding = []
+    # Grouped processes share ONE cap across their clock modes, so the test has to be on
+    # the group total. Checked per mode, a solve that spreads 54 extractors over two
+    # clocks leaves every column below the cap and reports nothing binding -- while the
+    # cap is in fact fully consumed. That is how a hard constraint went unmentioned.
+    group_used: dict[str, float] = {}
+    group_cap: dict[str, float] = {}
     for i, p in enumerate(procs):
-        if p.max_count is not None and x[col_p(i)] >= p.max_count - 1e-6 and p.max_count > 0:
+        if p.max_count is None or p.max_count <= 0:
+            continue
+        if p.group:
+            group_used[p.group] = group_used.get(p.group, 0.0) + x[col_p(i)]
+            group_cap[p.group] = p.max_count
+        elif x[col_p(i)] >= p.max_count - 1e-6:
             binding.append(f"{p.label}: all {p.max_count:g} available")
+    labelled = {p.group: p.label for p in procs if p.group}
+    for key, used in group_used.items():
+        if used >= group_cap[key] - 1e-6:
+            binding.append(f"{labelled[key]}: all {group_cap[key]:g} available")
     for j, item in enumerate(raw_items):
         if x[col_r(j)] >= sc.raw_caps[item] - 1e-6:
             binding.append(f"{g.item_name(item)} capped at {sc.raw_caps[item]:g}")
+
+    if dropped:
+        worst = max(rate for _, rate in dropped)
+        warnings.append(
+            f"{len(dropped)} process(es) contribute under {NEGLIGIBLE_IPM}/min "
+            f"({', '.join(sorted({name for name, _ in dropped}))}) and are left out of "
+            f"the build table -- a whole machine at 0.01% clock reads as an instruction. "
+            f"They ARE counted in the building total; the largest makes "
+            f"{worst:.4f}/min"
+        )
 
     logistics = _logistics(sc, procs, x, col_p, raw_used)
     heavy = [entry for entry in logistics if (entry["lines"] or 0) > 1]
