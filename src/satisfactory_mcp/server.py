@@ -28,7 +28,7 @@ from .planning import advisor, byproducts, compare, supply
 from .planning import bom as bom_mod
 from .planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from .planning.diff import build_diff
-from .planning.layout import build_layout
+from .planning.layout import build_layout, fluid_head
 from .planning.optimize import MW, free_lunch_audit, solve
 from .planning.scenario import EXPORT_HELP, build_scenario, resolve_item
 from .save import projection as proj
@@ -2342,6 +2342,16 @@ def plan_layout(
     allow_sinks: bool = True,
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
+    # Without these plan_layout re-solves at defaults and schematises a DIFFERENT plan
+    # than the one being laid out -- measured at 15,043 MW against the 83,737 MW plan it
+    # was asked to draw, because base extraction is a sixth of overclocked.
+    clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
+    machine_cost_mw: float = 5.0,
+    water_extractors: Annotated[
+        int | None,
+        Field(description="how many Water Extractors your site can actually hold"),
+    ] = None,
     belt_tier: str = "Mk5",
     pipe_tier: str = "Mk2",
     save: str | None = None,
@@ -2385,8 +2395,8 @@ def plan_layout(
     belt_ipm = belts.get(belt_tier, 780.0)
     pipe_m3min = pipes.get(pipe_tier, 600.0)
 
-    # plan_layout declares fewer knobs than plan_factory; only the ones it has are
-    # offered as overrides, and the rest come from the stored plan untouched.
+    # Same solve-shaping arguments as plan_factory, so a layout can be asked for
+    # directly rather than only via a saved plan.
     supplied = dict(
         objective=objective,
         target_item=target_item,
@@ -2397,6 +2407,10 @@ def plan_layout(
         allow_sinks=allow_sinks,
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
+        clocks=clocks,
+        extractor_clocks=extractor_clocks,
+        machine_cost_mw=machine_cost_mw,
+        water_extractors=water_extractors,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -2421,6 +2435,11 @@ def plan_layout(
     lay = build_layout(g, sol, belt_ipm=belt_ipm, pipe_m3min=pipe_m3min)
     production = [f for f in lay.floors if f.kind == "production"]
     logistics = [f for f in lay.floors if f.kind == "logistics"]
+
+    # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
+    # nothing about head. Chain depth tends to make every fluid climb; the model has no
+    # terrain and no view of where crude arrives, so the cost is named, not optimised.
+    climbing = [d for d in fluid_head(lay) if d["direction"] == "climbs"]
 
     summary = "\n".join(
         [
@@ -2580,6 +2599,18 @@ def plan_layout(
             head.append(f"still to build: {still}")
         body = "\n".join(head) + "\n\n" + body
         plan_notes = [*plan_notes, *fit.notes]
+
+    if climbing:
+        notes.append(
+            "floors follow chain depth, not fluid head: "
+            + ", ".join(
+                f"{d['item']} climbs {d['floors']} floor(s) at "
+                f"{render.num(d['rate'])}{d['unit']}"
+                for d in climbing[:4]
+            )
+            + ". Water can only be drawn at sea level, so putting its extractors at the "
+            "bottom with consumers above lets the rest of the stack fall instead"
+        )
 
     return render.envelope(summary, body, [*plan_notes, *notes])
 

@@ -196,3 +196,64 @@ def test_layout_excludes_power_from_buses(oil_layout):
     assert MW not in {b.item for b in lay.buses}
     for b in lay.blocks:
         assert MW not in b.inputs and MW not in b.outputs
+
+
+def test_plan_layout_takes_the_same_solve_arguments_as_plan_factory(game, state):
+    """It re-solved at defaults, so it schematised a DIFFERENT plan than the one it was
+    asked to draw -- measured at 15,043 MW against an 83,737 MW plan, because base
+    extraction is roughly a sixth of overclocked. Four arguments were missing."""
+    import inspect
+
+    from satisfactory_mcp import server as srv
+
+    factory_args = set(inspect.signature(srv.plan_factory).parameters)
+    layout_args = set(inspect.signature(srv.plan_layout).parameters)
+    shaping = {"clocks", "extractor_clocks", "machine_cost_mw", "water_extractors"}
+    assert shaping <= factory_args
+    assert shaping <= layout_args, f"plan_layout still cannot express: {shaping - layout_args}"
+
+
+def test_the_two_tools_agree_on_the_same_request(game, state):
+    from satisfactory_mcp import server as srv
+
+    kw = dict(
+        sources=["region:Spire Coast"],
+        objective="max_mw",
+        exports=["MW"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        water_extractors=64,
+        limit=1,
+    )
+    f = srv.plan_factory(**kw)
+    lay = srv.plan_layout(**kw)
+
+    def mw(text):
+        line = next(x for x in text.splitlines() if x.startswith("net_MW"))
+        return line.split()[0].split("=")[1]
+
+    assert mw(f) == mw(lay), "the layout must schematise the plan it was given"
+
+
+def test_fluid_head_names_what_the_floor_order_costs(game, state):
+    """Floors follow chain depth, which is a correctness property, not a physics one.
+    On a measured oil plan it made every fluid climb -- water four floors at 11,500
+    m3/min. The model has no terrain, so the cost is reported rather than optimised."""
+    from satisfactory_mcp.planning.layout import build_layout, fluid_head
+    from satisfactory_mcp.planning.optimize import solve
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    req = build_scenario(
+        game,
+        state,
+        sources=["region:Spire Coast"],
+        objective="max_mw",
+        exports=["MW", "Plastic", "Rubber"],
+        export_minimums={"Plastic": 2000, "Rubber": 300},
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        water_extractors=64,
+    )
+    head = fluid_head(build_layout(game, solve(req.scenario)))
+    assert head, "an oil plan moves fluids between floors"
+    water = [d for d in head if d["item"] == "Water"]
+    assert water and water[0]["direction"] == "climbs"
+    assert head[0]["floors"] >= water[0]["floors"], "sorted by how far it is lifted"

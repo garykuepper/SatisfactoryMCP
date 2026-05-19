@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 496 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 499 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1466,6 +1466,39 @@ puts cycle members on one floor, which is also correct physically. Floor height 
 machine on it; logistics decks are 4 m.
 
 Site size is the **peak** floor, not the sum, since floors stack.
+
+### 8.5a plan_layout must take the same arguments as plan_factory
+
+`plan_layout` accepted neither `extractor_clocks` nor `water_extractors` (nor `clocks` or
+`machine_cost_mw`), so it silently **re-solved at defaults** and schematised a different
+plan than the one it was asked to draw — measured at **15,043 MW against the 83,737 MW
+plan**, because base extraction is roughly a sixth of overclocked. Both tools now take the
+same solve-shaping set and agree; a test asserts the signatures stay in step, because the
+failure is silent and looks like a legitimate operating point.
+
+**Floors follow chain depth, which is a correctness property and not a physics one.**
+Chain depth puts a consumer above its producer so the schematic reads in build order.
+Fluids do not care: a pipe running downhill is free, one running uphill needs head, and
+water can only be drawn at sea level whatever the chain says.
+
+The consequence is that chain-depth ordering tends to make *everything* climb. On a
+measured oil plan, nothing fell:
+
+| fluid | direction | floors | rate |
+|---|---|---|---|
+| Water | climbs | 4 | 11,500 m³/min |
+| Fuel | climbs | 2 | 9,200 m³/min |
+| Heavy Oil Residue | climbs | 2 | 4,600 m³/min |
+| Crude Oil | climbs | 2 | 3,450 m³/min |
+
+Reordering by hand — water extractors at sea level under the blenders, generators one
+above, refineries on top with crude arriving high — leaves only water and fuel climbing one
+storey each, and lets residue and crude fall for free.
+
+`fluid_head()` reports this and `plan_layout` surfaces it. It is deliberately **not**
+optimised: the right stack depends on terrain, on where crude arrives, and on how much
+pumping the player will accept, none of which this model has. Naming the cost is what lets
+a planner disagree with the default.
 
 ### 8.6 Diff vs save — what to actually change
 

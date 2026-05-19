@@ -44,6 +44,7 @@ __all__ = [
     "Layout",
     "build_layout",
     "chain_depth",
+    "fluid_head",
 ]
 
 #: Height reserved for a logistics deck: belts, pipes and a walkway between them.
@@ -383,6 +384,51 @@ def _buses(
         )
     buses.sort(key=lambda b: -b.rate)
     return buses
+
+
+def fluid_head(layout: Layout) -> list[dict]:
+    """Which fluids the floor assignment makes climb, and by how many storeys.
+
+    Floors follow CHAIN DEPTH, which is a correctness property -- a consumer sits above
+    its producer, so the schematic reads in build order. It is not a physics property.
+    Fluids do not care about chain depth: a pipe running downhill is free while one
+    running uphill needs head, and water in particular can only be drawn at sea level, so
+    it always starts at the bottom whatever the chain says.
+
+    Chain-depth ordering therefore tends to make everything climb. On a measured oil plan
+    it put extractors at F0, refineries F2, blenders F4, generators F6 -- water up two
+    storeys, crude, heavy oil residue and fuel up one each. Reordering by hand so the
+    water extractors sit at sea level under the blenders, generators one above and
+    refineries on top leaves only water and fuel climbing one storey each, and lets
+    residue and crude fall for free.
+
+    This is reported rather than optimised: the right stack depends on terrain, on where
+    the crude arrives, and on how much the player is willing to pump, none of which this
+    model has. Naming the cost is what lets a planner disagree with the default.
+    """
+    floor_of: dict[int, int] = {}
+    for floor in layout.floors:
+        if floor.stage is not None:
+            floor_of[floor.stage] = floor.index
+
+    out: list[dict] = []
+    for bus in layout.buses:
+        if bus.carrier != "pipe" or bus.external:
+            continue
+        start, end = floor_of.get(bus.from_stage), floor_of.get(bus.to_stage)
+        if start is None or end is None or start == end:
+            continue
+        out.append(
+            {
+                "item": bus.name,
+                "rate": bus.rate,
+                "unit": bus.unit,
+                "floors": end - start,
+                "direction": "climbs" if end > start else "falls",
+            }
+        )
+    out.sort(key=lambda d: (-d["floors"], -d["rate"]))
+    return out
 
 
 def _floors(blocks: list[Block], buses: list[Bus]) -> list[Floor]:
