@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 491 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 496 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1336,6 +1336,36 @@ table (a whole machine at 0.0087 % clock reads as an instruction) but the machin
 This is the one place the reporter's original instinct — filter below an epsilon — was
 right, and it was right for the *opposite* reason to the extractor case. The two look
 identical in the table and need opposite treatment: fold one, omit-but-count the other.
+
+### 8.2d Building footprints, exposed
+
+`docs/footprint.py` has always derived an axis-aligned box per building from
+`mClearanceData`, and `plan_layout` has always used it for foundation counts — but
+nothing surfaced it. `list_buildings` now carries **size** (W×D×H) and **found** (8 m
+foundations one machine covers):
+
+| building | size | found |
+|---|---|---|
+| Smelter | 5×10×4.5 m | 2 |
+| Manufacturer | 18×20×11 m | 9 |
+| Water Extractor | 20×18×12 m | 9 |
+| Nuclear Power Plant | 36×42×10 m | 30 |
+| Quantum Encoder | 22×50×14 m | 21 |
+
+Foundations round up **per axis** — a 5×10 m Smelter takes two, not one — and edges shared
+with a neighbour are ignored, so a row of N machines needs somewhat fewer than N × found.
+Both caveats are stated in the output rather than left to be discovered.
+
+The rotation trap is documented in the module and now has a test: the Fuel Generator's
+clearance is several thin boxes at 45° increments approximating a round machine, so taking
+the largest box naively gives 22×4 m instead of ~20×20 — roughly **1,000 foundations
+understated across a 176-generator plan**.
+
+This feeds straight back into §8.2c's water problem. "Siting is not modelled" is abstract;
+*"each is 20×18 m, so 96 of them cover 34,560 m² of water — about 1,920 m of shoreline in a
+single line"* is something you can hold against a platform. Area is unambiguous and
+frontage assumes one line along a shore, so both are given rather than one dressed up as
+the answer.
 
 ### 8.3 Guards
 

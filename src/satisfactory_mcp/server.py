@@ -262,14 +262,41 @@ def list_buildings(kind: str = "production") -> str:
             detail = f"{render.num(b.items_per_min)} items/min"
         elif b.flow_m3_min:
             detail = f"{render.num(b.flow_m3_min)} m3/min"
+        fp = b.footprint
         rows.append(
-            (b.name, f"{render.num(b.power_mw)}MW", render.num(b.max_clock), b.sloop_slots, detail)
+            (
+                b.name,
+                f"{render.num(b.power_mw)}MW",
+                render.num(b.max_clock),
+                b.sloop_slots,
+                str(fp) if fp else "-",
+                fp.foundations if fp else "-",
+                detail,
+            )
         )
+
+    notes = [
+        (
+            "size is the axis-aligned clearance box (WxDxH); 'found' is the 8m "
+            "foundations one machine covers, ignoring edges shared with a neighbour, "
+            "so a row of N machines needs somewhat fewer than N x found"
+        )
+    ]
+    unknown = [b.name for b in picks if not b.footprint]
+    if unknown:
+        notes.append(
+            f"no clearance data, so no size: {', '.join(sorted(unknown))}. "
+            "plan_layout leaves these out of its space budget rather than guessing"
+        )
+
     return render.envelope(
         f"# {len(rows)} {kind} building(s)",
-        render.table(("building", "power", "max_clock", "sloops", "detail"), rows)
+        render.table(
+            ("building", "power", "max_clock", "sloops", "size", "found", "detail"), rows
+        )
         + "\n"
         + render.ids_footer((b.name, b.cls) for b in picks),
+        notes,
     )
 
 
@@ -2159,11 +2186,24 @@ def plan_factory(
         p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"
     )
     if n_water >= WATER_EXTRACTOR_WARN_AT and not plan_kwargs.get("water_extractors"):
+        pump = g.buildings.get("Build_WaterPump_C")
+        size = pump.footprint if pump else None
+        space = ""
+        if size:
+            # Area is unambiguous; frontage assumes one line along a shore, which is how
+            # they are actually placed, so both are given rather than one dressed up as
+            # the answer.
+            space = (
+                f" Each is {size} ({size.foundations} foundations), so {n_water} of them "
+                f"cover {n_water * size.area_m2:,.0f} m2 of water -- about "
+                f"{n_water * max(size.width_m, size.depth_m):,.0f} m of shoreline if "
+                "placed in a single line."
+            )
         notes.append(
             f"{n_water} Water Extractor(s): siting is NOT modelled. Water comes from "
             "water volumes, which carry no node, purity or geometry here, so the count "
             "is capped by assumption, not by shoreline. It is also the only fluid that "
-            "must be sourced at sea level and cannot be gravity-fed. Pass "
+            f"must be sourced at sea level and cannot be gravity-fed.{space} Pass "
             "water_extractors=<what your site holds> to plan against the real limit"
         )
     # A SUCCESSFUL plan can still be answering a question it cannot answer. An export

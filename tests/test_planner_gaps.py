@@ -233,3 +233,57 @@ def test_a_negligible_process_is_unlisted_but_still_counted(game, state):
     assert all(p["clock"] >= opt.NEGLIGIBLE_IPM / 1000 for p in sol.processes), (
         "no vanishing rows survive in the table"
     )
+
+
+# ------------------------------------------------- building footprints
+
+
+def test_every_production_building_has_a_footprint(game):
+    """They are extracted from mClearanceData and used by plan_layout, but were not
+    exposed anywhere until asked for."""
+    missing = [b.name for b in game.buildings.values() if b.is_manufacturer and not b.footprint]
+    assert missing == []
+
+
+def test_the_fuel_generator_footprint_survives_box_rotation(game):
+    """The regression the footprint module exists for: its clearance is several thin
+    boxes at 45-degree increments approximating a round machine. Taking the largest box
+    naively gives 22x4m instead of ~20x20 -- about 1,000 foundations understated across
+    a 176-generator plan."""
+    fp = game.buildings["Build_GeneratorFuel_C"].footprint
+    assert fp is not None
+    assert min(fp.width_m, fp.depth_m) > 15, f"looks like an unrotated thin box: {fp}"
+    assert fp.foundations == 9
+
+
+def test_foundations_round_up_per_axis(game):
+    """A 5x10m Smelter occupies two 8m foundations, not one: the axes round separately."""
+    fp = game.buildings["Build_SmelterMk1_C"].footprint
+    assert (fp.width_m, fp.depth_m) == (5.0, 10.0)
+    assert fp.foundations == 2
+
+
+def test_list_buildings_exposes_size_and_foundations(game):
+    from satisfactory_mcp import server as srv
+
+    out = srv.list_buildings("production")
+    header = next(line for line in out.splitlines() if line.startswith("building\t"))
+    assert "size" in header and "found" in header
+    assert "18x20x11m" in out, "Manufacturer size should be listed"
+
+
+def test_the_water_warning_quotes_real_geometry(game, state):
+    """The whole point of surfacing footprints here: "siting is not modelled" is
+    abstract, "96 of them cover 34,560 m2" is something you can check against a
+    platform."""
+    from satisfactory_mcp import server as srv
+
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    assert fp is not None and fp.area_m2 > 0
+    out = srv.plan_factory(
+        sources=SPIRE, objective="max_mw", exports=["MW"], extractor_clocks=[1, 1.5, 2, 2.5]
+    )
+    warn = [line for line in out.splitlines() if "Water Extractor(s): siting" in line]
+    if warn:
+        assert "m2 of water" in warn[0]
+        assert "shoreline" in warn[0]
