@@ -195,13 +195,41 @@ def plan_trunks(
             # Water: no node, no purity, no geometry anywhere this project can read.
             out.placeless.append((game.item_name(item), proc["rates"][item], wanted))
             continue
-        # Tightest cluster first, which is the shortest pipe: extra nodes of a purity
-        # exist precisely when the plan does not need all of them, and taking the
-        # scattered ones would be a worse answer for no reason.
+        # Least work first, then tightest cluster. Extra nodes of a purity exist
+        # precisely when the plan does not need all of them, so the choice is free and
+        # worth making well.
+        #
+        # The ranking is by what the node COSTS to take, which is not the same as
+        # "prefer untapped". A node already carrying the extractor this plan wants is
+        # the cheapest of all -- nothing to build and nothing to remove, and
+        # diff_vs_save will match it as standing. Untapped is next: build one. A node
+        # held by the WRONG extractor is last, because taking it means demolishing
+        # something that is currently running.
+        #
+        # On the reference save every Spire Coast crude node is tapped, all of them by
+        # the Oil Pump this plan wants, so a plain free-first rule would have ranked all
+        # thirteen equal-worst and picked on geometry alone.
         cx = sum(r["x"] for r in pool) / len(pool)
         cy = sum(r["y"] for r in pool) / len(pool)
-        pool.sort(key=lambda r: math.dist((r["x"], r["y"]), (cx, cy)))
+
+        def _cost(r: dict, want=proc["building_id"], cx=cx, cy=cy) -> tuple[int, float]:
+            if not r["tapped"]:
+                rank = 1
+            elif r.get("tapped_by") == want:
+                rank = 0
+            else:
+                rank = 2
+            return rank, math.dist((r["x"], r["y"]), (cx, cy))
+
+        pool.sort(key=_cost)
         chosen = pool[:wanted]
+        displaced = [r for r in chosen if r["tapped"] and r.get("tapped_by") != proc["building_id"]]
+        if displaced:
+            out.notes.append(
+                f"{proc['label']}: {len(displaced)} of the chosen node(s) are held by a "
+                "different extractor and must be cleared first -- no free or "
+                "already-correct node was left"
+            )
         if len(chosen) < wanted:
             out.notes.append(
                 f"{proc['label']}: plan wants {wanted} but only {len(chosen)} node(s) are "

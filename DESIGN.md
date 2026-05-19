@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 561 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 579 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1696,6 +1696,65 @@ would read as a complete answer.
 `run` is the straight-line chain and is labelled a LOWER BOUND: there is no terrain here,
 so a drawn route would be invented -- the same line § 8.5 draws around the schematic.
 
+### 8.5d Commissioning: a startup order, not a build order
+
+The re-frame that removed most of this problem came from Lukas: *"Can't we just build an
+unpowered factory, and just power it after the build is done?"*
+
+Building costs materials, not power -- a machine draws only when it runs. So the whole
+821-building plant is constructed at leisure, drawing nothing, and then energised block by
+block. **There is no power-constrained build order to search for.** The commit-granularity
+question that looked like the hard part (partition by self-powered slice? by grid-positive
+slice? by vertical column?) simply dissolves, and with it the objection that vertical
+slices make you revisit every block N times. Each block is built once.
+
+What is left is one hard constraint:
+
+> at every step, sum(energised consumer draw) <= headroom + generation from generators
+> already receiving fuel
+
+**Generators are free to energise** -- `power_mw == 0`, `power_production_mw == 250`, read
+from the dump. Only consumers spend headroom, so a wave costs its consumers and refunds its
+generators, and the refund pays for the next wave. On the measured Spire Coast plan
+(14,524 MW draw, 121,875 MW generation) that converges in four waves from 711 MW free:
+
+| wave | machines | draw | generation | free after |
+|---|---|---|---|---|
+| W1 | 16 | 661 MW | +1,249 MW | 1,299 MW |
+| W2 | 49 | 1,171 MW | +6,493 MW | 6,622 MW |
+| W3 | 284 | 5,093 MW | +41,957 MW | 43,485 MW |
+| W4 | 472 | 7,598 MW | +72,176 MW | 108,062 MW |
+
+**The bound is hard, not advisory.** Exceeding available power in Satisfactory does not
+degrade gracefully -- the fuse blows and the whole grid stops until reset by hand,
+including the plant that was feeding it. So the tool also recommends **one Power Switch per
+block**, which has to be built in from the start; energising is then a switch flip and a
+misbehaving block can be isolated.
+
+**A wave never pays for itself.** Between energising a wave's refineries and its generators
+burning fuel, the pipes are filling and nothing is coming back, so `available` only grows
+once the wave completes. This is the difference between a sequence that works and one that
+looks fine on paper.
+
+**The floor is reported.** One machine of every process -- the cheapest slice that still
+feeds the whole chain -- costs **631 MW** here against 711 free. Below that no startup order
+exists at all, and the tool says so and names the number rather than emitting a sequence
+that trips on step one.
+
+Two honest limits. Waves are power-ordered, **not ratio-balanced**: whole machines cannot
+hit the plan's ratios at the bottom of the ramp, so early waves run starved. That errs safe
+-- a starved machine idles and draws less than modelled -- and is stated rather than dressed
+up as a balanced mini-plant. And headroom is printed as a **labelled input**
+(`source: power_report, nameplate`), so a sequence computed against a save that has since
+moved is visibly stale instead of quietly wrong.
+
+Node choice follows the same least-work-first idea (§ 8.5c). The ranking is by what a node
+COSTS to take, which is not "prefer untapped": a node already carrying the extractor this
+plan wants is cheapest of all, untapped is next, and a node held by the WRONG extractor is
+last because taking it means demolishing something running. On the reference save all
+thirteen Spire crude nodes are tapped -- every one by the Oil Pump the plan wants -- so a
+plain free-first rule would have ranked them all equal-worst.
+
 ### 8.6 Diff vs save — what to actually change
 
 `plan_factory` says what the factory should be. `diff_vs_save` says what to do about it. The hard part
@@ -2128,7 +2187,7 @@ that import and re-export; the tools live in `tools/`, one module per concern:
 
 | module | tools | lines |
 |---|---|---|
-| `planning` | 10 | 1,085 |
+| `planning` | 11 | 1,240 |
 | `factories` | 8 | 818 |
 | `spatial` | 6 | 577 |
 | `gamedata` | 5 | 240 |

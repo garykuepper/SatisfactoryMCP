@@ -14,6 +14,7 @@ from ..docs.constants import WATER_EXTRACTOR_WARN_AT
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
 from ..planning import byproducts, compare
+from ..planning.commission import commission
 from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
 from ..planning.layout import build_layout, fluid_head
@@ -1238,3 +1239,174 @@ def bom(
     except ValueError as exc:
         return str(exc)
     return bom_mod.render_bom(result, limit=render.clamp(limit, default=20))
+
+
+@mcp.tool(structured_output=False)
+def commission_plan(
+    objective: str = "max_mw",
+    target_item: str | None = None,
+    sources: list[str] | None = None,
+    exports: list[str] | None = None,
+    export_minimums: dict[str, float] | None = None,
+    only_free_nodes: bool = False,
+    allow_sinks: bool = True,
+    clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
+    machine_cost_mw: float = 5.0,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
+    water_extractors: int | None = None,
+    sloops: int = 0,
+    headroom_mw: Annotated[
+        float | None,
+        Field(description="grid power free for startup; default reads it from the save"),
+    ] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 60,
+    plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+) -> str:
+    """In what order to switch a built plant on, without blowing the fuse.
+
+    This is a STARTUP order, not a build order, and the difference removes most of the
+    problem. Building costs materials, not power -- a machine draws only when it runs --
+    so the whole plant can be constructed at leisure, drawing nothing, and then energised
+    block by block. Nothing here tells you what to build first.
+
+    The constraint is one line, and it is hard: at every step, energised consumer draw
+    must stay under the headroom plus generation from generators already burning fuel.
+    Exceeding it in Satisfactory does not degrade gracefully -- the fuse blows and the
+    whole grid stops until it is reset by hand, including the plant that was feeding it.
+
+    Generators are free to energise (0 MW draw, read from the dump), so a wave costs its
+    consumers and refunds its generators, and that refund pays for the next wave.
+
+    Takes plan_factory's arguments, or recall a saved plan with ``plan=``.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    supplied = dict(
+        objective=objective,
+        target_item=target_item,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        only_free_nodes=only_free_nodes,
+        allow_sinks=allow_sinks,
+        clocks=clocks,
+        extractor_clocks=extractor_clocks,
+        machine_cost_mw=machine_cost_mw,
+        exclude_recipes=exclude_recipes,
+        only_recipes=only_recipes,
+        water_extractors=water_extractors,
+        sloops=sloops,
+    )
+    try:
+        plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
+    except KeyError as exc:
+        return f"! {exc.args[0]}"
+
+    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
+    if prepared.failure:
+        return render.envelope(
+            f"# {prepared.failure.headline} -- nothing to commission",
+            "",
+            [*prepared.failure.notes, "see plan_factory for why"],
+        )
+
+    # Headroom is an INPUT and is printed as one. A sequence computed against a save
+    # that has since moved is then visibly stale rather than quietly wrong -- the same
+    # reason phase_requirements labels its rows instead of filtering them.
+    if headroom_mw is None:
+        head, source = st.power_report()["headroom_mw"], "power_report, nameplate"
+    else:
+        head, source = float(headroom_mw), "given by caller"
+
+    plan_run = commission(prepared, g, head, source)
+    rows = []
+    for w in plan_run.waves:
+        # A summary line per wave, because the numbers that decide whether the sequence
+        # is safe -- what it costs and what it hands back -- belong to the wave and not
+        # to any row in it.
+        rows.append(
+            (
+                f"W{w.index}",
+                "",
+                w.machines,
+                "",
+                f"-- switch on {w.machines} machine(s), wait, then next wave --",
+                f"{render.num(-w.draw_mw)} then +{render.num(w.generation_mw)}",
+                f"{w.available_after:,.0f}",
+            )
+        )
+        for r in w.rows:
+            rows.append(
+                (
+                    "",
+                    f"d{r.depth}",
+                    r.machines,
+                    f"{r.cumulative}/{r.total}",
+                    r.label[:34],
+                    render.num(-r.draw_mw) if r.draw_mw else f"+{render.num(r.generation_mw)}",
+                    "",
+                )
+            )
+    # Truncation is applied to the WHOLE sequence, never per wave. Chopping each wave at
+    # `limit` silently dropped its generator rows -- they sort last by chain depth -- and
+    # those are the only rows that pay for the next wave.
+    body = render.table(
+        ("wave", "chain", "on", "cum", "process", "MW", "free after"),
+        rows[: render.clamp(limit, default=40)],
+        total=len(rows),
+        limit=limit,
+    )
+
+    summary = "\n".join(
+        [
+            f"# startup order for {objective}"
+            + (f" ({plan_name})" if plan_name else "")
+            + f", {len(plan_run.waves)} wave(s)",
+            f"# {st.age_note}",
+            (
+                f"headroom_MW={head:,.0f} (source: {source})  "
+                f"plant_draw_MW={plan_run.plant_draw_mw:,.0f}  "
+                f"plant_generation_MW={plan_run.plant_generation_mw:,.0f}"
+            ),
+            (
+                f"minimum_slice_MW={plan_run.minimum_slice_mw:,.0f} "
+                "(one machine of every process -- the floor no order can go under)"
+            ),
+        ]
+    )
+
+    notes = [*plan_notes, *plan_run.warnings]
+    if plan_run.ok:
+        notes.append(
+            "build EVERYTHING first, unpowered: a machine draws only when it runs, so "
+            "construction is never the constraint. These waves are switch-ons"
+        )
+        notes.append(
+            "wire one Power Switch per block before starting. Energising is then a "
+            "switch flip, and a block that misbehaves can be isolated -- without one, "
+            "an overload blows the fuse on the WHOLE grid and stops the plant feeding it"
+        )
+        waits = [w.index for w in plan_run.waves if w.waits_for_fill]
+        if waits:
+            notes.append(
+                "wave(s) "
+                + ", ".join(f"W{i}" for i in waits[:6])
+                + " energise consumers and the generators they feed: let the pipes fill "
+                "and the generators come up to speed BEFORE starting the next wave. A "
+                "wave's own generation is not counted until it completes, so the free-MW "
+                "column is what you have during the wait, not after it"
+            )
+        notes.append(
+            "waves are power-ordered, not ratio-balanced -- whole machines cannot hit "
+            "the plan's ratios at the bottom of the ramp, so early waves run starved. "
+            "That is safe: a starved machine idles and draws less than modelled"
+        )
+    return render.envelope(summary, body, notes)
