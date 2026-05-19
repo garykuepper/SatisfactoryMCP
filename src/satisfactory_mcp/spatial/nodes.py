@@ -100,6 +100,16 @@ def node_rate(node: dict, game: GameData, extractor_cls: str | None = None) -> f
         b = game.buildings.get(cls)
         if b is None or not b.base_extract_rate:
             continue
+        # FORM first. mAllowedResources is only populated when
+        # mOnlyAllowCertainResources is True, which is False on every miner -- so
+        # filtering on it alone left miners unrestricted and a Miner Mk.3 (base 240)
+        # out-bid the Oil Extractor (base 120) on crude. Every oil node was reported at
+        # DOUBLE its real rate: a pure node read 480/min where the pump gives 240.
+        # mAllowedResourceForms is the field that actually encodes it: RF_SOLID on
+        # miners, RF_LIQUID on the pumps.
+        item = game.items.get(node["resource"])
+        if b.allowed_forms and item is not None and item.form not in b.allowed_forms:
+            continue
         if b.allowed_resources and node["resource"] not in b.allowed_resources:
             continue
         best = max(best, b.extract_rate(node["purity"]))

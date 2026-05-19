@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 499 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 502 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1100,6 +1100,36 @@ water are **well-only**, so a bare node token does not exist for them; oil is bo
 Collectibles are single tokens — `greenSlugs`, `yellowSlugs`, `purpleSlugs`, `hardDrives`,
 `mercerSpheres`, `somersloops`. There are 51 layer *groups*, of which `gameLayer` carries
 the resource markers.
+
+### 7.2c A miner is never valid on a liquid node
+
+`search_resource_nodes` reported **every oil node at double its real rate** — a pure node
+read 480 m³/min where an Oil Extractor gives 240.
+
+`node_rate` picks the best extractor for the node's kind, filtered by `mAllowedResources`.
+That field is only populated when `mOnlyAllowCertainResources` is **True**, which is
+`False` on every miner — so miners looked unrestricted, and Miner Mk.3 (base 240) out-bid
+the Oil Extractor (base 120) on crude.
+
+`mAllowedResourceForms` is the field that actually encodes it, and it was **already parsed
+and simply never consulted**:
+
+| building | `mAllowedResourceForms` | `mOnlyAllowCertainResources` |
+|---|---|---|
+| Miner Mk1/2/3 | `RF_SOLID` | False → `mAllowedResources` empty |
+| Oil / Water Extractor | `RF_LIQUID` | True |
+| Resource Well Extractor | `RF_LIQUID, RF_GAS` | True |
+
+Corrected: oil reads 60/120/240 by purity. The wiki was unreachable (Cloudflare 403), so
+the check was made against something better — the dump's own cycle fields. `mItemsPerCycle
+/ mExtractCycleTime × 60`, with litres converted to m³ for fluids, reproduces every parsed
+`base_extract_rate` exactly, including the Oil Extractor's 2000 L/s → 120 m³/min. A test
+pins that derivation.
+
+**Only the node search was affected.** `extractor_processes` builds its columns from
+`building.extract_rate(purity, clock)` with the actual building, so the LP and
+`plan_layout` were always right — which is how the discrepancy was spotted: the same world
+read 480 in one tool and 240 in the other.
 
 ### 7.3 Source selectors
 

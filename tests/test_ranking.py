@@ -126,3 +126,66 @@ def test_custom_weights_change_the_order():
         weights={"throughput": 0.1, "distance": -1.0},
     )
     assert distance_first[0].cluster is near_small
+
+
+def test_a_miner_is_never_offered_for_a_liquid_node(game):
+    """search_resource_nodes reported every oil node at DOUBLE its real rate: a pure
+    node read 480 m3/min where an Oil Extractor gives 240.
+
+    node_rate takes the best extractor for the node's kind, filtered by
+    mAllowedResources -- but that field is only populated when
+    mOnlyAllowCertainResources is True, which is False on every miner. So miners looked
+    unrestricted, and Miner Mk.3 (base 240) out-bid the Oil Extractor (base 120).
+    mAllowedResourceForms is the field that actually encodes it: RF_SOLID on miners,
+    RF_LIQUID on the pumps. It was already parsed and simply not consulted.
+    """
+    from satisfactory_mcp.spatial import nodes as nodes_mod
+
+    table = nodes_mod.load_nodes()
+    oil = [n for n in table.nodes if n["resource"] == "Desc_LiquidOil_C" and n["kind"] == "node"]
+    assert oil
+    rates = {n["purity"]: nodes_mod.node_rate(n, game) for n in oil}
+    assert rates == {"impure": 60.0, "normal": 120.0, "pure": 240.0}
+
+
+def test_node_rates_agree_with_the_extractor_that_can_tap_them(game):
+    """The general invariant. Every node's rate must be achievable by some extractor
+    whose allowed FORM matches the resource."""
+    from satisfactory_mcp.spatial import nodes as nodes_mod
+
+    table = nodes_mod.load_nodes()
+    for node in table.nodes:
+        if node["kind"] != "node":
+            continue
+        item = game.items.get(node["resource"])
+        rate = nodes_mod.node_rate(node, game)
+        if not rate or item is None:
+            continue
+        usable = [
+            b
+            for cls in nodes_mod.EXTRACTOR_FOR_KIND["node"]
+            if (b := game.buildings.get(cls))
+            and (not b.allowed_forms or item.form in b.allowed_forms)
+        ]
+        assert usable, node["resource"]
+        assert rate == max(b.extract_rate(node["purity"]) for b in usable)
+
+
+def test_the_base_rates_match_the_dumps_own_cycle_fields(game):
+    """Derived independently of our parser: items-per-cycle over cycle-time, with
+    litres converted to m3 for fluids. Confirms the extractor model was right all along
+    and only node_rate was wrong."""
+    from satisfactory_mcp import config
+    from satisfactory_mcp.docs.loader import load_docs
+
+    raw = load_docs(config.docs_path())
+    idx = raw.index(
+        "FGBuildableResourceExtractor", "FGBuildableWaterPump", "FGBuildableFrackingExtractor"
+    )
+    for cls in ("Build_MinerMk1_C", "Build_MinerMk2_C", "Build_MinerMk3_C", "Build_OilPump_C"):
+        entry = idx[cls]
+        per_cycle = float(entry.get("mItemsPerCycle", 0))
+        cycle = float(entry["mExtractCycleTime"])
+        fluid = "RF_LIQUID" in entry.get("mAllowedResourceForms", "")
+        derived = per_cycle / cycle * 60 / (1000 if fluid else 1)
+        assert game.buildings[cls].base_extract_rate == derived, cls
