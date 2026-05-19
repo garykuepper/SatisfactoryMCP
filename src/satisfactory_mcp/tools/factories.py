@@ -1,0 +1,818 @@
+"""Factory identity: proposing, naming, querying and health.
+
+The tools over ``graph/`` -- candidates from several signals, persisted
+labels, and the two read-outs built on a named machine set."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from pydantic import Field
+
+from .. import render
+from ..app import Limit, _resolve_factory, _state, mcp
+from ..graph.query import ASPECTS as QUERY_ASPECTS
+from ..graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
+from ..graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
+from ..graph.select import SelectorError
+
+
+def _cand_row(c, store, labelled: set[str]) -> tuple:
+    named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
+    covered = sum(1 for m in c.machines if m in labelled)
+    return (
+        c.source,
+        c.size,
+        f"{int(c.centroid[0] / 100)},{int(c.centroid[1] / 100)}",
+        f"{c.spread_m:.0f}m",
+        f"{covered}/{c.size}" if covered else "-",
+        ", ".join(sorted(named))[:40] or "-",
+        c.name_hint()[:44],
+    )
+
+
+@mcp.tool(structured_output=False)
+def factory_map(
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 12,
+    show: Annotated[
+        str, Field(description="candidates | named | slabs | unlabelled | all")
+    ] = "all",
+) -> str:
+    """Proposed factories, from power islands and belt topology, plus what is named.
+
+    Three independent signals are reported rather than one answer, because none is
+    right alone: power islands separate outposts but leave a grown-together base as one
+    476-machine blob; belt components shatter that blob into fragments; foundation slabs
+    are the sharpest of the three but say nothing about the ground-built parts of a
+    factory. Where they disagree, carve the difference with `name_factory` and a
+    `product:`, `near:` or `slab:` selector.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ..graph import identity
+
+    gr = st.graph
+    store = st.labels
+    base_c, line_c = identity.candidates(gr, st.game, st.projection)
+    labelled = store.assigned()
+    machines = set(gr.machines())
+    n = render.clamp(limit)
+
+    want = show.casefold()
+    chunks: list[str] = []
+    notes: list[str] = []
+
+    if want in ("all", "named") and store.labels:
+        rows = []
+        for label in sorted(store.labels, key=lambda x: -len(x.anchors)):
+            alive = set(label.anchors) & machines
+            cand = identity.describe(sorted(alive), gr, st.game, st.projection, "label")
+            rows.append(
+                (
+                    label.name,
+                    len(label.anchors),
+                    f"{len(alive)}/{len(label.anchors)}",
+                    f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
+                    f"{cand.spread_m:.0f}m",
+                    cand.name_hint()[:44],
+                )
+            )
+        chunks.append(
+            "## named\n"
+            + render.table(("name", "machines", "alive", "x,y(m)", "spread", "makes"), rows)
+        )
+        for issue in store.review(machines):
+            notes.append(
+                f"{issue['name']}: {issue['missing']} anchor machine(s) gone "
+                f"(recall {issue['recall']}) -- {issue['status']}"
+            )
+
+    if want in ("all", "candidates"):
+        rows = [_cand_row(c, store, labelled) for c in base_c[:n]]
+        chunks.append(
+            "## power islands (bases)\n"
+            + render.table(
+                ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
+                rows,
+                total=len(base_c),
+                limit=n,
+            )
+        )
+        fresh = [c for c in line_c if not set(c.machines) <= labelled]
+        rows = [_cand_row(c, store, labelled) for c in fresh[:n]]
+        chunks.append(
+            "## belt components (lines), unnamed first\n"
+            + render.table(
+                ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
+                rows,
+                total=len(fresh),
+                limit=n,
+            )
+        )
+
+    if want in ("all", "slabs"):
+        sx = st.structures
+        rows = []
+        for group in sx.groups()[:n]:
+            index = sx.slab_of[group[0]]
+            slab = sx.slabs[index]
+            cand = identity.describe(group, gr, st.game, st.projection, "structure")
+            names = sorted({lbl.name for m in group if (lbl := store.label_for(m))})
+            rows.append(
+                (
+                    index,
+                    len(group),
+                    slab.tiles,
+                    f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
+                    f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
+                    ", ".join(names)[:34] or "-",
+                    cand.name_hint()[:38],
+                )
+            )
+        total = len(sx.groups())
+        chunks.append(
+            f"## foundation slabs ({len(sx.slabs)} platforms, "
+            f"{len(sx.slab_of)} machines on one)\n"
+            + render.table(
+                ("slab", "machines", "tiles", "x,y(m)", "extent", "labels", "makes"),
+                rows,
+                total=total,
+                limit=n,
+            )
+        )
+        ground = len(machines) - len(sx.slab_of)
+        if ground:
+            notes.append(
+                f"{ground} machine(s) stand on no foundation at all -- slabs cannot see "
+                "them, so this signal is a candidate and never the arbiter."
+            )
+
+    if want in ("all", "unlabelled"):
+        loose = identity.unassigned(gr, labelled)
+        if loose:
+            grouped = identity.describe(loose, gr, st.game, st.projection, "unlabelled")
+            top = ", ".join(f"{name} {count}" for name, count in grouped.products.most_common(12))
+            chunks.append(f"## unlabelled: {len(loose)} machine(s)\n{top or '(no recipes set)'}")
+
+    if want in ("all", "candidates", "slabs"):
+        notes.append(GRAPH_INDEX_WARNING)
+
+    if base_c and base_c[0].size > 100:
+        notes.append(
+            f"the largest power island holds {base_c[0].size} machines across "
+            f"{base_c[0].spread_m:.0f}m -- that is a grown-together base, not one factory. "
+            "Carve it with name_factory(select=['product:Steel Ingot','near:x,y@150'])."
+        )
+
+    return render.envelope(
+        f"# {st.age_note}\n# {len(machines)} machines; {len(base_c)} power island(s), "
+        f"{len(line_c)} belt component(s); {len(store.labels)} named, "
+        f"{len(labelled & machines)} machine(s) covered",
+        "\n\n".join(chunks),
+        notes,
+    )
+
+
+@mcp.tool(structured_output=False)
+def factory_query(
+    factory: Annotated[str, Field(description="a label name, or any selector e.g. 'proposal:3'")],
+    of: Annotated[
+        str, Field(description="comma-separated: " + ", ".join(QUERY_ASPECTS))
+    ] = "summary",
+    limit: Limit = 15,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Ask one thing about one factory: what it makes, needs, draws, or touches.
+
+    `of` accepts several at once, e.g. "balance,power,links".
+
+    - **summary** size, position, top recipes, net power
+    - **balance** per-item produced vs consumed vs net -- the sign is the point
+    - **outputs** net surplus: it leaves the factory, or it backs up
+    - **inputs** net deficit: it has to be fed in from outside
+    - **machines** every machine with its building, recipe and clock
+    - **recipes** / **buildings** counts
+    - **power** draw vs generation at saved clocks
+    - **nodes** resource nodes its extractors sit on
+    - **links** which other factories it exchanges material with
+    - **issues** paused, recipe-less, or unresolved machines
+
+    Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
+    starved factory still reports its full rate.
+    """
+    from ..graph.query import build_view
+
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    try:
+        name, machines = _resolve_factory(st, factory)
+    except SelectorError as exc:
+        return f"! {exc}"
+    if not machines:
+        return f"! {factory!r} resolved to no machines that still exist in this save"
+
+    view = build_view(name, machines, st.graph, st.game, st.projection, st.labels)
+    asked = [a.strip().casefold() for a in of.split(",") if a.strip()]
+    unknown = [a for a in asked if a not in QUERY_ASPECTS]
+    if unknown:
+        return f"! unknown aspect(s) {unknown}. Choose from: {', '.join(QUERY_ASPECTS)}"
+
+    n = render.clamp(limit)
+    chunks: list[str] = []
+    g = st.game
+
+    def bname(cls: str) -> str:
+        b = g.buildings.get(cls)
+        return b.name if b else cls.replace("Build_", "").replace("_C", "")
+
+    for aspect in asked:
+        if aspect == "summary":
+            head = render.kv(
+                [
+                    ("machines", view.size),
+                    ("at", f"{int(view.centroid[0] / 100)},{int(view.centroid[1] / 100)}"),
+                    ("spread", f"{view.spread_m:.0f}m"),
+                    ("draw", f"{view.draw_mw:.0f} MW"),
+                    ("generation", f"{view.generation_mw:.0f} MW" if view.generation_mw else ""),
+                    ("recipes", len(view.recipes)),
+                    ("issues", len(view.issues) or ""),
+                ]
+            )
+            makes = ", ".join(f"{k} {v:.0f}/min" for k, v in view.outputs()[:5]) or "-"
+            needs = ", ".join(f"{k} {v:.0f}/min" for k, v in view.inputs()[:5]) or "-"
+            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}")
+        elif aspect == "balance":
+            rows = []
+            for item in sorted(view.flows, key=lambda k: -abs(view.net(k))):
+                f = view.flows[item]
+                net = view.net(item)
+                verdict = (
+                    "surplus" if net > 1e-6 else "needs feeding" if net < -1e-6 else "internal"
+                )
+                rows.append(
+                    (
+                        item,
+                        render.num(f["produced"]),
+                        render.num(f["consumed"]),
+                        f"{net:+.1f}",
+                        verdict,
+                    )
+                )
+            chunks.append(
+                "## balance (items/min at saved clocks)\n"
+                + render.table(
+                    ("item", "made", "used", "net", ""), rows[:n], total=len(rows), limit=n
+                )
+            )
+        elif aspect in ("outputs", "inputs"):
+            data = view.outputs() if aspect == "outputs" else view.inputs()
+            chunks.append(
+                f"## {aspect}\n"
+                + render.table(
+                    ("item", "per min"),
+                    [(k, render.num(v)) for k, v in data[:n]],
+                    total=len(data),
+                    limit=n,
+                )
+            )
+        elif aspect == "machines":
+            rows = [
+                (
+                    m.instance,
+                    bname(m.building),
+                    m.recipe or "-",
+                    f"{m.clock:.0%}",
+                    "paused" if m.paused else "",
+                )
+                for m in sorted(view.machines, key=lambda x: (x.building, x.recipe))
+            ]
+            chunks.append(
+                "## machines\n"
+                + render.table(
+                    ("instance", "building", "recipe", "clock", ""),
+                    rows[:n],
+                    total=len(rows),
+                    limit=n,
+                )
+            )
+        elif aspect == "recipes":
+            chunks.append(
+                "## recipes\n"
+                + render.table(
+                    ("recipe", "machines"),
+                    view.recipes.most_common(n),
+                    total=len(view.recipes),
+                    limit=n,
+                )
+            )
+        elif aspect == "buildings":
+            chunks.append(
+                "## buildings\n"
+                + render.table(
+                    ("building", "count"),
+                    [(bname(c), v) for c, v in view.buildings.most_common(n)],
+                    total=len(view.buildings),
+                    limit=n,
+                )
+            )
+        elif aspect == "power":
+            chunks.append(
+                "## power (nameplate at saved clocks)\n"
+                + render.kv(
+                    [
+                        ("draw", f"{view.draw_mw:.1f} MW"),
+                        ("generation", f"{view.generation_mw:.1f} MW"),
+                        ("net", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                    ]
+                )
+            )
+        elif aspect == "nodes":
+            chunks.append(
+                "## resource nodes\n"
+                + render.table(
+                    ("node", "resource", "purity", "extractor", "clock", "left"),
+                    [
+                        (a, b, c, bname(d), f"{e:.0%}", f if f is not None else "-")
+                        for a, b, c, d, e, f in view.nodes[:n]
+                    ],
+                    total=len(view.nodes),
+                    limit=n,
+                )
+            )
+        elif aspect == "links":
+            chunks.append(
+                "## material links across the boundary\n"
+                "# machines reached on the far side, not an edge count -- asymmetric by\n"
+                "# nature, since the first machine of a small set blocks the rest\n"
+                + render.table(
+                    ("other side", "machines reached"),
+                    view.links.most_common(n),
+                    total=len(view.links),
+                    limit=n,
+                )
+            )
+        elif aspect == "issues":
+            body = render.bullets(view.issues[:n]) if view.issues else "none"
+            chunks.append(f"## issues ({len(view.issues)})\n{body}")
+
+    notes = []
+    loose = view.links.get("(unlabelled)")
+    if loose:
+        notes.append(
+            f"{loose} connection(s) cross into machines no label covers -- "
+            "run propose_factories to see what they are"
+        )
+    return render.envelope(
+        f"# {st.age_note}\n# {name}: {view.size} machines", "\n\n".join(chunks), notes
+    )
+
+
+@mcp.tool(structured_output=False)
+def factory_health(
+    factory: Annotated[
+        str, Field(description="a label name, any selector, or 'all' for every named factory")
+    ] = "all",
+    limit: Limit = 15,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Measured uptime per machine, and WHY each stopped one is stopped.
+
+    The only measured numbers in this MCP. Every manufacturing building keeps a fixed
+    300-second productivity window; uptime is seconds-producing over that window.
+
+    States, worst first: `paused`, `dead node` (extractor bound to no resource --
+    a game update removed it), `no recipe`, `blocked` (output stack full),
+    `starved` (input empty), `stalled` (has input, output has room, still not running --
+    usually power), `intermittent`, `saturated`, `unmonitored`.
+
+    **Blocked is not automatically a fault.** A base whose output nobody consumes fills
+    its buffers and stops, which is what a mature factory at rest looks like. Starved,
+    stalled and no-recipe are the actionable ones.
+    """
+    from ..graph.health import STATES, assess, summarise
+    from ..graph.select import SelectorError
+
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    alive = set(st.graph.machines())
+    n = render.clamp(limit)
+
+    if factory.strip().casefold() in ("all", "*"):
+        if not st.labels.labels:
+            return "! nothing named yet -- run propose_factories, then name_factory"
+        rows, notes = [], []
+        for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
+            report = assess(
+                label.name, [m for m in label.anchors if m in alive], st.game, st.projection
+            )
+            mean = report.mean_uptime
+            actionable = sum(
+                report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
+            )
+            rows.append(
+                (
+                    label.name,
+                    len(report.machines),
+                    "-" if mean is None else f"{mean:.0%}",
+                    report.by_state["blocked"] or "",
+                    report.by_state["starved"] or "",
+                    report.by_state["stalled"] or "",
+                    report.by_state["no recipe"] or "",
+                    report.by_state["dead node"] or "",
+                    report.by_state["paused"] or "",
+                    actionable or "",
+                )
+            )
+        # Sort on the accumulated values, not on a column position: inserting a column
+        # once silently reordered this table by the wrong field.
+        rows.sort(key=lambda r: (-(r[-1] or 0), r[2]))
+        blocked_total = sum(r[3] or 0 for r in rows)
+        if blocked_total:
+            notes.append(
+                f"{blocked_total} machine(s) are blocked -- their output stack is full. "
+                "That is what a factory nobody is drawing from looks like, not a fault. "
+                "Look at starved/stalled/no-recipe first."
+            )
+        return render.envelope(
+            f"# {st.age_note}\n# uptime measured over a 300s window per machine",
+            render.table(
+                (
+                    "factory",
+                    "n",
+                    "uptime",
+                    "blocked",
+                    "starved",
+                    "stalled",
+                    "no recipe",
+                    "dead node",
+                    "paused",
+                    "todo",
+                ),
+                rows[:n],
+                total=len(rows),
+                limit=n,
+            ),
+            notes,
+        )
+
+    try:
+        name, machines = _resolve_factory(st, factory)
+    except SelectorError as exc:
+        return f"! {exc}"
+    if not machines:
+        return f"! {factory!r} resolved to no machines that still exist in this save"
+
+    report = assess(name, machines, st.game, st.projection)
+    chunks = [summarise(report)]
+
+    worst = report.worst(n)
+    if worst:
+        chunks.append(
+            "## needs attention\n"
+            + render.table(
+                ("instance", "state", "uptime", "recipe", "cause"),
+                [
+                    (
+                        m.instance,
+                        m.state,
+                        "-" if m.uptime is None else f"{m.uptime:.0%}",
+                        m.recipe or m.building.replace("Build_", "").replace("_C", ""),
+                        ", ".join(m.cause),
+                    )
+                    for m in worst
+                ],
+                total=sum(1 for m in report.machines if m.needs_attention),
+                limit=n,
+            )
+        )
+    if report.blocked_on:
+        chunks.append(
+            "## output backing up\n"
+            + render.table(("item", "machines blocked"), report.blocked_on.most_common(n))
+        )
+    if report.starved_of:
+        chunks.append(
+            "## inputs not arriving\n"
+            + render.table(("ingredient", "machines starved"), report.starved_of.most_common(n))
+        )
+
+    notes = []
+    if report.by_state["blocked"]:
+        notes.append(
+            f"{report.by_state['blocked']} blocked: output stack full, so its consumer "
+            "is the bottleneck -- or nothing is drawing from it at all"
+        )
+    if report.by_state["dead node"]:
+        notes.append(
+            f"{report.by_state['dead node']} extractor(s) sit on NO resource node -- "
+            "the node was removed, so they can never produce and must be rebuilt elsewhere"
+        )
+    if report.by_state["stalled"]:
+        notes.append(
+            f"{report.by_state['stalled']} stalled: has input, output has room, still "
+            "not producing. Check power before anything else"
+        )
+    if report.by_state["unmonitored"]:
+        notes.append(
+            f"{report.by_state['unmonitored']} machine(s) keep no productivity monitor, "
+            "so their uptime is unknown rather than zero"
+        )
+    assert STATES
+    return render.envelope(f"# {st.age_note}\n# {name}", "\n\n".join(chunks), notes)
+
+
+@mcp.tool(structured_output=False)
+def propose_factories(
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 15,
+    max_span_m: Annotated[float, Field(description="cap on a proposal's diameter, metres")] = 250.0,
+    unnamed_only: bool = False,
+) -> str:
+    """One coherence score over every signal, agglomerated into proposed factories.
+
+    Combines foundation slabs, proximity, belt connectivity, shared products and
+    supply links. Validated leave-one-factory-out against the player's twelve
+    hand-named factories: precision 1.000, recall 0.945, and precision was 1.000 on
+    every fold -- it never merges two factories, it only ever splits one.
+
+    Use `name_factory` on what it proposes. `unnamed_only=True` answers "what have I
+    built and not named".
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ..graph import cohere, identity
+
+    store = st.labels
+    proposals = (
+        st.proposals
+        if max_span_m == cohere.MAX_SPAN_M
+        else cohere.propose(st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m)
+    )
+    rows = []
+    shown = 0
+    for k, pr in enumerate(proposals):
+        names = sorted({lbl.name for m in pr.machines if (lbl := store.label_for(m))})
+        if unnamed_only and names:
+            continue
+        shown += 1
+        if shown > render.clamp(limit):
+            continue
+        cand = identity.describe(pr.machines, st.graph, st.game, st.projection, "proposal")
+        rows.append(
+            (
+                k,
+                pr.size,
+                f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
+                f"{cand.spread_m:.0f}m",
+                "+".join(str(x) for x in pr.parts) if len(pr.parts) > 1 else pr.size,
+                "+".join(n for n, _ in pr.evidence.most_common(3)),
+                ", ".join(names)[:26] or "-",
+                cand.name_hint()[:34],
+            )
+        )
+    total = shown
+    covered = sum(1 for pr in proposals for m in pr.machines if store.label_for(m))
+    return render.envelope(
+        f"# {st.age_note}\n# {len(proposals)} proposal(s) over "
+        f"{len(st.graph.machines())} machines; {covered} already named",
+        render.table(
+            ("#", "machines", "x,y(m)", "spread", "parts", "evidence", "labels", "makes"),
+            rows,
+            total=total,
+            limit=limit,
+        ),
+        [
+            (
+                f"clusters only LINK within {max_span_m:.0f}m, so a sprawling factory is "
+                "offered in pieces -- raise max_span_m if yours is bigger"
+            ),
+            (
+                "a 'parts' column with more than one number means dependents were "
+                "absorbed: a cluster whose belts and pipes lead almost only into one "
+                "other factory joins it, however far away it sits"
+            ),
+            GRAPH_INDEX_WARNING,
+        ],
+    )
+
+
+@mcp.tool(structured_output=False)
+def select_machines(
+    select: Annotated[
+        list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")
+    ],
+    save: str | None = None,
+    world: str | None = None,
+    split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+    expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
+) -> str:
+    """Preview which machines a selector picks, before naming them.
+
+    Worth running first on anything product-based: 17 machines make Concrete on the
+    reference save, but 15 of them are a construction feed inside the steel site and
+    only one is the player's "concrete setup".
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ..graph import identity
+    from ..graph import select as gsel
+
+    try:
+        picked = gsel.select_machines(
+            select,
+            st.graph,
+            st.game,
+            st.projection,
+            st.labels,
+            split=split,
+            expand=expand,
+            structures=st.structures,
+            proposals=st.proposals,
+        )
+    except gsel.SelectorError as exc:
+        return f"! {exc}"
+    if not picked:
+        return "! that selector matched no machines"
+
+    cand = identity.describe(picked, st.graph, st.game, st.projection, "selector")
+    groups = identity.cluster_machines(picked, st.projection)
+    parts = [
+        render.kv(
+            [
+                ("machines", cand.size),
+                ("at", f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}"),
+                ("spread", f"{cand.spread_m:.0f}m"),
+                ("clusters", len(groups)),
+            ]
+        ),
+        "products: " + (", ".join(f"{k} {v}" for k, v in cand.products.most_common(10)) or "-"),
+        "buildings: "
+        + ", ".join(f"{v}x {k.replace('Build_', '')}" for k, v in cand.buildings.most_common(8)),
+    ]
+    if len(groups) > 1:
+        sub = identity.describe(groups[0], st.graph, st.game, st.projection, "selector")
+        parts.append(
+            f"! {len(groups)} separate sites {[len(g) for g in groups]}; the largest is "
+            f"{sub.size} at {int(sub.centroid[0] / 100)},{int(sub.centroid[1] / 100)}. "
+            "Pass split=true to keep only that one."
+        )
+    clashes = {lbl.name for m in picked if (lbl := st.labels.label_for(m))}
+    if clashes:
+        parts.append("already named: " + ", ".join(sorted(clashes)))
+    return render.envelope(f"# {st.age_note}", "\n".join(parts))
+
+
+@mcp.tool(structured_output=False)
+def name_factory(
+    name: str,
+    select: Annotated[
+        list[str], Field(description=f"selector terms, ANDed. {GRAPH_SELECTOR_HELP}")
+    ],
+    notes: str = "",
+    save: str | None = None,
+    world: str | None = None,
+    split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
+    expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
+    dry_run: bool = False,
+) -> str:
+    """Name a set of machines and persist it for this world.
+
+    The label stores the machine instance ids, which are stable across saves, so it
+    survives moving machines, adding to the factory, and autosave rotation. Calling
+    this again with the same name re-anchors it to the current selection.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ..graph import identity
+    from ..graph import select as gsel
+
+    try:
+        picked = gsel.select_machines(
+            select,
+            st.graph,
+            st.game,
+            st.projection,
+            st.labels,
+            split=split,
+            expand=expand,
+            structures=st.structures,
+            proposals=st.proposals,
+        )
+    except gsel.SelectorError as exc:
+        return f"! {exc}"
+    if not picked:
+        return "! that selector matched no machines; nothing named"
+
+    store = st.labels
+    stolen: dict[str, int] = {}
+    for machine in picked:
+        other = store.label_for(machine)
+        if other and other.name.casefold() != name.strip().casefold():
+            stolen[other.name] = stolen.get(other.name, 0) + 1
+
+    cand = identity.describe(picked, st.graph, st.game, st.projection, "label")
+    existing = store.find(name)
+    verb = "would name" if dry_run else ("re-anchored" if existing else "named")
+    head = (
+        f"{verb} {cand.size} machine(s) as {name!r} at "
+        f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)} "
+        f"(spread {cand.spread_m:.0f}m): {cand.name_hint()}"
+    )
+    warn = [f"overlaps {other!r} on {n} machine(s)" for other, n in sorted(stolen.items())]
+    if existing and not dry_run:
+        kept = len(set(existing.anchors) & set(picked))
+        warn.append(
+            f"was {len(existing.anchors)} machine(s), {kept} kept, "
+            f"{len(existing.anchors) - kept} dropped"
+        )
+
+    if dry_run:
+        return render.envelope(f"# {head}", "", warn + ["dry run: nothing written"])
+
+    when = st.header.get("save_datetime") or st.header.get("filename") or ""
+    label = store.put(name, picked, notes=notes, when=str(when))
+    label.centroid = cand.centroid
+    label.signature = dict(cand.buildings)
+    path = store.save()
+    return render.envelope(f"# {head}", f"stored in {path}", warn)
+
+
+@mcp.tool(structured_output=False)
+def list_factories(save: str | None = None, world: str | None = None) -> str:
+    """Named factories for this world, with how much of each is still standing."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ..graph import identity
+
+    store = st.labels
+    if not store.labels:
+        return render.envelope(
+            f"# {st.age_note}\n# no factories named yet for world {store.world_id!r}",
+            "Run factory_map to see candidates, then name_factory to persist one.",
+        )
+    machines = set(st.graph.machines())
+    rows = []
+    for label in sorted(store.labels, key=lambda x: -len(x.anchors)):
+        alive = sorted(set(label.anchors) & machines)
+        cand = identity.describe(alive, st.graph, st.game, st.projection, "label")
+        rows.append(
+            (
+                label.name,
+                len(label.anchors),
+                f"{len(alive)}/{len(label.anchors)}",
+                f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)}",
+                f"{cand.spread_m:.0f}m",
+                cand.name_hint()[:40],
+                label.notes[:40],
+            )
+        )
+    loose = len(identity.unassigned(st.graph, store.assigned()))
+    from ..graph.labels import LabelStore
+
+    # Say where the file is. Labels are the one thing here a player authored by hand,
+    # so another tool will want them, and reverse-engineering platformdirs to find them
+    # is not a reasonable ask.
+    return render.envelope(
+        f"# {st.age_note}\n# {len(store.labels)} named, {loose} machine(s) unlabelled"
+        f"\n# stored at {LabelStore.path_for(store.world_id)}"
+        f"\n# also served as resource satisfactory://factories/labels",
+        render.table(("name", "anchors", "alive", "x,y(m)", "spread", "makes", "notes"), rows),
+        [f"{d['name']}: {d['status']} (recall {d['recall']})" for d in store.review(machines)],
+    )
+
+
+@mcp.tool(structured_output=False)
+def forget_factory(name: str, save: str | None = None, world: str | None = None) -> str:
+    """Delete a factory label. The machines themselves are untouched."""
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    store = st.labels
+    label = store.find(name)
+    if label is None:
+        known = ", ".join(x.name for x in store.labels) or "(none)"
+        return f"! no label named {name!r}. Known: {known}"
+    store.remove(label.name)
+    store.save()
+    return f"forgot {label.name!r} ({len(label.anchors)} machine(s) released)"

@@ -202,3 +202,69 @@ def test_prompts_render_with_arguments():
     assert "Rubber" in text
     assert "120" in text
     assert "INFEASIBLE" in text  # the byproduct escape hatch must be spelled out
+
+
+def test_every_tool_module_is_imported_by_the_package():
+    """The imports in tools/__init__.py look unused and are not: each module's
+    decorators run on import, and that is what attaches it to the shared `mcp`. A module
+    dropped from that list would silently remove its tools -- the server would start
+    fine and simply not offer them."""
+    import pkgutil
+
+    from satisfactory_mcp import tools
+
+    on_disk = {m.name for m in pkgutil.iter_modules(tools.__path__)}
+    assert on_disk, "no tool modules found"
+    assert on_disk <= set(tools.__all__), f"not imported: {on_disk - set(tools.__all__)}"
+
+
+def test_the_registered_surface_survives_the_split():
+    """Pinned counts, because the split moved 36 tools between files and a decorator
+    that fails to run is invisible."""
+    tools = _run(srv.mcp.list_tools())
+    assert len(tools) == 36
+    assert len(_run(srv.mcp.list_resources())) == 4
+    assert len(_run(srv.mcp.list_prompts())) == 3
+
+
+def test_server_still_re_exports_what_callers_reach_for():
+    """server.py is now a thin aggregator, but tests and scripts import tools from it by
+    name. Losing a re-export breaks them at import time rather than at call time."""
+    for name in (
+        "mcp",
+        "game",
+        "PLAN_DEFAULTS",
+        "GRAPH_INDEX_WARNING",
+        "plan_factory",
+        "plan_layout",
+        "diff_vs_save",
+        "bom",
+        "factory_query",
+        "factory_labels",
+        "list_buildings",
+        "search_recipes",
+        "search_resource_nodes",
+        "_state",
+        "_origin_for",
+        "_plan_kwargs",
+        "_resolve_factory",
+    ):
+        assert hasattr(srv, name), name
+
+
+def test_no_tool_module_imports_another():
+    """Shared helpers live in `app`, so the tool modules stay siblings. One importing
+    another is the first step back toward a single file."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(srv.__file__).parent / "tools"
+    for path in root.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        siblings = re.findall(
+            r"^\s*from \.(\w+) import|^\s*from \. import (\w+)", text, re.MULTILINE
+        )
+        found = {a or b for a, b in siblings}
+        assert not found, f"{path.name} imports sibling tool module(s): {found}"

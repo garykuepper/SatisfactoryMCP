@@ -358,8 +358,12 @@ def _ban_processes(sc: Scenario, patterns: list[str]) -> tuple[Scenario, list[st
             p
             for p in candidates
             if needle in p.label.casefold()
-            or needle == (sc.game.buildings[p.building].name.casefold()
-                          if p.building in sc.game.buildings else "")
+            or needle
+            == (
+                sc.game.buildings[p.building].name.casefold()
+                if p.building in sc.game.buildings
+                else ""
+            )
             or any(
                 needle == sc.game.item_name(item).casefold()
                 for item, rate in p.rates.items()

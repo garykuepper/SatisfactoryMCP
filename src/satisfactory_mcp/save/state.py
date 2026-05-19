@@ -438,17 +438,13 @@ class WorldState:
             ("crates", self._inventories.get("storage", {})),
             ("depot", self.projection.get("depot", {})),
         ):
-            held = {
-                self.game.item_name(k): v for k, v in source.items() if k in wanted and v
-            }
+            held = {self.game.item_name(k): v for k, v in source.items() if k in wanted and v}
             if held:
                 by_place[place] = held
 
         slugs = []
         craftable = 0.0
-        for item, yield_each in sorted(
-            self.game.slug_yields().items(), key=lambda kv: -kv[1]
-        ):
+        for item, yield_each in sorted(self.game.slug_yields().items(), key=lambda kv: -kv[1]):
             held = stock.get(item, 0.0)
             if not held:
                 continue

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 503 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 507 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -170,9 +170,17 @@ SatisfactoryMcp/
       projection.py    # invokes sidecar, validates, caches
       cache.py
       model.py
-    spatial/  geo.py  nodes.py  regions.py  select.py
-    planning/ optimize.py  advisor.py  supply.py  bom.py  fit.py  store.py
+    graph/    model.py  build.py  structure.py  identity.py  cohere.py
+              labels.py  select.py  query.py  health.py
+    spatial/  geo.py  nodes.py  regions.py  select.py  maplink.py
+    planning/ optimize.py  scenario.py  diff.py  layout.py  advisor.py
+              supply.py  bom.py  fit.py  store.py  byproducts.py  compare.py
     render.py          # ALL formatting: TSV, envelopes, truncation
+    app.py             # the mcp object + resolvers more than one tool group needs
+    server.py          # thin: imports tools/, re-exports, main()
+    tools/             # one module per concern; importing it registers everything
+      gamedata.py  world.py  progression.py  factories.py
+      spatial.py   planning.py  harddrives.py  resources.py  prompts.py
   sidecar/
     extract_save.py    # imports sav_parse, emits JSON projection on stdout
     vendor/sat_sav_parse/
@@ -1968,6 +1976,44 @@ Iron Ingot  120  (4 Smelters)   Screws 120 (3)   Iron Plate 60 (3)   Iron Rod 30
 this save's alternates route the same 10 plates through Stitched Iron Plate and the Pure ingot recipes for
 **26.92 Iron Ore + 13.33 Copper Ore + 24.27 Water** — a 4.5× swing on iron, which is why every row names
 its recipe.
+
+### 10.1d One module per concern
+
+`server.py` reached **3,467 lines and 36 tools** before being split. It is now 143 lines
+that import and re-export; the tools live in `tools/`, one module per concern:
+
+| module | tools | lines |
+|---|---|---|
+| `planning` | 10 | 1,085 |
+| `factories` | 8 | 818 |
+| `spatial` | 6 | 577 |
+| `gamedata` | 5 | 240 |
+| `world` | 5 | 198 |
+| `progression` | 2 | 205 |
+| `harddrives` | 2 | 116 |
+| `resources` / `prompts` | 4 / 3 | 102 / 69 |
+
+Three rules hold it together, each with a test:
+
+- **`tools/__init__.py` imports every module for its side effects.** The decorators run on
+  import, and that is what attaches a tool to the shared `mcp`. Those imports look unused
+  and are not — a module dropped from that list would leave the server starting cleanly and
+  simply not offering its tools. A test walks the directory and asserts nothing is missing.
+- **Tool modules never import each other.** Shared resolvers (`_resolve_factory`,
+  `_origin_for`) live in `app` alongside `mcp` and `_state`, because more than one group
+  needs each. A sibling import is the first step back toward one file, so a test forbids it.
+- **`server` re-exports every public name.** Tests and scripts reach for
+  `server.plan_factory`, and a caller should not need to know which module a tool landed in.
+
+The move was mechanical — every tool body is byte-identical — but two classes of breakage
+were invisible to the linter and only showed at runtime: relative imports written for the
+package root resolve one level too shallow inside `tools/` (`from .render` became
+`satisfactory_mcp.tools.render`), and the **indented** lazy imports inside function bodies
+escaped a line-anchored fix, so `factory_labels` failed only when called. `ruff` passed
+clean in both states; the test suite caught them.
+
+`progression` also corrects a mislabel: `phase_requirements` and `power_shards` had been
+spliced under the *resources* banner during a parallel merge, and are tools.
 
 ### 10.2 Context budget
 
