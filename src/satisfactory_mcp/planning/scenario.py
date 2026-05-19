@@ -151,6 +151,7 @@ def build_scenario(
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
     water_extractors: int | None = None,
+    sloops: int = 0,
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
@@ -275,6 +276,12 @@ def build_scenario(
         belt_ipm=belt_ipm,
         pipe_m3min=pipe_m3min,
         buildings_available=buildings,
+        # Zero is not "unlimited", it is "spend none" -- and it is the right default.
+        # Somersloops are the scarcest thing in the game (a fixed number exist on the
+        # whole map), so a plan that quietly assumed them would be unbuildable in a way
+        # no other parameter is. Opting in also keeps the column count down: offering
+        # every sloop count roughly doubles the matrix.
+        sloop_budget=max(0, int(sloops or 0)),
         # Without this the power row forces generation == consumption. Ignored when MW
         # is exported, since a power plant that imports power to export it is unbounded.
         grid_import_mw=None if MW in export_ids else 1e6,
@@ -322,6 +329,7 @@ def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
             "clocks": list(sc.clocks),
             "extractor_clocks": list(sc.extractor_clocks or ()),
             "machine_cost_mw": sc.machine_cost_mw,
+            "sloop_budget": sc.sloop_budget,
             "belt_ipm": sc.belt_ipm,
             "pipe_m3min": sc.pipe_m3min,
             "grid_import_mw": sc.grid_import_mw,

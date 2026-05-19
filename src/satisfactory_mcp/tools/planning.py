@@ -43,6 +43,7 @@ PLAN_DEFAULTS: dict = {
     "exclude_recipes": None,
     "only_recipes": None,
     "water_extractors": None,
+    "sloops": 0,
 }
 
 
@@ -159,6 +160,10 @@ def plan_factory(
         int | None,
         Field(description="how many Water Extractors your site can actually hold"),
     ] = None,
+    sloops: Annotated[
+        int,
+        Field(description="Somersloops the plan may spend; 0 spends none"),
+    ] = 0,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
@@ -211,6 +216,13 @@ def plan_factory(
     is deliberate, because exporting MW also forbids drawing from the existing grid.
     A token matching no item is refused by name rather than solved around.
 
+    ``sloops`` is a BUDGET, not a switch: it is how many Somersloops you will actually
+    commit, and the solver spends up to that many wherever they buy the most. Default 0
+    spends none, because only a fixed number exist on the whole map and a plan that
+    quietly assumed them would be unbuildable. Each one costs 4x power for 2x output on
+    its machine, so they are placed one at a time across many machines rather than
+    filling one -- output is linear in sloops and power is quadratic, so spreading wins.
+
     ``logistics_items`` pins named items into the belt/pipe table however small their
     flow, as rows ADDED to the ``limit`` biggest by volume. Without it, a two-item
     question can fall off the bottom of a big plan's flow table.
@@ -235,6 +247,7 @@ def plan_factory(
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
         water_extractors=water_extractors,
+        sloops=sloops,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -322,20 +335,66 @@ def plan_factory(
             f"{budget['free']:.0f} free + {budget['craftable']:.0f} craftable "
             f"= {budget['potential']:.0f} -- {verdict}"
         )
-    if bill.sloop_rows:
-        top = bill.sloop_rows[0]
-        aside = (
-            f" A further {bill.unboostable_slots} slot(s) sit in generators and "
-            "extractors, which this model cannot production-boost, so they are not "
-            "counted as capacity."
-            if bill.unboostable_slots
+    aside = (
+        f" A further {bill.unboostable_slots} slot(s) sit in generators and extractors, "
+        "which this model cannot production-boost, so they are not counted as capacity."
+        if bill.unboostable_slots
+        else ""
+    )
+    budget = int(plan_kwargs.get("sloops") or 0)
+    if bill.sloop_used_rows:
+        spent = ", ".join(
+            f"{r.machines}x{r.slots_each} in {r.label[:26]} = {r.total} ({r.boost:g}x)"
+            for r in bill.sloop_used_rows[:4]
+        )
+        held = st.sloop_budget()
+        # The overshoot guard. The LP spends sloops against machine-EQUIVALENTS and the
+        # build table rounds those up to whole machines, so an honest bill can exceed the
+        # budget it was solved under. Same shape as the extractor cap that reported 64
+        # machines under a limit of 54; caught here rather than left for the player to
+        # discover at the workbench.
+        over = (
+            f" -- ROUNDING UP to whole machines needs {bill.sloops_used - budget} more "
+            f"than the budget of {budget}; drop a machine or raise it"
+            if bill.sloops_used > budget
             else ""
+        )
+        short = (
+            f" You hold {held['free']:.0f}, so this is SHORT by "
+            f"{bill.sloops_used - held['free']:.0f}."
+            if bill.sloops_used > held["free"]
+            else f" You hold {held['free']:.0f}."
+        )
+        unmeasured = (
+            " Sloops already slotted in machines are not readable from the save, so "
+            "'held' counts only loose ones."
+            if not held["committed_measured"]
+            else ""
+        )
+        spare = (
+            f" {bill.sloop_slots} boostable slot(s) are still empty, so a bigger budget "
+            "has somewhere to go."
+            if bill.sloop_slots
+            else ""
+        )
+        notes.append(
+            f"somersloops: {bill.sloops_used} spent ({spent}){over}.{short}{unmeasured}"
+            f"{spare}{aside}"
+        )
+    elif bill.sloop_rows:
+        top = bill.sloop_rows[0]
+        why = (
+            " The budget bought nothing here: every boost costs 4x power for 2x output, "
+            "and this plan is power-limited."
+            if budget
+            else " Reported, not spent -- pass sloops=<how many you will commit> to "
+            "let the solver use them"
         )
         notes.append(
             f"somersloops: {bill.sloop_slots} boostable slot(s), none used. Filling "
             f"{top.label[:28]} ({top.machines}x{top.slots_each}={top.total}) would run "
             f"it at {top.boost:g}x output for 4x power, halving that block."
-            f"{aside} Reported, not spent -- nothing here plans sloops"
+            f"{aside}{why}"
         )
 
     if req.excluded:
@@ -478,6 +537,10 @@ def plan_layout(
         int | None,
         Field(description="how many Water Extractors your site can actually hold"),
     ] = None,
+    sloops: Annotated[
+        int,
+        Field(description="Somersloops the plan may spend; 0 spends none"),
+    ] = 0,
     max_floor_foundations: Annotated[
         int,
         Field(description="cap a deck at this many 8m foundations; 0 = one stage per deck"),
@@ -541,6 +604,7 @@ def plan_layout(
         extractor_clocks=extractor_clocks,
         machine_cost_mw=machine_cost_mw,
         water_extractors=water_extractors,
+        sloops=sloops,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)

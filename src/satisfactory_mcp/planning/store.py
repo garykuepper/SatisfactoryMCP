@@ -45,6 +45,7 @@ PLAN_ARGS = (
     "exclude_recipes",
     "only_recipes",
     "water_extractors",
+    "sloops",
 )
 
 

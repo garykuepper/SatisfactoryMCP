@@ -503,6 +503,50 @@ class WorldState:
             "measured": any("potential_slots" in r for r in self._all_records()),
         }
 
+    def sloop_budget(self) -> dict:
+        """Somersloops on hand, and an honest admission about the ones in machines.
+
+        Free ones are read the same way as shards: ``stock`` pools carried, crates and
+        the Dimensional Depot, which is exactly the set that can be spent.
+
+        **Committed sloops are NOT measurable here, and that is reported rather than
+        assumed to be zero.** A slotted shard shows up in the ``InventoryPotential``
+        component the sidecar reads; the equivalent for production boost does not appear
+        in this save under any of the three plausible property names, nor in Docs.json.
+        So a plan can be told what is spendable but cannot be told what is already spent.
+        Reporting 0 committed as if it were measured would overstate the free pool for
+        any player who has slotted some, which is most of them past mid-game.
+
+        Mercer Spheres are counted separately and never added in. They share the WAT
+        prefix and the same alien-artifact feel, and they do nothing for production.
+        """
+        stock = self.stock()
+        free = float(stock.get(self.SLOOP_ITEM, 0.0))
+        by_place: dict[str, float] = {}
+        for place, source in (
+            ("carried", self._inventories.get("player", {})),
+            ("crates", self._inventories.get("storage", {})),
+            ("depot", self.projection.get("depot", {})),
+        ):
+            held = float(source.get(self.SLOOP_ITEM, 0.0))
+            if held:
+                by_place[place] = held
+        return {
+            "item": self.SLOOP_ITEM,
+            "free": free,
+            "by_place": by_place,
+            "mercer_spheres": float(stock.get(self.MERCER_ITEM, 0.0)),
+            #: True only if the save ever yielded a production-boost property. False
+            #: means "unknown", never "none installed".
+            "committed_measured": any("production_boost" in r for r in self._all_records()),
+        }
+
+    #: The Somersloop and Mercer Sphere item classes. Named here rather than resolved by
+    #: display name because both are stable class ids and a name lookup would silently
+    #: match nothing in a localised dump.
+    SLOOP_ITEM: ClassVar[str] = "Desc_WAT1_C"
+    MERCER_ITEM: ClassVar[str] = "Desc_WAT2_C"
+
     # ---- MAM / hard drives ---------------------------------------------
 
     def _schematic_recipes(self, s: Schematic) -> list[Recipe]:

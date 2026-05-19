@@ -227,7 +227,14 @@ def recipe_processes(sc: Scenario) -> list[Process]:
             continue
         sloop_options = [0]
         if sc.sloop_budget and b.can_boost:
-            sloop_options = sorted({0, b.sloop_slots})
+            # EVERY count, not just full or empty. Output is linear in sloops
+            # (base + n*mult) while power goes as boost**2, so the marginal output per
+            # sloop is constant and the marginal power cost rises. Under a binding
+            # budget, spreading therefore strictly dominates: one sloop in each of four
+            # Blenders buys 4 x 1.25 output for 4 x 1.56 power, where four in one buys
+            # 2.0 for 4.0. Offering only 0-or-full made the solver pay the worst rate on
+            # the scarcest resource in the game.
+            sloop_options = list(range(b.sloop_slots + 1))
         for clock in sc.clocks:
             for sloops in sloop_options:
                 boost = b.boost_for(sloops)

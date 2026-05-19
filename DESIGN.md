@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 531 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 548 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1458,6 +1458,47 @@ extractors carry slots with `can_boost = False`, so `boost_for` correctly return
 first version advertised a Fuel Generator block at "1x output", which is nonsense dressed as
 a recommendation. Those slots are counted separately as *unboostable* and never presented as
 capacity. `Process.sloops` remains 0 everywhere: nothing plans them yet.
+
+### 8.2f Somersloops: spread, never stacked
+
+The solver has carried `sloop_budget`, `Process.sloops` and `boost_for` since the
+formulation was written and **nothing ever set them**, so every plan silently ran at zero
+sloops while the readout printed how many slots were going spare. `sloops=` is now a plan
+argument, persisted with the plan and hashed into `plan_id`.
+
+It is a **budget, not a switch** — how many you will actually commit — and it defaults to
+0. Somersloops are the only genuinely finite resource in the game (a fixed number exist on
+the whole map), so a plan that quietly assumed them would be unbuildable in a way no other
+default is.
+
+**The modelling correction: offer every count, not just full-or-empty.** Output is linear
+in sloops and power is quadratic in the boost they produce:
+
+| sloops in a Blender | boost | power |
+|---|---|---|
+| 0 | 1.00x | 75 MW |
+| 1 | 1.25x | 117 MW |
+| 2 | 1.50x | 169 MW |
+| 4 | 2.00x | 300 MW |
+
+So marginal output per sloop is flat while marginal power rises, and under a binding
+budget **spreading strictly dominates**. Offering only 0-or-full made the solver pay the
+worst rate on the scarcest resource in the game: at a budget of 16 it built 8 Refineries
+at 2 sloops for 113,945 MW where 16 at 1 sloop gives **114,065 MW**. Measured, and a test
+pins the comparison rather than the argument.
+
+`PlanSlice` keeps **spent** slots apart from **empty** ones, because one is a bill and the
+other is a suggestion — conflated, a plan that spends none would report 662 somersloops
+needed. `sloops_used` counts against WHOLE machines, so it can exceed the budget the LP
+solved under (the same rounding that turned a 54-extractor cap into 64 machines); the tool
+checks and says so rather than quoting a number that is quietly too small.
+
+**Committed sloops are reported as unknown, never as zero.** A slotted Power Shard shows
+up in an `InventoryPotential` component; the production-boost equivalent appears nowhere in
+this save under any of the three plausible property names, nor in Docs.json. `free` counts
+loose sloops only — 16 on the reference save, 1 carried and 15 in the Depot — and the note
+says so, because reporting 0 committed as if measured would overstate the pool for anyone
+past mid-game. Mercer Spheres share the WAT prefix and are counted separately.
 
 ### 8.3 Guards
 

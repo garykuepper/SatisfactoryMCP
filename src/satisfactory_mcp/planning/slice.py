@@ -79,7 +79,12 @@ class PlanSlice:
     #: Net per-minute rate per item across these processes.
     flows: dict[str, float] = field(default_factory=dict)
     shard_rows: list[ShardRow] = field(default_factory=list)
+    #: EMPTY boostable slots -- capacity the plan did not use.
     sloop_rows: list[SloopRow] = field(default_factory=list)
+    #: Slots the plan actually fills. Distinct from `sloop_rows` because one is a
+    #: suggestion and the other is a bill: conflating them would report 856 somersloops
+    #: needed for a plan that spends none.
+    sloop_used_rows: list[SloopRow] = field(default_factory=list)
     #: Slots on buildings this model cannot production-boost (generators, extractors).
     #: Counted separately so they are never advertised as a doubling.
     unboostable_slots: int = 0
@@ -97,6 +102,17 @@ class PlanSlice:
     def sloop_slots(self) -> int:
         """Empty Somersloop slots across the slice -- capacity, not a commitment."""
         return sum(r.total for r in self.sloop_rows)
+
+    @property
+    def sloops_used(self) -> int:
+        """Somersloops this plan spends, counted against WHOLE machines.
+
+        The LP spends them against machine-equivalents and the readout rounds those up,
+        so this can exceed the budget the solver was given -- the same overshoot that
+        turned a 54-extractor cap into 64 machines. The caller checks it against the
+        budget rather than being told a number that is quietly too small.
+        """
+        return sum(r.total for r in self.sloop_used_rows)
 
     def outputs(self, tol: float = 1e-6) -> list[tuple[str, float]]:
         return sorted([(k, v) for k, v in self.flows.items() if v > tol], key=lambda kv: -kv[1])
@@ -144,11 +160,24 @@ def slice_of(
         building = game.buildings.get(row["building_id"] or "")
         if building is not None and building.sloop_slots:
             boost = building.boost_for(building.sloop_slots)
-            if building.can_boost and boost > 1.0:
+            if row["sloops"]:
+                # Spent, so it is a bill line and never a suggestion. The boost is the
+                # one this row actually runs at, not the building's maximum: a Refinery
+                # with 1 of its 2 slots filled makes 1.5x, and quoting the 2x it could
+                # reach would overstate the plan's own output.
+                out.sloop_used_rows.append(
+                    SloopRow(
+                        row["label"],
+                        row["machines"],
+                        row["sloops"],
+                        building.boost_for(row["sloops"]),
+                    )
+                )
+            elif building.can_boost and boost > 1.0:
                 out.sloop_rows.append(
                     SloopRow(row["label"], row["machines"], building.sloop_slots, boost)
                 )
-            else:
+            elif not building.can_boost:
                 # Generators and extractors carry slots with can_boost False, so
                 # boost_for returns 1.0. Whatever a somersloop does in a Fuel Generator,
                 # this model does not represent it -- counting those slots as capacity
@@ -165,4 +194,5 @@ def slice_of(
 
     out.shard_rows.sort(key=lambda r: -r.total)
     out.sloop_rows.sort(key=lambda r: -r.total)
+    out.sloop_used_rows.sort(key=lambda r: -r.total)
     return out
