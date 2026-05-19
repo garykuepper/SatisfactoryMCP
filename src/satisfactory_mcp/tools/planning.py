@@ -14,10 +14,11 @@ from ..docs.constants import WATER_EXTRACTOR_WARN_AT
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
 from ..planning import byproducts, compare
-from ..planning.commission import commission
+from ..planning.commission import Tracking, commission, track
 from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
 from ..planning.layout import build_layout, fluid_head
+from ..planning.materials import build_materials
 from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.scenario import build_scenario, resolve_item
@@ -561,8 +562,9 @@ def plan_layout(
     """Turn a plan into a buildable schematic: blocks, buses and floors.
 
     Same arguments as plan_factory, plus ``detail``: "floors" (default, the stack),
-    "blocks" (every module with its size and rates), "buses" (item flows), or
-    "trunks" (which resource nodes share each pipe or belt run into the site).
+    "blocks" (every module with its size and rates), "buses" (item flows),
+    "trunks" (which resource nodes share each pipe or belt run into the site), or
+    "materials" (what the whole thing costs to build, machines plus deck).
 
     This is a SCHEMATIC, not a blueprint. It gives modules, connections, floor
     assignment and a space budget. It deliberately does NOT give world coordinates or
@@ -711,6 +713,69 @@ def plan_layout(
             total=len(lay.blocks),
             limit=limit,
         )
+    elif detail == "materials":
+        # Foundations live here and nowhere else -- they are not machines, so no build
+        # table counts them, and at 5 Concrete each a big deck outweighs most of the
+        # machine bill. This is why the construction bill hangs off plan_layout rather
+        # than plan_factory: only the layout knows how many tiles the plan stands on.
+        #
+        # TOTAL, not `lay.foundations`. That property is the PEAK floor, which is what
+        # sizes the site -- floors stack, so the ground you need is the biggest one. But
+        # you pour concrete for every floor, so charging the peak would understate the
+        # deck by however many storeys the stack has.
+        bill = build_materials(g, sol.processes, st.stock(), lay.total_foundations)
+        rows = [
+            (
+                line.name[:26],
+                render.num(line.needed),
+                render.num(line.held),
+                render.num(line.short) if line.short else "",
+                ", ".join(line.wanted_by)[:38],
+            )
+            for line in bill.lines[: render.clamp(limit, default=20)]
+        ]
+        body = render.table(
+            ("item", "need", "have", "short", "for"),
+            rows,
+            total=len(bill.lines),
+            limit=limit,
+        )
+        biggest = sorted(bill.buildings, key=lambda b: -b.items)[:3]
+        body = (
+            f"machines={bill.machines}  foundations={bill.foundations}  "
+            f"distinct_parts={len(bill.lines)}\n"
+            + "costliest: "
+            + ", ".join(f"{b.count}x {b.name} = {b.items:,} parts" for b in biggest)
+            + "\n\n"
+            + body
+        )
+        notes.extend(bill.notes)
+        short = bill.shortfall
+        notes.append(
+            "you can afford every part of this from stock"
+            if not short
+            else "short of "
+            + ", ".join(f"{render.num(x.short)} {x.name}" for x in short[:4])
+            + (f", and {len(short) - 4} more" if len(short) > 4 else "")
+        )
+        notes.append(
+            "construction cost only, and NOT the same question as diff_vs_save's cost "
+            "table: this prices the WHOLE plan, that one prices what is left to place "
+            "and lists only what you are short of"
+        )
+        notes.append(
+            "stock is spendable only -- carried, crates and the Dimensional Depot -- "
+            "never machine buffers, which are not carryable"
+        )
+        notes.append(
+            "belts and pipes are NOT costed: their cost is per metre and there is no "
+            "route, so a length here would be invented. Use detail='buses' for line "
+            "counts and detail='trunks' for a straight-line lower bound on the runs"
+        )
+        notes.append(
+            "these are build-gun components, not ore. Call bom on any row to expand it "
+            "-- flattening here would have to guess a depth through the Recycled loop"
+        )
     elif detail == "trunks":
         # The destination decides which end of each chain is "far", so it decides the
         # sign of every lift. A named factory is the honest answer when there is one;
@@ -826,7 +891,8 @@ def plan_layout(
         )
         notes.append(
             'detail="blocks" for every module, detail="buses" for item flows, '
-            'detail="trunks" for which nodes share a pipe'
+            'detail="trunks" for which nodes share a pipe, detail="materials" for '
+            "what it costs to build"
         )
 
     if plan_name:
@@ -872,6 +938,165 @@ def plan_layout(
     return render.envelope(summary, body, [*plan_notes, *notes])
 
 
+#: Said on every stage report, because it is the one thing about this feature that a
+#: reader will otherwise get wrong. `built` is exact; `running` is the only positive
+#: evidence of power the save carries, and its absence is not evidence of no power.
+ENERGISED_CAVEAT = (
+    "built and ENERGISED are different states and the save separates them only one way: "
+    "a machine that produced inside the last 300s window certainly had power, while a "
+    "machine that did not may be unpowered, starved, blocked or simply idle. mHasPower "
+    "and the circuit id are not SaveGame properties and the circuit subsystem stores "
+    "nothing, so grid membership is rebuilt at load and is NOT in the file. A fully "
+    "built, wholly dark block is a valid state here, not an anomaly"
+)
+
+#: Emitted only when some row's built count is an interval. Without it "built 1..11,
+#: running 11" reads as a contradiction; it is not, because the two columns have
+#: different denominators.
+RANGE_CAVEAT = (
+    "a built count is a RANGE wherever a machine cannot be attributed to this plan "
+    "(Water Extractors, OQ5): the low bound counts only the ones standing among the "
+    "plan's own. 'running' is measured over every MATCHED machine, so it can sit above "
+    "the low bound without contradicting it"
+)
+
+
+def _stage_state(stage) -> str:
+    """One phrase per stage, saying only what the save supports."""
+    if stage.built_max <= 0:
+        return "not built"
+    if not stage.complete:
+        span = f"{stage.fraction_built:.0%}"
+        if stage.built_max != stage.built and stage.machines:
+            span = f"{span}-{stage.built_max / stage.machines:.0%}"
+        return f"{span} built"
+    if stage.running >= stage.machines:
+        return "built, all running"
+    if stage.running:
+        return f"built, {stage.running} running"
+    return "built, none running"
+
+
+def _stage_overview(tracking: Tracking) -> tuple[str, list[str]]:
+    """The whole partition against the save: which stage the player is in."""
+    if not tracking.ok:
+        return "", tracking.warnings
+    rows = [
+        (
+            f"S{s.index}",
+            s.machines,
+            f"{s.built}..{s.built_max}" if s.built_max != s.built else s.built,
+            s.running,
+            f"{render.num(-s.draw_mw)}/+{render.num(s.generation_mw)}",
+            f"{s.available_after:,.0f}",
+            _stage_state(s),
+        )
+        for s in tracking.stages
+    ]
+    if tracking.current:
+        done = tracking.current - 1
+        here = next(s for s in tracking.stages if s.index == tracking.current)
+        headline = (
+            f"# you are in STAGE {tracking.current} of {len(tracking.stages)}: "
+            + (f"stages 1-{done} complete, " if done > 1 else "stage 1 complete, " if done else "")
+            + f"stage {tracking.current} is {here.fraction_built:.0%} built "
+            f"({here.built}/{here.machines}) and {here.running} machine(s) in it are "
+            "proven running"
+        )
+    else:
+        headline = (
+            f"# every stage is built ({tracking.built}/{tracking.machines} machines). "
+            f"{tracking.running} are proven running; the rest may be built-and-unpowered, "
+            "which is what this plan expects until you energise them"
+        )
+    body = (
+        "# STAGES: the commission_plan startup order, matched against the save\n"
+        + render.table(("stage", "on", "built", "running", "MW", "free after", "state"), rows)
+        + "\n"
+        + headline
+    )
+    notes = [*tracking.warnings, ENERGISED_CAVEAT]
+    if any(s.built_max != s.built for s in tracking.stages):
+        notes.append(RANGE_CAVEAT)
+    if tracking.monitored:
+        notes.append(
+            f"{tracking.monitored} built machine(s) carry a productivity monitor, so "
+            "'running' is measured for those and unknown for the rest. Pass stage=<n> "
+            "for one stage's rows, or factory_health for why a machine is stopped"
+        )
+    if not tracking.plan_name:
+        notes.append(
+            "these stage numbers came from THIS CALL's arguments, not a stored plan, so "
+            "they renumber whenever the arguments or the world move. Save the plan "
+            "(plan_factory save_as=...) before treating a stage number as a milestone"
+        )
+    return body, notes
+
+
+def _stage_detail(tracking: Tracking, index: int, limit: int) -> tuple[str, list[str]]:
+    """One stage's own rows: what it energises, what stands, what is proven running."""
+    stage = next((s for s in tracking.stages if s.index == index), None)
+    if stage is None:
+        available = ", ".join(f"{s.index}" for s in tracking.stages) or "(none)"
+        return "", [f"no stage {index} in this plan; it has stages {available}"]
+    rows = []
+    for r in stage.rows:
+        # The free action belongs to the whole build job, not to this slice of it: three
+        # paused pumps are three dropdowns however the waves cut them. Rendering it as
+        # this stage's verb would tell the player to unpause them twice.
+        note = f"{r.verb} {r.free} first, plan-wide" if r.free else ""
+        note = f"{note}; {r.note}" if note and r.note else note or r.note
+        rows.append(
+            (
+                "BUILD" if r.to_build else "OK",
+                r.machines,
+                f"{r.built}..{r.built_max}" if r.built_max != r.built else r.built,
+                r.running,
+                r.label[:34],
+                r.building[:18],
+                render.num(-r.draw_mw) if r.draw_mw else f"+{render.num(r.generation_mw)}",
+                note[:44],
+            )
+        )
+    body = (
+        f"# STAGE {index} of {len(tracking.stages)}: {stage.machines} machine(s), "
+        f"{_stage_state(stage)}\n"
+        + render.kv(
+            [
+                ("draw_MW", render.num(stage.draw_mw)),
+                ("generation_MW", render.num(stage.generation_mw)),
+                ("free_before_MW", render.num(stage.available_before)),
+                ("free_after_MW", render.num(stage.available_after)),
+            ]
+        )
+        + "\n"
+        + render.table(
+            ("act", "on", "built", "running", "process", "building", "MW", "note"),
+            rows[: render.clamp(limit, default=20)],
+            total=len(rows),
+            limit=limit,
+        )
+    )
+    notes = [
+        *tracking.warnings,
+        ENERGISED_CAVEAT,
+        (
+            "materials are NOT split by stage, and the cost table is left out here for "
+            "that reason: a stage is a switch-on, not a build step, so the whole plant "
+            "is built first and the bill belongs to the plan as a whole"
+        ),
+    ]
+    if any(r.built_max != r.built for r in stage.rows):
+        notes.append(RANGE_CAVEAT)
+    if stage.dark:
+        notes.append(
+            f"{stage.dark} machine(s) in this stage are dark with no supply cause the "
+            "save can name -- consistent with not being energised yet, but the file "
+            "cannot confirm it"
+        )
+    return body, notes
+
+
 @mcp.tool(structured_output=False)
 def diff_vs_save(
     objective: str = "max_mw",
@@ -891,6 +1116,10 @@ def diff_vs_save(
     limit: Limit = 20,
     show_cost: bool = True,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+    stage: Annotated[
+        int | None,
+        Field(description="one startup stage's delta; 0 for the stage overview"),
+    ] = None,
     factory: Annotated[
         str | None,
         Field(description="only count this factory's machines as already built"),
@@ -912,6 +1141,18 @@ def diff_vs_save(
     arithmetic is INCREMENTAL, charging only the machines you have yet to place. Where
     a machine cannot be identified at all (Water Extractors have no recipe and no
     resolvable node) the answer is a RANGE, never a number.
+
+    Recall a stored plan with ``plan=`` and the diff is also grouped by STARTUP STAGE --
+    the same partition commission_plan emits -- so it answers "which stage am I in".
+    ``stage=<n>`` narrows to one stage's delta; ``stage=0`` asks for the overview
+    without a stored plan, at the cost that the numbering moves when the arguments do.
+
+    Built and energised are DIFFERENT states and the save separates them in one
+    direction only: a machine that produced in the last 300s window certainly had
+    power, while one that did not may be unpowered, starved, blocked or idle. Grid
+    membership is not persisted at all, so a stage is never reported as "unpowered" --
+    only as built with nothing proven running, which is exactly what a finished but
+    not-yet-energised block looks like.
 
     Saves are read-only: this never proposes writing one, and there is no dismantle
     action. Machines standing among the plan but not in it are listed for you to judge.
@@ -994,6 +1235,52 @@ def diff_vs_save(
 
     rep = build_diff(g, st, sol, req, scope=scope)
     pw = st.power_report()
+
+    # Stage detection is the same partition commission_plan emits, matched against the
+    # save -- nothing is stored and nothing is re-solved. It is off unless asked for,
+    # because the numbering is only stable for a STORED plan and because a diff that
+    # nobody asked a stage question of should not pay the context for one.
+    tracking: Tracking | None = None
+    if plan or stage is not None:
+        tracking = track(
+            prepared,
+            commission(prepared, g, pw["headroom_mw"], "power_report, nameplate"),
+            rep,
+            g,
+            st,
+            plan_name=plan_name,
+        )
+        if plan_name and (stored := st.plans.find(plan_name)) and stored.plan_id != req.plan_id:
+            # The same drift list_plans reports, said where it bites hardest: a stage
+            # number is a milestone the player remembers, and a re-solve against a moved
+            # world can renumber the whole partition under them.
+            plan_notes.append(
+                f"plan {plan_name!r} was saved against plan_id {stored.plan_id} and "
+                f"re-solves to {req.plan_id} -- the WORLD moved, so these stage numbers "
+                "may not be the ones you were given before"
+            )
+
+    if stage:
+        body, stage_notes = _stage_detail(tracking, stage, limit)
+        if not body:
+            return render.envelope(
+                f"# no stage {stage} [plan {req.plan_id}/save {rep.save_id}]",
+                "",
+                [*plan_notes, *stage_notes],
+            )
+        return render.envelope(
+            "\n".join(
+                [
+                    (
+                        f"# stage {stage} of plan {objective}|{sel.description} "
+                        f"[plan {req.plan_id}/save {rep.save_id}]"
+                    ),
+                    f"# {st.age_note}",
+                ]
+            ),
+            body,
+            [*plan_notes, *stage_notes],
+        )
 
     rows = []
     targets: list[str] = []
@@ -1105,13 +1392,21 @@ def diff_vs_save(
                 ],
             )
         )
-    if rep.deficit_mw > 0 and rep.slices > 1:
+    # Suppressed when the stage table is present: "place it in >=18 proportional slices"
+    # is the answer from BEFORE the startup-order re-frame, and printing it beside the
+    # startup order would tell the player to partition a build that is not partitioned.
+    if rep.deficit_mw > 0 and rep.slices > 1 and tracking is None:
         parts.append(
             "# ORDER: an LP solution is a ray, so any fraction of the plan is itself "
             f"feasible and self-powered.\n# The build dips {render.num(rep.deficit_mw)} MW "
             f"against {render.num(rep.headroom_mw)} MW of headroom, so place it in "
             f">={rep.slices} proportional slices."
         )
+    if tracking is not None:
+        block, stage_notes = _stage_overview(tracking)
+        if block:
+            parts.append(block)
+        notes += stage_notes
 
     if plan_name:
         plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]

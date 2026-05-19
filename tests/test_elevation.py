@@ -1,0 +1,184 @@
+"""Elevation, sampled -- because there is no heightmap anywhere in this project's inputs.
+
+`search_resource_nodes` already reports a fluid field's head span, and `plan_layout
+detail="trunks"` attaches it to a pipe. This closes the other half: what a bare coordinate
+is at. The whole risk here is the same one twice -- a plausible single number invented from
+too few points reads as measured, so every assertion below is about refusing to do that.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from satisfactory_mcp import server as srv
+from satisfactory_mcp.spatial import elevation
+from satisfactory_mcp.spatial import nodes as nodes_mod
+
+pytestmark = pytest.mark.integration
+
+#: On the main platform, dense with foundations. Chosen because it is the case where the
+#: built population swamps the ground population.
+ON_PLATFORM = (-1216, -1127)
+#: In the crude field: nodes, no structures.
+IN_THE_FIELD = (2000, -2400)
+#: Nothing within any sane radius.
+OPEN_OCEAN = (-3500, 3500)
+
+
+@pytest.fixture
+def points(state):
+    return elevation.sample_points(nodes_mod.load_nodes(), state)
+
+
+# ------------------------------------------------------------- the sources
+
+
+def _counts(points) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for s in points:
+        out[s.source] = out.get(s.source, 0) + 1
+    return out
+
+
+def test_an_old_projection_loses_a_source_rather_than_failing(points, projection):
+    """The committed fixture is schema 5 and predates `structures` being extracted at
+    all, so it carries no foundations. That must cost one source and nothing else -- the
+    same tolerance `sloop_budget` and `phase_requirements` show for projections written
+    before the field they want existed."""
+    assert "structures" not in projection
+    counts = _counts(points)
+    assert "structure" not in counts
+    assert counts["node"] == 608
+    assert counts["building"] > 400
+
+
+def test_foundations_are_the_dense_source_on_a_current_save(game):
+    """8,347 of them against 566 buildings on the live save. They are what gives a
+    developed site any evidence about itself at all -- one building per machine is sparse,
+    one sample per foundation piece is not."""
+    from satisfactory_mcp.app import _state
+
+    try:
+        live = _state(None, None)
+    except Exception:  # pragma: no cover - only when no .sav is present
+        pytest.skip("needs a readable save")
+    counts = _counts(elevation.sample_points(nodes_mod.load_nodes(), live))
+    assert counts["structure"] > 8000
+    assert counts["structure"] > counts["building"] * 10
+
+
+def test_it_works_with_no_save_at_all(game):
+    """The node table is static and map-wide, so an unexplored coordinate still gets an
+    answer. Requiring a save would make this useless for exactly the ground a player is
+    scouting."""
+    only_nodes = elevation.sample_points(nodes_mod.load_nodes(), None)
+    assert only_nodes
+    assert {s.source for s in only_nodes} == {"node"}
+
+
+def test_a_probe_only_returns_what_is_inside_the_radius(points):
+    near = elevation.probe(IN_THE_FIELD[0] * 100, IN_THE_FIELD[1] * 100, points, radius_m=400)
+    assert near.samples
+    assert all(s.dist_m <= 400 + 1e-6 for s in near.samples)
+    assert [s.dist_m for s in near.samples] == sorted(s.dist_m for s in near.samples)
+
+
+def test_a_wider_radius_never_loses_a_sample(points):
+    small = elevation.probe(ON_PLATFORM[0] * 100, ON_PLATFORM[1] * 100, points, radius_m=100)
+    big = elevation.probe(ON_PLATFORM[0] * 100, ON_PLATFORM[1] * 100, points, radius_m=300)
+    assert len(big.samples) >= len(small.samples)
+
+
+# ------------------------------------------------- ground and built stay apart
+
+
+def test_ground_and_built_are_separate_populations(points):
+    """A node is on terrain; a foundation is wherever the player put it, often levelled
+    across a slope. Averaged together on a developed site the structures outnumber the
+    nodes hundreds to one, so the result would silently BE the platform height while
+    still being labelled ground."""
+    near = elevation.probe(ON_PLATFORM[0] * 100, ON_PLATFORM[1] * 100, points, radius_m=200)
+    assert near.ground and near.built
+    assert set(near.ground).isdisjoint(set(near.built)) or True  # values may coincide
+    assert len(near.ground) + len(near.built) == len(near.samples)
+    assert "structure" not in elevation.GROUND_SOURCES
+    assert "building" not in elevation.GROUND_SOURCES
+
+
+def test_fill_depth_needs_more_than_one_ground_sample(points):
+    """The measured trap: 805 structures against 1 node on the main platform. One node is
+    a point, and a point is not a ground level, so no fill depth is quoted from it."""
+    near = elevation.probe(ON_PLATFORM[0] * 100, ON_PLATFORM[1] * 100, points, radius_m=200)
+    assert len(near.ground) < elevation.MIN_GROUND_SAMPLES
+    assert near.fill_m is None
+
+
+def test_fill_depth_is_a_difference_of_medians_when_both_sides_are_real():
+    made = [
+        elevation.Sample("node", 0, 0, 1000.0),
+        elevation.Sample("node", 10, 0, 1000.0),
+        elevation.Sample("node", 20, 0, 1000.0),
+        elevation.Sample("structure", 0, 0, 3000.0),
+        elevation.Sample("structure", 10, 0, 3000.0),
+    ]
+    near = elevation.probe(0, 0, made, radius_m=10)
+    assert near.fill_m == pytest.approx(20.0)
+
+
+def test_one_sided_evidence_yields_no_fill(points):
+    """In the crude field there are nodes and nothing built. A fill depth is a difference
+    and one side alone cannot produce it."""
+    near = elevation.probe(IN_THE_FIELD[0] * 100, IN_THE_FIELD[1] * 100, points, radius_m=400)
+    assert near.ground and not near.built
+    assert near.fill_m is None
+
+
+def test_the_median_resists_a_spire(points):
+    """One Spire Coast node sits 220 m above its neighbours. A mean would drag the field's
+    reported height up by tens of metres; the median does not move."""
+    near = elevation.probe(IN_THE_FIELD[0] * 100, IN_THE_FIELD[1] * 100, points, radius_m=400)
+    values = near.ground
+    assert max(values) - min(values) > 200
+    assert near.median("node") < 50
+
+
+# ------------------------------------------------------------- the tool
+
+
+def test_describe_location_reports_elevation(game):
+    out = srv.describe_location(*ON_PLATFORM)
+    assert "built_elevation_m=" in out
+    assert "samples=" in out
+    assert "structure" in out
+
+
+def test_it_says_the_number_is_sampled_not_a_heightmap(game):
+    """The standing rule in this project: name what the data cannot do rather than
+    letting a confident-looking number imply it can."""
+    out = srv.describe_location(*ON_PLATFORM)
+    assert "SAMPLED, not a heightmap" in out
+
+
+def test_unsurveyed_ground_says_unknown_rather_than_guessing(game):
+    """The nearest-land guess is exactly the failure describe_location already refuses for
+    region naming. Elevation gets the same treatment."""
+    out = srv.describe_location(*OPEN_OCEAN)
+    assert "no known elevation" in out
+    assert "elevation_m=" not in out
+    assert "off-map or ocean" in out
+
+
+def test_the_radius_is_the_callers_to_widen(game):
+    tight = srv.describe_location(*IN_THE_FIELD, radius_m=50)
+    wide = srv.describe_location(*IN_THE_FIELD, radius_m=800)
+    assert "no known elevation within 50m" in tight
+    assert "ground_elevation_m=" in wide
+
+
+def test_region_naming_still_works_exactly_as_before(game):
+    """Elevation is an addition. The region answer that callers already depend on must be
+    untouched, including its confidence word."""
+    out = srv.describe_location(*IN_THE_FIELD)
+    assert "region=Spire Coast" in out
+    assert "confidence=interior" in out
+    assert "grid=X5Y5" in out

@@ -54,6 +54,7 @@ __all__ = [
     "DiffReport",
     "DiffRow",
     "build_diff",
+    "group_key",
 ]
 
 #: How close a machine must stand to one of the plan's own matched machines before it
@@ -85,6 +86,16 @@ class DiffRow:
     build: int = 0
     #: Upper bound on ``build``; None when the match is exact.
     build_max: int | None = None
+    #: Lower bound on ``have`` where identity is unavailable -- the machines of this
+    #: class standing among the plan's own, as opposed to every one in the world. None
+    #: when the match is exact and ``have`` needs no interval.
+    have_min: int | None = None
+    #: What this row is matched ON (see group_key). The join key for anything that needs
+    #: to say something else about the same build job, such as which startup wave it is in.
+    key: tuple = ()
+    #: instanceNames of the machines counted in ``have``, so a caller can ask the save
+    #: what those machines are actually doing rather than only how many there are.
+    have_instances: list[str] = field(default_factory=list)
     #: Distance in metres of each matched machine from the plan's ground anchor.
     have_distances: list[float] = field(default_factory=list)
     #: (node id, metres from the anchor) to build on. Ids paste back as node: selectors.
@@ -145,7 +156,14 @@ def _resource_of(proc: dict) -> str:
     return produced[0] if produced else ""
 
 
-def _group_key(proc: dict) -> tuple:
+def group_key(proc: dict) -> tuple:
+    """The identity a plan row is matched on, as a hashable tuple.
+
+    Public because it is the join between the two things this package says about one
+    machine: what to BUILD (here) and when to SWITCH IT ON (commission). Both must agree
+    on what counts as the same build job, and the only way to guarantee that is for both
+    to call this.
+    """
     if proc["kind"] == "recipe":
         return ("recipe", proc["building_id"], proc["recipe"])
     if proc["kind"] == "generator":
@@ -162,7 +180,7 @@ def _group_processes(sol: Solution) -> list[dict]:
     """
     groups: dict[tuple, dict] = {}
     for proc in sol.processes:
-        key = _group_key(proc)
+        key = group_key(proc)
         entry = groups.get(key)
         if entry is None:
             entry = {
@@ -379,6 +397,7 @@ def _row_for(
     records = _matched(group, index)
     notes: list[str] = []
     build_max: int | None = None
+    have_min: int | None = None
     targets: list[tuple[str, float]] = []
 
     if group["kind"] == "extractor" and not _node_backed(group, index):
@@ -391,6 +410,12 @@ def _row_for(
             if (d := _nearest_m(_xy(r), matched_points)) is not None and d <= NEIGHBOUR_RADIUS_M
         ]
         build_max = max(0, need - len(near))
+        have_min = len(near)
+        # Nearest first, so anything downstream that samples this row's machines samples
+        # the ones plausibly at the plant before the ones 2.5 km away. It changes no
+        # count -- both bounds are already fixed above -- only which machines get asked.
+        close = {id(r) for r in near}
+        records = [*near, *(r for r in records if id(r) not in close)]
         notes.append("no node link (OQ5), low bound counts every one built")
     elif group["kind"] == "extractor":
         free = sorted(
@@ -473,6 +498,9 @@ def _row_for(
 
     return DiffRow(
         stage=stage,
+        key=group["key"],
+        have_instances=[r["instance"].rsplit(".", 1)[-1] for r in records],
+        have_min=have_min,
         verb=verb,
         count=count,
         process=(

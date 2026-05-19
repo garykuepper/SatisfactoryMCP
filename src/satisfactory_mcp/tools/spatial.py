@@ -17,7 +17,7 @@ from ..app import (
     game,
     mcp,
 )
-from ..spatial import geo
+from ..spatial import elevation, geo
 from ..spatial import nodes as nodes_mod
 from ..spatial import ranking as ranking_mod
 from ..spatial import regions as regions_mod
@@ -72,25 +72,82 @@ def list_regions(with_resource: str | None = None) -> str:
 
 
 @mcp.tool(structured_output=False)
-def describe_location(x_m: float, y_m: float) -> str:
-    """Name the region at a coordinate, with confidence.
+def describe_location(
+    x_m: float,
+    y_m: float,
+    radius_m: Annotated[
+        float, Field(description="how far to look for known elevations, metres")
+    ] = 200.0,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Name the region at a coordinate, with confidence, and sample its elevation.
 
     Returns 'off-map or ocean' rather than guessing the nearest land region.
+
+    There is no heightmap in any data this reads, so elevation is a SAMPLE and is
+    reported with its count and spread rather than as one invented number. Resource
+    nodes rest on terrain and are quoted as ground; foundations and buildings are quoted
+    separately as built elevation, because a platform is wherever the player put it.
+    Where the two disagree, the difference is the fill already stacked there.
     """
     rm = regions_mod.load_regions()
     x, y = x_m * 100, y_m * 100
     label = rm.label_for(x, y)
-    return render.envelope(
-        render.kv(
-            [
-                ("region", label.describe()),
-                ("confidence", label.confidence),
-                ("grid", geo.grid_cell(x, y)),
-                ("direction_from_centre", geo.direction_of(x, y)),
-                ("bearing_deg", render.num(geo.bearing_deg(x, y))),
-            ]
+
+    # The node table alone covers the whole map and needs no save, so an unexplored
+    # coordinate still gets an answer. A readable save adds the dense sources.
+    st = None
+    try:
+        st = _state(save, world)
+    except Exception:
+        pass
+    near = elevation.probe(x, y, elevation.sample_points(nodes_mod.load_nodes(), st), radius_m)
+
+    fields = [
+        ("region", label.describe()),
+        ("confidence", label.confidence),
+        ("grid", geo.grid_cell(x, y)),
+        ("direction_from_centre", geo.direction_of(x, y)),
+        ("bearing_deg", render.num(geo.bearing_deg(x, y))),
+    ]
+    notes: list[str] = []
+    if near.samples:
+        for what, values in (("ground", near.ground), ("built", near.built)):
+            if not values:
+                continue
+            mid = values[len(values) // 2]
+            fields.append(
+                (
+                    f"{what}_elevation_m",
+                    f"{mid:.0f} (median of {len(values)}, {min(values):.0f}..{max(values):.0f})",
+                )
+            )
+        fields.append(
+            (
+                "samples",
+                ", ".join(f"{n} {src}" for src, n in sorted(near.counts.items()))
+                + f" within {radius_m:g}m",
+            )
         )
-    )
+        fill = near.fill_m
+        if fill is not None and abs(fill) >= 1.0:
+            notes.append(
+                f"built surface sits {fill:+.0f}m relative to the nearest ground samples "
+                "-- that gap is foundation already stacked here, not terrain"
+            )
+        notes.append(
+            "elevation is SAMPLED, not a heightmap: there is no terrain data in the dump "
+            "or the save. Resource nodes rest on the ground; foundations and buildings "
+            "are wherever they were placed"
+        )
+    else:
+        notes.append(
+            f"no known elevation within {radius_m:g}m. Nothing is built here and no "
+            "resource node is near, so the height is genuinely unknown -- widen radius_m "
+            "or accept that this is unsurveyed ground"
+        )
+    return render.envelope(render.kv(fields), "", notes)
 
 
 @mcp.tool(structured_output=False)

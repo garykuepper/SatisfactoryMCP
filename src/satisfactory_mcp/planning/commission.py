@@ -40,16 +40,81 @@ self-correcting, and it errs the safe way: a machine with no input idles and dra
 to nothing, so real draw comes in UNDER the modelled figure. The bound stays conservative
 precisely because the ratios are imperfect. Said out loud rather than dressed up as a
 balanced mini-plant.
+
+Which wave you are in, read back from the save
+----------------------------------------------
+``track`` closes the loop. A wave is a partition of a stored plan, and ``build_diff``
+already matches built machines against that plan by identity, so grouping its output by
+wave says which stage the player is actually in without persisting anything.
+
+**Built and energised are different states, and the save distinguishes them only in one
+direction.** Measured on the reference save rather than assumed:
+
+* ``uptime`` -- the 300 s productivity monitor -- is present on 517 of 566 machines,
+  extractors and generators, and ``produce_s > 0`` PROVES the machine ran, which proves
+  it had power. That is the only positive evidence of energisation in the file.
+* ``produce_s == 0`` proves nothing. Unpowered, starved, blocked and merely idle are
+  indistinguishable, and ``graph.health`` already separates the three that have a supply
+  cause -- what is left is its ``stalled`` bucket, where an unpowered block would land
+  along with a monitor that has not caught up.
+* ``paused`` (``mIsProductionPaused``, 16 actors here) is a DIFFERENT thing: the player
+  switched the machine off, and it is recorded per machine whatever the grid is doing.
+* ``clock`` is a slider position, not a state, and does not move when power does.
+* Power wires ARE in the projection (1,287 edges), so "wired to nothing" is knowable --
+  but wired is not energised.
+* The direct answers are not in the file at all. ``mHasPower`` and ``mCircuitID`` on
+  ``UFGPowerInfoComponent`` carry no ``SaveGame`` specifier (checked in Headers.zip) and
+  appear zero times in 44,307 objects; ``BP_CircuitSubsystem`` saves an EMPTY property
+  set, so grid membership is rebuilt at load and never persisted. ``mIsSwitchOn`` IS a
+  SaveGame property of ``AFGBuildableCircuitSwitch``, but this world has built no power
+  switch at all and the projection does not read one.
+
+So a stage reports what it can prove -- ``running`` -- and refuses to convert silence
+into "unpowered". A fully built, wholly dark block is a valid and expected state under
+the Q1 re-frame, not an anomaly, and is reported as such.
 """
 
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
+from ..graph.health import assess
+from ..save.state import WorldState
+from .diff import DiffReport, group_key
 
-__all__ = ["Commissioning", "Energised", "Wave", "commission"]
+__all__ = [
+    "DARK_STATES",
+    "MONITORED_STATES",
+    "RUNNING_STATES",
+    "Commissioning",
+    "Energised",
+    "Stage",
+    "StageRow",
+    "Tracking",
+    "Wave",
+    "commission",
+    "track",
+]
+
+#: ``graph.health`` states that PROVE a machine was energised. Both mean it produced
+#: inside the last complete 300 s window, and a machine with no power produces nothing.
+#: Every other state is silence, and silence has several causes.
+RUNNING_STATES = frozenset({"saturated", "intermittent"})
+
+#: The states where "no power" is still a live explanation. ``blocked`` and ``starved``
+#: name a supply cause instead; ``stalled`` is health.py's own word for "has input,
+#: output not full, still not running", which is exactly where an unpowered block lands
+#: -- and also where a monitor that has not caught up lands, so it is never conclusive.
+DARK_STATES = frozenset({"stalled", "unmonitored"})
+
+#: States ``graph.health`` can only reach by reading the productivity monitor. If none of
+#: a plan's machines land in one, the save carries no uptime evidence at all, and the
+#: report has to say so instead of reading silence as "nothing is running". The committed
+#: test projection is exactly that case: it predates the monitor being extracted.
+MONITORED_STATES = frozenset({"saturated", "intermittent", "blocked", "starved", "stalled"})
 
 #: How many waves to attempt before giving up. A plant whose generation exceeds its draw
 #: converges geometrically -- the measured Spire Coast plan needs three -- so a run that
@@ -73,6 +138,10 @@ class Energised:
     #: Distance from raw extraction along the item chain. Decides switch-on order within
     #: a wave: upstream first, so the fluid is already moving when the next block lights.
     depth: int = 0
+    #: Solution process id, kept so a wave row can be joined back to the build job the
+    #: diff matched against the save. Without it the two halves of "which stage am I in"
+    #: would have to be re-derived from labels, which are display strings.
+    pid: str = ""
 
 
 @dataclass
@@ -248,6 +317,7 @@ def commission(
             p = by_pid[pid]
             wave.rows.append(
                 Energised(
+                    pid=pid,
                     label=p["label"],
                     kind=p["kind"],
                     building=p["building"],
@@ -268,4 +338,233 @@ def commission(
         # wave: the pipes are still filling and the generators are not burning yet.
         available = wave.available_after
 
+    return out
+
+
+# ------------------------------------------------- which stage am I actually in
+
+
+@dataclass
+class StageRow:
+    """One build job's share of one stage, and what the save says about it."""
+
+    stage: int
+    label: str
+    kind: str
+    building: str
+    #: Machines this stage energises, and the plan's total for the same job.
+    machines: int
+    total: int
+    #: Machines in the save allotted to this stage. An interval only where identity is
+    #: unavailable (Water Extractors, OQ5), where a single number would be a lie in
+    #: whichever direction it fell.
+    built: int = 0
+    built_max: int = 0
+    #: graph.health state -> how many of this stage's built machines are in it.
+    by_state: Counter = field(default_factory=Counter)
+    draw_mw: float = 0.0
+    generation_mw: float = 0.0
+    #: Carried from the diff so a per-stage table can still say what to do about the row.
+    #: ``verb``/``free`` are the WHOLE plan's free action for this build job -- unpausing
+    #: three pumps is one job however the waves split them -- so a stage renders them as
+    #: an aside and never as its own instruction.
+    verb: str = "OK"
+    free: int = 0
+    note: str = ""
+
+    @property
+    def running(self) -> int:
+        """Machines PROVEN to have had power: they produced inside the last window."""
+        return sum(n for s, n in self.by_state.items() if s in RUNNING_STATES)
+
+    @property
+    def to_build(self) -> int:
+        return max(0, self.machines - self.built)
+
+
+@dataclass
+class Stage:
+    """One startup wave, matched against the save."""
+
+    index: int
+    rows: list[StageRow] = field(default_factory=list)
+    draw_mw: float = 0.0
+    generation_mw: float = 0.0
+    available_before: float = 0.0
+    available_after: float = 0.0
+
+    @property
+    def machines(self) -> int:
+        return sum(r.machines for r in self.rows)
+
+    @property
+    def built(self) -> int:
+        return sum(r.built for r in self.rows)
+
+    @property
+    def built_max(self) -> int:
+        return sum(r.built_max for r in self.rows)
+
+    @property
+    def running(self) -> int:
+        return sum(r.running for r in self.rows)
+
+    @property
+    def by_state(self) -> Counter:
+        total: Counter = Counter()
+        for r in self.rows:
+            total.update(r.by_state)
+        return total
+
+    @property
+    def complete(self) -> bool:
+        return self.built >= self.machines
+
+    @property
+    def fraction_built(self) -> float:
+        return self.built / self.machines if self.machines else 1.0
+
+    @property
+    def dark(self) -> int:
+        """Built machines with no proof of power, and no supply cause either.
+
+        NOT the same as "unpowered". It is the residue after the save's own explanations
+        -- paused, starved, blocked, no recipe, dead node -- have been taken out, and an
+        unpowered block and a monitor that has not caught up both land here.
+        """
+        return sum(n for s, n in self.by_state.items() if s in DARK_STATES)
+
+
+@dataclass
+class Tracking:
+    stages: list[Stage] = field(default_factory=list)
+    ok: bool = True
+    #: The stage the player is in: the first one not fully built. 0 when the whole plan
+    #: stands, because at that point there is no build left to be partway through and
+    #: the save cannot say which block is energised.
+    current: int = 0
+    #: Name of the stored plan this partition came from. Empty means the numbering was
+    #: derived from arguments given on the call and will renumber when they change.
+    plan_name: str = ""
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def machines(self) -> int:
+        return sum(s.machines for s in self.stages)
+
+    @property
+    def built(self) -> int:
+        return sum(s.built for s in self.stages)
+
+    @property
+    def running(self) -> int:
+        return sum(s.running for s in self.stages)
+
+    @property
+    def monitored(self) -> int:
+        """Built machines whose state was decided by reading the productivity monitor.
+
+        Zero means the save yields NO evidence about energisation either way, which is a
+        different report from "nothing is running" and must never be printed as one.
+        """
+        return sum(n for s in self.stages for st, n in s.by_state.items() if st in MONITORED_STATES)
+
+
+def _states_for(row, health: dict[str, str]) -> list[str]:
+    """This build job's matched machines, running ones first.
+
+    The order is the whole modelling decision here, so it is stated rather than left to
+    dict order. Identical machines are indistinguishable in the save -- nothing records
+    which Refinery was meant for wave 2 -- so built machines are allotted to the EARLIEST
+    wave that wants them, and within that, the ones proven to be running go first. Both
+    halves say the same thing: progress is assumed to have been made in the order the
+    startup sequence prescribes. Any other rule would need evidence the file does not have.
+    """
+    states = [health.get(name, "unmonitored") for name in row.have_instances]
+    return sorted(states, key=lambda s: (s not in RUNNING_STATES, s))
+
+
+def track(
+    prepared,
+    run: Commissioning,
+    report: DiffReport,
+    game: GameData,
+    state: WorldState,
+    plan_name: str = "",
+) -> Tracking:
+    """Group a diff by startup wave: which stage is built, and which is proven running.
+
+    Takes both halves already computed rather than recomputing either. ``commission``
+    owns the partition and ``build_diff`` owns the matching; this only joins them, on
+    ``diff.group_key``, so the two can never disagree about what one build job is.
+    """
+    out = Tracking(plan_name=plan_name)
+    if not run.ok or not run.waves:
+        out.ok = False
+        out.warnings.append(
+            "no startup order exists at this headroom, so the plan has no stages to "
+            "match the save against"
+        )
+        return out
+
+    by_key = {r.key: r for r in report.rows if r.key}
+    key_of_pid = {p["pid"]: group_key(p) for p in prepared.solution.processes}
+
+    # One health pass over every machine the diff matched, anywhere in the plan. Split
+    # per row it would rescan the whole projection once per build job.
+    matched = [name for r in report.rows for name in r.have_instances]
+    health = {m.instance: m.state for m in assess("plan", matched, game, state.projection).machines}
+
+    # Remaining pool per build job, consumed wave by wave. `low` is the pessimistic
+    # count: for a row whose machines cannot be attributed at all, only the ones standing
+    # among the plan's own are certainly its own, and the rest may belong to any plant.
+    pool: dict[tuple, list[str]] = {}
+    low: dict[tuple, int] = {}
+    for key, row in by_key.items():
+        pool[key] = _states_for(row, health)
+        low[key] = row.have if row.have_min is None else row.have_min
+
+    for wave in run.waves:
+        stage = Stage(
+            index=wave.index,
+            draw_mw=wave.draw_mw,
+            generation_mw=wave.generation_mw,
+            available_before=wave.available_before,
+            available_after=wave.available_after,
+        )
+        for energised in wave.rows:
+            key = key_of_pid.get(energised.pid, ())
+            diff_row = by_key.get(key)
+            take = pool.get(key, [])[: energised.machines]
+            if key in pool:
+                pool[key] = pool[key][energised.machines :]
+            certain = min(energised.machines, low.get(key, 0))
+            low[key] = max(0, low.get(key, 0) - energised.machines)
+            stage.rows.append(
+                StageRow(
+                    stage=wave.index,
+                    label=energised.label,
+                    kind=energised.kind,
+                    building=energised.building,
+                    machines=energised.machines,
+                    total=energised.total,
+                    built=certain,
+                    built_max=len(take),
+                    by_state=Counter(take),
+                    draw_mw=energised.draw_mw,
+                    generation_mw=energised.generation_mw,
+                    verb=diff_row.verb if diff_row else "OK",
+                    free=diff_row.count if diff_row and diff_row.verb not in ("OK", "BUILD") else 0,
+                    note=diff_row.note if diff_row else "",
+                )
+            )
+        out.stages.append(stage)
+
+    incomplete = [s.index for s in out.stages if not s.complete]
+    out.current = incomplete[0] if incomplete else 0
+    if not out.monitored:
+        out.warnings.append(
+            "this save carries no productivity monitor for any matched machine, so "
+            "there is NO evidence either way about what is energised -- only what is built"
+        )
     return out

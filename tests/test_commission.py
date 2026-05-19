@@ -8,6 +8,13 @@ leaves a fixed machine set plus one hard constraint.
 Hard, not advisory: exceeding available power in Satisfactory blows the fuse and stops the
 WHOLE grid until it is reset by hand -- including the plant that was feeding it. Every
 assertion about power below is an inequality that must never be violated, not a preference.
+
+The second half of the file is the tracker: which stage the save says you are in. Its
+tests all turn on ONE distinction, because getting it wrong makes the tracker lie. Built
+and energised are separate states, and the save proves only one of them -- a machine that
+produced inside the last 300 s window certainly had power, a machine that did not may be
+unpowered, starved, blocked or idle, and nothing in the file separates those. Every test
+below that touches power is really a test that silence is never read as "unpowered".
 """
 
 from __future__ import annotations
@@ -15,8 +22,10 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.commission import commission
+from satisfactory_mcp.planning.commission import commission, track
+from satisfactory_mcp.planning.diff import DiffReport, DiffRow, build_diff, group_key
 from satisfactory_mcp.planning.prepare import prepare
+from satisfactory_mcp.save.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -28,6 +37,14 @@ SPIRE = dict(
 )
 HEADROOM = 711.49
 
+#: A real recipe id, so a fabricated machine record is assessed as a machine with a
+#: recipe rather than falling into health.py's "no recipe" bucket and hiding the state
+#: the test is actually setting.
+A_RECIPE = "Recipe_Alternate_HeavyOilResidue_C"
+
+#: The full 300 s productivity window. Fixed by the game on every carrier in the save.
+WINDOW = 300.0
+
 
 @pytest.fixture
 def plan(game, state):
@@ -37,6 +54,73 @@ def plan(game, state):
 @pytest.fixture
 def run(plan, game):
     return commission(plan, game, HEADROOM, "test")
+
+
+def _record(name: str, uptime: dict | None) -> dict:
+    record = {"instance": f"L:P.{name}", "cls": "Build_OilRefinery_C", "recipe": A_RECIPE}
+    if uptime is not None:
+        record["uptime"] = uptime
+    return record
+
+
+#: The three evidence states a built machine can be in, as the save records them.
+#: "running" is the only one that proves power; the other two are silence with and
+#: without a monitor behind it, and neither may be reported as "unpowered".
+EVIDENCE = {
+    "running": {"window_s": WINDOW, "produce_s": WINDOW, "cur_window_s": 0.0, "cur_produce_s": 0.0},
+    "dark": {"window_s": WINDOW, "produce_s": 0.0, "cur_window_s": 0.0, "cur_produce_s": 0.0},
+    "unmonitored": None,
+}
+
+
+def _built(plan, game, fraction: float, evidence: str = "running"):
+    """A (DiffReport, WorldState) pair standing in for a save at a chosen completeness.
+
+    Fabricated rather than measured because the two cases that matter most -- nothing
+    built and everything built -- are the two the reference save is not, and a tracker
+    that only works partway through is exactly the one that misreports the end of a build.
+    """
+    totals: dict[tuple, int] = {}
+    shape: dict[tuple, dict] = {}
+    for proc in plan.solution.processes:
+        key = group_key(proc)
+        totals[key] = totals.get(key, 0) + proc["machines"]
+        shape.setdefault(key, proc)
+
+    rows, records = [], []
+    for n, (key, need) in enumerate(totals.items()):
+        have = round(need * fraction)
+        names = [f"Fake_{n}_{i}" for i in range(have)]
+        records += [_record(name, EVIDENCE[evidence]) for name in names]
+        rows.append(
+            DiffRow(
+                stage=1,
+                key=key,
+                have_instances=names,
+                verb="OK" if have >= need else "BUILD",
+                count=max(0, need - have),
+                process=shape[key]["label"],
+                building_id=shape[key]["building_id"],
+                building=shape[key]["building"],
+                need=need,
+                have=have,
+                build=max(0, need - have),
+            )
+        )
+    report = DiffReport(
+        rows=rows,
+        cost=[],
+        neighbours=[],
+        notes=[],
+        to_build=sum(r.build for r in rows),
+        to_build_max=sum(r.build for r in rows),
+        headroom_mw=HEADROOM,
+        deficit_mw=0.0,
+        slices=1,
+        anchor=None,
+        save_id="fake",
+    )
+    return report, WorldState(projection={"machines": records}, game=game)
 
 
 # --------------------------------------------------------- the game rule
@@ -218,3 +302,207 @@ def test_generator_rows_survive_truncation(game):
     # And truncation is announced rather than silent, so a short table does not read as
     # the whole sequence.
     assert "more: call again with offset" in out
+
+
+# ------------------------------------------------- which stage am I in: the grouping
+
+
+def test_a_stage_is_a_wave_and_the_two_never_disagree(plan, run, game, state):
+    """Stages are the commissioning partition re-read from the save, not a second
+    partition invented here. If the two ever diverged, the sequence a player was handed
+    and the progress they are shown against it would be counting different machines."""
+    report, world = _built(plan, game, 0.0)
+    tracking = track(plan, run, report, game, world)
+    assert [s.index for s in tracking.stages] == [w.index for w in run.waves]
+    assert [s.machines for s in tracking.stages] == [w.machines for w in run.waves]
+    assert tracking.machines == sum(p["machines"] for p in plan.solution.processes)
+
+
+def test_the_join_is_the_diff_identity_key_not_the_label(plan, run, game, state):
+    """A label is a display string and two build jobs can share one. The wave carries the
+    process id and the diff carries group_key, and joining on anything else would let the
+    tracker credit a Refinery on one recipe with a Refinery on another."""
+    keys = {group_key(p) for p in plan.solution.processes}
+    report = build_diff(game, state, plan.solution, plan.request)
+    assert {r.key for r in report.rows} == keys
+    assert all(r.key for r in report.rows)
+
+
+def test_built_machines_fill_the_earliest_stage_first(plan, run, game):
+    """Identical machines are indistinguishable in the save -- nothing records which
+    Refinery was meant for wave 2 -- so progress is assumed to follow the order the
+    sequence prescribes. Any other rule would need evidence the file does not have."""
+    report, world = _built(plan, game, 0.5)
+    tracking = track(plan, run, report, game, world)
+    # One build job's share, stage by stage. It is split across waves precisely because
+    # a wave can only afford part of it, which is what makes the ordering visible.
+    split = [
+        [r for r in s.rows if r.label == plan.solution.processes[0]["label"]]
+        for s in tracking.stages
+    ]
+    shares = [(r.built, r.machines) for rows in split for r in rows]
+    assert len(shares) > 1, "the reference plan should split at least one job across waves"
+    starved = False
+    for built, machines in shares:
+        assert not (starved and built), "a later stage was credited before an earlier one"
+        starved = starved or built < machines
+    assert tracking.stages[0].rows[0].built == tracking.stages[0].rows[0].machines
+
+
+# ------------------------------------------------- built and energised are different
+
+
+def test_only_production_in_the_last_window_proves_power(plan, run, game):
+    """THE distinction. A machine that produced inside the 300 s window certainly had
+    power. That is the only positive evidence of energisation in the save, and it is the
+    only thing `running` is ever allowed to count."""
+    report, world = _built(plan, game, 1.0, evidence="running")
+    lit = track(plan, run, report, game, world)
+    assert lit.running == lit.built == lit.machines
+
+    report, world = _built(plan, game, 1.0, evidence="dark")
+    dark = track(plan, run, report, game, world)
+    assert dark.built == dark.machines
+    assert dark.running == 0
+
+
+def test_a_fully_built_dark_plant_is_a_valid_state_not_an_anomaly(plan, run, game):
+    """The whole point of the Q1 re-frame: you build the entire plant unpowered and then
+    energise it block by block, so every stage complete and nothing running is the
+    EXPECTED state on the day the build finishes. A tracker that flagged it, or that read
+    it as "unpowered", would be wrong on the most important day of the plan."""
+    report, world = _built(plan, game, 1.0, evidence="dark")
+    tracking = track(plan, run, report, game, world)
+    assert all(s.complete for s in tracking.stages)
+    assert tracking.current == 0
+    assert all(s.dark == s.built for s in tracking.stages)
+    assert not tracking.warnings
+
+
+def test_silence_with_no_monitor_is_reported_as_no_evidence_not_as_zero_running(plan, run, game):
+    """A save that carries no productivity monitor says NOTHING about what is energised,
+    which is a different report from "nothing is running" and must not be printed as one.
+    Same precedent as sloop_budget reporting committed sloops as unknown rather than 0."""
+    report, world = _built(plan, game, 1.0, evidence="unmonitored")
+    tracking = track(plan, run, report, game, world)
+    assert tracking.built == tracking.machines
+    assert tracking.monitored == 0
+    assert any("NO evidence either way" in w for w in tracking.warnings)
+
+
+def test_the_save_carries_no_direct_answer_about_power(state):
+    """Pinned because the gap is the finding, and a future projection change might close
+    it. mHasPower and mCircuitID on UFGPowerInfoComponent carry no SaveGame specifier, so
+    grid membership is rebuilt at load and never persisted; there is no property here to
+    read "is this block switched on" from, whatever else the projection grows."""
+    records = [
+        *state.projection.get("machines", ()),
+        *state.projection.get("extractors", ()),
+        *state.projection.get("generators", ()),
+    ]
+    assert records
+    assert not any("has_power" in r or "circuit" in r for r in records)
+
+
+# ------------------------------------------------- the ends of the build
+
+
+def test_nothing_built_puts_you_in_the_first_stage(plan, run, game):
+    """A greenfield plan. Every stage 0%, and the answer is stage 1 rather than a
+    division by zero or a cheerful "complete"."""
+    report, world = _built(plan, game, 0.0)
+    tracking = track(plan, run, report, game, world)
+    assert tracking.built == 0
+    assert tracking.current == 1
+    assert all(not s.complete and s.fraction_built == 0.0 for s in tracking.stages)
+
+
+def test_everything_built_reports_no_current_stage(plan, run, game):
+    """Zero means "there is no stage you are partway through", not stage zero. At that
+    point the build is over and the only remaining question is energisation, which the
+    save cannot answer -- so claiming a stage there would be inventing one."""
+    report, world = _built(plan, game, 1.0)
+    tracking = track(plan, run, report, game, world)
+    assert tracking.current == 0
+    assert tracking.built == tracking.machines
+
+
+def test_no_startup_order_means_no_stages_rather_than_an_exception(plan, game):
+    """Below the minimum slice there is no sequence, so there is nothing to match the
+    save against. The tracker says that instead of dividing an empty partition."""
+    starved = commission(plan, game, 10.0, "test")
+    report, world = _built(plan, game, 0.5)
+    tracking = track(plan, starved, report, game, world)
+    assert not tracking.ok
+    assert not tracking.stages
+    assert any("no stages" in w for w in tracking.warnings)
+
+
+# ------------------------------------------------- the tool
+
+
+def test_the_tool_groups_the_diff_by_stage(game):
+    """stage=0 asks for the overview without a stored plan. The table is the point: one
+    row per wave, with what is built and what is proven running side by side."""
+    out = srv.diff_vs_save(stage=0, **SPIRE)
+    assert not out.startswith("! ")
+    assert "# STAGES" in out
+    assert "stage\ton\tbuilt\trunning" in out
+    assert "S1" in out
+
+
+def test_the_stage_overview_never_calls_a_dark_block_unpowered(game):
+    """The one way this feature can be confidently wrong. Silence has four causes and the
+    save separates none of them, so the word must not appear as a verdict."""
+    out = srv.diff_vs_save(stage=0, **SPIRE)
+    assert "built and ENERGISED are different states" in out
+    assert "may be unpowered, starved, blocked or simply idle" in out
+    assert "not an anomaly" in out
+
+
+def test_the_stage_filter_shows_one_stage_and_drops_the_cost_table(game):
+    """A stage is a switch-on, not a build step: the whole plant is built first, so
+    splitting the materials bill across stages would describe a build nobody does."""
+    out = srv.diff_vs_save(stage=1, **SPIRE)
+    assert "# STAGE 1 of" in out
+    assert "act\ton\tbuilt\trunning" in out
+    assert "cost of the build counts" not in out
+    assert "materials are NOT split by stage" in out
+
+
+def test_an_unknown_stage_names_the_stages_that_exist(game):
+    """Rather than an empty table, which would read as "stage 9 is done"."""
+    out = srv.diff_vs_save(stage=99, **SPIRE)
+    assert "no stage 99" in out
+    assert "it has stages 1" in out
+
+
+def test_a_stage_number_without_a_stored_plan_says_it_will_move(game):
+    """Stage numbers are only a milestone if the partition is stable, and it is stable
+    only for a stored request. Derived from loose arguments they renumber the moment an
+    argument or the world moves, so the tool says so rather than letting a player write
+    "I am in stage 3" in their notes against nothing."""
+    out = srv.diff_vs_save(stage=0, **SPIRE)
+    assert "not a stored plan" in out
+    assert "save_as" in out
+
+
+def test_an_unknown_plan_name_is_a_message_not_an_exception(game):
+    out = srv.diff_vs_save(plan="no-such-plan", stage=1)
+    assert out.startswith("! no saved plan named 'no-such-plan'")
+
+
+def test_recalling_a_stored_plan_answers_which_stage_you_are_in(game, tmp_path, monkeypatch):
+    """The headline case: `diff_vs_save(plan=...)` with no stage argument at all. A
+    stored plan is what makes a stage number worth writing down, so recalling one turns
+    the grouping on without being asked, and the caveat about loose numbering drops."""
+    from satisfactory_mcp.planning import store as store_mod
+
+    monkeypatch.setattr(store_mod.config, "plans_dir", lambda: tmp_path)
+    saved = srv.plan_factory(save_as="stage-test", **SPIRE)
+    assert "saved as 'stage-test'" in saved
+
+    out = srv.diff_vs_save(plan="stage-test")
+    assert "# STAGES" in out
+    assert "you are in STAGE" in out or "every stage is built" in out
+    assert "not a stored plan" not in out

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 579 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 626 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1660,6 +1660,37 @@ Reported as a span, **never as a pump count**: head per pump is a game rule this
 no data for, and a test asserts no pump count is invented. Solid fields say nothing, because
 a coal field climbing 200 m costs a belt nothing.
 
+### 8.5b2 Elevation, sampled -- because there is no heightmap
+
+`z` reached the node table and the trunk head spans, but a bare coordinate still had no
+answer. Nothing in Docs.json or the save carries terrain. What both carry is a lot of
+things whose Z is exact:
+
+| source | count | is it ground? |
+|---|---|---|
+| resource nodes | 608 | **yes** -- a node rests on terrain, and needs no save |
+| foundation/wall pieces | 8,347 | no -- built elevation |
+| production buildings | 566 | no -- built elevation |
+
+So `describe_location` answers with a **sample**, its count and its spread, never an
+interpolated surface. A single number invented from three points 40 m apart reads as
+measured and is not.
+
+**Ground and built are separate populations, and that is the load-bearing decision.** A
+foundation is wherever the player put it -- often deliberately level across a slope. On this
+world's main platform the probe finds **805 structures against 1 node**, so an average would
+silently *become* the platform height while still being labelled ground. Reported apart,
+their difference is the interesting number instead: the fill already stacked there.
+
+Even that difference is refused below `MIN_GROUND_SAMPLES = 3`. Not a statistical
+threshold -- a refusal: one node is a point, and a point is not a ground level. Quoting a
+25 m fill from a single sample would be an invented number wearing a measurement's clothes.
+
+Unsurveyed ground says so and names the radius, the same way the tool already returns
+'off-map or ocean' rather than guessing the nearest land region. And an old projection
+(the committed fixture is schema 5, predating `structures`) loses one source rather than
+failing.
+
 ### 8.5c Which nodes share a pipe
 
 `logistics` already counts LINES -- `ceil(rate / capacity)` -- which is the right total and
@@ -1754,6 +1785,136 @@ plan wants is cheapest of all, untapped is next, and a node held by the WRONG ex
 last because taking it means demolishing something running. On the reference save all
 thirteen Spire crude nodes are tapped -- every one by the Oil Pump the plan wants -- so a
 plain free-first rule would have ranked them all equal-worst.
+
+### 8.5e Which stage am I in — detected from the save, never stored
+
+Lukas: *"I feel like the mcp should have fundamental capacity to identify stages."* So a stage is a
+domain concept, not a printout — and usefully, one that needs **no new persistence layer at all**.
+A stage is a partition of a stored plan (§ 8.5d), and `diff_vs_save` already matches built machines
+against a plan by identity, so *grouping that output by stage* is the whole feature. Nothing is
+written; a stored plan is still only a stored *request* (§ 10.1a) and is re-solved every call.
+
+Three modules and no new tool, because each already owns exactly one half of the answer:
+
+| owns | module | contributes |
+|---|---|---|
+| the partition | `commission()` | which machines are in wave *k* |
+| the matching | `build_diff()` | which of them exist in the save |
+| the evidence | `graph.health.assess()` | what each existing one is doing |
+
+`track()` only joins them, on `diff.group_key` — the same key the diff matches on, promoted from
+private to public for exactly this reason. Joining on anything else (the display label, the building
+class) would let the tracker credit a Refinery on Alt HOR with one making alumina, which is the
+failure §8.6 exists to prevent, re-introduced one layer up.
+
+**Built machines fill the earliest stage first.** Identical machines are indistinguishable in the
+save — nothing records which Refinery was *meant* for wave 2 — so progress is assumed to have been
+made in the order the sequence prescribes, and within a stage the machines proven to be running are
+taken first. This is a modelling decision, not a measurement, and it is stated in the code that makes
+it. Any other rule needs evidence the file does not carry.
+
+#### Built and energised are different states, and the save proves only one of them
+
+This is the crux, and conflating the two would make the tracker lie on the most important day of a
+build. Under the Q1 re-frame you construct the entire plant unpowered and then energise it block by
+block, so **fully built and wholly dark is the expected state**, not an anomaly. What the file
+actually supports, measured on the reference save rather than assumed:
+
+| signal | present | what it settles |
+|---|---|---|
+| `uptime` (300 s productivity window) | **517 of 566** machines/extractors/generators | `produce_s > 0` **proves** the machine ran, so it **had power**. The only positive evidence of energisation in the file. |
+| `uptime` at zero | the other side of the same field | Proves nothing. Unpowered, starved, blocked and idle are indistinguishable. |
+| `buffers` | every record | Names a *supply* cause (blocked / starved), which **excludes** power as the explanation but can never confirm it. |
+| `paused` (`mIsProductionPaused`) | 16 actors | A different thing entirely: the player switched this machine off, recorded per machine whatever the grid is doing. |
+| `clock` (`mCurrentPotential`) | 46 actors | A slider position, not a state. Does not move when power does. |
+| power wires (`graph.power`) | 1,287 edges | "Wired to nothing" is knowable. Wired is **not** energised. |
+| `mHasPower` | **0 of 44,307 objects** | Carries no `SaveGame` specifier on `UFGPowerInfoComponent` (checked in Headers.zip). Not in the file. |
+| `mCircuitID` | **0** | Same — grid membership is rebuilt at load, so *which grid a machine is on* is not readable. |
+| `BP_CircuitSubsystem` | 1 object, **empty property set** | Confirms the above from the other direction. |
+| `mIsSwitchOn` | *is* `SaveGame` on `AFGBuildableCircuitSwitch` | …but this world has built **no power switch at all**, and the projection does not read one. Even the per-block switch § 8.5d recommends would be unreadable today. |
+
+So a stage reports `running` — what it can prove — and **refuses to convert silence into
+"unpowered"**. The residue after the save's own explanations (paused, starved, blocked, no recipe,
+dead node) are taken out is reported as `dark`, health.py's `stalled` bucket plus the unmonitored,
+and named as *consistent with* not being energised rather than as evidence of it. Same precedent as
+`sloop_budget()` reporting committed sloops as unknown rather than zero (§ 6.5) and
+`phase_requirements` labelling stale rows instead of filtering them (§ 6.4). A save carrying **no**
+monitor at all — the committed test projection is one — reports *no evidence either way*, which is a
+different answer from "nothing is running" and must never be printed as one.
+
+#### The surface
+
+No new tool. `diff_vs_save` gains one argument:
+
+* `plan=<name>` alone appends the stage table — a stored plan is what makes a stage number worth
+  writing down, so recalling one turns grouping on without being asked.
+* `stage=<n>` narrows to one stage's delta, and **drops the cost table**: a stage is a switch-on, not
+  a build step, so splitting the materials bill across stages would describe a build nobody does.
+* `stage=0` asks for the overview without a stored plan, at the stated cost that the numbering
+  renumbers whenever an argument or the world moves.
+* Plan-id drift is reported *here*, not only in `list_plans`, because a stage number is a milestone a
+  player remembers and a re-solve against a moved world can renumber the whole partition under them.
+
+Grouping is off by default: the numbering is only stable for a stored plan, and a diff nobody asked a
+stage question of should not pay the context for one (the 2,600-char diff budget is pinned). Where
+the stage table appears, the older *"place it in ≥18 proportional slices"* line is suppressed — that
+is the answer from **before** the startup-order re-frame, and printing it beside a startup order tells
+the player to partition a build that is not partitioned.
+
+Measured against the reference save with the stored `spire-coast-full` plan (787 buildings, 99,730 MW,
+711 MW free):
+
+| stage | on | built | running | MW | free after | state |
+|---|---|---|---|---|---|---|
+| S1 | 17 | 13 | 13 | −701 / +1,750 | 1,761 | 76% built |
+| S2 | 72 | 22..25 | 23 | −1,627 / +10,000 | 10,134 | 31–35% built |
+| S3 | 524 | 7..23 | 10 | −10,024 / +76,500 | 76,610 | 1–4% built |
+| S4 | 174 | 0 | 0 | −2,901 / +26,750 | 100,458 | not built |
+
+→ *you are in **stage 1** of 4: 76% built (13/17), 13 machines proven running.*
+
+Built counts stay a **range** wherever identity is unavailable, for the same reason § 8.6 gives — and
+that is why `running` can sit *above* the low bound without contradicting it: the low bound throws
+away every Water Extractor that cannot be attributed to this plan, and some of those are running. The
+two columns have different denominators, and the report says so rather than letting the numbers
+argue with each other.
+
+### 8.5f What a plan costs to build
+
+The startup re-frame separated running cost from construction cost (§ 8.5d), and only the
+first had ever been measured. `plan_layout detail="materials"` measures the second:
+
+```
+machines=821  foundations=6529  distinct_parts=15
+costliest: 488x Fuel-Powered Generator = 78,080 parts, 6529x Foundation = 32,645 parts
+
+item                      need    have   short   for
+Concrete                 32645   60622          Foundation
+Rubber                   24400    5996   18404  Fuel-Powered Generator
+Motor                    10705    5254    5451  Fuel-Powered Generator, Blender, Refinery
+Heavy Modular Frame        920     244     676  Blender
+```
+
+**This does not replace `diff._cost`, and the difference is the point.** That charges the
+**delta** -- what is left to place -- filtered to what you are short of and ranked by how
+hard the shortfall is to fix: a shopping list for the next session. This charges the
+**whole plan**, every item whether or not you hold it, attributed to the buildings that
+want it. Neither is derivable from the other, and a reader who conflates them will think
+the plant is cheaper than it is, so the output says so out loud.
+
+**Foundations are the number nobody had.** They are not machines, so no build table counted
+them, and 6,529 of them at 5 Concrete each is 32,645 Concrete -- larger than every machine
+line except Rubber. It is charged at `total_foundations`, not `Layout.foundations`: the
+latter is the PEAK floor, which is what sizes the *ground* because floors stack, but
+concrete is poured for every storey. Charging the peak would understate the deck by the
+height of the stack.
+
+Two refusals, both familiar. **Belts and pipes are not costed** -- their cost is per metre
+and there is no route, so a length here would be the largest invented number in the
+project; line counts and the trunk lower bound are offered instead. And the bill stops at
+**build-gun components, not ore**: flattening would have to guess a depth through the
+Recycled Plastic / Recycled Rubber 2-cycle, which is exactly why `bom` uses an LP. The two
+compose -- this says "10,705 Motors", `bom` says what a Motor costs.
 
 ### 8.6 Diff vs save — what to actually change
 
