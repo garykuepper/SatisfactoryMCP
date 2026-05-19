@@ -13,13 +13,13 @@ from ..app import Limit, _item_id, _resolve_factory, _state, game, mcp
 from ..docs.constants import WATER_EXTRACTOR_WARN_AT
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
-from ..planning import byproducts, compare, supply
+from ..planning import byproducts, compare
 from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
 from ..planning.layout import build_layout, fluid_head
-from ..planning.optimize import MW, free_lunch_audit, solve
-from ..planning.scenario import EXPORT_HELP, build_scenario, resolve_item
-from ..spatial.select import SELECTOR_HELP
+from ..planning.optimize import MW
+from ..planning.prepare import prepare
+from ..planning.scenario import build_scenario, resolve_item
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -240,28 +240,22 @@ def plan_factory(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    req = build_scenario(g, st, **plan_kwargs)
-    sel, sc = req.selection, req.scenario
-    if sel.errors and not sel.nodes:
-        return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
-    if req.export_errors:
-        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
-
-    audit_ok, audit_val = free_lunch_audit(sc)
-    sol = solve(sc)
-    if not sol.ok:
-        return render.envelope(
-            f"# INFEASIBLE ({objective})",
-            "",
-            [
-                *sol.warnings,
-                *supply.describe(supply.diagnose(req, g, st.unlocked_building_ids), g),
-                (
-                    "with equality balances, infeasible usually means a byproduct has "
-                    "no consumer and no legal sink -- try adding it to exports"
-                ),
-            ],
+    prepared = prepare(g, st, plan_kwargs, objective_label=objective, audit=True)
+    if prepared.failure:
+        hint = (
+            "with equality balances, infeasible usually means a byproduct has no "
+            "consumer and no legal sink -- try adding it to exports"
         )
+        notes = (
+            [*prepared.failure.notes, hint]
+            if "INFEASIBLE" in prepared.failure.headline
+            else prepared.failure.notes
+        )
+        return render.envelope(f"# {prepared.failure.headline}", "", notes)
+    req, sol = prepared.request, prepared.solution
+    sel = req.selection
+    sel = req.selection
+    audit_ok, audit_val = prepared.audit_ok, prepared.audit_value
 
     rows_out = [
         (
@@ -274,7 +268,7 @@ def plan_factory(
         )
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
-    notes = [*sel.errors, *req.recipe_errors, *sol.warnings]
+    notes = [*sel.errors, *req.recipe_errors, *prepared.notes]
 
     # Water has no nodes, no purity and no geometry in any data this project can read,
     # so the extractor count is bounded by an ASSUMPTION rather than by the map. Say so
@@ -304,12 +298,6 @@ def plan_factory(
             f"must be sourced at sea level and cannot be gravity-fed.{space} Pass "
             "water_extractors=<what your site holds> to plan against the real limit"
         )
-    # A SUCCESSFUL plan can still be answering a question it cannot answer. An export
-    # nothing produces is now pinned to zero rather than conjured, but zero output is a
-    # quiet answer, so the reason is said out loud on this path too -- not only when the
-    # solve fails. Costs nothing: this branch of the diagnostic runs no probe.
-    for line in supply.unmakeable(req, g):
-        notes.append(line + " -- it is pinned to 0 in this plan")
     if req.excluded:
         notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:
@@ -515,20 +503,16 @@ def plan_layout(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    req = build_scenario(g, st, **plan_kwargs)
-    sel, sc = req.selection, req.scenario
-    if sel.errors and not sel.nodes:
-        return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
-    if req.export_errors:
-        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
-
-    sol = solve(sc)
-    if not sol.ok:
+    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
+    if prepared.failure:
+        suffix = " -- nothing to lay out" if "INFEASIBLE" in prepared.failure.headline else ""
         return render.envelope(
-            f"# INFEASIBLE ({objective}) -- nothing to lay out",
+            f"# {prepared.failure.headline}{suffix}",
             "",
-            [*sol.warnings, "see plan_factory for why"],
+            [*prepared.failure.notes, "see plan_factory for why"],
         )
+    req, sol = prepared.request, prepared.solution
+    sel = req.selection
 
     lay = build_layout(g, sol, belt_ipm=belt_ipm, pipe_m3min=pipe_m3min)
     production = [f for f in lay.floors if f.kind == "production"]
@@ -781,22 +765,18 @@ def diff_vs_save(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    req = build_scenario(g, st, **plan_kwargs)
-    sel = req.selection
-    if sel.errors and not sel.nodes:
-        return render.envelope("# no sources selected", "", [*sel.errors, SELECTOR_HELP])
-    if req.export_errors:
-        return render.envelope("# unusable exports", "", [*req.export_errors, EXPORT_HELP])
-
-    sol = solve(req.scenario)
-    if not sol.ok:
+    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
+    if prepared.failure:
         # Hand back the plan's own reason. An empty diff table would read as "you
         # already have it", which is the opposite of what infeasible means.
+        suffix = " -- no plan to diff against" if "INFEASIBLE" in prepared.failure.headline else ""
         return render.envelope(
-            f"# INFEASIBLE ({objective}) -- no plan to diff against",
+            f"# {prepared.failure.headline}{suffix}",
             "",
-            [*sol.warnings, "see plan_factory for why; there is nothing to change yet"],
+            [*prepared.failure.notes, "see plan_factory for why; there is nothing to change yet"],
         )
+    req, sol = prepared.request, prepared.solution
+    sel = req.selection
 
     if not sol.processes:
         # Feasible but empty. Rendering an empty table would read as "nothing to do",

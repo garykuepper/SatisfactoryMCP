@@ -257,3 +257,63 @@ def test_fluid_head_names_what_the_floor_order_costs(game, state):
     water = [d for d in head if d["item"] == "Water"]
     assert water and water[0]["direction"] == "climbs"
     assert head[0]["floors"] >= water[0]["floors"], "sorted by how far it is lifted"
+
+
+def test_the_three_planning_tools_share_one_pipeline(game, state):
+    """They ran the same seven-step prologue three times, and the copies drifted:
+    plan_layout stopped accepting extractor_clocks and water_extractors and silently
+    re-solved at defaults. One implementation cannot drift from itself."""
+    import inspect
+
+    from satisfactory_mcp.tools import planning
+
+    for name in ("plan_factory", "plan_layout", "diff_vs_save"):
+        src = inspect.getsource(getattr(planning, name))
+        assert "prepare(" in src, f"{name} does not use the shared pipeline"
+        assert "build_scenario(" not in src, f"{name} still builds its own scenario"
+        assert "= solve(" not in src, f"{name} still solves for itself"
+
+
+def test_prepare_renders_nothing(game, state):
+    """The pipeline is reusable only if it is free of presentation. A failure comes back
+    as a headline plus notes and the TOOL decides how to show it."""
+    import inspect
+
+    from satisfactory_mcp.planning import prepare as prepare_mod
+
+    src = inspect.getsource(prepare_mod)
+    assert "render." not in src
+    assert "envelope" not in src
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        (dict(sources=["region:Nowhere"], exports=["MW"]), "no sources selected"),
+        (dict(exports=["Plastik"]), "unusable exports"),
+    ],
+)
+def test_every_planning_tool_reports_a_bad_request_the_same_way(game, state, kwargs, expected):
+    """Shared guards mean shared wording. Before, each tool spelled these out itself."""
+    from satisfactory_mcp import server as srv
+
+    for fn in (srv.plan_factory, srv.plan_layout, srv.diff_vs_save):
+        out = fn(limit=1, **kwargs)
+        assert expected in out.splitlines()[0], (fn.__name__, out.splitlines()[0])
+
+
+def test_prepare_is_usable_without_the_mcp_layer(game, state):
+    """The point of the extraction: a script or a batch planner can solve without going
+    through a tool, and gets the same guards."""
+    from satisfactory_mcp.planning.prepare import prepare
+
+    good = prepare(
+        game, state, {"objective": "max_mw", "sources": ["region:Spire Coast"], "exports": ["MW"]}
+    )
+    assert good.ok and good.solution.net_mw > 0
+
+    bad = prepare(
+        game, state, {"objective": "max_mw", "sources": ["region:Nowhere"], "exports": ["MW"]}
+    )
+    assert not bad.ok
+    assert bad.failure.headline == "no sources selected"

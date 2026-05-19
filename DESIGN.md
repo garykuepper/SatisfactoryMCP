@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 507 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 512 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -173,7 +173,7 @@ SatisfactoryMcp/
     graph/    model.py  build.py  structure.py  identity.py  cohere.py
               labels.py  select.py  query.py  health.py
     spatial/  geo.py  nodes.py  regions.py  select.py  maplink.py
-    planning/ optimize.py  scenario.py  diff.py  layout.py  advisor.py
+    planning/ optimize.py  scenario.py  prepare.py  diff.py  layout.py  advisor.py
               supply.py  bom.py  fit.py  store.py  byproducts.py  compare.py
     render.py          # ALL formatting: TSV, envelopes, truncation
     app.py             # the mcp object + resolvers more than one tool group needs
@@ -2014,6 +2014,40 @@ clean in both states; the test suite caught them.
 
 `progression` also corrects a mislabel: `phase_requirements` and `power_shards` had been
 spliced under the *resources* banner during a parallel merge, and are tools.
+
+### 10.1e Tools call services; they do not contain them
+
+The domain already lived in `docs/`, `graph/`, `planning/` and `spatial/`. What a tool
+module holds after the split is argument marshalling, orchestration and rendering — of
+`plan_factory`'s 252 lines, roughly 20 marshal arguments, 10 orchestrate and 200 present.
+Presentation belongs in the tool. **Orchestration did not**, and the evidence is a bug.
+
+`plan_factory`, `plan_layout` and `diff_vs_save` each wrote out the same seven steps:
+recall a saved plan → merge overrides → build a scenario → reject an empty source
+selection → reject an unusable export → solve → explain a failure. Three copies drift, and
+these did: `plan_layout` stopped accepting `extractor_clocks` and `water_extractors`, so it
+silently re-solved at defaults and schematised a different plan than the one it was asked
+to draw — **15,043 MW against 83,737**. Nothing in its output said arguments had been
+dropped, because from its own point of view none had.
+
+`planning/prepare.py` is that sequence, once. It returns a `PreparedPlan` carrying either a
+solution or a `PlanFailure` of headline plus notes.
+
+**It renders nothing**, and a test asserts so. Wording stays with the tool because the three
+genuinely differ — `plan_factory` explains byproduct balance, while the other two defer to
+it rather than repeating a diagnosis they did not run. Sequence is shared; voice is not.
+
+Tests pin the shape rather than the behaviour alone: no planning tool may call
+`build_scenario` or `solve` directly, `prepare` may not mention `render`, and all three
+must report a bad request identically. There is also a test that `prepare` works with no
+MCP layer at all, which is the point of the extraction — a script or a batch planner gets
+the same guards.
+
+**Not everything was extracted, deliberately.** `search_resource_nodes` (177 lines) and
+`factory_query` (185) are long but their length is filtering and table-building against a
+domain call that already exists; there is no second copy to drift from. Extracting those
+would add indirection and remove nothing. The rule applied was: extract where logic is
+*duplicated* or *unreachable without the MCP layer*, not wherever a function is long.
 
 ### 10.2 Context budget
 
