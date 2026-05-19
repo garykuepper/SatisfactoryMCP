@@ -20,6 +20,7 @@ from ..planning.layout import build_layout, fluid_head
 from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.scenario import build_scenario, resolve_item
+from ..planning.slice import slice_of
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -298,6 +299,45 @@ def plan_factory(
             f"must be sourced at sea level and cannot be gravity-fed.{space} Pass "
             "water_extractors=<what your site holds> to plan against the real limit"
         )
+    # Shards and sloops, from the clocks the plan already chose. Hand-totalling this is
+    # error-prone in a specific way: a shard raises the MAXIMUM clock by 0.5, so a
+    # machine at 150% needs one and only a machine at 250% needs three. Assuming three
+    # apiece overstates a mixed plan badly.
+    bill = slice_of(prepared, g)
+    if bill.shard_rows:
+        budget = st.shard_budget()
+        detail = ", ".join(
+            f"{r.machines}x {r.label.split(' on ')[0]} @{r.clock:.0%} = {r.total}"
+            for r in bill.shard_rows[:4]
+        )
+        verdict = (
+            "already free"
+            if bill.shards <= budget["free"]
+            else "affordable after crafting slugs"
+            if bill.shards <= budget["potential"]
+            else f"SHORT by {bill.shards - budget['potential']:.0f}"
+        )
+        notes.append(
+            f"power shards: {bill.shards} needed ({detail}); you hold "
+            f"{budget['free']:.0f} free + {budget['craftable']:.0f} craftable "
+            f"= {budget['potential']:.0f} -- {verdict}"
+        )
+    if bill.sloop_rows:
+        top = bill.sloop_rows[0]
+        aside = (
+            f" A further {bill.unboostable_slots} slot(s) sit in generators and "
+            "extractors, which this model cannot production-boost, so they are not "
+            "counted as capacity."
+            if bill.unboostable_slots
+            else ""
+        )
+        notes.append(
+            f"somersloops: {bill.sloop_slots} boostable slot(s), none used. Filling "
+            f"{top.label[:28]} ({top.machines}x{top.slots_each}={top.total}) would run "
+            f"it at {top.boost:g}x output for 4x power, halving that block."
+            f"{aside} Reported, not spent -- nothing here plans sloops"
+        )
+
     if req.excluded:
         notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:

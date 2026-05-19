@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 512 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 521 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -173,7 +173,7 @@ SatisfactoryMcp/
     graph/    model.py  build.py  structure.py  identity.py  cohere.py
               labels.py  select.py  query.py  health.py
     spatial/  geo.py  nodes.py  regions.py  select.py  maplink.py
-    planning/ optimize.py  scenario.py  prepare.py  diff.py  layout.py  advisor.py
+    planning/ optimize.py  scenario.py  prepare.py  slice.py  diff.py  layout.py
               supply.py  bom.py  fit.py  store.py  byproducts.py  compare.py
     render.py          # ALL formatting: TSV, envelopes, truncation
     app.py             # the mcp object + resolvers more than one tool group needs
@@ -1418,6 +1418,46 @@ This feeds straight back into §8.2c's water problem. "Siting is not modelled" i
 single line"* is something you can hold against a platform. Area is unambiguous and
 frontage assumes one line along a shore, so both are given rather than one dressed up as
 the answer.
+
+### 8.2e Plan slices, and the shard bill
+
+Every plan-level question that is not "solve it" is the same operation: take some of the
+processes and total their power, flows, shards and sloop slots. `planning/slice.py` is that
+operation; the shard bill is one call to it and commissioning will be it in a loop.
+
+**Two power figures, and the difference is not rounding.** `mw_linear` is what the LP
+optimised — power proportional to machine-equivalents. `mw` is exact, after whole machines
+are placed at a derived clock. `clock**exponent` is convex, so N machines below 100% draw
+*less* than the linear estimate. The identity that holds is
+
+```
+solution.net_mw == sum(mw_linear) - sink_mw        # exactly
+```
+
+and the exact figure is better — 43,101 MW against 43,092 promised on a measured plan.
+**Headroom checks must use the exact one**: it is what the machines actually draw, and
+erring the other way would reject a slice that fits.
+
+`sink_mw` belongs to the plan, not to any process — an AWESOME Sink is charged per belt
+line of sunk material and no column owns it. A partial slice reports 0 rather than a
+prorated invention.
+
+**The shard bill.** `plan_factory` now prints it from the clocks the plan already chose:
+
+```
+power shards: 109 needed (64x Water Extractor @150% = 64, 7x Oil Extractor @250% = 21, …);
+you hold 22 free + 407 craftable = 429 -- affordable after crafting slugs
+```
+
+The arithmetic is easy to get wrong by hand and was: a shard raises the **maximum** clock by
+0.5, so 150% costs one and only 250% costs three. Assuming three apiece gave 192 where the
+answer is 109.
+
+**Somersloops are reported, never spent**, and only where they do something. Generators and
+extractors carry slots with `can_boost = False`, so `boost_for` correctly returns 1.0 — the
+first version advertised a Fuel Generator block at "1x output", which is nonsense dressed as
+a recommendation. Those slots are counted separately as *unboostable* and never presented as
+capacity. `Process.sloops` remains 0 everywhere: nothing plans them yet.
 
 ### 8.3 Guards
 
