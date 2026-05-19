@@ -53,9 +53,7 @@ _EXTRACTOR_PREFERENCE = (
     "Build_MinerMk1_C",
 )
 
-#: Water comes from water volumes, not from the node table, so it is not node-limited.
-#: Cap the extractor COUNT rather than the flow, so the burden stays visible.
-_WATER_EXTRACTOR_CAP = 200
+from ..docs.constants import WATER_EXTRACTOR_CAP_ASSUMED
 
 
 def resolve_item(game: GameData, query: str) -> str | None:
@@ -152,6 +150,7 @@ def build_scenario(
     pipe_m3min: float = 600.0,
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
+    water_extractors: int | None = None,
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
@@ -216,9 +215,17 @@ def build_scenario(
             ext[key] = ext.get(key, 0) + 1
             break
     if "Build_WaterPump_C" in state.unlocked_building_ids:
-        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = _WATER_EXTRACTOR_CAP
+        # Water has no nodes to count, so this is an ASSUMPTION standing in for
+        # shoreline the model cannot see. A caller who has measured their platform
+        # should override it; see WATER_EXTRACTOR_CAP_ASSUMED.
+        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = (
+            int(water_extractors) if water_extractors else WATER_EXTRACTOR_CAP_ASSUMED
+        )
 
     recipes = [r.cls for r in state.unlocked_recipes("part")]
+    #: Kept for the miss check: a pattern that banned a recipe is not a miss even
+    #: though `recipes` no longer contains it by the time processes are matched.
+    all_recipes = list(recipes)
     excluded: list[str] = []
     recipe_errors: list[str] = []
 
@@ -232,12 +239,21 @@ def build_scenario(
         if keep:
             recipes = [rid for rid in recipes if rid in keep]
 
+    # Patterns are matched against RECIPES first, then against the synthesised
+    # processes. Generator burn and extraction are built from building data, not from
+    # Docs.json, so they have no recipe to match -- "Coal-Powered Generator on Coal"
+    # printed in the build table hit nothing at all, and the only recourse was dropping
+    # rows by hand and hoping the subgraph was isolated.
+    # EVERY pattern is offered to both. Recipe-first precedence looked tidier and was
+    # wrong: "Coal" matches Biocoal/Charcoal/Compacted Coal, so under it the pattern
+    # never reached the generators and "do not burn coal here" silently did the
+    # opposite of what it said. Whatever is banned is listed back, so an over-broad
+    # pattern is visible rather than surprising.
+    pending_process_bans: list[str] = []
     for pattern in exclude_recipes or []:
         hits = match_recipes(game, pattern, recipes)
+        pending_process_bans.append(pattern)
         if not hits:
-            # Refuse quietly-wrong answers: a ban that matched nothing would return a
-            # plan happily using the recipe the user meant to forbid.
-            recipe_errors.append(f"exclude_recipes: nothing matches {pattern!r}")
             continue
         excluded.extend(game.recipes[rid].name for rid in hits)
         banned = set(hits)
@@ -263,6 +279,18 @@ def build_scenario(
         # is exported, since a power plant that imports power to export it is unbounded.
         grid_import_mw=None if MW in export_ids else 1e6,
     )
+
+    if pending_process_bans:
+        sc, process_hits, misses = _ban_processes(sc, pending_process_bans)
+        excluded.extend(process_hits)
+        matched_a_recipe = {
+            pattern for pattern in pending_process_bans if match_recipes(game, pattern, all_recipes)
+        }
+        for pattern in [m for m in misses if m not in matched_a_recipe]:
+            # Still refuse quietly-wrong answers: a ban matching neither a recipe nor a
+            # process would return a plan using the very thing the user forbade.
+            recipe_errors.append(f"exclude_recipes: nothing matches {pattern!r}")
+
     return PlanRequest(
         scenario=sc,
         selection=sel,
@@ -306,3 +334,41 @@ def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+def _ban_processes(sc: Scenario, patterns: list[str]) -> tuple[Scenario, list[str], list[str]]:
+    """Remove synthesised processes by name, and report which patterns hit nothing.
+
+    Matched case-insensitively against the process LABEL exactly as the build table
+    prints it ("Coal-Powered Generator on Coal"), its building name, and the item it
+    consumes -- so "Coal-Powered Generator", "coal-powered generator on coal" and
+    "Coal" all work, the last banning every generator that burns it.
+    """
+    from dataclasses import replace
+
+    from .optimize import build_processes
+
+    candidates = [p for p in build_processes(sc) if p.kind in ("generator", "extractor")]
+    banned: set[str] = set()
+    labels: list[str] = []
+    misses: list[str] = []
+    for pattern in patterns:
+        needle = pattern.strip().casefold()
+        hits = [
+            p
+            for p in candidates
+            if needle in p.label.casefold()
+            or needle == (sc.game.buildings[p.building].name.casefold()
+                          if p.building in sc.game.buildings else "")
+            or any(
+                needle == sc.game.item_name(item).casefold()
+                for item, rate in p.rates.items()
+                if rate < 0
+            )
+        ]
+        if not hits:
+            misses.append(pattern)
+            continue
+        banned.update(p.pid for p in hits)
+        labels.extend(sorted({p.label for p in hits}))
+    return replace(sc, excluded_pids=frozenset(banned)), labels, misses

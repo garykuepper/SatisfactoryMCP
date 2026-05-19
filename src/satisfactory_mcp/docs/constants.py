@@ -122,3 +122,25 @@ STACK_SIZE: dict[str, int] = {
 BUILDING_CLASS_ALIASES: dict[str, str] = {
     "Build_GeneratorBiomass_C": "Build_GeneratorBiomass_Automated_C",
 }
+
+
+#: Water Extractors the planner assumes can be sited, when the caller does not say.
+#:
+#: NOT a measurement, and the only number in this register with no data behind it.
+#: Water is drawn from FGWaterVolume objects -- ocean, lakes -- which carry no node
+#: entry, no purity, and no geometry this project can read. So the model has no idea how
+#: many extractors a given shoreline holds; this figure exists only to keep the column
+#: from being unbounded.
+#:
+#: It is deliberately high enough not to bind, which makes it DANGEROUS to read as
+#: capacity. A measured oil-power plan wanted 105 extractors and 12,400 m3/min -- the
+#: largest fluid in the plant, larger than its Fuel -- on a 138x136 m ocean platform
+#: whose perimeter fits roughly 27. Water is also the only fluid that must be sourced at
+#: sea level and cannot be gravity-fed, so it drives deck ordering. Pass
+#: ``water_extractors`` to replace this with a number the player has actually measured.
+WATER_EXTRACTOR_CAP_ASSUMED: int = 200
+
+#: Above this many extractors in one plan, say plainly that siting is unmodelled.
+#: Chosen as roughly what a large single platform holds, so the warning fires on the
+#: plans where shoreline is about to become the real constraint.
+WATER_EXTRACTOR_WARN_AT: int = 30

@@ -16,7 +16,7 @@ from pydantic import Field
 
 from . import config, render
 from .docs import search
-from .docs.constants import max_clock, shards_for_clock
+from .docs.constants import WATER_EXTRACTOR_WARN_AT, max_clock, shards_for_clock
 from .docs.loader import load_docs
 from .docs.model import GameData
 from .docs.normalize import normalize
@@ -1916,6 +1916,7 @@ PLAN_DEFAULTS: dict = {
     "machine_cost_mw": 5.0,
     "exclude_recipes": None,
     "only_recipes": None,
+    "water_extractors": None,
 }
 
 
@@ -2028,6 +2029,10 @@ def plan_factory(
         list[str] | None,
         Field(description="items whose belt/pipe rows to pin, whatever their volume"),
     ] = None,
+    water_extractors: Annotated[
+        int | None,
+        Field(description="how many Water Extractors your site can actually hold"),
+    ] = None,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
@@ -2103,6 +2108,7 @@ def plan_factory(
         machine_cost_mw=machine_cost_mw,
         exclude_recipes=exclude_recipes,
         only_recipes=only_recipes,
+        water_extractors=water_extractors,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -2144,6 +2150,22 @@ def plan_factory(
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
     notes = [*sel.errors, *req.recipe_errors, *sol.warnings]
+
+    # Water has no nodes, no purity and no geometry in any data this project can read,
+    # so the extractor count is bounded by an ASSUMPTION rather than by the map. Say so
+    # once it is large enough to matter: a measured plan wanted 105 extractors and
+    # 12,400 m3/min -- more than its Fuel -- on a platform whose perimeter fits ~27.
+    n_water = sum(
+        p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"
+    )
+    if n_water >= WATER_EXTRACTOR_WARN_AT and not plan_kwargs.get("water_extractors"):
+        notes.append(
+            f"{n_water} Water Extractor(s): siting is NOT modelled. Water comes from "
+            "water volumes, which carry no node, purity or geometry here, so the count "
+            "is capped by assumption, not by shoreline. It is also the only fluid that "
+            "must be sourced at sea level and cannot be gravity-fed. Pass "
+            "water_extractors=<what your site holds> to plan against the real limit"
+        )
     # A SUCCESSFUL plan can still be answering a question it cannot answer. An export
     # nothing produces is now pinned to zero rather than conjured, but zero output is a
     # quiet answer, so the reason is said out loud on this path too -- not only when the

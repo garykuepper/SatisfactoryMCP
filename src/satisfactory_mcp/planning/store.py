@@ -44,6 +44,7 @@ PLAN_ARGS = (
     "machine_cost_mw",
     "exclude_recipes",
     "only_recipes",
+    "water_extractors",
 )
 
 

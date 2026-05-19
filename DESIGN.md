@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 476 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 485 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1268,6 +1268,52 @@ branch needs no LP probe, so it is free.
 Test note: of the three regression tests, two fail without the fix. The third (no floor,
 `min_power`) reads 0 either way because nothing rewards raising that column; its docstring
 says so rather than implying it catches the bug.
+
+### 8.2c Three gaps a planning session found
+
+**Generator burn had no name to ban.** `exclude_recipes` searches `game.recipes`, but
+generator burn and extraction are *synthesised* in `optimize.py` from building data —
+they are not recipes and have no entry in Docs.json. So `"Coal-Powered Generator on
+Coal"`, the exact string the build table prints, matched nothing. The recourse was
+deleting 20 generators by hand, which only worked because coal happened to be a leaf in
+that plan.
+
+Patterns are now matched against synthesised processes too — by label, building name, or
+consumed item — so `"Coal-Powered Generator on Coal"`, `"Coal-Powered Generator"` and
+`"Coal"` all work. **Every pattern is offered to both matchers.** Recipe-first precedence
+looked tidier and was wrong: `"Coal"` matches Biocoal/Charcoal/Compacted Coal, so under it
+the pattern never reached the generators and "do not burn coal here" silently did the
+opposite. A pattern matching neither still refuses, which is the behaviour the reporter
+explicitly asked to keep.
+
+**Water was modelled as placeless and unlimited.** It has no node entry, no purity and no
+geometry anywhere this project can read — pumps point at `FGWaterVolume` objects. The
+count was bounded by a private `_WATER_EXTRACTOR_CAP = 200`, chosen only to keep the
+column from being unbounded.
+
+That is not cosmetic. On a measured plan water was **12,400 m³/min across 105 extractors —
+the largest fluid in the plant, larger than its Fuel** — on a 138×136 m ocean platform
+whose perimeter fits roughly 27. It is also the only fluid that must be sourced at sea
+level and cannot be gravity-fed, so it drives deck ordering.
+
+Three changes: the constant moves into the §5.6 register as
+`WATER_EXTRACTOR_CAP_ASSUMED`, labelled the only entry with no data behind it; a
+`water_extractors` parameter lets a player state what their site holds (capping the same
+plan to 27 costs 89,712 → 74,016 MW, a 17.5 % difference previously invisible); and any
+plan using more than `WATER_EXTRACTOR_WARN_AT` says outright that siting is unmodelled.
+Water pump rows also stop reporting `?` for resource and purity — a Water Extractor sits
+on a volume, so it now reads `Water / n/a (water volume)` rather than looking broken.
+
+**Degenerate sub-1 % rows were clock modes, not an LP artefact.** Offering a node set at
+several clocks creates one column per mode, and the modes share a node cap, so the solver
+may split across them arbitrarily — 0.615 machine-equivalents at 100 % plus 0.0201 at
+150 %. That printed as two rows with an *identical* label, the second a whole miner at
+2 % clock, reading as a real build instruction.
+
+Extractor modes of the same (building, resource, purity) are now folded before read-out.
+The fold is **exact, not cosmetic**: extraction is linear in clock, so pooling `v × clock`
+and re-emitting at one mode preserves both the rate and the node count, and `ceil` of the
+pooled value never exceeds the sum of the individual ceils.
 
 ### 8.3 Guards
 

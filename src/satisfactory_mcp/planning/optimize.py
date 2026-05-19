@@ -144,6 +144,12 @@ class Scenario:
     #: faster -- while overclocking production machines usually just burns power.
     #: None means extractors use `clocks` like everything else.
     extractor_clocks: tuple[float, ...] | None = None
+    #: Process ids removed by name. Generator burn and extraction are SYNTHESISED here
+    #: from building data -- they are not recipes and have no entry in Docs.json -- so
+    #: exclude_recipes could never reach them. "Coal-Powered Generator on Coal" printed
+    #: in the build table matched nothing, and the user had to drop 20 generators by
+    #: hand after noticing coal happened to be a leaf.
+    excluded_pids: frozenset[str] = frozenset()
     sloop_budget: int = 0
     max_machines: float | None = None
     #: What one machine costs, in MW, when the objective is power.
@@ -323,6 +329,8 @@ def generator_processes(sc: Scenario) -> list[Process]:
 
 def build_processes(sc: Scenario) -> list[Process]:
     procs = [*recipe_processes(sc), *extractor_processes(sc), *generator_processes(sc)]
+    if sc.excluded_pids:
+        procs = [p for p in procs if p.pid not in sc.excluded_pids]
     seen: dict[str, Process] = {}
     for p in procs:
         if p.pid in seen:
@@ -646,13 +654,37 @@ def solve(sc: Scenario) -> Solution:
             warnings.append("phase 2 (minimise machines) failed; counts are not minimal")
 
     # ---- read out -----------------------------------------------------
+    # Offering a node set at several clocks creates one column per mode, and the modes
+    # share a node cap, so the LP may split a solve across them arbitrarily: 0.615
+    # machine-equivalents at 100% plus 0.0201 at 150% is the same extraction as 0.645
+    # at 100%. Left alone that prints as two rows with an IDENTICAL label, the second a
+    # whole miner at 2% clock, which reads as a real build instruction and is not one.
+    #
+    # Folding is exact rather than cosmetic: extraction is linear in clock, so summing
+    # v*clock and re-emitting at the lowest offered mode preserves both the rate and the
+    # node count. Only extractor modes of the same (building, resource, purity) are
+    # merged -- recipe processes have no such duplication.
+    merged: dict[str, float] = {}
+    for i, p in enumerate(procs):
+        v = float(x[col_p(i)])
+        if v > _EPS and p.kind == "extractor" and p.group:
+            merged[p.group] = merged.get(p.group, 0.0) + v * p.clock
+
     out_procs = []
     machines_total = 0.0
     exact_mw_total = 0.0
+    folded: set[str] = set()
     for i, p in enumerate(procs):
         v = float(x[col_p(i)])
         if v <= _EPS:
             continue
+        if p.kind == "extractor" and p.group:
+            if p.group in folded:
+                continue
+            # Re-express the pooled node-units at THIS process's clock, taking the row
+            # whose mode the solver actually reached first.
+            v = merged[p.group] / p.clock
+            folded.add(p.group)
 
         # v is throughput in machine-equivalents. The build is ceil(v) whole machines
         # all clocked to v/ceil(v) -- exact, always a clean ratio, and power-optimal

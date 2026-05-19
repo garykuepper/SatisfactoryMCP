@@ -203,6 +203,11 @@ def build_view(
         meta = node_table.get(node) or node_table.get(_short(node) if node else "") or {}
         purity = meta.get("purity") or ""
         resource = meta.get("resource") or ""
+        # A Water Extractor sits on an FGWaterVolume, which is not a node and has no
+        # purity. Reporting "?" for both made a working pump look broken; the building
+        # class already says what it draws, so say that and name the reason instead.
+        if not resource and "WaterPump" in record.get("cls", ""):
+            resource, purity = "Desc_Water_C", "n/a (water volume)"
         view.nodes.append(
             (
                 _short(node) if node else "(unresolved)",
@@ -218,7 +223,12 @@ def build_view(
             continue
         if building is not None:
             view.draw_mw += building.power_at(clock)
-            if resource and purity:
+            if resource and purity == "n/a (water volume)":
+                # Water volumes have no purity multiplier: extraction is the flat rate.
+                flows[game.item_name(resource)]["produced"] += building.extract_rate(
+                    "normal", clock
+                )
+            elif resource and purity:
                 flows[game.item_name(resource)]["produced"] += building.extract_rate(purity, clock)
             elif not node:
                 view.issues.append(f"{short}: extractor bound to no node, output unknown")
