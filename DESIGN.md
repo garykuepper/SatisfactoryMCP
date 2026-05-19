@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 548 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 561 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1659,6 +1659,42 @@ reports its head span — the 13 Spire Coast crude nodes cover **−17 to 23 m, 
 Reported as a span, **never as a pump count**: head per pump is a game rule this project has
 no data for, and a test asserts no pump count is invented. Solid fields say nothing, because
 a coal field climbing 200 m costs a belt nothing.
+
+### 8.5c Which nodes share a pipe
+
+`logistics` already counts LINES -- `ceil(rate / capacity)` -- which is the right total and
+says nothing about which nodes share one, and the layout schematic starts at the factory
+edge with the crude already arrived. `plan_layout detail="trunks"` fills the gap:
+
+| trunk | nodes | rate | run | head |
+|---|---|---|---|---|
+| T1 Crude Oil | 3 | 600/600 | 289 m | |
+| T3 Crude Oil | 2 | 450/600 | 118 m | |
+| T4 Crude Oil | 1 | 600/600 | 0 m | |
+| T6 Crude Oil | 3 | 600/600 | 290 m | **UP 40 m** |
+
+**A trunk is a line, not a blob.** Pipes are laid end to end and each node joins the one
+running past it, so nodes are ordered along a nearest-neighbour chain from the node
+furthest from the destination inward, and the chain is cut wherever the next node would
+overflow. Capacitated clustering would give tighter blobs and a worse answer: two nodes
+40 m apart on opposite sides of a run are not on the same pipe.
+
+**This is where the head span becomes actionable.** `search_resource_nodes` reports the
+Spire crude field spanning 40 m (§ 8.5b). Attached to a trunk, the answer is sharper --
+five of the six runs are flat and *one* climbs the whole 40 m. `lift_m` is signed and
+measured inward, so the sign is the answer: downhill needs no pumping. Still no pump count,
+same rule as before. Head is reported for **pipes only**; a belt does not care that its
+sulfur climbs 218 m, and a number there invites a pump that cannot exist.
+
+Two cases are surfaced rather than smoothed over. A single node above one line's capacity
+(a pure Crude Oil node at 250% makes exactly 600 m3/min) gets a run of its own instead of
+being split silently -- it is a real problem the player solves with a second pipe off one
+extractor. And Water Extractors sit on no node, so they get no trunk and are named in a
+note, because 9,200 m3/min vanishing from a table that otherwise conserves every unit
+would read as a complete answer.
+
+`run` is the straight-line chain and is labelled a LOWER BOUND: there is no terrain here,
+so a drawn route would be invented -- the same line § 8.5 draws around the schematic.
 
 ### 8.6 Diff vs save — what to actually change
 

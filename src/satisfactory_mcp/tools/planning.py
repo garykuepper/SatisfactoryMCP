@@ -21,6 +21,7 @@ from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.scenario import build_scenario, resolve_item
 from ..planning.slice import slice_of
+from ..planning.trunks import plan_trunks
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -559,7 +560,8 @@ def plan_layout(
     """Turn a plan into a buildable schematic: blocks, buses and floors.
 
     Same arguments as plan_factory, plus ``detail``: "floors" (default, the stack),
-    "blocks" (every module with its size and rates) or "buses" (item flows).
+    "blocks" (every module with its size and rates), "buses" (item flows), or
+    "trunks" (which resource nodes share each pipe or belt run into the site).
 
     This is a SCHEMATIC, not a blueprint. It gives modules, connections, floor
     assignment and a space budget. It deliberately does NOT give world coordinates or
@@ -708,6 +710,62 @@ def plan_layout(
             total=len(lay.blocks),
             limit=limit,
         )
+    elif detail == "trunks":
+        # The destination decides which end of each chain is "far", so it decides the
+        # sign of every lift. A named factory is the honest answer when there is one;
+        # otherwise the field's own centroid, said out loud rather than assumed.
+        target, target_label = None, "the node field's centroid"
+        if factory:
+            try:
+                resolved_name, machines = _resolve_factory(st, factory)
+            except SelectorError as exc:
+                return f"! {exc}"
+            pts = [m["pos"] for m in machines if m.get("pos")]
+            if pts:
+                target = (
+                    sum(p[0] for p in pts) / len(pts),
+                    sum(p[1] for p in pts) / len(pts),
+                )
+                target_label = resolved_name
+        tp = plan_trunks(prepared, g, target, target_label)
+        rows = []
+        for i, t in enumerate(tp.trunks, 1):
+            # Head is a FLUID concern only. A belt does not care that its coal climbs
+            # 218 m, and printing a number there invites a pump that cannot exist.
+            climb = ""
+            if t.carrier == "pipe" and abs(t.lift_m) >= 1.0:
+                climb = f"{'down' if t.lift_m > 0 else 'UP'} {abs(t.lift_m):.0f}m"
+            rows.append(
+                (
+                    f"T{i}",
+                    t.name[:16],
+                    len(t.members),
+                    f"{render.num(t.rate)}/{render.num(t.capacity)}",
+                    f"{t.used:.0%}",
+                    f"{t.run_m:.0f}m",
+                    climb,
+                    ", ".join(f"{m.short}:{m.purity[:3]}" for m in t.members[:4]),
+                )
+            )
+        body = render.table(
+            ("trunk", "item", "nodes", "rate", "full", "run", "head", "nodes tapped"),
+            rows,
+            total=len(tp.trunks),
+            limit=limit,
+        )
+        notes.extend(tp.notes)
+        notes.append(
+            f"trunks converge on {tp.destination_label}. `run` is the straight-line chain "
+            "node to node, so it is a LOWER BOUND on pipe -- no terrain data exists here. "
+            "`head` is the climb from the far end inward: UP needs pumping, down does not. "
+            "No pump count is given, because head-per-pump is not in any data this reads"
+        )
+        for name, rate, count in tp.placeless:
+            notes.append(
+                f"{count}x {name} extractor(s) carrying {render.num(rate)}/min sit on no "
+                "node, so they get no trunk -- water comes from water volumes, which "
+                "carry no geometry here. Site them at the shore and pipe inward"
+            )
     elif detail == "buses":
         rows = [
             (
@@ -765,7 +823,10 @@ def plan_layout(
             total=len(lay.floors),
             limit=limit,
         )
-        notes.append('detail="blocks" for every module, detail="buses" for item flows')
+        notes.append(
+            'detail="blocks" for every module, detail="buses" for item flows, '
+            'detail="trunks" for which nodes share a pipe'
+        )
 
     if plan_name:
         plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
