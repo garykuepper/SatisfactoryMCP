@@ -148,3 +148,46 @@ def test_only_free_narrows_the_nearest_list(game):
     )
     assert "tapped" in everything
     assert "tapped" not in free_only
+
+
+# ---------------------------------------------------------- elevation
+
+
+def test_node_rows_carry_elevation(game):
+    """z was in the node table and in every machine position all along, read by nothing
+    but geo.cluster's centroid. The planner concluded the tool "has no z-data" and
+    guessed pump counts by hand."""
+    from satisfactory_mcp.spatial import nodes as nodes_mod
+
+    table = nodes_mod.load_nodes()
+    assert all("z" in n for n in table.nodes)
+    out = srv.search_resource_nodes(resource="Crude Oil", mode="nodes", limit=3)
+    assert "z(m)" in out
+
+
+def test_a_fluid_field_reports_its_head_span(game):
+    """The number that decides pump counts. Reported as a SPAN, never as a pump count:
+    head per pump is a game rule this project has no data for."""
+    out = srv.search_resource_nodes(
+        resource="Crude Oil", sources=["region:Spire Coast"], mode="nodes", limit=1
+    )
+    assert "elevation" in out
+    assert "span 40m" in out, out.splitlines()[2]
+    assert "pump" in out.lower()
+
+
+def test_a_solid_field_says_nothing_about_head(game):
+    """Elevation is a fluid concern. A coal field climbing 200 m costs a belt nothing."""
+    out = srv.search_resource_nodes(resource="Coal", mode="nodes", limit=1)
+    assert "elevation" not in out
+
+
+def test_no_pump_count_is_invented(game):
+    """The tool must not turn a head span into a number of pumps until head-per-pump is
+    sourced. Naming the cost is the deliverable; guessing it is not."""
+    out = srv.search_resource_nodes(
+        resource="Crude Oil", sources=["region:Spire Coast"], mode="nodes", limit=1
+    )
+    header = out[: out.index("node_id")]
+    assert "pumps needed" not in header
+    assert "1 pump" not in header

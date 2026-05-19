@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 36 tools, 4 resources, 3 prompts, 521 tests passing. See README.md for usage.
+**Status:** implemented. 36 tools, 4 resources, 3 prompts, 531 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1591,6 +1591,33 @@ storey each, and lets residue and crude fall for free.
 optimised: the right stack depends on terrain, on where crude arrives, and on how much
 pumping the player will accept, none of which this model has. Naming the cost is what lets
 a planner disagree with the default.
+
+### 8.5b Capping a deck, and naming the head
+
+**`max_floor_foundations=` inverts the layout question.** Uncapped, `plan_layout` answers
+"how big a site does this need" by giving each chain stage a deck of whatever size it
+wants — 496×496 m on a measured oil plan. A player with a finished platform is asking the
+reverse. Same computation, run backwards:
+
+| cap | production decks | peak | site |
+|---|---|---|---|
+| none | 5 | 3,774 | 496×496 m |
+| 1225 (35×35) | 8 | 1,080 | 264×264 m |
+| 900 (30×30) | 9 | 900 | 240×240 m |
+
+**Total foundations are conserved at 6,472 across every cap** — the same machines stacked
+differently — and a test asserts it, because a total that moved would mean the cap was
+dropping or duplicating blocks. A block larger than the cap gets a deck of its own rather
+than being split: a block is one manifold.
+
+**Elevation was never missing.** `z` is in the node table and in every machine position and
+was read by nothing but `geo.cluster`'s centroid, so a planner reasonably concluded the tool
+had no z-data and guessed pump counts by hand. Node rows now carry it, and a fluid field
+reports its head span — the 13 Spire Coast crude nodes cover **−17 to 23 m, a 40 m span**.
+
+Reported as a span, **never as a pump count**: head per pump is a game rule this project has
+no data for, and a test asserts no pump count is invented. Solid fields say nothing, because
+a coal field climbing 200 m costs a belt nothing.
 
 ### 8.6 Diff vs save — what to actually change
 

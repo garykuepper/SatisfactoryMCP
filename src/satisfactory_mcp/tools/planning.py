@@ -478,6 +478,10 @@ def plan_layout(
         int | None,
         Field(description="how many Water Extractors your site can actually hold"),
     ] = None,
+    max_floor_foundations: Annotated[
+        int,
+        Field(description="cap a deck at this many 8m foundations; 0 = one stage per deck"),
+    ] = 0,
     belt_tier: str = "Mk5",
     pipe_tier: str = "Mk2",
     save: str | None = None,
@@ -554,7 +558,13 @@ def plan_layout(
     req, sol = prepared.request, prepared.solution
     sel = req.selection
 
-    lay = build_layout(g, sol, belt_ipm=belt_ipm, pipe_m3min=pipe_m3min)
+    lay = build_layout(
+        g,
+        sol,
+        belt_ipm=belt_ipm,
+        pipe_m3min=pipe_m3min,
+        max_floor_foundations=max_floor_foundations,
+    )
     production = [f for f in lay.floors if f.kind == "production"]
     logistics = [f for f in lay.floors if f.kind == "logistics"]
 

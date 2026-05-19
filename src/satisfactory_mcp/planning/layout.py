@@ -431,20 +431,44 @@ def fluid_head(layout: Layout) -> list[dict]:
     return out
 
 
-def _floors(blocks: list[Block], buses: list[Bus]) -> list[Floor]:
+def _decks_for(blocks: list[Block], cap: int) -> list[list[Block]]:
+    """Split one chain stage across as many decks as a foundation cap allows.
+
+    The uncapped layout answers "how big a site does this need" by giving each stage a
+    deck of whatever size it wants -- 504x504 m on a measured oil plan. The question a
+    player with a finished platform actually has is the reverse: *I have 30x30
+    foundations, how many decks?* Same computation, run backwards.
+
+    Blocks keep their order, so a deck still reads in build order, and a block larger
+    than the cap gets a deck to itself rather than being silently dropped -- the caller
+    is told instead.
+    """
+    if cap <= 0:
+        return [blocks]
+    decks: list[list[Block]] = []
+    current: list[Block] = []
+    used = 0
+    for block in blocks:
+        need = block.foundations
+        if current and used + need > cap:
+            decks.append(current)
+            current, used = [], 0
+        current.append(block)
+        used += need
+    if current:
+        decks.append(current)
+    return decks
+
+
+def _floors(blocks: list[Block], buses: list[Bus], max_floor_foundations: int = 0) -> list[Floor]:
     stages = sorted({b.stage for b in blocks})
     floors: list[Floor] = []
     index = 0
     for position, stage in enumerate(stages):
         on_stage = [b for b in blocks if b.stage == stage]
-        tallest = max((b.height_m for b in on_stage), default=0.0)
-        height = math.ceil((tallest + FLOOR_HEADROOM_M) / FLOOR_STEP_M) * FLOOR_STEP_M
-        floors.append(
-            Floor(index=index, kind="production", stage=stage, height_m=height, blocks=on_stage)
-        )
-        index += 1
+        for deck in _decks_for(on_stage, max_floor_foundations):
+            index = _emit_deck(floors, index, stage, deck)
         if position < len(stages) - 1:
-            # A logistics deck carries everything crossing this boundary.
             crossing = [
                 bus
                 for bus in buses
@@ -464,17 +488,28 @@ def _floors(blocks: list[Block], buses: list[Bus]) -> list[Floor]:
     return floors
 
 
+def _emit_deck(floors: list[Floor], index: int, stage: int, on_stage: list[Block]) -> int:
+    """Append one production deck, sized by its tallest machine. Returns the next index."""
+    tallest = max((b.height_m for b in on_stage), default=0.0)
+    height = math.ceil((tallest + FLOOR_HEADROOM_M) / FLOOR_STEP_M) * FLOOR_STEP_M
+    floors.append(
+        Floor(index=index, kind="production", stage=stage, height_m=height, blocks=on_stage)
+    )
+    return index + 1
+
+
 def build_layout(
     game: GameData,
     sol: Solution,
     belt_ipm: float = 780.0,
     pipe_m3min: float = 600.0,
+    max_floor_foundations: int = 0,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors."""
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
     _assign_stages(blocks)
     buses = _buses(game, blocks, sol, belt_ipm, pipe_m3min)
-    floors = _floors(blocks, buses)
+    floors = _floors(blocks, buses, max_floor_foundations)
 
     warnings: list[str] = []
     missing = sorted({b.building for b in blocks if b.foundations == 0})

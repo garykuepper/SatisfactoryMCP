@@ -317,3 +317,78 @@ def test_prepare_is_usable_without_the_mcp_layer(game, state):
     )
     assert not bad.ok
     assert bad.failure.headline == "no sources selected"
+
+
+# ------------------------------------------- capping a deck's footprint
+
+
+@pytest.fixture(scope="module")
+def oil_solution(game, state):
+    from satisfactory_mcp.planning.prepare import prepare
+
+    return prepare(
+        game,
+        state,
+        dict(
+            sources=["region:Spire Coast"],
+            objective="max_mw",
+            exports=["MW", "Plastic", "Rubber"],
+            export_minimums={"Plastic": 2000, "Rubber": 300},
+            extractor_clocks=[1, 1.5, 2, 2.5],
+            water_extractors=64,
+        ),
+    ).solution
+
+
+@pytest.mark.parametrize("cap", [1225, 900, 400])
+def test_no_deck_exceeds_the_foundation_cap(game, oil_solution, cap):
+    """The inverse of the default question. Uncapped, layout answers "how big a site
+    does this need" -- 496x496 m. A player with a finished platform is asking the
+    reverse: I have 30x30 foundations, how many decks?"""
+    from satisfactory_mcp.planning.layout import build_layout
+
+    lay = build_layout(game, oil_solution, max_floor_foundations=cap)
+    production = [f for f in lay.floors if f.kind == "production"]
+    oversized = [f for f in production if f.foundations > cap and len(f.blocks) > 1]
+    assert not oversized, [(f.index, f.foundations) for f in oversized]
+
+
+def test_capping_adds_decks_without_changing_the_work(game, oil_solution):
+    """Total foundations are conserved: the same machines, stacked differently. If the
+    total moved, the cap would be silently dropping or duplicating blocks."""
+    from satisfactory_mcp.planning.layout import build_layout
+
+    def totals(cap):
+        lay = build_layout(game, oil_solution, max_floor_foundations=cap)
+        production = [f for f in lay.floors if f.kind == "production"]
+        return len(production), sum(f.foundations for f in production), lay.foundations
+
+    open_decks, open_total, open_peak = totals(0)
+    capped_decks, capped_total, capped_peak = totals(900)
+
+    assert capped_total == open_total, "same machines, different stacking"
+    assert capped_decks > open_decks
+    assert capped_peak <= 900 < open_peak
+
+
+def test_a_block_larger_than_the_cap_gets_its_own_deck(game):
+    """It must not vanish, and it must not be split -- a block is one manifold. The
+    honest answer is a deck of its own that exceeds the cap."""
+    from satisfactory_mcp.planning.layout import _decks_for
+
+    class B:
+        def __init__(self, f):
+            self.foundations = f
+
+    big, small = B(500), B(10)
+    decks = _decks_for([small, big, small], cap=100)
+    assert [len(d) for d in decks] == [1, 1, 1]
+    assert decks[1][0] is big
+
+
+def test_a_zero_cap_means_no_cap(game, oil_solution):
+    from satisfactory_mcp.planning.layout import build_layout
+
+    assert [f.index for f in build_layout(game, oil_solution, max_floor_foundations=0).floors] == [
+        f.index for f in build_layout(game, oil_solution).floors
+    ]

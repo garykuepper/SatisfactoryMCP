@@ -139,9 +139,7 @@ def slice_of(
         if row["clock"] > 1.0 + 1e-9 and per_shard:
             each = shards_for_clock(row["clock"], per_shard)
             if each:
-                out.shard_rows.append(
-                    ShardRow(row["label"], row["machines"], row["clock"], each)
-                )
+                out.shard_rows.append(ShardRow(row["label"], row["machines"], row["clock"], each))
 
         building = game.buildings.get(row["building_id"] or "")
         if building is not None and building.sloop_slots:

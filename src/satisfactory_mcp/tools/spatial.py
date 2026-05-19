@@ -226,6 +226,7 @@ def search_resource_nodes(
                 ),
                 r["grid"],
                 f"{int(r['x'] / 100)},{int(r['y'] / 100)}",
+                f"{r['z'] / 100:.0f}",
                 render.num(r["rate"]),
                 "tapped" if r["tapped"] else ("LOCKED" if not r["reachable"] else "free"),
                 rm.label_for_node(r).name or "-",
@@ -238,6 +239,7 @@ def search_resource_nodes(
             f"dist to {where}" if show_distance else ("purity" if mixed else "kind"),
             "grid",
             "x,y(m)",
+            "z(m)",
             "rate",
             "status",
             "region",
@@ -280,10 +282,23 @@ def search_resource_nodes(
         body = render.table(headers, crows, total=len(clusters), limit=limit)
         notes.append('mode="nodes" lists individual nodes; mode="nearest" ranks by distance')
 
+    # Elevation matters for fluids and nothing else: a pipe running downhill is free and
+    # one running uphill needs head. The SPAN is reported, never a pump count -- head per
+    # pump is a game rule this project has no data for, and guessing it would be the kind
+    # of invented number the rest of this file exists to avoid.
+    zs = [r["z"] / 100.0 for r in rows_all if "z" in r]
+    head = ""
+    if zs and any(g.items[r].is_fluid for r in resources if r in g.items):
+        low, high = min(zs), max(zs)
+        head = (
+            f"\n# elevation {low:.0f}..{high:.0f}m (span {high - low:.0f}m); fluid, so "
+            "uphill runs need pumps and downhill runs do not"
+        )
+
     return render.envelope(
         f"# {sel.description}: {len(rows_all)} node(s), "
         f"{render.num(total)} {unit} total, {render.num(free)} free and reachable\n"
-        f"# rates at 100% clock; coords in metres",
+        f"# rates at 100% clock; coords in metres{head}",
         body,
         notes,
     )
