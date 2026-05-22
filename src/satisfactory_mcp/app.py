@@ -22,6 +22,7 @@ from .docs.model import GameData
 from .docs.normalize import normalize
 from .planning.scenario import resolve_item
 from .save.state import WorldState, load_state
+from .spatial import geo
 
 mcp = FastMCP("satisfactory")
 
@@ -112,7 +113,4 @@ def _origin_for(st, near: str) -> tuple[tuple[float, float], str]:
     points = [pos[m][:2] for m in label.anchors if m in pos]
     if not points:
         raise ValueError(f"{label.name!r} has no machines left to centre on")
-    return (
-        (sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points)),
-        label.name,
-    )
+    return geo.centroid(points), label.name

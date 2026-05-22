@@ -27,6 +27,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
+from ..spatial import geo
 from .model import FactoryGraph
 
 __all__ = ["Candidate", "bases", "describe", "lines_within", "product_clusters"]
@@ -118,12 +119,8 @@ def describe(
             products[game.item_name(flow.item)] += 1
 
     pts = [pos[m][:2] for m in machines if m in pos]
-    if pts:
-        cx = sum(p[0] for p in pts) / len(pts)
-        cy = sum(p[1] for p in pts) / len(pts)
-        spread = max((math.dist(a, b) for a in pts for b in pts), default=0.0) / 100.0
-    else:
-        cx = cy = spread = 0.0
+    cx, cy = geo.centroid(pts) or (0.0, 0.0)
+    spread = geo.diameter_m(pts)
 
     return Candidate(
         machines=sorted(machines),

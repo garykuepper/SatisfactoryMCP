@@ -310,9 +310,7 @@ def _anchor(index: _SaveIndex) -> tuple[float, float] | None:
             actor = index.extractor_on.get(row["instance"])
             if actor and _xy(actor):
                 points.append(_xy(actor))
-    if not points:
-        return None
-    return (sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points))
+    return geo.centroid(points)
 
 
 def _save_id(state: WorldState) -> str:

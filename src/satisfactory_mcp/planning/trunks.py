@@ -34,6 +34,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
+from ..spatial import geo
 
 __all__ = ["Trunk", "TrunkPlan", "plan_trunks"]
 
@@ -209,8 +210,7 @@ def plan_trunks(
         # On the reference save every Spire Coast crude node is tapped, all of them by
         # the Oil Pump this plan wants, so a plain free-first rule would have ranked all
         # thirteen equal-worst and picked on geometry alone.
-        cx = sum(r["x"] for r in pool) / len(pool)
-        cy = sum(r["y"] for r in pool) / len(pool)
+        cx, cy = geo.centroid([(r["x"], r["y"]) for r in pool])
 
         def _cost(r: dict, want=proc["building_id"], cx=cx, cy=cy) -> tuple[int, float]:
             if not r["tapped"]:
@@ -254,10 +254,7 @@ def plan_trunks(
         capacity = sc.pipe_m3min if fluid else sc.belt_ipm
         # Absent a named destination, the node set's own centroid: the plant goes in the
         # middle of its field unless the player says otherwise.
-        target = destination or (
-            sum(m.x for m in members) / len(members),
-            sum(m.y for m in members) / len(members),
-        )
+        target = destination or geo.centroid([(m.x, m.y) for m in members])
         # Start at the far end so the chain runs INWARD, which is the direction the
         # fluid moves and the direction lift_m is measured in.
         start = max(members, key=lambda m: math.dist((m.x, m.y), target))

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 644 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 652 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2024,10 +2024,19 @@ with a non-zero fallback — but a divergence inside duplicated code is a bug wa
 day it becomes reachable. Now `planning/carrier.py`, resolved toward 1, because the count
 feeds block splitting and `None` would need a guard at every use.
 
-**Centroid and spread — four copies.** `graph/identity.py` and `graph/query.py` each
-compute `sum(p[0])/len(p)` plus an O(n²) `max(dist(a, b))`, which is what `geo.Cluster`
-already exposes as `centroid` and `diameter_m`. `diff` has a named `_centroid`;
-`trunks` and `app` inline theirs again.
+**Centroid and spread — fixed, six sites.** `graph/identity.py` and `graph/query.py`
+each carried `sum(p[0])/len(p)` plus `max(dist(a, b))`; `diff` had a named `_centroid`;
+`app`, `select` and `trunks` inlined theirs again. `geo.Cluster` had both all along, just
+shaped for node dicts rather than `(x, y)` tuples — which is how the copies started.
+
+Now `geo.centroid` and `geo.diameter_m`, with two behaviours pinned that the copies
+disagreed about. **Empty returns `None`, not the origin**, because (0, 0) is a real and
+important place here — the world centre every compass direction is measured from — so
+answering it for "no points" is a plausible wrong location rather than an obvious one.
+And spread compares **`i < j` only**: the inline copies iterated
+`for a in points for b in points`, computing every pair twice plus the zero diagonal.
+Same answer, double the work — 317k distance calls instead of 158k at 563 machines — and
+a test pins that the cheaper form changed no number.
 
 **`math.dist(...) / 100` vs `geo.distance_m`.** The helper exists and 12 call sites use
 it; `graph/*`, `trunks` and `elevation` retype the centimetre conversion by hand. Cosmetic

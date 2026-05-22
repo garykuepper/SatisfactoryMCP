@@ -35,6 +35,7 @@ from __future__ import annotations
 import math
 
 from ..docs.model import GameData
+from ..spatial import geo
 from .identity import bases, cluster_machines
 from .labels import LabelStore
 from .model import FactoryGraph
@@ -157,7 +158,7 @@ def _by_near(
         pts = [pos[m][:2] for m in label.anchors if m in pos]
         if not pts:
             raise SelectorError(f"label {label.name!r} has no machines left to centre on")
-        centre = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+        centre = geo.centroid(pts)
 
     limit = radius_m * 100.0
     return {m for m in graph.machines() if m in pos and math.dist(pos[m][:2], centre) <= limit}

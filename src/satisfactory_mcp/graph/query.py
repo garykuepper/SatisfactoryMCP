@@ -22,11 +22,11 @@ which no per-machine listing does.
 
 from __future__ import annotations
 
-import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
+from ..spatial import geo
 from ..spatial import nodes as nodes_mod
 from .model import FactoryGraph
 
@@ -268,11 +268,10 @@ def build_view(
 
     view.flows = dict(flows)
 
-    if points:
-        cx = sum(p[0] for p in points) / len(points)
-        cy = sum(p[1] for p in points) / len(points)
-        view.centroid = (cx, cy)
-        view.spread_m = max((math.dist(a, b) for a in points for b in points), default=0.0) / 100.0
+    middle = geo.centroid(points)
+    if middle is not None:
+        view.centroid = middle
+        view.spread_m = geo.diameter_m(points)
 
     # The factory's boundary. A material edge runs machine -> belt -> ... -> machine, so
     # walking only direct edges finds nothing; the walk has to pass THROUGH logistics and
