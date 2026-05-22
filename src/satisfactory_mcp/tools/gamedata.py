@@ -174,9 +174,23 @@ def search_recipes(
 
 
 @mcp.tool(structured_output=False)
-def list_buildings(kind: str = "production") -> str:
-    """Buildings by kind: production, extractor, generator, logistics."""
+def list_buildings(
+    kind: str = "production", save: str | None = None, world: str | None = None
+) -> str:
+    """Buildings by kind: production, extractor, generator, logistics.
+
+    Rows are marked HAVE or LOCKED against the save when one can be read. That matters
+    most for ``logistics``: a planner assuming a belt or pipe tier it has not unlocked
+    gets every line count wrong by a factor and nothing says so, which is the worst
+    failure mode a planner has.
+    """
     g = game()
+    try:
+        st = _state(save, world)
+        unlocked, built = st.unlocked_building_ids, st.built_counts
+    except Exception:
+        # Game data alone is still a useful answer; the columns just go blank.
+        st, unlocked, built = None, None, {}
     picks = []
     for b in g.buildings.values():
         if (
@@ -205,9 +219,12 @@ def list_buildings(kind: str = "production") -> str:
         elif b.flow_m3_min:
             detail = f"{render.num(b.flow_m3_min)} m3/min"
         fp = b.footprint
+        have = "" if unlocked is None else ("HAVE" if b.cls in unlocked else "LOCKED")
         rows.append(
             (
+                have,
                 b.name,
+                built.get(b.cls, "") or "",
                 f"{render.num(b.power_mw)}MW",
                 render.num(b.max_clock),
                 b.sloop_slots,
@@ -224,6 +241,18 @@ def list_buildings(kind: str = "production") -> str:
             "so a row of N machines needs somewhat fewer than N x found"
         )
     ]
+    if unlocked is not None and kind == "logistics" and st is not None:
+        belt, pipe = st.best_belt(), st.best_pipe()
+        chosen = (
+            ", ".join(f"{g.buildings[c].name} ({v:g})" for c, v in (belt, pipe) if c)
+            or "none unlocked"
+        )
+        notes.append(
+            f"planning defaults to the fastest UNLOCKED tier: {chosen}. A tier assumed "
+            "rather than checked changes every belt and pipe count in a plan"
+        )
+    elif unlocked is None:
+        notes.append("no save could be read, so HAVE/LOCKED is blank -- game data only")
     unknown = [b.name for b in picks if not b.footprint]
     if unknown:
         notes.append(
@@ -233,7 +262,20 @@ def list_buildings(kind: str = "production") -> str:
 
     return render.envelope(
         f"# {len(rows)} {kind} building(s)",
-        render.table(("building", "power", "max_clock", "sloops", "size", "found", "detail"), rows)
+        render.table(
+            (
+                "have",
+                "building",
+                "built",
+                "power",
+                "max_clock",
+                "sloops",
+                "size",
+                "found",
+                "detail",
+            ),
+            rows,
+        )
         + "\n"
         + render.ids_footer((b.name, b.cls) for b in picks),
         notes,

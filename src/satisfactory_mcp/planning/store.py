@@ -46,6 +46,8 @@ PLAN_ARGS = (
     "only_recipes",
     "water_extractors",
     "sloops",
+    "belt_ipm",
+    "pipe_m3min",
 )
 
 

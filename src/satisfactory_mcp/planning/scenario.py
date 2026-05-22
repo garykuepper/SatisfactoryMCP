@@ -146,8 +146,11 @@ def build_scenario(
     clocks: list[float] | None = None,
     extractor_clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
-    belt_ipm: float = 780.0,
-    pipe_m3min: float = 600.0,
+    #: None means "the fastest tier this save can build". Hardcoding Mk5/Mk2 was right
+    #: on the reference world and unverified everywhere else, and getting it wrong is
+    #: silent: every belt and pipe count is off by a factor and nothing says so.
+    belt_ipm: float | None = None,
+    pipe_m3min: float | None = None,
     exclude_recipes: list[str] | None = None,
     only_recipes: list[str] | None = None,
     water_extractors: int | None = None,
@@ -179,6 +182,16 @@ def build_scenario(
             export_errors.append(f"export_minimums: {err}")
             continue
         minimums[resolved] = float(value)
+
+    # Carrier tiers, from what is unlocked rather than from a constant. Falls back to
+    # the Mk5/Mk2 figures when a save cannot be read, so a game-data-only caller still
+    # gets a sane answer.
+    if belt_ipm is None:
+        best = state.best_belt()
+        belt_ipm = best[1] if best else 780.0
+    if pipe_m3min is None:
+        best = state.best_pipe()
+        pipe_m3min = best[1] if best else 600.0
 
     table = nodes_mod.load_nodes()
     # The player position goes in as `player`, NOT as `origin`. origin would also

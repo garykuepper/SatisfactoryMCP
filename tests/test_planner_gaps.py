@@ -270,7 +270,10 @@ def test_list_buildings_exposes_size_and_foundations(game):
     from satisfactory_mcp import server as srv
 
     out = srv.list_buildings("production")
-    header = next(line for line in out.splitlines() if line.startswith("building\t"))
+    # "have" leads the header now: a row says whether the save can build the thing, which
+    # is what stops a planner assuming a tier it has not unlocked.
+    header = next(line for line in out.splitlines() if "\tbuilding\t" in line)
+    assert header.startswith("have\t")
     assert "size" in header and "found" in header
     assert "18x20x11m" in out, "Manufacturer size should be listed"
 

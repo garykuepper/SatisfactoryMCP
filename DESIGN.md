@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 681 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 691 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2070,6 +2070,40 @@ a 400 m walk.
 
 A test walks the source tree and fails if `math.dist` appears anywhere outside those two
 modules, so a hand-typed conversion cannot creep back in.
+
+### 8.5i Carrier tiers, assumed for a year
+
+`belt_ipm=780` and `pipe_m3min=600` — Mk5 and Mk2 — were hardcoded defaults, and an entire
+design session ran on them with nothing checking the tiers were unlocked. They were, on
+this save. Had Pipeline Mk.2 been locked, **every pipe count doubles**: six crude trunks
+become eleven and the deck stops fitting. Silent-wrong-by-default is the worst failure mode
+a planner has.
+
+Three separate bugs came out of checking:
+
+**The tier is now read from the save.** `best_belt()` / `best_pipe()` pick the fastest
+UNLOCKED tier, and `list_buildings` marks every row HAVE or LOCKED with its built count —
+the same treatment `alternates_for_item` already gave recipes. Mk6 belt is locked here and
+the pick correctly refuses to reach for it.
+
+**`items_per_min` is not the test for "is a belt".** A Personnel Elevator reports 400/min
+and carries *people*; a Conveyor Lift duplicates a belt tier's rate. Selection is by native
+class (`FGBuildableConveyorBelt`, `FGBuildablePipeline`), or a naive "fastest thing with a
+rate" can name something that is not a belt at all.
+
+**`belt_tier` and `pipe_tier` had never worked.** The lookup keyed on
+`name.replace("Conveyor Belt ", "")`, which yields `"Mk.5"` — while the parameter defaults
+were `"Mk5"` and `"Mk2"`. Nothing ever matched; every call fell through to the hardcoded
+780/600, and it looked right only because those were the same numbers. `belt_tier="Mk3"`
+would have quietly planned at Mk5 speed. Tokens are normalised now and an unknown tier is
+refused by name rather than silently defaulted.
+
+**And the tier reached the schematic but not the solve** — §8.5a's drift, again, in a new
+place. `plan_layout` passed its resolved rates to `build_layout` and left the scenario on
+the default, so `pipe_tier="Mk1"` changed the block split while the trunk view (which reads
+`sc.pipe_m3min`) stayed on Mk2: one response describing two different plants. Carrier
+throughput is a stored plan argument now, because it shapes the solve — `belt_ipm` prices
+sinks — and not merely the drawing.
 
 ### 8.6 Diff vs save — what to actually change
 

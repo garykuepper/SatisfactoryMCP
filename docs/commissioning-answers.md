@@ -52,11 +52,13 @@ The E1 numbers are unchanged, only their meaning is. As a startup order:
 1. **Fill time.** Between steps 3 and 5 the pipes and machines are filling and nothing is
    returning power. The deficit is carried for a real interval, not instantaneously. The
    sequence must be safe *during* the wait, not just after it.
-2. **How a block is isolated.** Connecting everything to the grid and hoping does not work
-   — an overloaded Satisfactory grid browns out globally, slowing every machine. The build
-   needs **one Power Switch per block** so energisation is a switch flip. This is a
-   recommendation the tool should emit alongside the sequence, since it has to be built in
-   from the start.
+2. **How a block is isolated.** Connecting everything to the grid and hoping does not work.
+   Correction to an earlier draft of this doc: an overload does **not** brown out and slow
+   machines — the fuse blows and the entire grid stops until it is reset by hand, including
+   the plant that was feeding it. There is no graceful degradation, so the sequence has no
+   safety margin to spend. The build needs **one Power Switch per block** so energisation is
+   a switch flip and a misbehaving block can be isolated. This has to be built in from the
+   start, so the tool should emit it alongside the sequence.
 
 ## Q2 — Resolved by Q1: bootstrap, not buildout. No babysitting.
 

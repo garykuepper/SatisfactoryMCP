@@ -47,6 +47,10 @@ PLAN_DEFAULTS: dict = {
     "only_recipes": None,
     "water_extractors": None,
     "sloops": 0,
+    # Carrier throughput SHAPES THE SOLVE -- belt_ipm prices sinks and both split blocks
+    # and trunks -- so it belongs with the stored arguments, not with presentation.
+    "belt_ipm": None,
+    "pipe_m3min": None,
 }
 
 
@@ -604,8 +608,12 @@ def plan_layout(
         int,
         Field(description="cap a deck at this many 8m foundations; 0 = one stage per deck"),
     ] = 0,
-    belt_tier: str = "Mk5",
-    pipe_tier: str = "Mk2",
+    belt_tier: Annotated[
+        str, Field(description="belt tier name; blank = the fastest you have unlocked")
+    ] = "",
+    pipe_tier: Annotated[
+        str, Field(description="pipe tier name; blank = the fastest you have unlocked")
+    ] = "",
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 20,
@@ -636,18 +644,46 @@ def plan_layout(
     except Exception as exc:
         return f"could not read save: {exc}"
 
+    # Keyed on a NORMALISED tier token, because these lookups were dead. The keys used to
+    # be `name.replace("Conveyor Belt ", "")`, which yields "Mk.5" -- while the parameter
+    # defaults were "Mk5" and "Mk2". Nothing ever matched, every call silently fell back to
+    # the hardcoded 780/600, and it looked correct only because those were the same
+    # numbers. Passing belt_tier="Mk3" would have quietly planned at Mk5 speed.
+    def _tier(name: str, prefix: str) -> str:
+        return name.replace(prefix, "").replace(".", "").strip().casefold()
+
     belts = {
-        b.name.replace("Conveyor Belt ", ""): b.items_per_min
+        _tier(b.name, "Conveyor Belt "): b.items_per_min
         for b in g.buildings.values()
-        if b.items_per_min
+        if b.native == st.BELT_NATIVE
     }
     pipes = {
-        b.name.replace("Pipeline ", ""): b.flow_m3_min
+        _tier(b.name, "Pipeline "): b.flow_m3_min
         for b in g.buildings.values()
-        if b.flow_m3_min
+        if b.native == st.PIPE_NATIVE and "Clean" not in b.name
     }
-    belt_ipm = belts.get(belt_tier, 780.0)
-    pipe_m3min = pipes.get(pipe_tier, 600.0)
+    tier_errors = [
+        f"unknown {what}_tier {given!r}; known: {', '.join(sorted(table))}"
+        for what, given, table in (("belt", belt_tier, belts), ("pipe", pipe_tier, pipes))
+        if given and _tier(given, "") not in table
+    ]
+    if tier_errors:
+        return render.envelope("# unknown carrier tier", "", tier_errors)
+    belt_tier, pipe_tier = _tier(belt_tier, ""), _tier(pipe_tier, "")
+    # Blank means "what this save can actually build". A hardcoded Mk5/Mk2 default ran
+    # unverified through an entire design session; it happened to be right, which is not
+    # the same as being checked.
+    best_belt, best_pipe = st.best_belt(), st.best_pipe()
+    belt_ipm = belts.get(belt_tier) or (best_belt[1] if best_belt else 780.0)
+    pipe_m3min = pipes.get(pipe_tier) or (best_pipe[1] if best_pipe else 600.0)
+    belt_tier = belt_tier or (g.buildings[best_belt[0]].name if best_belt else "Mk5")
+    pipe_tier = pipe_tier or (g.buildings[best_pipe[0]].name if best_pipe else "Mk2")
+    tier_note = (
+        f"carriers are the fastest you have UNLOCKED: {belt_tier} at "
+        f"{render.num(belt_ipm)}/min and {pipe_tier} at {render.num(pipe_m3min)} m3/min. "
+        "Pass belt_tier/pipe_tier to plan against a different one -- an unlocked tier "
+        "assumed rather than checked changes every line count in this schematic"
+    )
 
     # Same solve-shaping arguments as plan_factory, so a layout can be asked for
     # directly rather than only via a saved plan.
@@ -666,6 +702,12 @@ def plan_layout(
         machine_cost_mw=machine_cost_mw,
         water_extractors=water_extractors,
         sloops=sloops,
+        # Into the SCENARIO, not just into build_layout. Passing a tier to the schematic
+        # while the solve kept the default is the same drift 8.5a documents: the trunk
+        # view reads sc.pipe_m3min, so pipe_tier="Mk1" changed the block split and left
+        # the trunk count untouched, describing two different plants in one response.
+        belt_ipm=belt_ipm,
+        pipe_m3min=pipe_m3min,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -727,7 +769,7 @@ def plan_layout(
         ]
     )
 
-    notes = [*lay.warnings]
+    notes = [*lay.warnings, tier_note]
     notes.append(
         "schematic only: no world coordinates or belt routing -- there is no terrain "
         "data available, so those would be invented"
