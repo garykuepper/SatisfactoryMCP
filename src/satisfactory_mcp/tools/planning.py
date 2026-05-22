@@ -354,6 +354,26 @@ def plan_factory(
         else ""
     )
     budget = int(plan_kwargs.get("sloops") or 0)
+    # A sloop budget is only spendable if Production Amplifier is researched. Same class
+    # of check as the unlocked recipe set and the buildable set, which build_scenario
+    # already applies -- a plan using a locked capability is not a plan. It is a note
+    # rather than a refusal because planning ahead of the research is legitimate, and the
+    # research itself is cheap; what is not acceptable is being silent about it.
+    gate = st.research_gate("production_boost") if budget else None
+    if gate is not None:
+        bill_line = ", ".join(f"{r['need']:g} {r['name']}" for r in gate["cost"])
+        verdict = (
+            "you can afford that now"
+            if gate["affordable"]
+            else "short of "
+            + ", ".join(f"{r['need'] - r['have']:.0f} {r['name']}" for r in gate["short"])
+        )
+        notes.append(
+            f"sloops={budget} but PRODUCTION AMPLIFIER IS NOT RESEARCHED, so no somersloop "
+            f"can go in a machine yet and this plan is not buildable as printed. Research "
+            f"{gate['schematic_name']} in the MAM ({bill_line}) -- {verdict}. "
+            "The save carries no flag for this; it is read from your purchased schematics"
+        )
     if bill.sloop_used_rows:
         spent = ", ".join(
             f"{r.machines}x{r.slots_each} in {r.label[:26]} = {r.total} ({r.boost:g}x)"

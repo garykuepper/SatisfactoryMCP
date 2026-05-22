@@ -124,6 +124,26 @@ BUILDING_CLASS_ALIASES: dict[str, str] = {
 }
 
 
+#: Capabilities the game gates behind MAM research, and the schematic that grants each.
+#:
+#: These are here because **the save records no flag for them**. `BP_UnlockSubsystem_C`
+#: carries exactly thirteen properties -- map, overclock, efficiency, blueprints,
+#: customizer, inventory and arm slots, emotes, tapes, customizations, SAM intensity and
+#: two scanner lists -- and no key containing "Boost", "Amplif" or "Sloop" appears
+#: anywhere in the save's 44,307 objects. Overclocking has
+#: `mIsBuildingOverclockUnlocked`; production amplification simply has no equivalent.
+#:
+#: So the capability is derived from the purchased-schematic set instead, which is read
+#: and exact. The mapping itself is the one piece of game knowledge: it says which
+#: schematic is the gate, and it lives here with the rest of the hardcoded register
+#: rather than inline, so a game update moves one line.
+CAPABILITY_SCHEMATICS: dict[str, str] = {
+    #: Somersloops in production machines: 2x output for 4x power.
+    "production_boost": "Research_Alien_ProductionBooster_C",
+    #: The Alien Power Augmenter building, which is a different use of the same item.
+    "power_augmenter": "Research_Alien_PowerBooster_C",
+}
+
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
 #: NOT a measurement, and the only number in this register with no data behind it.

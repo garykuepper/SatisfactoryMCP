@@ -60,7 +60,7 @@ from .tools.planning import (
     plan_factory,
     plan_layout,
 )
-from .tools.progression import phase_requirements, power_shards
+from .tools.progression import mam_research, phase_requirements, power_shards
 from .tools.prompts import design_factory, pick_hard_drive, plan_power_plant
 from .tools.resources import current_save, docs_summary, factory_labels, map_regions
 from .tools.spatial import (
@@ -110,6 +110,7 @@ __all__ = [
     "list_regions",
     "list_worlds",
     "main",
+    "mam_research",
     "map_regions",
     "mcp",
     "name_factory",

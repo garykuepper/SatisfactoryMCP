@@ -180,23 +180,54 @@ def test_committed_sloops_are_reported_as_unknown_not_as_zero(game, state):
 # ------------------------------------------------------------ the tool
 
 
+def _bill_line(out: str) -> str:
+    """The spend bill, selected by what it says rather than by being first.
+
+    It stopped being the first somersloop line once the research gate was added, and the
+    gate belongs above it: a bill for sloops you cannot yet place is the less urgent half.
+    """
+    return next(x for x in out.splitlines() if "somersloops:" in x)
+
+
 def test_the_tool_prints_a_bill_when_it_spends(game):
     out = srv.plan_factory(sloops=16, limit=3, **SPIRE)
-    line = next(x for x in out.splitlines() if "somersloop" in x.lower())
+    line = _bill_line(out)
     assert "16 spent" in line
     assert "not readable from the save" in line
 
 
 def test_the_tool_says_short_when_the_budget_exceeds_what_is_held(game):
     out = srv.plan_factory(sloops=64, limit=3, **SPIRE)
-    line = next(x for x in out.splitlines() if "somersloop" in x.lower())
-    assert "SHORT by" in line
+    assert "SHORT by" in _bill_line(out)
+
+
+def test_a_sloop_budget_warns_when_the_research_is_missing(game):
+    """Spending sloops needs Production Amplifier researched, and the save carries no flag
+    for it -- it is derived from the purchased schematics. Planning ahead of the research
+    is legitimate, so this warns rather than refusing, but staying silent would print a
+    plan that cannot be built as shown."""
+    from satisfactory_mcp.app import _state
+
+    st = _state(None, None)
+    out = srv.plan_factory(sloops=16, limit=3, **SPIRE)
+    if st.has_capability("production_boost"):
+        assert "NOT RESEARCHED" not in out
+        return
+    line = next(x for x in out.splitlines() if "NOT RESEARCHED" in x)
+    assert "Production Amplifier" in line
+    assert "Somersloop" in line and "SAM Fluctuator" in line
+
+
+def test_no_budget_means_no_research_warning(game):
+    """The gate is about SPENDING them. A plan that spends none is buildable today."""
+    out = srv.plan_factory(limit=3, **SPIRE)
+    assert "NOT RESEARCHED" not in out
 
 
 def test_spending_none_still_points_at_the_argument(game):
     """The old note said "nothing here plans sloops", which stopped being true."""
     out = srv.plan_factory(limit=3, **SPIRE)
-    line = next(x for x in out.splitlines() if "somersloop" in x.lower())
+    line = _bill_line(out)
     assert "none used" in line
     assert "sloops=" in line
 

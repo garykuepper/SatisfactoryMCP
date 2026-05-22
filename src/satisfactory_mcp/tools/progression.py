@@ -5,9 +5,13 @@ are tools, not resources -- both read the save and one takes a hypothetical."""
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from .. import render
 from ..app import Limit, _state, mcp
-from ..docs.constants import max_clock, shards_for_clock
+from ..docs.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
 
 
 @mcp.tool(structured_output=False)
@@ -199,6 +203,107 @@ def power_shards(
             ("building", "clock", "slotted", "needed", "idle"),
             rows,
             total=len(budget["holders"]),
+            limit=limit,
+        ),
+        notes,
+    )
+
+
+@mcp.tool(structured_output=False)
+def mam_research(
+    status: Annotated[
+        str, Field(description="all | todo | affordable -- todo hides finished research")
+    ] = "todo",
+    search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 25,
+) -> str:
+    """MAM research: what is left, what it costs, and what you can afford right now.
+
+    The MAM is where CAPABILITIES live, as opposed to recipes -- the Dimensional Depot,
+    the Power Augmenter, and Production Amplifier, which is the one that lets a
+    Somersloop go into a machine at all.
+
+    That last one has no flag in the save. `BP_UnlockSubsystem_C` records overclocking as
+    `mIsBuildingOverclockUnlocked`, but nothing anywhere in the file records production
+    amplification, so it is derived from the purchased-schematic set instead. Capability
+    rows are marked LOCKS so it is obvious which research gates a tool argument rather
+    than just adding a recipe.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    g = st.game
+    done = st.purchased_schematic_ids
+    stock = st.stock()
+    wanted = (status or "todo").strip().casefold()
+    if wanted not in ("all", "todo", "affordable"):
+        return f"! unknown status {status!r}. Choose from: all, todo, affordable"
+
+    gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
+    rows = []
+    n_todo = 0
+    for cls, s in sorted(g.schematics.items(), key=lambda kv: kv[1].name):
+        if s.type != "EST_MAM":
+            continue
+        finished = cls in done
+        if not finished:
+            n_todo += 1
+        if wanted != "all" and finished:
+            continue
+        if search and search.strip().casefold() not in (s.name or "").casefold():
+            continue
+        short = [(f, stock.get(f.item, 0.0)) for f in s.cost if stock.get(f.item, 0.0) < f.amount]
+        if wanted == "affordable" and (short or finished):
+            continue
+        blocked = [
+            g.schematics[d].name for d in s.dependencies if d in g.schematics and d not in done
+        ]
+        rows.append(
+            (
+                "DONE" if finished else ("BLOCKED" if blocked else ("short" if short else "READY")),
+                s.name[:30],
+                "LOCKS " + gates[cls] if cls in gates else "",
+                ", ".join(f"{f.amount:g} {g.item_name(f.item)}" for f in s.cost)[:52] or "-",
+                ", ".join(f"{f.amount - have:.0f} {g.item_name(f.item)}" for f, have in short)[:34],
+                ", ".join(blocked)[:24],
+            )
+        )
+
+    notes = [
+        (
+            "MAM research is where CAPABILITIES live, not just recipes -- 'LOCKS x' marks "
+            "one that gates a feature of this MCP rather than adding a recipe"
+        ),
+        (
+            "cost is checked against spendable stock only: carried, crates and the "
+            "Dimensional Depot, never machine buffers"
+        ),
+    ]
+    for name in CAPABILITY_SCHEMATICS:
+        gate = st.research_gate(name)
+        if gate is None:
+            continue
+        bill = ", ".join(f"{r['need']:g} {r['name']}" for r in gate["cost"])
+        missing = ", ".join(f"{r['need'] - r['have']:.0f} {r['name']}" for r in gate["short"])
+        verdict = "you can afford it now" if gate["affordable"] else f"short of {missing}"
+        blocked = (
+            " Blocked by " + ", ".join(gate["blocked_by"]) + " first." if gate["blocked_by"] else ""
+        )
+        notes.append(
+            f"{name} is NOT researched: needs {gate['schematic_name']} in the MAM "
+            f"({bill}) -- {verdict}.{blocked}"
+        )
+
+    return render.envelope(
+        f"# {st.age_note}\n# {n_todo} MAM research node(s) outstanding, showing status={wanted}",
+        render.table(
+            ("status", "research", "capability", "cost", "short by", "blocked by"),
+            rows[: render.clamp(limit, default=25)],
+            total=len(rows),
             limit=limit,
         ),
         notes,

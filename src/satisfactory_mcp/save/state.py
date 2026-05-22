@@ -503,6 +503,56 @@ class WorldState:
             "measured": any("potential_slots" in r for r in self._all_records()),
         }
 
+    def has_capability(self, name: str) -> bool:
+        """Whether a MAM-gated capability is researched.
+
+        Derived from the purchased-schematic set, because the save carries no flag for
+        these. Overclocking has ``mIsBuildingOverclockUnlocked``; production amplification
+        has no equivalent anywhere in the file. See ``CAPABILITY_SCHEMATICS``.
+        """
+        from ..docs.constants import CAPABILITY_SCHEMATICS
+
+        gate = CAPABILITY_SCHEMATICS.get(name)
+        return bool(gate) and gate in self.purchased_schematic_ids
+
+    def research_gate(self, name: str) -> dict | None:
+        """The schematic that unlocks ``name``, its cost, and what the player holds.
+
+        ``None`` when the capability is already researched, so a caller can treat a
+        truthy result as "here is what is still in the way".
+        """
+        from ..docs.constants import CAPABILITY_SCHEMATICS
+
+        gate = CAPABILITY_SCHEMATICS.get(name)
+        schematic = self.game.schematics.get(gate or "")
+        if schematic is None or self.has_capability(name):
+            return None
+        stock = self.stock()
+        rows = [
+            {
+                "item": f.item,
+                "name": self.game.item_name(f.item),
+                "need": f.amount,
+                "have": stock.get(f.item, 0.0),
+            }
+            for f in schematic.cost
+        ]
+        return {
+            "capability": name,
+            "schematic": gate,
+            "schematic_name": schematic.name,
+            "kind": schematic.type,
+            "cost": rows,
+            "short": [r for r in rows if r["have"] < r["need"]],
+            "affordable": all(r["have"] >= r["need"] for r in rows),
+            #: Prerequisite schematics not yet purchased. Empty on an unblocked node.
+            "blocked_by": [
+                self.game.schematics[d].name
+                for d in schematic.dependencies
+                if d in self.game.schematics and d not in self.purchased_schematic_ids
+            ],
+        }
+
     def sloop_budget(self) -> dict:
         """Somersloops on hand, and an honest admission about the ones in machines.
 

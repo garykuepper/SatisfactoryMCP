@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 654 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 670 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2665,6 +2665,44 @@ code freely licensable. Separately, `resourcePurity.py` data originates from SCI
 terms, not GreyHak's, would govern.
 
 ---
+
+### 6.9 Capabilities the save does not record
+
+Overclocking records itself: `BP_UnlockSubsystem_C` carries
+`mIsBuildingOverclockUnlocked`. **Production amplification records nothing.** Probed
+directly against the save rather than assumed — the unlock subsystem has exactly thirteen
+properties (map, overclock, efficiency, blueprints, customizer, inventory and arm slots,
+emotes, tapes, customizations, SAM intensity, two scanner lists) and **no key containing
+"Boost", "Amplif" or "Sloop" appears anywhere in the 44,307 objects**.
+
+That matters because it gates a tool argument. `plan_factory(sloops=N)` spends Somersloops,
+and a Somersloop cannot enter a machine at all until **Production Amplifier** is researched
+in the MAM. Planning against it while locked prints a plan that cannot be built.
+
+So the capability is derived from the **purchased-schematic set**, which is read and exact,
+via a small register (`CAPABILITY_SCHEMATICS`) mapping capability → gating schematic. The
+register is the only game knowledge involved; everything else — cost, prerequisites,
+affordability — comes from Docs.json and `stock()`.
+
+On the reference save this closes a real gap: production boost was **not researched**, so
+every sloop plan produced so far was unbuildable and nothing said so. `plan_factory` now
+says it, with the bill:
+
+```
+! sloops=16 but PRODUCTION AMPLIFIER IS NOT RESEARCHED, so no somersloop can go in a
+  machine yet and this plan is not buildable as printed. Research Production Amplifier in
+  the MAM (1 Somersloop, 100 SAM Fluctuator, 50 Circuit Board) -- you can afford that now.
+```
+
+It **warns rather than refuses**, because planning ahead of cheap research is legitimate —
+the same reasoning that makes `must build first:` a note and not an error. It fires only
+when `sloops > 0`, since a plan spending none is buildable today and a standing warning
+would be noise.
+
+`mam_research` exposes the whole tree: status (DONE / READY / short / BLOCKED), cost,
+what you are short of, prerequisites, and a `LOCKS <capability>` marker on the rows that
+gate a feature rather than merely adding a recipe. Costs are checked against spendable
+stock only — carried, crates and the Depot — never machine buffers, per § 6.
 
 ## 14. Open questions
 
