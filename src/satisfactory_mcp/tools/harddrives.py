@@ -1,8 +1,17 @@
 """Hard-drive research: what is waiting to be picked, and which option to take.
 
 Split from ``planning`` because the question is different in kind. The optimiser sizes a
-factory you have decided to build; this ranks a one-off irreversible choice against the
-factory you already have.
+factory you have decided to build; this ranks a one-off choice against the factory you
+already have.
+
+**The choice is not irreversible, and saying it was made this advice worse.** Confirmed by
+the player in-game (2026-07-28), closing OQ2: the option you do NOT take **returns to the
+pool** and can be offered by a later drive. Only the drive is spent, never the schematic.
+
+That inverts the advice. Picking is low-stakes, so the right move is to take whatever helps
+the factory you have now and let the other alternate come back around -- there is nothing
+to agonise over and no reason to hoard an unclaimed drive waiting for a better roll. The
+old framing ("irreversible") argued for exactly the opposite behaviour.
 """
 
 from __future__ import annotations
@@ -10,6 +19,13 @@ from __future__ import annotations
 from .. import render
 from ..app import _state, mcp
 from ..planning import advisor
+
+#: Said on every hard-drive response, because it is the fact that decides how hard to
+#: think about the choice, and it is not visible anywhere in the game's own UI.
+POOL_RULE = (
+    "the option you do NOT pick is not lost -- it returns to the pool and a later drive "
+    "can offer it again. Only the drive is spent, so pick what helps now"
+)
 
 
 @mcp.tool(structured_output=False)
@@ -36,7 +52,17 @@ def list_pending_hard_drive_choices(save: str | None = None, world: str | None =
         f"# {len(offers)} unclaimed hard drive(s), each a live choice; "
         f"{st.spare_hard_drives()} unanalysed drive(s) on hand",
         render.table(("id", "rerolls", "options"), rows),
-        ["use advise_hard_drive_pick(hard_drive_id=N) to rank one drive's options"],
+        [
+            "use advise_hard_drive_pick(hard_drive_id=N) to rank one drive's options",
+            POOL_RULE,
+            # Measured across all 25 offers on the reference save: every drive shows
+            # exactly 2 options and starts with exactly 1 reroll, which matches
+            # mNumSchematicsPerHardDrive and mNumRerollsPerHardDrive in the headers.
+            (
+                "each drive offers 2 options and allows 1 reroll; a reroll can re-serve "
+                "an excluded schematic when the pool is thin, so it is never simply wasted"
+            ),
+        ],
     )
 
 
@@ -112,5 +138,6 @@ def advise_hard_drive_pick(
             *res.get("notes", []),
             "deltas are marginal value vs this world's current recipes",
             "a 0 delta means the player already has a route that dominates it",
+            POOL_RULE,
         ],
     )

@@ -2109,10 +2109,15 @@ types required (and whether they're unlocked *and built*), water/pipe burden, be
 
 ### 9.3 Unverified mechanics — must be labelled in output
 
-- **`[UNVERIFIED]`** Whether picking one option permanently forfeits the other, and whether the forfeited
-  schematic returns to the pool. Only headers ship; the supporting doc comment on
-  `GetAvailableAlternateSchematics` excludes "unclaimed hard drive rewards" from candidates, from which
-  return-to-pool follows *only if* `ClaimHardDrive` removes the entry. Plausible, not demonstrated.
+- **CONFIRMED (player, 2026-07-28).** Picking one option does **not** forfeit the other: the unchosen
+  schematic **returns to the pool** and a later drive can offer it again. Only the drive is spent. This was
+  the inference the headers supported -- the doc comment on `GetAvailableAlternateSchematics` excludes
+  "unclaimed hard drive rewards" from candidates, so return-to-pool follows *if* `ClaimHardDrive` removes
+  the entry -- and it is now demonstrated in game rather than merely plausible.
+  **It inverts the advice.** The module had described this as "a one-off irreversible choice", which argues
+  for agonising over each pick and hoarding drives against a better roll. The opposite is correct: take
+  whatever helps the factory you have now, because the other alternate comes back around. Both hard-drive
+  tools now say so on every response, since the rule appears nowhere in the game's own UI.
 - **Reroll has a documented fallback**: *"If the required number isn't met, we fall back to
   excludedSchematics to fill up the list"* — so rerolling with a thin pool can re-serve excluded
   schematics rather than failing. Advice like "rerolling is pointless" is wrong.
@@ -2522,8 +2527,8 @@ terms, not GreyHak's, would govern.
 | id | question | impact | how to resolve |
 |---|---|---|---|
 | ~~OQ1~~ | ~~Can fluids actually be sunk?~~ | **CLOSED** — user confirms fluids cannot be sunk. Hardcoded per §5.6. | — |
-| OQ2 | Does an unchosen hard-drive option return to the pool, and is the forfeit permanent? | Whether picking is low-stakes or high-stakes advice. | In-game test; or `.pak` inspection. |
-| OQ3 | Are `mNumSchematicsPerHardDrive = 2` / `mNumRerollsPerHardDrive = 1` overridden by a packaged ini? | Reroll advice. | Only inside the shipping DLL; treat as semi-verified. |
+| ~~OQ2~~ | ~~Does an unchosen hard-drive option return to the pool, and is the forfeit permanent?~~ | **CLOSED** — player confirms the unchosen option returns to the pool; only the drive is spent. Picking is **low-stakes**, which inverts the advice the tools used to imply. See §9.3. | — |
+| ~~OQ3~~ | ~~Are `mNumSchematicsPerHardDrive = 2` / `mNumRerollsPerHardDrive = 1` overridden by a packaged ini?~~ | **CLOSED for practical purposes** — the constants are confirmed by *observation* rather than by source: all 25 offers on the reference save carry exactly 2 options, and 24 of 25 exactly 1 reroll (the 25th has spent it). Player confirms one reroll. Whether some other install could override them is unanswerable from here and no longer matters. | — |
 | OQ4 | Runtime property names for installed somersloops. | Reading sloop placement from a save. | Place a sloop, re-save, diff the properties. |
 | OQ5 | Water pump -> water volume mapping (`FGWaterVolume*` aren't purity keys). | Water capacity accounting. | Coordinate fallback, or accept "unknown". |
 | ~~OQ6~~ | ~~Regenerate the node/purity table independently of SCIM.~~ | **CLOSED** — merged with an MIT, game-asset-derived set; 0 purity/resource mismatches, and a missing node recovered. See §3.4. | — |
