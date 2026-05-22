@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 630 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 635 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1411,9 +1411,14 @@ foundations one machine covers):
 | Nuclear Power Plant | 36×42×10 m | 30 |
 | Quantum Encoder | 22×50×14 m | 21 |
 
-Foundations round up **per axis** — a 5×10 m Smelter takes two, not one — and edges shared
-with a neighbour are ignored, so a row of N machines needs somewhat fewer than N × found.
-Both caveats are stated in the output rather than left to be discovered.
+Foundations round up **per axis** — a 5×10 m Smelter takes two, not one. The `found`
+column is deliberately **per machine and ignoring shared edges**, so `N × found` is an
+upper bound: a row of N machines needs fewer, because two 20 m machines side by side span
+40 m and want 5 tiles rather than 6.
+
+That caveat used to be merely *stated*, and both `plan_layout` and the water-siting note
+had independently grown their own copy of the wrong `N × found` arithmetic. It is now
+computed once, by `Footprint.pack(n, columns=)` (§ 8.5g).
 
 The rotation trap is documented in the module and now has a test: the Fuel Generator's
 clearance is several thin boxes at 45° increments approximating a round machine, so taking
@@ -1421,7 +1426,7 @@ the largest box naively gives 22×4 m instead of ~20×20 — roughly **1,000 fou
 understated across a 176-generator plan**.
 
 This feeds straight back into §8.2c's water problem. "Siting is not modelled" is abstract;
-*"77 of them pack into 8×10 = 160×180 m (460 foundations, 2,300 Concrete), or a single pier
+*"77 of them pack into 11×7 = 220×126 m (448 foundations, 2,240 Concrete), or a single pier
 20×1,386 m (522 foundations)"* is something you can hold against a build.
 
 The frontage half of this was **wrong and is gone**. It quoted "about 1,920 m of shoreline
@@ -1437,7 +1442,7 @@ cheapest way to buy the area, the pier is what you measure modules against.
 
 **And it is packed, not multiplied.** `Footprint.foundations` says outright that it ignores
 shared edges, so `n × foundations` is an upper bound and not a build — two pumps side by
-side span 40 m and need 5 tiles, not 6. Across 77 pumps that is **460 foundations against
+side span 40 m and need 5 tiles, not 6. Across 77 pumps that is **448 foundations against
 693**, a third of the concrete. `Footprint.pack(n, columns=)` does the arithmetic and the
 naive figure now appears only as the thing being corrected.
 
@@ -1664,11 +1669,11 @@ reverse. Same computation, run backwards:
 
 | cap | production decks | peak | site |
 |---|---|---|---|
-| none | 5 | 3,774 | 496×496 m |
-| 1225 (35×35) | 8 | 1,080 | 264×264 m |
-| 900 (30×30) | 9 | 900 | 240×240 m |
+| none | 5 | 2,920 | 440×440 m |
+| 1225 (35×35) | 7 | 1,200 | 280×280 m |
+| 900 (30×30) | 8 | 900 | 240×240 m |
 
-**Total foundations are conserved at 6,472 across every cap** — the same machines stacked
+**Total foundations are conserved at 4,719 across every cap** — the same machines stacked
 differently — and a test asserts it, because a total that moved would mean the cap was
 dropping or duplicating blocks. A block larger than the cap gets a deck of its own rather
 than being split: a block is one manifold.
@@ -1907,11 +1912,11 @@ The startup re-frame separated running cost from construction cost (§ 8.5d), an
 first had ever been measured. `plan_layout detail="materials"` measures the second:
 
 ```
-machines=821  foundations=6529  distinct_parts=15
-costliest: 488x Fuel-Powered Generator = 78,080 parts, 6529x Foundation = 32,645 parts
+machines=821  foundations=4719  distinct_parts=15
+costliest: 488x Fuel-Powered Generator = 78,080 parts, 4719x Foundation = 23,595 parts
 
 item                      need    have   short   for
-Concrete                 32645   60622          Foundation
+Concrete                 23595   60622          Foundation
 Rubber                   24400    5996   18404  Fuel-Powered Generator
 Motor                    10705    5254    5451  Fuel-Powered Generator, Blender, Refinery
 Heavy Modular Frame        920     244     676  Blender
@@ -1925,7 +1930,7 @@ want it. Neither is derivable from the other, and a reader who conflates them wi
 the plant is cheaper than it is, so the output says so out loud.
 
 **Foundations are the number nobody had.** They are not machines, so no build table counted
-them, and 6,529 of them at 5 Concrete each is 32,645 Concrete -- larger than every machine
+them, and 4,719 of them at 5 Concrete each is 23,595 Concrete — larger than every machine
 line except Rubber. It is charged at `total_foundations`, not `Layout.foundations`: the
 latter is the PEAK floor, which is what sizes the *ground* because floors stack, but
 concrete is poured for every storey. Charging the peak would understate the deck by the
@@ -1937,6 +1942,52 @@ project; line counts and the trunk lower bound are offered instead. And the bill
 **build-gun components, not ore**: flattening would have to guess a depth through the
 Recycled Plastic / Recycled Rubber 2-cycle, which is exactly why `bom` uses an LP. The two
 compose -- this says "10,705 Motors", `bom` says what a Motor costs.
+
+### 8.5g One sizing primitive
+
+"How much floor do N of these need" was being answered in two places with the same wrong
+arithmetic. `plan_layout` sized every block as `footprint.foundations × n`, and the
+water-siting note had independently grown its own copy — while `Footprint.foundations`
+says in its own docstring that it is per-machine and **ignores shared edges**.
+
+It is one computation and it is now in one place: `Footprint.pack(count, columns=)`.
+
+| pumps | `n × found` | packed block | pier |
+|---|---|---|---|
+| 30 | 270 | 10×3 = 200×54 m, **175** | 540 m, 204 |
+| 64 | 576 | 8×8 = 160×144 m, **360** | 1,152 m, 432 |
+| 77 | 693 | 11×7 = 220×126 m, **448** | 1,386 m, 522 |
+| 105 | 945 | 15×7 = 300×126 m, **608** | 1,890 m, 711 |
+
+`columns=1` gives a single row, whose *length* is what platform modules get measured
+against. Left at 0 it searches every column count — and **two false starts are worth
+recording, because both looked obviously right**:
+
+*Squarest* was the first rule, on the reasoning that perimeter waste costs tiles. It is
+wrong: four Oil Extractors (8×13 m) laid 3×2 span 24×26 m and need **12** tiles, where
+four in a row span 32×13 m and need **8**. Unfilled grid slots and depths that land just
+past a tile boundary lose more than the perimeter saves.
+
+*Cheapest* then produced ribbons: the true tile optimum for 77 pumps is 2×39, a
+**40×702 m** strip that wastes nothing at either edge, saves 4%, and is not a thing anyone
+builds. So the default is cheapest among shapes within `MAX_BLOCK_ASPECT` (4:1) — the one
+judgement call in the module, labelled as such — **plus the single row, always**. Keeping
+the row as a candidate is what preserves the guarantee that this never exceeds
+`n × foundations`; without it a 5-machine Lookout Tower block came out at 6 tiles against
+the old 5, making the change an improvement on average and a regression in places.
+
+**It moved real numbers.** The Spire Coast plan's deck fell from 6,529 foundations to
+**4,719** — 28% — its peak floor from 3,774 to 2,920, and its site from 496 m square to
+**440 m**. Everything downstream inherited the correction at once: the concrete line in the
+build bill (§ 8.5f), the deck-cap table (§ 8.5b), and `assess_fit`'s verdict on whether a
+plan fits an existing platform. That is the argument for one primitive rather than two
+agreeing implementations — the second copy is not merely duplication, it is a second thing
+that can be wrong on its own.
+
+The layout tests did not need changing, which is the other half of the point: they assert
+conservation across caps and `peak == max(floor)` rather than hardcoded totals, so they
+survived a 19% shift in the underlying number and would still have caught a cap that
+dropped or duplicated a block.
 
 ### 8.6 Diff vs save — what to actually change
 

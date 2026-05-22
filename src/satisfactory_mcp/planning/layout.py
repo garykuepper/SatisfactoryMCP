@@ -32,7 +32,7 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from ..docs.footprint import FOUNDATION_M
+from ..docs.footprint import FOUNDATION_M, Packed
 from ..docs.model import GameData
 from .optimize import MW, Solution
 
@@ -76,10 +76,26 @@ class Block:
     inputs: dict[str, float] = field(default_factory=dict)
     outputs: dict[str, float] = field(default_factory=dict)
     stage: int = 0
+    #: Per-MACHINE dimensions, which is what the build table prints as "each(m)".
     width_m: float = 0.0
     depth_m: float = 0.0
     height_m: float = 0.0
-    foundations: int = 0
+    #: The whole block laid out on foundations. The single source of "how much floor do
+    #: N of these need" -- see Footprint.pack. None only when the building has no
+    #: clearance data at all, which `build_layout` reports rather than treating as free.
+    packed: Packed | None = None
+
+    @property
+    def foundations(self) -> int:
+        return self.packed.foundations if self.packed else 0
+
+    @property
+    def block_width_m(self) -> float:
+        return self.packed.width_m if self.packed else 0.0
+
+    @property
+    def block_depth_m(self) -> float:
+        return self.packed.depth_m if self.packed else 0.0
 
     @property
     def name(self) -> str:
@@ -218,7 +234,14 @@ def _blocks_from(game: GameData, sol: Solution, belt_ipm: float, pipe_m3min: flo
                     width_m=fp.width_m if fp else 0.0,
                     depth_m=fp.depth_m if fp else 0.0,
                     height_m=fp.height_m if fp else 0.0,
-                    foundations=(fp.foundations * n) if fp else 0,
+                    # ONE sizing primitive, shared with everything else that asks how
+                    # much floor N machines need. This used to be `fp.foundations * n`,
+                    # which the footprint's own docstring warns is an upper bound: it
+                    # ignores shared edges, so two 20 m machines side by side were
+                    # charged 6 tiles where they span 40 m and need 5. Across a plan that
+                    # was about a third too much concrete, and the water-siting note had
+                    # independently grown its own copy of the same wrong arithmetic.
+                    packed=fp.pack(n) if fp else None,
                 )
             )
     return blocks

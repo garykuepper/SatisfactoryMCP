@@ -311,10 +311,10 @@ def test_packing_beats_counting_machines_one_at_a_time(game):
     """`Footprint.foundations` says outright that it ignores shared edges, so
     `n x foundations` is an upper bound and not a build. Two Water Extractors side by side
     span 40 m and need 5 tiles, not 6, and across 77 pumps that gap is a third of the
-    concrete -- 460 against 693."""
+    concrete -- 448 against 693."""
     fp = game.buildings["Build_WaterPump_C"].footprint
     packed = fp.pack(77)
-    assert packed.foundations == 460
+    assert packed.foundations == 448
     assert packed.foundations < 77 * fp.foundations
     assert packed.count == 77
 
@@ -330,10 +330,9 @@ def test_a_pack_always_holds_every_machine(game):
             assert packed.depth_m >= fp.depth_m
 
 
-def test_the_squarest_arrangement_is_the_cheapest(game):
-    """Which is why it is the default: perimeter waste is what costs tiles, so a block
-    beats a pier on concrete every time. The pier is offered anyway because its LENGTH is
-    the number you lay platform modules against."""
+def test_the_default_block_beats_a_pier_on_concrete(game):
+    """Cheapest-buildable is the default, not squarest -- squarest was wrong, see pack().
+    The pier is offered anyway because its LENGTH is the number you lay modules against."""
     fp = game.buildings["Build_WaterPump_C"].footprint
     block, pier = fp.pack(77), fp.pack(77, columns=1)
     assert block.foundations < pier.foundations
@@ -346,3 +345,34 @@ def test_one_machine_packs_to_its_own_footprint(game):
     one = fp.pack(1)
     assert one.foundations == fp.foundations
     assert (one.columns, one.rows) == (1, 1)
+
+
+def test_packing_is_never_worse_than_the_arithmetic_it_replaced(game):
+    """The guarantee that makes this strictly an improvement rather than one that is
+    better on average and worse in places. It holds because the single row is always a
+    candidate and ceil is subadditive -- an aspect cap alone broke it for 567 small cases,
+    e.g. a 5-machine Lookout Tower block at 6 tiles against the old 5."""
+    checked = 0
+    for building in game.buildings.values():
+        fp = building.footprint
+        if fp is None:
+            continue
+        for n in (1, 2, 3, 5, 7, 12, 24, 64, 77, 105):
+            packed = fp.pack(n)
+            assert packed.foundations <= n * fp.foundations, (building.cls, n)
+            assert packed.columns * packed.rows >= n
+            checked += 1
+    assert checked > 500
+
+
+def test_the_default_block_is_a_shape_someone_would_build(game):
+    """Unconstrained, the cheapest pack for 77 Water Extractors is a 40x702 m ribbon. It
+    is correct arithmetic and not a build, so the default is capped at MAX_BLOCK_ASPECT."""
+    from satisfactory_mcp.docs.footprint import MAX_BLOCK_ASPECT
+
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    block = fp.pack(77)
+    assert max(block.width_m, block.depth_m) <= MAX_BLOCK_ASPECT * min(block.width_m, block.depth_m)
+    assert block.foundations == 448
+    # The ribbon is still reachable when explicitly asked for.
+    assert fp.pack(77, columns=2).foundations < block.foundations

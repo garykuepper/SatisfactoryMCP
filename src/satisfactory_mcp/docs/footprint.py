@@ -24,6 +24,13 @@ __all__ = ["FOUNDATION_M", "Footprint", "Packed", "extract_footprint"]
 #: Standard foundation edge length. Everything in Satisfactory grids to this.
 FOUNDATION_M = 8.0
 
+#: Longest side of a default block, as a multiple of its shortest. A judgement call, not
+#: a game rule, and the only number in this module that is not derived: the unconstrained
+#: tile optimum is routinely a ribbon (77 Water Extractors pack cheapest as 40x702 m,
+#: saving 4% over a squarish block), which is correct arithmetic and not a build. Pass
+#: `columns=` to override it in either direction.
+MAX_BLOCK_ASPECT = 4.0
+
 
 @dataclass(frozen=True)
 class Footprint:
@@ -55,26 +62,66 @@ class Footprint:
         ``foundations`` above is per-machine and says it ignores shared edges, which makes
         ``count x foundations`` an UPPER bound rather than a build. Two Water Extractors
         side by side span 40 m and need 5 tiles, not 6, so a real block is meaningfully
-        cheaper than the naive product -- 77 of them measure **460 foundations** packed
+        cheaper than the naive product -- 77 of them measure **448 foundations** packed
         against 693 counted one at a time, a third less concrete.
 
-        ``columns`` picks the arrangement. 0 chooses the squarest one, which is the
-        cheapest in foundations because it minimises perimeter waste; 1 gives a single
-        row, which is the shape you want when the answer is "how long a pier is this".
+        ``columns`` forces an arrangement; 1 gives a single row, whose LENGTH is what
+        platform modules get measured against. Left at 0, every column count is tried and
+        the cheapest BUILDABLE one wins, ties broken toward the squarer block.
+
+        Two false starts, both recorded because both looked obviously right:
+
+        *Squarest*, on the reasoning that perimeter waste costs tiles. Wrong: four Oil
+        Extractors (8x13 m) laid 3x2 span 24x26 m and need **12** tiles, where four in a
+        row span 32x13 m and need **8**. Unfilled grid slots, and depths landing just past
+        a tile boundary, lose more than the perimeter saves.
+
+        *Cheapest outright*, which produces ribbons -- the true optimum for 77 Water
+        Extractors is 2x39, a 40x702 m strip that wastes nothing at either edge, saves 4%,
+        and is not a thing anyone builds. Hence ``MAX_BLOCK_ASPECT``.
+
+        The result is never worse than ``count x foundations``, because the single row is
+        always among the candidates and ``ceil`` is subadditive -- n machines in a row can
+        never need more tiles than n machines each given their own patch. That guarantee
+        is what makes this strictly an improvement on the arithmetic it replaced, rather
+        than one that is better on average and worse in places.
         """
         import math
 
         n = max(1, int(count))
-        cols = (
-            int(columns) if columns else max(1, round(math.sqrt(n * self.depth_m / self.width_m)))
-        )
-        cols = max(1, min(cols, n))
-        rows = math.ceil(n / cols)
-        width = cols * self.width_m
-        depth = rows * self.depth_m
-        tiles = max(1, math.ceil(width / FOUNDATION_M)) * max(1, math.ceil(depth / FOUNDATION_M))
-        return Packed(
-            count=n, columns=cols, rows=rows, width_m=width, depth_m=depth, foundations=tiles
+
+        def measure(cols: int) -> Packed:
+            cols = max(1, min(cols, n))
+            rows = math.ceil(n / cols)
+            width, depth = cols * self.width_m, rows * self.depth_m
+            tiles = max(1, math.ceil(width / FOUNDATION_M)) * max(
+                1, math.ceil(depth / FOUNDATION_M)
+            )
+            return Packed(
+                count=n, columns=cols, rows=rows, width_m=width, depth_m=depth, foundations=tiles
+            )
+
+        if columns:
+            return measure(int(columns))
+        # Cheapest among BUILDABLE shapes. Unconstrained, the true optimum for 77 Water
+        # Extractors is 2x39 -- a 40x702 m ribbon that happens to waste no tiles at either
+        # edge. It saves 4% over a squarish block and nobody builds it. Capping the aspect
+        # keeps the default something a player would actually lay, and `columns=` still
+        # gives the long row on demand, where the length is the point.
+        options = [measure(c) for c in range(1, n + 1)]
+        buildable = [
+            p
+            for p in options
+            if max(p.width_m, p.depth_m) <= MAX_BLOCK_ASPECT * min(p.width_m, p.depth_m)
+        ]
+        # The single row is ALWAYS a candidate, whatever its aspect. It is the shape the
+        # old `n x foundations` bound implicitly assumed, so keeping it is what makes this
+        # never worse than what it replaced -- without it a 5-machine Lookout Tower block
+        # came out at 6 tiles against the old 5, and the change would have been an
+        # improvement on average and a regression in places. It rarely wins on anything
+        # large: 77 Water Extractors in one row is 579 tiles against the block's 448.
+        return min(
+            [*buildable, measure(n)], key=lambda p: (p.foundations, abs(p.width_m - p.depth_m))
         )
 
 

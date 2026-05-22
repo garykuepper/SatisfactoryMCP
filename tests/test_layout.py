@@ -392,3 +392,83 @@ def test_a_zero_cap_means_no_cap(game, oil_solution):
     assert [f.index for f in build_layout(game, oil_solution, max_floor_foundations=0).floors] == [
         f.index for f in build_layout(game, oil_solution).floors
     ]
+
+
+# ------------------------------------------------- one sizing primitive
+
+
+def test_a_block_is_packed_not_multiplied(game, state):
+    """`Footprint.foundations` is per machine and says outright that it ignores shared
+    edges, so `n x found` is an upper bound. plan_layout used to charge exactly that, and
+    the water-siting note had independently grown its own copy of the same arithmetic --
+    two places to be wrong instead of one."""
+    from satisfactory_mcp.planning.prepare import prepare
+
+    prepared = prepare(
+        game,
+        state,
+        dict(
+            sources=["region:Spire Coast"],
+            objective="max_mw",
+            exports=["MW"],
+            extractor_clocks=[1, 1.5, 2, 2.5],
+        ),
+    )
+    lay = build_layout(game, prepared.solution)
+    checked = 0
+    for block in lay.blocks:
+        fp = game.buildings[block.building_id].footprint
+        if fp is None:
+            continue
+        assert block.foundations == fp.pack(block.machines).foundations
+        if block.machines > 1:
+            assert block.foundations <= fp.foundations * block.machines
+            checked += 1
+    assert checked, "no multi-machine block to compare"
+
+
+def test_packing_shrank_the_site_rather_than_the_machine_count(game, state):
+    """The correction must move floor area only. A foundation change that also moved
+    machines would mean it had eaten part of the plan."""
+    from satisfactory_mcp.planning.prepare import prepare
+
+    prepared = prepare(
+        game,
+        state,
+        dict(
+            sources=["region:Spire Coast"],
+            objective="max_mw",
+            exports=["MW"],
+            extractor_clocks=[1, 1.5, 2, 2.5],
+        ),
+    )
+    lay = build_layout(game, prepared.solution)
+    naive = sum(
+        game.buildings[b.building_id].footprint.foundations * b.machines
+        for b in lay.blocks
+        if game.buildings.get(b.building_id) and game.buildings[b.building_id].footprint
+    )
+    assert lay.total_foundations < naive
+    assert lay.machines == sum(p["machines"] for p in prepared.solution.processes)
+
+
+def test_a_building_with_no_clearance_data_is_not_free(game, state):
+    """packed is None only when the dump has no clearance boxes at all. Reporting 0
+    foundations there is honest; silently sizing it as a point would not be, so
+    build_layout names those buildings in its warnings."""
+    from satisfactory_mcp.planning.layout import Block
+
+    bare = Block(
+        key="k",
+        label="l",
+        building_id="x",
+        building="X",
+        recipe=None,
+        machines=4,
+        clock=1.0,
+        part=1,
+        parts=1,
+    )
+    assert bare.packed is None
+    assert bare.foundations == 0
+    assert bare.block_width_m == 0.0
