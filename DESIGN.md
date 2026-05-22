@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 635 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 636 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1988,6 +1988,47 @@ The layout tests did not need changing, which is the other half of the point: th
 conservation across caps and `peak == max(floor)` rather than hardcoded totals, so they
 survived a 19% shift in the underlying number and would still have caught a cap that
 dropped or duplicated a block.
+
+### 8.5h Duplicated logic found by asking
+
+A sweep for "same computation implemented twice", prompted by the sizing primitive above
+turning out to be exactly that. Ranked by whether the copies can actually disagree.
+
+**Chain depth — fixed, and it was a live bug.** `commission._depths` relaxed depths
+iteratively with a cap while `layout.chain_depth` condenses strongly connected components,
+and `diff` already used the latter. On a Recycled-shaped 2-cycle they disagree outright:
+
+| process | `chain_depth` | the relaxation |
+|---|---|---|
+| ore | 0 | 0 |
+| plastic | **1** | 7 |
+| rubber | **1** | 8 |
+| sink | **2** | 8 |
+
+The relaxation splits cycle members across stages, which is wrong (they have to be
+energised together) and unstable (the depth depends on the iteration cap). It mattered
+across modules, not just locally: `track` joins a commission wave against a diff row, so
+the two halves of "which stage am I in" could order the same plant differently. Now one
+function, with a test asserting the two agree on the reference plan.
+
+**Carrier and line count — two copies, one divergence.** `layout._carrier` / `_lines_for`
+and `optimize._logistics` both derive carrier, unit, capacity and
+`ceil(rate / capacity - 1e-9)` from `item.is_fluid`. The shared epsilon is the tell that
+one was copied from the other. They differ on `capacity <= 0`: layout returns 1 line,
+optimize returns `None`. Unreachable today because rate is filtered positive first.
+
+**Centroid and spread — four copies.** `graph/identity.py` and `graph/query.py` each
+compute `sum(p[0])/len(p)` plus an O(n²) `max(dist(a, b))`, which is what `geo.Cluster`
+already exposes as `centroid` and `diameter_m`. `diff` has a named `_centroid`;
+`trunks` and `app` inline theirs again.
+
+**`math.dist(...) / 100` vs `geo.distance_m`.** The helper exists and 12 call sites use
+it; `graph/*`, `trunks` and `elevation` retype the centimetre conversion by hand. Cosmetic
+until it isn't — §9's standing note is that getting this wrong silently searches 100× too
+far.
+
+Only the first was fixed. The rest are recorded rather than swept up, because each touches
+a module with its own tests and the sweep is worth doing deliberately.
 
 ### 8.6 Diff vs save — what to actually change
 

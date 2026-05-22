@@ -196,41 +196,40 @@ class Commissioning:
 
 
 def _depths(processes: list[dict]) -> dict[str, int]:
-    """Chain depth per process id, by relaxation.
+    """Chain depth per process id.
 
-    ``MW`` is excluded from the dependency graph on purpose. It is modelled as an item so
-    the power balance is just another row (see optimize), but treating it as one here
-    would make every consumer depend on every generator and every generator depend on its
-    fuel -- one strongly connected component, and no order at all.
+    One line of real work, because ``layout.chain_depth`` already does this and does it
+    properly. This function used to relax depths iteratively with a cap, which looked
+    equivalent and was not: item flow is genuinely cyclic -- Recycled Plastic and Recycled
+    Rubber consume each other's output -- and relaxation drives a cycle to the cap instead
+    of collapsing it. Measured on a 2-cycle of that exact shape, the relaxation returned
+    plastic=7, rubber=8, sink=8 where the condensation returns 1, 1, 2. Cycle members
+    landed on DIFFERENT stages, which is both wrong and unbuildable: they have to go up
+    together.
 
-    Relaxation rather than a topological sort because item flow is not always acyclic:
-    refinery loops like Residual Rubber legitimately feed themselves. A cycle settles at
-    the cap instead of raising.
+    It also mattered across modules. ``diff`` computes build order with ``chain_depth``,
+    and ``track`` joins a wave against a diff row, so two implementations meant the two
+    halves of "which stage am I in" could order the same plant differently.
+
+    ``MW`` is filtered out here rather than inside ``chain_depth``. Power is modelled as
+    an item so the balance is just another row (see optimize), but as a dependency it
+    would make every consumer depend on every generator and every generator on its fuel:
+    one component, and no order at all. In practice a solution row never carries MW in
+    ``rates`` -- it is kept in ``mw`` -- so this is belt and braces, and cheap.
     """
+    from .layout import chain_depth
     from .optimize import MW
 
-    makers: dict[str, list[str]] = {}
-    for p in processes:
-        for item, rate in p["rates"].items():
-            if rate > 0 and item != MW:
-                makers.setdefault(item, []).append(p["pid"])
-
-    depth = {p["pid"]: 0 for p in processes}
-    for _ in range(len(processes)):
-        changed = False
-        for p in processes:
-            inputs = [i for i, rate in p["rates"].items() if rate < 0 and i != MW]
-            best = 0
-            for item in inputs:
-                for src in makers.get(item, ()):
-                    if src != p["pid"]:
-                        best = max(best, depth[src] + 1)
-            if best > depth[p["pid"]]:
-                depth[p["pid"]] = best
-                changed = True
-        if not changed:
-            break
-    return depth
+    depths = chain_depth(
+        [
+            (
+                [i for i, rate in p["rates"].items() if rate < 0 and i != MW],
+                [i for i, rate in p["rates"].items() if rate > 0 and i != MW],
+            )
+            for p in processes
+        ]
+    )
+    return {p["pid"]: d for p, d in zip(processes, depths, strict=True)}
 
 
 def commission(

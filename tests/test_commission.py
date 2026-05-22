@@ -216,17 +216,49 @@ def test_power_is_kept_out_of_the_dependency_graph(game, state):
     assert extractors and all(depths[pid] == 0 for pid in extractors)
 
 
-def test_a_refinery_loop_does_not_hang_the_depth_pass(game, state):
-    """Item flow is not always acyclic -- Residual Rubber legitimately feeds itself -- so
-    depth is relaxed with a cap rather than topologically sorted."""
+def test_a_cycle_puts_its_members_on_the_SAME_stage(game, state):
+    """Item flow is genuinely cyclic -- Recycled Plastic and Recycled Rubber consume each
+    other's output -- and members of a cycle have to be energised together, so they must
+    share a depth.
+
+    This is the regression that motivated deleting a second depth implementation. Relaxing
+    with a cap, which is what commission used to do, returned plastic=7 rubber=8 sink=8 on
+    exactly this shape: the cycle split across stages and the consumer landed level with
+    its own producer. layout.chain_depth condenses the cycle instead and returns 1, 1, 2.
+    """
     from satisfactory_mcp.planning.commission import _depths
 
     procs = [
-        {"pid": "a", "rates": {"x": 1.0, "y": -1.0}},
-        {"pid": "b", "rates": {"y": 1.0, "x": -1.0}},
+        {"pid": "ore", "rates": {"ore": 1.0}},
+        {"pid": "plastic", "rates": {"plastic": 1.0, "rubber": -1.0, "ore": -1.0}},
+        {"pid": "rubber", "rates": {"rubber": 1.0, "plastic": -1.0}},
+        {"pid": "sink", "rates": {"plastic": -1.0}},
     ]
     depths = _depths(procs)
-    assert set(depths) == {"a", "b"}
+    assert depths["plastic"] == depths["rubber"], "cycle members must share a stage"
+    assert depths["ore"] < depths["plastic"] < depths["sink"]
+
+
+def test_commission_and_diff_order_a_plant_the_same_way(game, state):
+    """`track` joins a commission wave against a diff row, so the two must agree on chain
+    depth. They now agree by construction -- one function -- and this pins that they are
+    not allowed to drift back apart."""
+    from satisfactory_mcp.planning.commission import _depths
+    from satisfactory_mcp.planning.layout import chain_depth
+
+    prepared = prepare(game, state, dict(SPIRE))
+    procs = prepared.solution.processes
+    mine = _depths(procs)
+    theirs = chain_depth(
+        [
+            (
+                [i for i, r in p["rates"].items() if r < 0],
+                [i for i, r in p["rates"].items() if r > 0],
+            )
+            for p in procs
+        ]
+    )
+    assert [mine[p["pid"]] for p in procs] == theirs
 
 
 # --------------------------------------------------------- the floor
