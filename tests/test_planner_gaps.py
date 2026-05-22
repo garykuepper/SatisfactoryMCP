@@ -288,11 +288,61 @@ def test_the_water_warning_quotes_real_geometry(game, state):
     )
     warn = [line for line in out.splitlines() if "Water Extractor(s): siting" in line]
     if warn:
-        assert "m2 of water" in warn[0]
-        # The platform and its concrete, which is what actually costs something. The
-        # frontage figure this used to assert was answering a question nobody had: pumps
-        # do not line a shore, they sit on floors built out over open water, and quoting
-        # metres-of-shoreline made ordinary large water plans look impossible.
-        assert "Concrete to float" in warn[0]
+        # The platform and its concrete, which is what actually costs something, in BOTH
+        # shapes: the block is the cheapest way to buy the area and the pier length is the
+        # number you lay platform modules against.
+        assert "Concrete)" in warn[0]
+        assert "pier" in warn[0]
         assert "Shoreline is NOT the limit" in warn[0]
+        # The frontage figure this used to assert was answering a question nobody had.
+        # Pumps do not line a shore, they sit on floors built out over open water, and
+        # quoting metres-of-shoreline made ordinary large water plans look impossible.
         assert "of shoreline" not in warn[0]
+        # Packed, not n x footprint. The per-machine count ignores shared edges and
+        # overstates the concrete by about a third, so the naive figure appears only as
+        # the thing being corrected.
+        assert "ignores shared edges" in warn[0]
+
+
+# ------------------------------------------------- packing machines onto foundations
+
+
+def test_packing_beats_counting_machines_one_at_a_time(game):
+    """`Footprint.foundations` says outright that it ignores shared edges, so
+    `n x foundations` is an upper bound and not a build. Two Water Extractors side by side
+    span 40 m and need 5 tiles, not 6, and across 77 pumps that gap is a third of the
+    concrete -- 460 against 693."""
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    packed = fp.pack(77)
+    assert packed.foundations == 460
+    assert packed.foundations < 77 * fp.foundations
+    assert packed.count == 77
+
+
+def test_a_pack_always_holds_every_machine(game):
+    """A grid that quietly dropped the remainder would understate the platform."""
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    for n in (1, 2, 7, 30, 64, 77, 105, 200):
+        for columns in (0, 1, 3):
+            packed = fp.pack(n, columns=columns)
+            assert packed.columns * packed.rows >= n
+            assert packed.width_m >= fp.width_m
+            assert packed.depth_m >= fp.depth_m
+
+
+def test_the_squarest_arrangement_is_the_cheapest(game):
+    """Which is why it is the default: perimeter waste is what costs tiles, so a block
+    beats a pier on concrete every time. The pier is offered anyway because its LENGTH is
+    the number you lay platform modules against."""
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    block, pier = fp.pack(77), fp.pack(77, columns=1)
+    assert block.foundations < pier.foundations
+    assert pier.columns == 1 and pier.rows == 77
+    assert pier.depth_m == pytest.approx(77 * fp.depth_m)
+
+
+def test_one_machine_packs_to_its_own_footprint(game):
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    one = fp.pack(1)
+    assert one.foundations == fp.foundations
+    assert (one.columns, one.rows) == (1, 1)

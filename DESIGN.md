@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 626 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 630 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1421,14 +1421,25 @@ the largest box naively gives 22×4 m instead of ~20×20 — roughly **1,000 fou
 understated across a 176-generator plan**.
 
 This feeds straight back into §8.2c's water problem. "Siting is not modelled" is abstract;
-*"each is 20×18 m, so 96 of them cover 34,560 m² — a platform about 186×186 m, costing 864
-foundations and 4,320 Concrete to float"* is something you can hold against a build.
+*"77 of them pack into 8×10 = 160×180 m (460 foundations, 2,300 Concrete), or a single pier
+20×1,386 m (522 foundations)"* is something you can hold against a build.
 
 The frontage half of this was **wrong and is gone**. It quoted "about 1,920 m of shoreline
 in a single line", which assumed pumps line a shore; they do not, they sit on platforms out
 over open water. Quoting both and calling it balanced did not help — one of the two numbers
 was answering a question nobody had, and it was the one that made large water plans look
-impossible. Area and its concrete are now the only figures given.
+impossible.
+
+**A length is still given, just not that one.** Lukas lays platform modules, so "how long
+is this" is a real question — it is the *pier extent*, 1,386 m for 77 pumps, not a stretch
+of coast. Both shapes are printed because they answer different halves: the block is the
+cheapest way to buy the area, the pier is what you measure modules against.
+
+**And it is packed, not multiplied.** `Footprint.foundations` says outright that it ignores
+shared edges, so `n × foundations` is an upper bound and not a build — two pumps side by
+side span 40 m and need 5 tiles, not 6. Across 77 pumps that is **460 foundations against
+693**, a third of the concrete. `Footprint.pack(n, columns=)` does the arithmetic and the
+naive figure now appears only as the thing being corrected.
 
 ### 8.2e Plan slices, and the shard bill
 

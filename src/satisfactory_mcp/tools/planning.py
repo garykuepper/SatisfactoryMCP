@@ -303,13 +303,17 @@ def plan_factory(
         size = pump.footprint if pump else None
         space = ""
         if size:
-            deck = n_water * size.foundations
-            side = (n_water * size.area_m2) ** 0.5
+            # Both shapes, because the length is the number you lay platforms against and
+            # the block is the cheapest way to buy it. Packed, not n x footprint: that
+            # product ignores shared edges and overstates the concrete by about a third.
+            block, pier = size.pack(n_water), size.pack(n_water, columns=1)
             space = (
-                f" Each is {size} ({size.foundations} foundations), so {n_water} of them "
-                f"cover {n_water * size.area_m2:,.0f} m2 of water -- a platform about "
-                f"{side:,.0f}x{side:,.0f} m, costing {deck:,} foundations and "
-                f"{deck * 5:,.0f} Concrete to float."
+                f" Each is {size}, so {n_water} of them pack into {block} "
+                f"({block.foundations:,} foundations, {block.foundations * 5:,} Concrete), "
+                f"or a single pier {pier.width_m:,.0f}x{pier.depth_m:,.0f} m "
+                f"({pier.foundations:,} foundations). Counting each machine's "
+                f"{size.foundations} foundations separately would say "
+                f"{n_water * size.foundations:,} -- that ignores shared edges."
             )
         notes.append(
             f"{n_water} Water Extractor(s): siting is NOT modelled. Water comes from "
