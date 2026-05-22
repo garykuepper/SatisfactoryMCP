@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 636 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 644 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2011,11 +2011,18 @@ across modules, not just locally: `track` joins a commission wave against a diff
 the two halves of "which stage am I in" could order the same plant differently. Now one
 function, with a test asserting the two agree on the reference plan.
 
-**Carrier and line count — two copies, one divergence.** `layout._carrier` / `_lines_for`
-and `optimize._logistics` both derive carrier, unit, capacity and
-`ceil(rate / capacity - 1e-9)` from `item.is_fluid`. The shared epsilon is the tell that
-one was copied from the other. They differ on `capacity <= 0`: layout returns 1 line,
-optimize returns `None`. Unreachable today because rate is filtered positive first.
+**Carrier and line count — fixed. Three copies, not two.** `layout._carrier` /
+`_lines_for` and `optimize._logistics` both derived carrier, unit, capacity and
+`ceil(rate / capacity - 1e-9)` from `item.is_fluid` — and `Item.unit` had already
+centralised the unit string both re-derived.
+
+The shared epsilon is the tell. `- 1e-9` is load-bearing (1,560/min over a 780/min belt is
+exactly two lines; binary rounding makes it three) and nobody arrives at it independently,
+so one copy came from the other. They had already drifted on `capacity <= 0`: layout
+returned 1 line, optimize returned `None`. Unreachable — capacity comes from a tier lookup
+with a non-zero fallback — but a divergence inside duplicated code is a bug waiting for the
+day it becomes reachable. Now `planning/carrier.py`, resolved toward 1, because the count
+feeds block splitting and `None` would need a guard at every use.
 
 **Centroid and spread — four copies.** `graph/identity.py` and `graph/query.py` each
 compute `sum(p[0])/len(p)` plus an O(n²) `max(dist(a, b))`, which is what `geo.Cluster`

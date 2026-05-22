@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from ..docs.footprint import FOUNDATION_M, Packed
 from ..docs.model import GameData
+from .carrier import carrier_for
 from .optimize import MW, Solution
 
 __all__ = [
@@ -166,18 +167,6 @@ class Layout:
         return math.ceil(math.sqrt(max(self.foundations, 1))) * FOUNDATION_M
 
 
-def _carrier(game: GameData, item: str, belt_ipm: float, pipe_m3min: float):
-    it = game.items.get(item)
-    fluid = bool(it and it.is_fluid)
-    return ("pipe", "m3/min", pipe_m3min) if fluid else ("belt", "/min", belt_ipm)
-
-
-def _lines_for(rate: float, capacity: float) -> int:
-    if capacity <= 0:
-        return 1
-    return max(1, math.ceil(rate / capacity - 1e-9))
-
-
 def _split_process(game: GameData, proc: dict, belt_ipm: float, pipe_m3min: float) -> int:
     """How many parallel manifolds this process needs.
 
@@ -188,8 +177,8 @@ def _split_process(game: GameData, proc: dict, belt_ipm: float, pipe_m3min: floa
     for item, rate in proc.get("rates", {}).items():
         if item == MW:
             continue
-        _, _, capacity = _carrier(game, item, belt_ipm, pipe_m3min)
-        needed = max(needed, _lines_for(abs(rate), capacity))
+        line = carrier_for(game, item, belt_ipm, pipe_m3min)
+        needed = max(needed, line.lines_for(abs(rate)))
     # A manifold also stops being practical past a certain length.
     needed = max(needed, math.ceil(proc["machines"] / MAX_MACHINES_PER_BLOCK))
     return max(1, min(needed, proc["machines"]))
@@ -379,7 +368,7 @@ def _buses(
         rate = max(produced, consumed)
         if rate <= 1e-6:
             continue
-        carrier, unit, capacity = _carrier(game, item, belt_ipm, pipe_m3min)
+        line = carrier_for(game, item, belt_ipm, pipe_m3min)
         src = [b for b in blocks if b.outputs.get(item, 0.0) > 1e-6]
         dst = [b for b in blocks if b.inputs.get(item, 0.0) > 1e-6]
         it = game.items.get(item)
@@ -388,9 +377,9 @@ def _buses(
                 item=item,
                 name=it.name if it else item,
                 rate=rate,
-                carrier=carrier,
-                unit=unit,
-                lines=_lines_for(rate, capacity),
+                carrier=line.kind,
+                unit=line.unit,
+                lines=line.lines_for(rate),
                 producers=[b.key for b in src],
                 consumers=[b.key for b in dst],
                 from_stage=min((b.stage for b in src), default=0),

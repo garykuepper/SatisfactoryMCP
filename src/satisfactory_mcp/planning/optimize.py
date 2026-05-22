@@ -32,6 +32,7 @@ from scipy.optimize import LinearConstraint, milp
 
 from ..docs.constants import AWESOME_SINK_MW
 from ..docs.model import GameData
+from .carrier import carrier_for
 
 __all__ = [
     "MW",
@@ -378,17 +379,16 @@ def _logistics(
         if rate <= _EPS:
             continue
         it = sc.game.items.get(item)
-        fluid = bool(it and it.is_fluid)
-        capacity = sc.pipe_m3min if fluid else sc.belt_ipm
+        line = carrier_for(sc.game, item, sc.belt_ipm, sc.pipe_m3min)
         out.append(
             {
                 "item": item,
                 "name": it.name if it else item,
                 "rate": round(rate, 2),
-                "carrier": "pipe" if fluid else "belt",
-                "unit": "m3/min" if fluid else "/min",
-                "capacity_per_line": capacity,
-                "lines": math.ceil(rate / capacity - 1e-9) if capacity else None,
+                "carrier": line.kind,
+                "unit": line.unit,
+                "capacity_per_line": line.capacity,
+                "lines": line.lines_for(rate),
             }
         )
     return out
