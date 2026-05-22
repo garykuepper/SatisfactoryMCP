@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 670 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 671 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1587,11 +1587,10 @@ surfaced explicitly rather than hiding inside a ratio.
 > items must not push two big ones out, or one blind spot is simply traded for another. Anything hidden
 > is counted in the note, and the multi-line warning says how many flows it did not list.
 
-**Somersloops remain dormant** by explicit decision. The machinery exists (`Process.sloops`,
-`Scenario.sloop_budget`, per-building boost multipliers) but nothing populates the budget, so no sloop
-modes are generated. Unconstrained sloops give meaningless answers, the runtime property names for
-reading installed ones are still unverified (OQ4), and the Alien Power Augmenter may be the better use
-anyway — a different model entirely.
+**Somersloops were dormant** by explicit decision, and are no longer. The machinery existed
+(`Process.sloops`, `Scenario.sloop_budget`, per-building boost multipliers) and nothing populated the
+budget. `sloops=` now does (§8.2f), gated on the research (§6.9), with installed ones read exactly —
+OQ4 is closed. The Alien Power Augmenter is still a different model and still unbuilt.
 
 ### 8.5 Layout: blocks, buses and floors
 
@@ -2666,23 +2665,37 @@ terms, not GreyHak's, would govern.
 
 ---
 
-### 6.9 Capabilities the save does not record
+### 6.9 Capability gates, and absence as evidence
 
-Overclocking records itself: `BP_UnlockSubsystem_C` carries
-`mIsBuildingOverclockUnlocked`. **Production amplification records nothing.** Probed
-directly against the save rather than assumed — the unlock subsystem has exactly thirteen
-properties (map, overclock, efficiency, blueprints, customizer, inventory and arm slots,
-emotes, tapes, customizations, SAM intensity, two scanner lists) and **no key containing
-"Boost", "Amplif" or "Sloop" appears anywhere in the 44,307 objects**.
+`plan_factory(sloops=N)` spends Somersloops, and a Somersloop cannot enter a machine until
+**Production Amplifier** is researched in the MAM. Planning against it while locked prints
+a plan that cannot be built, so the gate has to be readable.
 
-That matters because it gates a tool argument. `plan_factory(sloops=N)` spends Somersloops,
-and a Somersloop cannot enter a machine at all until **Production Amplifier** is researched
-in the MAM. Planning against it while locked prints a plan that cannot be built.
+**The first answer here was wrong, and the mistake is the useful part.** Probing a save
+taken before the research found no key containing "Boost", "Amplif" or "Sloop" anywhere in
+its 44,307 objects, and this section originally concluded that the game records no flag.
+It does: `BP_UnlockSubsystem_C.mIsBuildingProductionBoostUnlocked` appears the moment the
+research completes. UE omits a SaveGame property still at its default, so **absent means
+false** — the same rule §6 already states for empty TArrays, applied to a bool. *"Not in
+this file"* and *"no such field"* are different claims and only the first was evidence.
+The fix was to research it and look again; the reference save now carries the flag, and
+schema 10 extracts it.
 
-So the capability is derived from the **purchased-schematic set**, which is read and exact,
-via a small register (`CAPABILITY_SCHEMATICS`) mapping capability → gating schematic. The
-register is the only game knowledge involved; everything else — cost, prerequisites,
-affordability — comes from Docs.json and `stock()`.
+So the flag is authoritative when present, with a `CAPABILITY_SCHEMATICS` register
+(capability → gating schematic) as fallback. That fallback is not redundant: a projection
+written before schema 10 looks exactly like a world that never did the research. The
+register also answers the other half — *which research to do and what it costs* — from
+Docs.json and `stock()`.
+
+**The same absence fooled the sloop budget, in the same direction.** `sloop_budget` claimed
+committed Somersloops were unreadable. They are not: they sit in `InventoryPotential`, the
+*same component* as Power Shards, which the sidecar had been reading into `potential_slots`
+all along. `mArbitrarySlotSizes` shows the shape — `[1, 1, 1, 2]` on an Assembler is three
+shard slots plus one somersloop slot holding two. The count is now exact, and
+`mPendingProductionBoost` gives an independent cross-check: **1.5 on an Assembler with one
+of two slots filled, exactly `boost_for(1)`**. Reading the count from the slot is still
+right and the multiplier is the worse source, since inverting it needs the building's base
+and step and rounds.
 
 On the reference save this closes a real gap: production boost was **not researched**, so
 every sloop plan produced so far was unbuildable and nothing said so. `plan_factory` now
@@ -2711,10 +2724,10 @@ stock only — carried, crates and the Depot — never machine buffers, per § 6
 | ~~OQ1~~ | ~~Can fluids actually be sunk?~~ | **CLOSED** — user confirms fluids cannot be sunk. Hardcoded per §5.6. | — |
 | ~~OQ2~~ | ~~Does an unchosen hard-drive option return to the pool, and is the forfeit permanent?~~ | **CLOSED** — player confirms the unchosen option returns to the pool; only the drive is spent. Picking is **low-stakes**, which inverts the advice the tools used to imply. See §9.3. | — |
 | ~~OQ3~~ | ~~Are `mNumSchematicsPerHardDrive = 2` / `mNumRerollsPerHardDrive = 1` overridden by a packaged ini?~~ | **CLOSED for practical purposes** — the constants are confirmed by *observation* rather than by source: all 25 offers on the reference save carry exactly 2 options, and 24 of 25 exactly 1 reroll (the 25th has spent it). Player confirms one reroll. Whether some other install could override them is unanswerable from here and no longer matters. | — |
-| OQ4 | Runtime property names for installed somersloops. | Reading sloop placement from a save. | Place a sloop, re-save, diff the properties. |
+| ~~OQ4~~ | ~~Runtime property names for installed somersloops.~~ | **CLOSED** — resolved exactly as proposed: researched Production Amplifier, slotted one, re-saved, diffed. The sloop is in `InventoryPotential` beside the shards (`potential_slots`), and the actor carries `mPendingProductionBoost` = the resulting multiplier. See §6.9. | — |
 | OQ5 | Water pump -> water volume mapping (`FGWaterVolume*` aren't purity keys). | Water capacity accounting. | Coordinate fallback, or accept "unknown". |
 | ~~OQ6~~ | ~~Regenerate the node/purity table independently of SCIM.~~ | **CLOSED** — merged with an MIT, game-asset-derived set; 0 purity/resource mismatches, and a missing node recovered. See §3.4. | — |
-| OQ7 | How many somersloops does the user actually hold? 37 collected per one table, 15 demonstrably on hand. | Sloop budget in the optimizer. | Reconcile depot + inventories + world actors. |
+| ~~OQ7~~ | ~~How many somersloops does the user actually hold?~~ | **CLOSED by OQ4** — free and committed are both read, so owned is exact: **14 free + 1 slotted = 15**, plus 10 Mercer Spheres counted separately. Only the free pool can fund a plan; the committed one is reported so a player knows there is something to pull out. | — |
 
 ---
 

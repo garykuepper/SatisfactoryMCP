@@ -503,17 +503,33 @@ class WorldState:
             "measured": any("potential_slots" in r for r in self._all_records()),
         }
 
+    #: Capability -> the unlock flag that records it, where one exists. Present only
+    #: once true: UE omits a SaveGame property at its default, so absent means false.
+    CAPABILITY_FLAGS: ClassVar[dict[str, str]] = {
+        "production_boost": "mIsBuildingProductionBoostUnlocked",
+    }
+
     def has_capability(self, name: str) -> bool:
         """Whether a MAM-gated capability is researched.
 
-        Derived from the purchased-schematic set, because the save carries no flag for
-        these. Overclocking has ``mIsBuildingOverclockUnlocked``; production amplification
-        has no equivalent anywhere in the file. See ``CAPABILITY_SCHEMATICS``.
+        The unlock flag wins when the projection carries one, because it is what the game
+        itself checks. The purchased-schematic set is the fallback, and it is not merely
+        belt-and-braces: the flag is absent from a save taken before the research AND from
+        any projection written before schema 10 extracted it, and those two look identical
+        from here. Falling back keeps an older projection answering correctly instead of
+        reporting every capability locked.
         """
         from ..docs.constants import CAPABILITY_SCHEMATICS
 
+        flag = self.CAPABILITY_FLAGS.get(name)
+        if flag and flag in self._unlock_flags:
+            return bool(self._unlock_flags[flag])
         gate = CAPABILITY_SCHEMATICS.get(name)
         return bool(gate) and gate in self.purchased_schematic_ids
+
+    @property
+    def _unlock_flags(self) -> dict:
+        return self.projection.get("unlock_flags", {}) or {}
 
     def research_gate(self, name: str) -> dict | None:
         """The schematic that unlocks ``name``, its cost, and what the player holds.
@@ -554,18 +570,26 @@ class WorldState:
         }
 
     def sloop_budget(self) -> dict:
-        """Somersloops on hand, and an honest admission about the ones in machines.
+        """Somersloops on hand and in machines.
 
         Free ones are read the same way as shards: ``stock`` pools carried, crates and
         the Dimensional Depot, which is exactly the set that can be spent.
 
-        **Committed sloops are NOT measurable here, and that is reported rather than
-        assumed to be zero.** A slotted shard shows up in the ``InventoryPotential``
-        component the sidecar reads; the equivalent for production boost does not appear
-        in this save under any of the three plausible property names, nor in Docs.json.
-        So a plan can be told what is spendable but cannot be told what is already spent.
-        Reporting 0 committed as if it were measured would overstate the free pool for
-        any player who has slotted some, which is most of them past mid-game.
+        **Committed ones are read too, and this module used to claim they could not be.**
+        That was wrong, and wrong in an instructive way: a save taken before Production
+        Amplifier was researched contains no somersloop anywhere, so probing it found
+        nothing and the absence was read as "the game does not record this". It does --
+        in ``InventoryPotential``, the *same component* that holds Power Shards, which the
+        sidecar had been reading into ``potential_slots`` the whole time. The component
+        carries both, distinguished only by item class, and its ``mArbitrarySlotSizes``
+        shows the shape: ``[1, 1, 1, 2]`` on an Assembler is three shard slots plus one
+        somersloop slot holding up to two.
+
+        So the number is exact, like the shard one, and for the same reason: it is the
+        slot contents, not something derived from the boost. ``mPendingProductionBoost``
+        does record the resulting MULTIPLIER (1.5 on an Assembler with one of two slots
+        filled), which is a useful cross-check but a worse source -- inverting a
+        multiplier to a count needs the building's base and step, and rounds.
 
         Mercer Spheres are counted separately and never added in. They share the WAT
         prefix and the same alien-artifact feel, and they do nothing for production.
@@ -581,14 +605,40 @@ class WorldState:
             held = float(source.get(self.SLOOP_ITEM, 0.0))
             if held:
                 by_place[place] = held
+
+        committed = 0.0
+        holders: list[dict] = []
+        for record in self._all_records():
+            slotted = float((record.get("potential_slots") or {}).get(self.SLOOP_ITEM, 0.0))
+            if not slotted:
+                continue
+            committed += slotted
+            building = self.game.buildings.get(record.get("cls", ""))
+            holders.append(
+                {
+                    "instance": record["instance"].rsplit(".", 1)[-1],
+                    "cls": record.get("cls", "?"),
+                    "name": building.name if building else record.get("cls", "?"),
+                    "sloops": slotted,
+                    #: What the plan model says that many slots are worth, so a caller can
+                    #: check it against the boost the save reports.
+                    "boost": building.boost_for(int(slotted)) if building else None,
+                    "boost_in_save": record.get("production_boost"),
+                }
+            )
+        holders.sort(key=lambda h: (-h["sloops"], h["cls"]))
         return {
             "item": self.SLOOP_ITEM,
             "free": free,
             "by_place": by_place,
+            "committed": committed,
+            "owned": free + committed,
+            "holders": holders,
             "mercer_spheres": float(stock.get(self.MERCER_ITEM, 0.0)),
-            #: True only if the save ever yielded a production-boost property. False
-            #: means "unknown", never "none installed".
-            "committed_measured": any("production_boost" in r for r in self._all_records()),
+            #: False only on a projection too old to carry InventoryPotential at all, in
+            #: which case `committed` is unknown rather than zero. Same flag, and the same
+            #: reason, as the shard budget's.
+            "committed_measured": any("potential_slots" in r for r in self._all_records()),
         }
 
     #: The Somersloop and Mercer Sphere item classes. Named here rather than resolved by

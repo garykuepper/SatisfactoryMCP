@@ -1,14 +1,20 @@
-"""MAM research, and the capabilities that have no flag in the save.
+"""MAM research, and reading a capability out of a save.
 
-Overclocking records itself as `mIsBuildingOverclockUnlocked`. Production amplification —
-the research that lets a Somersloop go into a machine at all — records nothing. Probed
-directly: `BP_UnlockSubsystem_C` carries thirteen properties and none of them is about
-boosting, and no key containing "Boost", "Amplif" or "Sloop" appears anywhere in the
-save's 44,307 objects.
+Production amplification -- the research that lets a Somersloop enter a machine at all --
+gates `plan_factory(sloops=)`. Probing a save from before the research found no key
+containing "Boost", "Amplif" or "Sloop" anywhere in its 44,307 objects, and this module
+first concluded the game records no flag. **It does.**
+`BP_UnlockSubsystem_C.mIsBuildingProductionBoostUnlocked` appears the moment the research
+completes; UE omits a SaveGame property still at its default, so absent means false.
+"Not in this file" and "no such field" are different claims, and only the first was
+evidence.
 
-So the capability is derived from the purchased-schematic set, which is read and exact.
-The tests below pin that derivation and, more importantly, that the planner refuses to be
-silent when a plan spends a capability the player has not got.
+So the flag is authoritative when present, with the purchased-schematic set as fallback --
+which is not redundant, because a projection written before schema 10 extracted the flag
+looks exactly like a world that never did the research.
+
+The tests below pin that, and that the planner refuses to be silent when a plan spends a
+capability the player has not got.
 """
 
 from __future__ import annotations
@@ -19,6 +25,16 @@ from satisfactory_mcp import server as srv
 from satisfactory_mcp.docs.constants import CAPABILITY_SCHEMATICS
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def live(game):
+    """The save on this machine. The `state` fixture is a committed schema-5 projection
+    from BEFORE Production Amplifier was researched, so judging a tool's output -- which
+    reads the live save -- against it compares two different worlds."""
+    from satisfactory_mcp.app import _state
+
+    return _state(None, None)
 
 
 # ------------------------------------------------------- the register
@@ -42,12 +58,23 @@ def test_production_boost_is_gated_by_production_amplifier(game):
 # ------------------------------------------------------- reading it from a save
 
 
-def test_a_capability_is_read_from_purchased_schematics(game, state):
-    """Not from a flag, because there is no flag. This asserts the derivation runs and
-    agrees with the purchased set rather than asserting a particular answer, so it holds
-    whichever side of the research the reference save is on."""
+def test_the_schematic_fallback_answers_when_the_flag_is_absent(game, state):
+    """The committed fixture is schema 5: no unlock flag for boost, because nothing
+    extracted it then. Falling back to the purchased set is what keeps an older projection
+    answering correctly instead of reporting every capability locked."""
+    assert "mIsBuildingProductionBoostUnlocked" not in (state.projection.get("unlock_flags") or {})
     for capability, cls in CAPABILITY_SCHEMATICS.items():
         assert state.has_capability(capability) == (cls in state.purchased_schematic_ids)
+
+
+def test_the_flag_wins_when_the_projection_carries_one(game, live):
+    """It is what the game itself checks, so it outranks the inference."""
+    flags = live.projection.get("unlock_flags") or {}
+    if "mIsBuildingProductionBoostUnlocked" not in flags:
+        pytest.skip("live projection predates schema 10")
+    assert live.has_capability("production_boost") is bool(
+        flags["mIsBuildingProductionBoostUnlocked"]
+    )
 
 
 def test_an_unknown_capability_is_locked_rather_than_crashing(game, state):
@@ -78,7 +105,7 @@ def test_a_gate_prices_itself_against_spendable_stock(game, state):
 # ------------------------------------------------------- the planner gate
 
 
-def test_spending_sloops_without_the_research_is_called_out(game, state):
+def test_spending_sloops_without_the_research_is_called_out(game, live):
     """The same class of check as the unlocked recipe set: a plan using a locked
     capability is not a plan. It warns rather than refusing, because planning ahead of
     cheap research is legitimate — but silence would print an unbuildable plan."""
@@ -90,7 +117,7 @@ def test_spending_sloops_without_the_research_is_called_out(game, state):
         limit=2,
     )
     out = srv.plan_factory(sloops=16, **kw)
-    if state.has_capability("production_boost"):
+    if live.has_capability("production_boost"):
         assert "NOT RESEARCHED" not in out
         return
     assert "PRODUCTION AMPLIFIER IS NOT RESEARCHED" in out
@@ -122,20 +149,20 @@ def test_mam_research_lists_outstanding_nodes(game):
     assert "outstanding" in out
 
 
-def test_it_marks_which_research_gates_a_capability(game, state):
+def test_it_marks_which_research_gates_a_capability(game, live):
     """The point of the column: 'LOCKS production_boost' is why a reader should care about
     that row rather than treating the MAM as a pile of optional recipes."""
     # Narrowed with `search` rather than a big limit: Limit is schema-capped at 25 and
     # there are 120 MAM nodes, so the row would fall off the bottom of an unfiltered call.
     out = srv.mam_research(status="all", search="Production Amplifier")
-    if state.has_capability("production_boost"):
+    if live.has_capability("production_boost"):
         pytest.skip("already researched, so the row is not listed as a gate to clear")
     assert "LOCKS production_boost" in out
 
 
-def test_a_locked_capability_gets_a_note_with_its_bill(game, state):
+def test_a_locked_capability_gets_a_note_with_its_bill(game, live):
     out = srv.mam_research()
-    if state.has_capability("production_boost"):
+    if live.has_capability("production_boost"):
         return
     line = next(x for x in out.splitlines() if "production_boost is NOT researched" in x)
     assert "Production Amplifier" in line

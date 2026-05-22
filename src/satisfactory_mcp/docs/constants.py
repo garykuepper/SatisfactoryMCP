@@ -126,17 +126,20 @@ BUILDING_CLASS_ALIASES: dict[str, str] = {
 
 #: Capabilities the game gates behind MAM research, and the schematic that grants each.
 #:
-#: These are here because **the save records no flag for them**. `BP_UnlockSubsystem_C`
-#: carries exactly thirteen properties -- map, overclock, efficiency, blueprints,
-#: customizer, inventory and arm slots, emotes, tapes, customizations, SAM intensity and
-#: two scanner lists -- and no key containing "Boost", "Amplif" or "Sloop" appears
-#: anywhere in the save's 44,307 objects. Overclocking has
-#: `mIsBuildingOverclockUnlocked`; production amplification simply has no equivalent.
+#: **These are a cross-check, not the primary source, and the difference cost a wrong
+#: conclusion.** Probing a save from before the research found no key containing "Boost",
+#: "Amplif" or "Sloop" anywhere in its 44,307 objects, from which this module originally
+#: concluded that the game records no flag. It does:
+#: `BP_UnlockSubsystem_C.mIsBuildingProductionBoostUnlocked` appears the moment the
+#: research completes. UE omits a SaveGame property still at its default, so **absent
+#: means false** -- exactly the rule §6 already states for empty TArrays, applied to a
+#: bool. "Not in the file" and "no such field" are different claims and only the first
+#: was evidence.
 #:
-#: So the capability is derived from the purchased-schematic set instead, which is read
-#: and exact. The mapping itself is the one piece of game knowledge: it says which
-#: schematic is the gate, and it lives here with the rest of the hardcoded register
-#: rather than inline, so a game update moves one line.
+#: The flag is authoritative when present. This register stays because it answers the
+#: other half -- *which research to go and do*, and what it costs -- and because it lets
+#: the capability be derived from the purchased-schematic set on a projection written
+#: before the flag was extracted. The mapping is the one piece of game knowledge here.
 CAPABILITY_SCHEMATICS: dict[str, str] = {
     #: Somersloops in production machines: 2x output for 4x power.
     "production_boost": "Research_Alien_ProductionBooster_C",

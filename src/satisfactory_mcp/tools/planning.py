@@ -392,16 +392,24 @@ def plan_factory(
             else ""
         )
         short = (
-            f" You hold {held['free']:.0f}, so this is SHORT by "
+            f" You hold {held['free']:.0f} free, so this is SHORT by "
             f"{bill.sloops_used - held['free']:.0f}."
             if bill.sloops_used > held["free"]
-            else f" You hold {held['free']:.0f}."
+            else f" You hold {held['free']:.0f} free."
         )
+        # Committed sloops are read from InventoryPotential, the same component as shards.
+        # Only FREE ones can pay for this plan, so the committed count is context and never
+        # added in -- but it is worth showing, because pulling one out of a machine is a
+        # legitimate way to fund a plan and the player cannot do that if nobody says where
+        # they are.
         unmeasured = (
-            " Sloops already slotted in machines are not readable from the save, so "
-            "'held' counts only loose ones."
-            if not held["committed_measured"]
+            f" A further {held['committed']:.0f} sit in {len(held['holders'])} machine(s) "
+            "and would have to be pulled out first."
+            if held["committed_measured"] and held["committed"]
             else ""
+            if held["committed_measured"]
+            else " Slotted sloops are unreadable on this projection (pre-schema-10), so "
+            "'held' may undercount what you own."
         )
         spare = (
             f" {bill.sloop_slots} boostable slot(s) are still empty, so a bigger budget "

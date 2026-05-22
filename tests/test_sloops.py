@@ -170,11 +170,34 @@ def test_mercer_spheres_are_never_counted_as_somersloops(game, state):
     assert budget["free"] != budget["free"] + budget["mercer_spheres"]
 
 
-def test_committed_sloops_are_reported_as_unknown_not_as_zero(game, state):
-    """A slotted shard is readable from an InventoryPotential component; the production
-    boost equivalent appears nowhere in this save under any plausible name. Saying 0
-    committed as if measured would overstate the free pool for anyone past mid-game."""
-    assert state.sloop_budget()["committed_measured"] is False
+def test_committed_sloops_are_measured_not_guessed(game, state):
+    """This module once claimed slotted sloops were unreadable. They are not: they sit in
+    InventoryPotential, the SAME component as Power Shards, which the sidecar already
+    read. The wrong conclusion came from probing a save taken before the research, where
+    no somersloop existed anywhere -- absence of a value read as absence of a field.
+
+    On this fixture the component IS readable and holds only shards, so committed is
+    genuinely zero rather than unknown, and the flag says which of the two it is."""
+    budget = state.sloop_budget()
+    assert budget["committed_measured"] is True
+    assert budget["committed"] == 0
+    assert budget["holders"] == []
+    assert budget["owned"] == budget["free"]
+
+
+def test_a_slotted_sloop_is_counted_and_agrees_with_the_saved_boost(game):
+    """Live save only: the fixture predates the research. The count comes from the slot
+    contents, and `mPendingProductionBoost` gives an independent check -- an Assembler with
+    one of two slots reports 1.5x, which is exactly boost_for(1)."""
+    from satisfactory_mcp.app import _state
+
+    budget = _state(None, None).sloop_budget()
+    if not budget["committed"]:
+        pytest.skip("no sloop is slotted in the live save")
+    for holder in budget["holders"]:
+        assert holder["sloops"] >= 1
+        if holder["boost_in_save"] is not None:
+            assert holder["boost"] == pytest.approx(float(holder["boost_in_save"]))
 
 
 # ------------------------------------------------------------ the tool
@@ -193,7 +216,9 @@ def test_the_tool_prints_a_bill_when_it_spends(game):
     out = srv.plan_factory(sloops=16, limit=3, **SPIRE)
     line = _bill_line(out)
     assert "16 spent" in line
-    assert "not readable from the save" in line
+    assert "You hold" in line
+    # Committed sloops are context, never added to what can pay for the plan.
+    assert "free" in line
 
 
 def test_the_tool_says_short_when_the_budget_exceeds_what_is_held(game):

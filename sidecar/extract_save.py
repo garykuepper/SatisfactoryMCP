@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_par
 
 import sav_parse
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -370,6 +370,10 @@ def extract(path: str) -> dict:
             for k in (
                 "mIsMapUnlocked",
                 "mIsBuildingOverclockUnlocked",
+                # Written only once it becomes true -- UE omits a SaveGame property
+                # still at its default -- so ABSENT means not researched. That is why a
+                # save from before the research carries no such key at all.
+                "mIsBuildingProductionBoostUnlocked",
                 "mIsBuildingEfficiencyUnlocked",
                 "mIsBlueprintsUnlocked",
                 "mIsCustomizerUnlocked",
