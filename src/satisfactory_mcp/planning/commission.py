@@ -142,6 +142,10 @@ class Energised:
     #: diff matched against the save. Without it the two halves of "which stage am I in"
     #: would have to be re-derived from labels, which are display strings.
     pid: str = ""
+    #: One cycle of this process at its own clock, in seconds. A recipe's duration or an
+    #: extractor's extract cycle; 0 for a generator, which burns continuously and has no
+    #: cycle to wait through.
+    cycle_s: float = 0.0
 
 
 @dataclass
@@ -149,6 +153,33 @@ class Wave:
     index: int
     rows: list[Energised] = field(default_factory=list)
     available_before: float = 0.0
+
+    def fill_s(self) -> float:
+        """Lower bound, in seconds, on the wait before this wave's generators produce.
+
+        The wait is where the risk lives: the wave's draw is already being paid and
+        nothing is coming back yet, so "wait" without a number is the least actionable
+        instruction in the sequence.
+
+        What is computed is the CYCLE chain. Every stage must finish at least one full
+        cycle before the next stage sees anything, so the sum of the slowest cycle at each
+        chain depth is a hard floor -- and each is divided by its clock, because a machine
+        at 250% completes in 40% of the time.
+
+        What is deliberately NOT in it, and why this is a floor rather than an estimate:
+        **pipe transit**. A pipe's fluid volume is not in Docs.json -- the only dimension
+        there is ``mRadius``, which is collision geometry, and turning that into litres
+        would be a guess dressed as a measurement. Route lengths are unknown anyway
+        (§8.5), so on a long run the transit dominates this number. Machine input buffers
+        are out for a related reason: their capacity is per-BUILT-machine and these
+        machines do not exist yet.
+        """
+        deepest: dict[int, float] = {}
+        for row in self.rows:
+            if row.cycle_s <= 0:
+                continue
+            deepest[row.depth] = max(deepest.get(row.depth, 0.0), row.cycle_s)
+        return sum(deepest.values())
 
     @property
     def draw_mw(self) -> float:
@@ -193,6 +224,23 @@ class Commissioning:
     @property
     def machines(self) -> int:
         return sum(w.machines for w in self.waves)
+
+
+def _cycle_s(proc: dict, game: GameData) -> float:
+    """How long one cycle of this process takes at the clock the plan runs it at.
+
+    Clock divides: a machine at 250% finishes its cycle in 40% of the base time, which is
+    exactly why an overclocked extractor is not what holds up a startup.
+    """
+    clock = proc.get("clock") or 1.0
+    recipe = game.recipes.get(proc.get("recipe") or "")
+    if recipe is not None and recipe.duration_s:
+        return recipe.duration_s / clock
+    building = game.buildings.get(proc.get("building_id") or "")
+    if building is not None and building.extract_cycle_s:
+        return building.extract_cycle_s / clock
+    # Generators burn continuously; there is no cycle to wait through.
+    return 0.0
 
 
 def _depths(processes: list[dict]) -> dict[str, int]:
@@ -319,6 +367,7 @@ def commission(
                     pid=pid,
                     label=p["label"],
                     kind=p["kind"],
+                    cycle_s=_cycle_s(p, game),
                     building=p["building"],
                     machines=n,
                     cumulative=done[pid],

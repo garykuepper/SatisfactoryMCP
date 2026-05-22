@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 691 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 697 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1804,6 +1804,21 @@ misbehaving block can be isolated.
 burning fuel, the pipes are filling and nothing is coming back, so `available` only grows
 once the wave completes. This is the difference between a sequence that works and one that
 looks fine on paper.
+
+**And the wait now has a number.** "Wait, then next wave" was the least actionable line in
+the sequence, and the wait is exactly the interval the deficit is carried through.
+`Wave.fill_s()` sums the slowest cycle at each chain depth — every stage must finish one
+full cycle before the next sees anything — divided by clock, since a machine at 250%
+finishes in 40% of the base time. The measured Spire waves come to **≥ 35 s**
+(1 s extraction + 12 s refining + 6 s blending + 16 s packaging).
+
+It is presented as a **floor**, not an estimate, and the reason is the recurring one: a
+pipe's fluid volume is not in Docs.json. The only dimension there is `mRadius`, which is
+collision geometry, and turning it into litres would be a guess dressed as a measurement —
+so pipe transit is excluded and dominates on a long run. Machine input buffers are out for
+a related reason: their capacity is per-BUILT-machine and these machines do not exist yet.
+A generator contributes zero, because it burns continuously and has no cycle to wait
+through.
 
 **The floor is reported.** One machine of every process -- the cheapest slice that still
 feeds the whole chain -- costs **631 MW** here against 711 free. Below that no startup order

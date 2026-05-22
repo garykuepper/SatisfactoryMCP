@@ -538,3 +538,71 @@ def test_recalling_a_stored_plan_answers_which_stage_you_are_in(game, tmp_path, 
     assert "# STAGES" in out
     assert "you are in STAGE" in out or "every stage is built" in out
     assert "not a stored plan" not in out
+
+
+# --------------------------------------------------------- how long the wait is
+
+
+def test_a_wave_says_how_long_the_wait_is(run):
+    """ "Wait, then next wave" is the least actionable line in the sequence, and the wait
+    is exactly where the risk lives -- the draw is already being paid and nothing is coming
+    back."""
+    assert run.ok
+    for w in run.waves:
+        assert w.fill_s() > 0
+
+
+def test_the_wait_is_one_cycle_per_chain_depth(run, game):
+    """Each stage must finish a full cycle before the next sees anything, so the sum of
+    the slowest cycle at each depth is a hard floor. Anything less would be claiming
+    material moved before it existed."""
+    for w in run.waves:
+        deepest: dict[int, float] = {}
+        for row in w.rows:
+            if row.cycle_s > 0:
+                deepest[row.depth] = max(deepest.get(row.depth, 0.0), row.cycle_s)
+        assert w.fill_s() == pytest.approx(sum(deepest.values()))
+        # And it is a floor over the individual cycles, never a sum of everything.
+        assert w.fill_s() >= max(deepest.values(), default=0.0)
+        assert w.fill_s() <= sum(r.cycle_s for r in w.rows) + 1e-9
+
+
+def test_a_generator_contributes_no_cycle(run):
+    """It burns continuously; there is no cycle to wait through. Charging one would
+    inflate every wave that lands generators, which is all of them."""
+    generators = [r for r in run.waves[0].rows if r.generation_mw > 0]
+    assert generators
+    assert all(r.cycle_s == 0.0 for r in generators)
+
+
+def test_overclocking_shortens_a_cycle(game):
+    """A machine at 250% finishes in 40% of the base time, which is why an overclocked
+    extractor is not what holds up a startup."""
+    from satisfactory_mcp.planning.commission import _cycle_s
+
+    base = {"recipe": A_RECIPE, "clock": 1.0, "building_id": "Build_OilRefinery_C"}
+    fast = {**base, "clock": 2.5}
+    assert _cycle_s(fast, game) == pytest.approx(_cycle_s(base, game) / 2.5)
+
+
+def test_an_extractor_uses_its_extract_cycle(game):
+    """It has no recipe at all, so a recipe-only lookup would silently call it instant."""
+    from satisfactory_mcp.planning.commission import _cycle_s
+
+    row = {"recipe": None, "clock": 1.0, "building_id": "Build_OilPump_C"}
+    assert _cycle_s(row, game) == pytest.approx(game.buildings["Build_OilPump_C"].extract_cycle_s)
+
+
+def test_the_tool_prints_the_wait_and_calls_it_a_floor(game):
+    """Pipe transit is not in it and dominates on a long run, so presenting the number as
+    an estimate would understate exactly the interval the player is exposed during."""
+    out = srv.commission_plan(
+        objective="max_mw",
+        sources=["region:Spire Coast"],
+        exports=["MW"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        limit=14,
+    )
+    assert "wait >=" in out
+    assert "LOWER bound" in out
+    assert "does NOT include pipe transit" in out

@@ -1752,7 +1752,7 @@ def commission_plan(
                 "",
                 w.machines,
                 "",
-                f"-- switch on {w.machines} machine(s), wait, then next wave --",
+                f"-- switch on {w.machines}, wait >={w.fill_s():.0f}s, then next wave --",
                 f"{render.num(-w.draw_mw)} then +{render.num(w.generation_mw)}",
                 f"{w.available_after:,.0f}",
             )
@@ -1827,6 +1827,15 @@ def commission_plan(
                 "wave's own generation is not counted until it completes, so the free-MW "
                 "column is what you have during the wait, not after it"
             )
+        slowest = max((w.fill_s() for w in plan_run.waves), default=0.0)
+        notes.append(
+            f"the wait is a LOWER bound (>={slowest:.0f}s on the longest wave): it sums "
+            "one full cycle at each chain depth, which every stage must finish before the "
+            "next sees anything. It does NOT include pipe transit -- a pipe's fluid volume "
+            "is not in the dump (only mRadius, which is collision geometry) and route "
+            "lengths are unknown -- so on a long run the real wait is longer, and the "
+            "deficit is carried for all of it"
+        )
         notes.append(
             "waves are power-ordered, not ratio-balanced -- whole machines cannot hit "
             "the plan's ratios at the bottom of the ramp, so early waves run starved. "
