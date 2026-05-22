@@ -22,6 +22,7 @@ from ..planning.materials import build_materials
 from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.scenario import build_scenario, resolve_item
+from ..planning.sensitivity import sweep_unlocks
 from ..planning.slice import slice_of
 from ..planning.trunks import plan_trunks
 
@@ -1842,3 +1843,146 @@ def commission_plan(
             "That is safe: a starved machine idles and draws less than modelled"
         )
     return render.envelope(summary, body, notes)
+
+
+@mcp.tool(structured_output=False)
+def rank_unlocks(
+    objective: str = "max_mw",
+    target_item: str | None = None,
+    sources: list[str] | None = None,
+    exports: list[str] | None = None,
+    export_minimums: dict[str, float] | None = None,
+    only_free_nodes: bool = False,
+    allow_sinks: bool = True,
+    clocks: list[float] | None = None,
+    extractor_clocks: list[float] | None = None,
+    machine_cost_mw: float = 5.0,
+    exclude_recipes: list[str] | None = None,
+    only_recipes: list[str] | None = None,
+    water_extractors: int | None = None,
+    sloops: int = 0,
+    search: Annotated[
+        str | None, Field(description="only test alternates whose name matches")
+    ] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 15,
+    plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
+) -> str:
+    """What every locked alternate recipe would be worth to THIS plan.
+
+    One counterfactual per candidate: solve the plan, solve it again with the recipe
+    added, report the difference. It answers "which unlock should I chase" with a number
+    in the plan's own units instead of a tier list, because a recipe's worth depends
+    entirely on what you already have.
+
+    A zero is an answer. Most candidates change nothing, and "you are not missing anything
+    here" is a decision -- it is otherwise reached by walking the recipe tree by hand.
+
+    Deltas are an UPPER bound: a candidate needing a machine you have not built is judged
+    as if you had it, and the machine is named. Alternates currently offered by a pending
+    hard drive are flagged, which is the difference between "worth having" and "claimable
+    now".
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    supplied = dict(
+        objective=objective,
+        target_item=target_item,
+        sources=sources,
+        exports=exports,
+        export_minimums=export_minimums,
+        only_free_nodes=only_free_nodes,
+        allow_sinks=allow_sinks,
+        clocks=clocks,
+        extractor_clocks=extractor_clocks,
+        machine_cost_mw=machine_cost_mw,
+        exclude_recipes=exclude_recipes,
+        only_recipes=only_recipes,
+        water_extractors=water_extractors,
+        sloops=sloops,
+    )
+    try:
+        plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
+    except KeyError as exc:
+        return f"! {exc.args[0]}"
+
+    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
+    if prepared.failure:
+        return render.envelope(
+            f"# {prepared.failure.headline} -- nothing to rank against",
+            "",
+            [*prepared.failure.notes, "see plan_factory for why"],
+        )
+
+    pool = st.locked_alternates
+    if search:
+        needle = search.strip().casefold()
+        pool = [r for r in pool if needle in r.name.casefold()]
+        if not pool:
+            return f"! no LOCKED alternate matches {search!r}"
+
+    sweep = sweep_unlocks(prepared.request, st, pool)
+    # Which of these you could claim today. A recipe worth 14,540 MW that is sitting in a
+    # pending drive is a different instruction from one that needs a drive you have not
+    # found yet.
+    on_offer: dict[str, int] = {}
+    for offer in st.hard_drive_offers:
+        for option in offer.options:
+            for recipe in option["recipes"]:
+                on_offer[recipe.cls] = offer.hard_drive_id
+
+    movers = sweep.movers
+    rows = [
+        (
+            render.num(r.gain),
+            f"{r.gain / sweep.baseline:+.1%}" if sweep.baseline else "",
+            r.name[:34],
+            render.num(r.machines),
+            f"drive {on_offer[r.recipe]}" if r.recipe in on_offer else "",
+            ", ".join(r.needs)[:22],
+        )
+        for r in movers[: render.clamp(limit, default=15)]
+    ]
+    notes = [*plan_notes]
+    if plan_name:
+        notes.insert(0, f"recalled saved plan {plan_name!r}")
+    notes.append(
+        f"{sweep.tried} locked alternate(s) tested, {len(movers)} changed this plan. "
+        "The rest are worth nothing HERE -- which is a result, not a gap: it is the "
+        "answer you would otherwise get by walking the tree by hand"
+    )
+    notes.append(
+        "deltas are an UPPER bound: a candidate is solved as if any machine it needs "
+        "already existed, and that machine is named in 'needs'"
+    )
+    claimable = [r for r in movers if r.recipe in on_offer]
+    if claimable:
+        notes.append(
+            "claimable NOW from a pending hard drive: "
+            + ", ".join(f"{r.name} (drive {on_offer[r.recipe]})" for r in claimable[:4])
+            + " -- use advise_hard_drive_pick for that drive's full comparison"
+        )
+    return render.envelope(
+        "\n".join(
+            [
+                f"# unlock value for {objective}" + (f" ({plan_name})" if plan_name else ""),
+                f"# {st.age_note}",
+                (
+                    f"baseline={render.num(sweep.baseline)}  candidates={sweep.tried}  "
+                    f"movers={len(movers)}"
+                ),
+            ]
+        ),
+        render.table(
+            ("gain", "vs base", "alternate", "machines", "on offer", "needs"),
+            rows,
+            total=len(movers),
+            limit=limit,
+        ),
+        notes,
+    )

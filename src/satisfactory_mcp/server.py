@@ -59,6 +59,7 @@ from .tools.planning import (
     list_plans,
     plan_factory,
     plan_layout,
+    rank_unlocks,
 )
 from .tools.progression import mam_research, phase_requirements, power_shards
 from .tools.prompts import design_factory, pick_hard_drive, plan_power_plant
@@ -123,6 +124,7 @@ __all__ = [
     "power_shards",
     "propose_factories",
     "rank_build_sites",
+    "rank_unlocks",
     "recipe_detail",
     "search_items",
     "search_recipes",

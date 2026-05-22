@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 697 tests passing. See README.md for usage.
+**Status:** implemented. 39 tools, 4 resources, 3 prompts, 712 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2119,6 +2119,43 @@ the default, so `pipe_tier="Mk1"` changed the block split while the trunk view (
 `sc.pipe_m3min`) stayed on Mk2: one response describing two different plants. Carrier
 throughput is a stored plan argument now, because it shapes the solve — `belt_ipm` prices
 sinks — and not merely the drawing.
+
+### 8.5j What an unlock is worth to THIS plan
+
+`advise_hard_drive` answered this for the two options of one pending drive. The question
+underneath — across every alternate *not* unlocked, which would change the factory being
+built — was being answered by tracing the recipe tree by hand.
+
+`rank_unlocks` is one counterfactual per candidate, reusing `advisor._solve_with` rather
+than growing a second copy of that machinery. On the measured Spire Coast plan:
+
+```
+baseline=107257.64  candidates=79  movers=1
+gain      vs base  alternate                    machines  on offer  needs
+14539.71  +13.6%   Alternate: Turbo Blend Fuel  38        drive 25  Blender
+```
+
+**One of 79.** And it is sitting in a pending hard drive with no rerolls left, which turns
+`advise_hard_drive_pick` from "here is what is in the pool" into "here is what it is worth
+to the plant you are building".
+
+**Sweeping everything, because it is cheap.** A solve here takes **0.01 s**, so all 79 cost
+about a second. An earlier guess of 1.5 s per solve had me designing a relevance filter —
+only test recipes touching an item the plan already moves, which would have cut 79 to 21 —
+and that filter would have been actively wrong: a recipe that opens a chain the plan cannot
+currently reach touches none of its items *by definition*, and is exactly the interesting
+case. Measuring first removed the need for the cleverness.
+
+**A zero is an answer.** 78 of 79 change nothing, and saying so is the point: "you are not
+missing anything here" is the decision the hand-walk was producing. So the sweep reports
+how many were tried, not only the winners.
+
+Two things keep the number honest. `gain` is oriented so larger is always better, because
+`objective_value` is already sign-normalised for max/min and a `min_raw` plan that halved
+its ore would otherwise report a large *negative* gain and sort last. And every delta is an
+**upper bound**: a candidate is solved as if any machine it needs already existed — Turbo
+Blend Fuel wants a Blender this world has never built — with that machine named beside the
+number.
 
 ### 8.6 Diff vs save — what to actually change
 
