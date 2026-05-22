@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 672 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 681 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2729,6 +2729,45 @@ what you are short of, prerequisites, and a `LOCKS <capability>` marker on the r
 gate a feature rather than merely adding a recipe. Costs are checked against spendable
 stock only — carried, crates and the Depot — never machine buffers, per § 6.
 
+### 6.10 Pushing back on "not modelled"
+
+Four claims of unknowability were audited after three of them turned out false in one
+session (§6.9, §8.5c). The pattern each time: a failed search reported as a missing field.
+
+**"Fuel supply and uptime are not modelled here" — false, and expensive.** `power_report`
+returned pure nameplate while the 300 s productivity monitor sat in the projection on
+**520 of 566 records**. Weighting each machine by it:
+
+| | nameplate | measured |
+|---|---|---|
+| draw | 6,839 MW | **1,516 MW** |
+| headroom | 711 MW | **6,034 MW** |
+
+An 8.5× error in the number `commission_plan` sizes a startup against. Both are now
+reported, because both are true and they answer different questions: nameplate is what
+everything built would draw *running at once* — the safe bound, since energising a block
+can un-starve idle machines and the fuse blows on demand rather than on averages —
+while measured is what is free *now*. Commissioning still defaults to nameplate and names
+the other, because being wrong in that direction trips a grid.
+
+Two rules keep it honest. A machine with **no monitor is charged in full** on both figures:
+unknown utilisation must not read as idle. And **generation is capacity on both**, because
+generators burn to meet demand rather than at a rate of their own — weighting them would
+double-count the idleness already seen on the draw side.
+
+**OQ5's "water pumps carry no geometry" — a third right, and the conclusion wrong.** The
+volume's *shape* is level geometry and genuinely absent from the save, so how many pumps a
+body of water holds stays unknowable. But its *identity* is in every pump's
+`mExtractableResource`, which the sidecar had been storing in `node` all along, and it
+groups this save's 23 pumps into **three distinct bodies (13 / 6 / 4)**. Sea level falls
+out of the same rows: every pump at **−17.4 m, spread 0.24 m**, which turns "water must be
+drawn at sea level" from a rule of thumb into a number deck ordering can be checked
+against.
+
+**Still genuinely unknown**, and left alone: terrain (there is no heightmap in any input,
+which is why layout draws no coordinates and trunk runs are lower bounds), water-volume
+capacity, and belt/pipe length without a route.
+
 ## 14. Open questions
 
 | id | question | impact | how to resolve |
@@ -2737,7 +2776,7 @@ stock only — carried, crates and the Depot — never machine buffers, per § 6
 | ~~OQ2~~ | ~~Does an unchosen hard-drive option return to the pool, and is the forfeit permanent?~~ | **CLOSED** — player confirms the unchosen option returns to the pool; only the drive is spent. Picking is **low-stakes**, which inverts the advice the tools used to imply. See §9.3. | — |
 | ~~OQ3~~ | ~~Are `mNumSchematicsPerHardDrive = 2` / `mNumRerollsPerHardDrive = 1` overridden by a packaged ini?~~ | **CLOSED for practical purposes** — the constants are confirmed by *observation* rather than by source: all 25 offers on the reference save carry exactly 2 options, and 24 of 25 exactly 1 reroll (the 25th has spent it). Player confirms one reroll. Whether some other install could override them is unanswerable from here and no longer matters. | — |
 | ~~OQ4~~ | ~~Runtime property names for installed somersloops.~~ | **CLOSED** — resolved exactly as proposed: researched Production Amplifier, slotted one, re-saved, diffed. The sloop is in `InventoryPotential` beside the shards (`potential_slots`), and the actor carries `mPendingProductionBoost` = the resulting multiplier. See §6.9. | — |
-| OQ5 | Water pump -> water volume mapping (`FGWaterVolume*` aren't purity keys). | Water capacity accounting. | Coordinate fallback, or accept "unknown". |
+| OQ5 | ~~Water pump -> water volume mapping~~ **PARTLY CLOSED** — pumps DO map to a named `FGWaterVolume` (3 bodies here, 13/6/4) and sea level is measured at −17.4 m. What stays unknown is a volume's SHAPE and capacity: the object is level geometry and is not in the save. See §6.10. | Remaining half needs map data no input carries. | Accept unknown. |
 | ~~OQ6~~ | ~~Regenerate the node/purity table independently of SCIM.~~ | **CLOSED** — merged with an MIT, game-asset-derived set; 0 purity/resource mismatches, and a missing node recovered. See §3.4. | — |
 | ~~OQ7~~ | ~~How many somersloops does the user actually hold?~~ | **CLOSED by OQ4** — free and committed are both read, so owned is exact: **14 free + 1 slotted = 15**, plus 10 Mercer Spheres counted separately. Only the free pool can fund a plan; the committed one is reported so a player knows there is something to pull out. | — |
 

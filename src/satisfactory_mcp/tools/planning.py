@@ -315,14 +315,33 @@ def plan_factory(
                 f"{size.foundations} foundations separately would say "
                 f"{n_water * size.foundations:,} -- that ignores shared edges."
             )
+        # OQ5 said water pumps carry no geometry and could not be matched to anything.
+        # The volume SHAPE is level geometry and genuinely absent, but its IDENTITY is in
+        # every pump's mExtractableResource and the sidecar has stored it all along. Sea
+        # level falls out of the same rows, which turns "must be drawn at sea level" from
+        # a rule of thumb into a number.
+        water = st.water_volumes()
+        existing = ""
+        if water["pumps"]:
+            bodies = ", ".join(f"{k} ({n})" for k, n in list(water["volumes"].items())[:3])
+            existing = (
+                f" You already run {water['pumps']} pump(s) across "
+                f"{len(water['volumes'])} distinct water bod(ies): {bodies}."
+            )
+            if water["sea_level_m"] is not None:
+                existing += (
+                    f" They all sit at {water['sea_level_m']:.1f}m"
+                    f" (spread {water['sea_level_span_m']:.2f}m), which is this world's"
+                    " sea level and the height any new pump has to be drawn at."
+                )
         notes.append(
-            f"{n_water} Water Extractor(s): siting is NOT modelled. Water comes from "
-            "water volumes, which carry no node, purity or geometry here, so the count is "
-            "capped by assumption. Shoreline is NOT the limit -- pumps sit on platforms "
-            "built out over open water, so only area and concrete cost anything. What "
-            "does bind is vertical: water is the only fluid that must be drawn at sea "
-            f"level and cannot be gravity-fed, so it sets deck order.{space} Pass "
-            "water_extractors=<what your site holds> to plan against a measured limit"
+            f"{n_water} Water Extractor(s): the COUNT is capped by assumption -- a water "
+            "volume's shape is level geometry and is not in the save, so nothing here "
+            "knows how many a body of water holds. Shoreline is NOT the limit: pumps sit "
+            "on platforms built out over open water, so only area and concrete cost "
+            "anything. What does bind is vertical -- water is the only fluid that must be "
+            f"drawn at sea level and cannot be gravity-fed, so it sets deck order.{space}"
+            f"{existing} Pass water_extractors=<what your site holds> for a measured limit"
         )
     # Shards and sloops, from the clocks the plan already chose. Hand-totalling this is
     # error-prone in a specific way: a shard raises the MAXIMUM clock by 0.5, so a
@@ -1668,8 +1687,14 @@ def commission_plan(
     # Headroom is an INPUT and is printed as one. A sequence computed against a save
     # that has since moved is then visibly stale rather than quietly wrong -- the same
     # reason phase_requirements labels its rows instead of filtering them.
+    power = st.power_report()
     if headroom_mw is None:
-        head, source = st.power_report()["headroom_mw"], "power_report, nameplate"
+        # Nameplate on purpose. Measured headroom is usually much larger -- 6,034 MW
+        # against 711 on the reference save, because most of that factory is idle -- but
+        # energising a block can un-starve the very machines that are idle, and the fuse
+        # blows on demand, not on averages. The safe bound is the default; the measured
+        # one is reported so a player who knows their base is quiet can pass it in.
+        head, source = power["headroom_mw"], "power_report, nameplate"
     else:
         head, source = float(headroom_mw), "given by caller"
 
@@ -1731,6 +1756,15 @@ def commission_plan(
     )
 
     notes = [*plan_notes, *plan_run.warnings]
+    if headroom_mw is None and power["measured_headroom_mw"] > head * 1.2:
+        notes.append(
+            f"your grid is only {power['utilisation']:.0%} utilised, so measured headroom "
+            f"is {power['measured_headroom_mw']:,.0f} MW against the {head:,.0f} MW "
+            "nameplate used here. Nameplate is the safe bound -- energising a block can "
+            "un-starve idle machines and the fuse blows on demand, not on averages -- but "
+            "if you know your base is quiet, pass headroom_mw= to plan against the real "
+            "figure and get far fewer waves"
+        )
     if plan_run.ok:
         notes.append(
             "build EVERYTHING first, unpowered: a machine draws only when it runs, so "

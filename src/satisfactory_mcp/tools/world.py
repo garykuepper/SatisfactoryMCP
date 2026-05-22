@@ -137,7 +137,13 @@ def unlocked_recipes(
 
 @mcp.tool(structured_output=False)
 def power_report(save: str | None = None, world: str | None = None) -> str:
-    """Nameplate generation vs machine draw. Excludes paused buildings."""
+    """Generation capacity vs machine draw, nameplate AND measured.
+
+    Nameplate is what everything built would draw running at once. Measured weights each
+    machine by the 300 s productivity monitor the save already carries, which on a factory
+    with idle blocks is a very different number -- and it is the one that says what is free
+    right now. Both are shown because they answer different questions.
+    """
     try:
         st = _state(save, world)
     except Exception as exc:
@@ -147,7 +153,24 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
         (v["name"], v["count"], render.num(v["mw"]))
         for v in sorted(pw["by_generator"].values(), key=lambda v: -v["mw"])
     ]
-    notes = ["nameplate only: fuel supply and uptime are not modelled"]
+    # This note used to read "nameplate only: fuel supply and uptime are not modelled".
+    # The uptime was in the projection the whole time, on 520 of 566 records.
+    notes = [
+        (
+            "nameplate headroom assumes every built machine runs at once -- the SAFE "
+            f"bound. Measured weights {pw['monitored']} machine(s) by the last complete "
+            "300s window and is what is free right now; utilisation is "
+            f"{pw['utilisation']:.0%}"
+        ),
+        (
+            f"{pw['unmonitored']} machine(s) carry no productivity monitor and are charged "
+            "in FULL on both figures -- unknown utilisation must not read as idle"
+        ),
+        (
+            "generation is capacity on both, because generators burn to meet demand "
+            "rather than at a rate of their own"
+        ),
+    ]
     if pw["unmodellable"]:
         notes.append(f"not in game data, excluded: {', '.join(pw['unmodellable'])}")
     return render.envelope(
@@ -155,8 +178,10 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
         + render.kv(
             [
                 ("generation_MW", render.num(pw["generation_mw"])),
-                ("draw_MW", render.num(pw["draw_mw"])),
-                ("headroom_MW", render.num(pw["headroom_mw"])),
+                ("draw_MW_nameplate", render.num(pw["draw_mw"])),
+                ("draw_MW_measured", render.num(pw["measured_draw_mw"])),
+                ("headroom_MW_nameplate", render.num(pw["headroom_mw"])),
+                ("headroom_MW_measured", render.num(pw["measured_headroom_mw"])),
                 ("paused", pw["paused_count"]),
             ]
         ),

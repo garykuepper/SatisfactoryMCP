@@ -217,10 +217,29 @@ class WorldState:
     # ---- power ---------------------------------------------------------
 
     def power_report(self) -> dict:
-        """Nameplate generation and machine draw.
+        """Generation capacity, and draw both nameplate and measured.
 
-        Nameplate, not actual: fuel supply and uptime are not modelled here. Paused
-        buildings are excluded from both sides.
+        This used to report nameplate only, saying uptime "is not modelled here". The
+        uptime was in the projection all along -- the 300 s productivity monitor, on 520 of
+        566 records -- and the difference is not a rounding detail. On the reference save
+        nameplate draw is **6,839 MW** while utilisation-weighted draw over the last
+        complete window is **1,516 MW**, because most of the factory is idle. Headroom
+        therefore reads 711 MW nameplate against roughly **6,034 MW** actual: an 8.5x
+        error in the number `commission_plan` sizes a startup against.
+
+        Both are reported because both are true and they answer different questions:
+
+        * ``headroom_mw`` (nameplate) is the **safe** figure -- what is free if everything
+          currently built ran at once. Energising a block can un-starve idle machines
+          downstream, so this is the one not to exceed if you cannot watch it.
+        * ``measured_headroom_mw`` is the **current** figure -- what is free right now,
+          given how much of the factory is actually running.
+
+        A machine with no productivity monitor is charged at full nameplate on both sides:
+        unknown utilisation must not read as idle. Generators are capacity either way,
+        since they burn to meet demand rather than at a rate of their own.
+
+        Paused buildings are excluded from both sides.
         """
         gen: dict[str, dict] = {}
         total_mw = 0.0
@@ -242,31 +261,91 @@ class WorldState:
             total_mw += mw
 
         draw = 0.0
+        measured = 0.0
+        monitored = 0
+        unmonitored = 0
+
+        def _charge(rated: float, record: dict) -> None:
+            """Add one machine to both totals, weighting the measured one by uptime."""
+            nonlocal draw, measured, monitored, unmonitored
+            draw += rated
+            uptime = record.get("uptime") or {}
+            window = uptime.get("window_s") or 0.0
+            produced = uptime.get("produce_s") or 0.0
+            if window > 0:
+                monitored += 1
+                measured += rated * (produced / window)
+            else:
+                # No monitor is NOT evidence of idleness. Charged in full, so an
+                # unreadable machine can only make the measured figure conservative.
+                unmonitored += 1
+                measured += rated
+
         for m in self.projection.get("machines", ()):
             if m.get("paused"):
                 continue
             r = self.game.recipes.get(m.get("recipe") or "")
             clock = m.get("clock") or 1.0
             if r is not None:
-                draw += self.game.recipe_power_mw(r, clock)
+                _charge(self.game.recipe_power_mw(r, clock), m)
             else:
                 b = self.game.buildings.get(m["cls"])
                 if b:
-                    draw += b.power_at(clock)
+                    _charge(b.power_at(clock), m)
         for e in self.projection.get("extractors", ()):
             if e.get("paused"):
                 continue
             b = self.game.buildings.get(e["cls"])
             if b:
-                draw += b.power_at(e.get("clock") or 1.0)
+                _charge(b.power_at(e.get("clock") or 1.0), e)
 
         return {
             "generation_mw": total_mw,
             "draw_mw": draw,
             "headroom_mw": total_mw - draw,
+            #: Utilisation-weighted over the last complete 300 s window.
+            "measured_draw_mw": measured,
+            "measured_headroom_mw": total_mw - measured,
+            "monitored": monitored,
+            "unmonitored": unmonitored,
+            "utilisation": (measured / draw) if draw else 1.0,
             "by_generator": gen,
             "unmodellable": sorted(set(variable)),
             "paused_count": len(self.paused),
+        }
+
+    def water_volumes(self) -> dict:
+        """Water Extractors grouped by the body of water they draw from, plus sea level.
+
+        OQ5 said water pumps "carry no node, purity or geometry", and concluded they could
+        not be matched to anything. Two thirds of that is right and the conclusion was not:
+        `mExtractableResource` points at a named `FGWaterVolume`, the sidecar has been
+        storing it in ``node`` the whole time, and it groups this save's 23 pumps into
+        three distinct bodies (13 / 6 / 4). The volume OBJECT is level geometry and is not
+        in the save, so its shape and capacity really are unknowable -- but its identity
+        is not, and identity is enough to say how many separate shorelines are already in
+        use.
+
+        Sea level falls out of the same rows. Every pump on this save sits at -17.3 or
+        -17.5 m, which turns "water must be drawn at sea level" from a rule of thumb into
+        a measured number that deck ordering can be checked against.
+        """
+        groups: dict[str, list[dict]] = {}
+        zs: list[float] = []
+        for e in self.projection.get("extractors", ()):
+            if e["cls"] != "Build_WaterPump_C":
+                continue
+            groups.setdefault(e.get("node") or "(unresolved)", []).append(e)
+            if e.get("pos"):
+                zs.append(e["pos"][2] / 100.0)
+        return {
+            "volumes": {
+                k.rsplit(".", 1)[-1]: len(v)
+                for k, v in sorted(groups.items(), key=lambda kv: -len(kv[1]))
+            },
+            "pumps": sum(len(v) for v in groups.values()),
+            "sea_level_m": (sum(zs) / len(zs)) if zs else None,
+            "sea_level_span_m": (max(zs) - min(zs)) if zs else None,
         }
 
     # ---- progression ---------------------------------------------------
