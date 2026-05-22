@@ -133,14 +133,23 @@ BUILDING_CLASS_ALIASES: dict[str, str] = {
 #: from being unbounded.
 #:
 #: It is deliberately high enough not to bind, which makes it DANGEROUS to read as
-#: capacity. A measured oil-power plan wanted 105 extractors and 12,400 m3/min -- the
-#: largest fluid in the plant, larger than its Fuel -- on a 138x136 m ocean platform
-#: whose perimeter fits roughly 27. Water is also the only fluid that must be sourced at
-#: sea level and cannot be gravity-fed, so it drives deck ordering. Pass
+#: capacity.
+#:
+#: **Shoreline is NOT the constraint, and saying it was gave bad advice.** Corrected by
+#: the player (2026-07-28): extractors go on foundation platforms built out over open
+#: water, so frontage is irrelevant and only water AREA matters. An earlier version of
+#: this note argued a measured 105-extractor plan was implausible because "a 138x136 m
+#: platform's perimeter fits roughly 27" -- but 105 pumps at 20x18 m occupy 37,800 m2,
+#: a 194 m square, which is smaller than that same plan's own 512 m site. The real cost
+#: is 945 foundations and 4,725 Concrete, against the 32,645 Concrete its deck already
+#: needs. Siting was never the binding limit.
+#:
+#: What remains true is vertical, not horizontal: water is the only fluid that must be
+#: drawn at sea level and cannot be gravity-fed, so it still drives deck ordering. Pass
 #: ``water_extractors`` to replace this with a number the player has actually measured.
 WATER_EXTRACTOR_CAP_ASSUMED: int = 200
 
-#: Above this many extractors in one plan, say plainly that siting is unmodelled.
-#: Chosen as roughly what a large single platform holds, so the warning fires on the
-#: plans where shoreline is about to become the real constraint.
+#: Above this many extractors in one plan, say plainly that the count is an assumption
+#: and quote what the platform costs. Not a danger threshold -- platforming for hundreds
+#: is ordinary play -- just the point where the concrete stops being a rounding error.
 WATER_EXTRACTOR_WARN_AT: int = 30

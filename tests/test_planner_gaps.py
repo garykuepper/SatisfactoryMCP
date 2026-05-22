@@ -88,8 +88,11 @@ def test_a_pattern_matching_neither_still_refuses(game, state):
 
 def test_water_extractors_can_be_capped_to_what_a_site_holds(game, state):
     """Water was the binding constraint on the real build and the model had no opinion:
-    a plan wanted 105 extractors and 12,400 m3/min -- more than its Fuel -- on a
-    platform whose perimeter fits about 27."""
+    a plan wanted 105 extractors and 12,400 m3/min, more than its Fuel.
+
+    The cap exists so a player can state a measured limit. It is NOT a shoreline count --
+    pumps sit on platforms built out over open water -- so what it stands in for is
+    however much water the player is willing to floor over."""
     kw = dict(sources=SPIRE, objective="max_mw", exports=["MW"])
     free = solve(build_scenario(game, state, **kw).scenario)
     capped = solve(build_scenario(game, state, water_extractors=5, **kw).scenario)
@@ -286,4 +289,10 @@ def test_the_water_warning_quotes_real_geometry(game, state):
     warn = [line for line in out.splitlines() if "Water Extractor(s): siting" in line]
     if warn:
         assert "m2 of water" in warn[0]
-        assert "shoreline" in warn[0]
+        # The platform and its concrete, which is what actually costs something. The
+        # frontage figure this used to assert was answering a question nobody had: pumps
+        # do not line a shore, they sit on floors built out over open water, and quoting
+        # metres-of-shoreline made ordinary large water plans look impossible.
+        assert "Concrete to float" in warn[0]
+        assert "Shoreline is NOT the limit" in warn[0]
+        assert "of shoreline" not in warn[0]

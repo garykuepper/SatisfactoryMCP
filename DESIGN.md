@@ -1344,9 +1344,16 @@ count was bounded by a private `_WATER_EXTRACTOR_CAP = 200`, chosen only to keep
 column from being unbounded.
 
 That is not cosmetic. On a measured plan water was **12,400 m³/min across 105 extractors —
-the largest fluid in the plant, larger than its Fuel** — on a 138×136 m ocean platform
-whose perimeter fits roughly 27. It is also the only fluid that must be sourced at sea
-level and cannot be gravity-fed, so it drives deck ordering.
+the largest fluid in the plant, larger than its Fuel**. It is also the only fluid that must
+be sourced at sea level and cannot be gravity-fed, so it drives deck ordering.
+
+> **Corrected 2026-07-28 (player).** This section originally added "on a 138×136 m ocean
+> platform whose perimeter fits roughly 27", treating **shoreline as the constraint**. It is
+> not. Pumps go on foundation platforms built out over open water, so frontage plays no
+> part and only area matters: 105 pumps at 20×18 m occupy 37,800 m², a **194 m square**,
+> smaller than that same plan's own 512 m site, and cost 945 foundations / 4,725 Concrete
+> against the 32,645 Concrete its deck already needs. The 105-extractor plan was never
+> implausible. What binds is vertical, not horizontal — see the sea-level rule above.
 
 Three changes: the constant moves into the §5.6 register as
 `WATER_EXTRACTOR_CAP_ASSUMED`, labelled the only entry with no data behind it; a
@@ -1414,10 +1421,14 @@ the largest box naively gives 22×4 m instead of ~20×20 — roughly **1,000 fou
 understated across a 176-generator plan**.
 
 This feeds straight back into §8.2c's water problem. "Siting is not modelled" is abstract;
-*"each is 20×18 m, so 96 of them cover 34,560 m² of water — about 1,920 m of shoreline in a
-single line"* is something you can hold against a platform. Area is unambiguous and
-frontage assumes one line along a shore, so both are given rather than one dressed up as
-the answer.
+*"each is 20×18 m, so 96 of them cover 34,560 m² — a platform about 186×186 m, costing 864
+foundations and 4,320 Concrete to float"* is something you can hold against a build.
+
+The frontage half of this was **wrong and is gone**. It quoted "about 1,920 m of shoreline
+in a single line", which assumed pumps line a shore; they do not, they sit on platforms out
+over open water. Quoting both and calling it balanced did not help — one of the two numbers
+was answering a question nobody had, and it was the one that made large water plans look
+impossible. Area and its concrete are now the only figures given.
 
 ### 8.2e Plan slices, and the shard bill
 

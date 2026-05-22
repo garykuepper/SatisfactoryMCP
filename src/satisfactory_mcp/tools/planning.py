@@ -287,10 +287,14 @@ def plan_factory(
     ]
     notes = [*sel.errors, *req.recipe_errors, *prepared.notes]
 
-    # Water has no nodes, no purity and no geometry in any data this project can read,
-    # so the extractor count is bounded by an ASSUMPTION rather than by the map. Say so
-    # once it is large enough to matter: a measured plan wanted 105 extractors and
-    # 12,400 m3/min -- more than its Fuel -- on a platform whose perimeter fits ~27.
+    # Water has no nodes, no purity and no geometry in any data this project can read, so
+    # the extractor count is bounded by an ASSUMPTION rather than by the map.
+    #
+    # What that assumption stands in for was WRONG until the player corrected it: pumps go
+    # on foundation platforms built out over open water, so shoreline frontage plays no
+    # part. This note used to quote "m of shoreline if placed in a single line", which
+    # made a perfectly ordinary 105-pump plan look impossible. Area and concrete are the
+    # honest costs, and both are small.
     n_water = sum(
         p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"
     )
@@ -299,21 +303,22 @@ def plan_factory(
         size = pump.footprint if pump else None
         space = ""
         if size:
-            # Area is unambiguous; frontage assumes one line along a shore, which is how
-            # they are actually placed, so both are given rather than one dressed up as
-            # the answer.
+            deck = n_water * size.foundations
+            side = (n_water * size.area_m2) ** 0.5
             space = (
                 f" Each is {size} ({size.foundations} foundations), so {n_water} of them "
-                f"cover {n_water * size.area_m2:,.0f} m2 of water -- about "
-                f"{n_water * max(size.width_m, size.depth_m):,.0f} m of shoreline if "
-                "placed in a single line."
+                f"cover {n_water * size.area_m2:,.0f} m2 of water -- a platform about "
+                f"{side:,.0f}x{side:,.0f} m, costing {deck:,} foundations and "
+                f"{deck * 5:,.0f} Concrete to float."
             )
         notes.append(
             f"{n_water} Water Extractor(s): siting is NOT modelled. Water comes from "
-            "water volumes, which carry no node, purity or geometry here, so the count "
-            "is capped by assumption, not by shoreline. It is also the only fluid that "
-            f"must be sourced at sea level and cannot be gravity-fed.{space} Pass "
-            "water_extractors=<what your site holds> to plan against the real limit"
+            "water volumes, which carry no node, purity or geometry here, so the count is "
+            "capped by assumption. Shoreline is NOT the limit -- pumps sit on platforms "
+            "built out over open water, so only area and concrete cost anything. What "
+            "does bind is vertical: water is the only fluid that must be drawn at sea "
+            f"level and cannot be gravity-fed, so it sets deck order.{space} Pass "
+            "water_extractors=<what your site holds> to plan against a measured limit"
         )
     # Shards and sloops, from the clocks the plan already chose. Hand-totalling this is
     # error-prone in a specific way: a shard raises the MAXIMUM clock by 0.5, so a
