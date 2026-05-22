@@ -82,6 +82,14 @@ LINK_Z = 1600.0
 #: How far under a machine to look for the tile it stands on, in cm.
 STAND_ON = 600.0
 
+#: This module works in CENTIMETRES throughout, deliberately, and is the one place that
+#: does not route distance through ``geo.distance_m``. Every threshold above is a cm
+#: figure measured against the save's own units, the comparisons are against those
+#: thresholds directly, and nothing is ever reported to a caller in metres -- so there is
+#: no conversion here to get wrong, and adding one would mean dividing by 100 only to
+#: compare against constants that would then have to be rewritten. Raw ``math.dist`` is
+#: correct here; it is not the duplication that ``geo`` exists to remove.
+
 #: Connective tissue. Catwalks are POINTEDLY absent -- see the module docstring.
 _BRIDGE = ("Ramp", "Stair", "Wall")
 _FOUNDATION = ("Foundation", "Platform")

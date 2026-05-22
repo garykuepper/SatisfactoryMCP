@@ -97,3 +97,36 @@ def test_a_factory_view_still_reports_a_centroid_and_spread(game, state):
             ]
         )
     )
+
+
+# ------------------------------------------------------------- the conversion
+
+
+def test_three_dimensional_distance_is_a_separate_function():
+    """Not a flag on distance_m, because the choice is a modelling decision. distance_m
+    drops Z on purpose -- a 40 m climb is noise against a 400 m walk when the question is
+    "is this near that" -- while a pipe RUN has to include the vertical leg, which is real
+    pipe. Passing 3-tuples to math.dist and letting it silently do 3D put that distinction
+    in the shape of a tuple rather than the name of the function."""
+    flat = geo.distance_m((0.0, 0.0), (300.0, 400.0))
+    tall = geo.distance_3d_m((0.0, 0.0, 0.0), (300.0, 400.0, 1200.0))
+    assert flat == pytest.approx(5.0)
+    assert tall == pytest.approx(13.0)
+    # distance_m must ignore a Z it is not given, not crash on a 2-tuple.
+    assert geo.distance_m((0.0, 0.0), (0.0, 0.0)) == 0.0
+
+
+def test_only_the_centimetre_module_still_calls_math_dist_directly():
+    """graph/structure.py works in cm throughout against cm thresholds and reports nothing
+    in metres, so there is no conversion there to get wrong. Everywhere else routes through
+    geo, and this pins that a new hand-typed `/ 100.0` does not creep back in."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "satisfactory_mcp"
+    offenders = []
+    for path in root.rglob("*.py"):
+        if path.name in ("geo.py", "structure.py"):
+            continue
+        if "math.dist" in path.read_text(encoding="utf-8"):
+            offenders.append(path.name)
+    assert offenders == [], offenders

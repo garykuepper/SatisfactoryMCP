@@ -32,8 +32,6 @@ four products, over there"::
 
 from __future__ import annotations
 
-import math
-
 from ..docs.model import GameData
 from ..spatial import geo
 from .identity import bases, cluster_machines
@@ -160,8 +158,9 @@ def _by_near(
             raise SelectorError(f"label {label.name!r} has no machines left to centre on")
         centre = geo.centroid(pts)
 
-    limit = radius_m * 100.0
-    return {m for m in graph.machines() if m in pos and math.dist(pos[m][:2], centre) <= limit}
+    return {
+        m for m in graph.machines() if m in pos and geo.distance_m(pos[m][:2], centre) <= radius_m
+    }
 
 
 def _indexed(groups: list[list[str]], spec: str, what: str) -> set[str]:

@@ -27,8 +27,9 @@ Where they disagree, that disagreement is the interesting part: it is the fill d
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
+
+from . import geo
 
 __all__ = ["Elevation", "Sample", "probe", "sample_points"]
 
@@ -154,10 +155,9 @@ def sample_points(node_table=None, state=None) -> list[Sample]:
 def probe(x: float, y: float, samples: list[Sample], radius_m: float = 200.0) -> Elevation:
     """Elevation samples within ``radius_m`` of a point. Coordinates in centimetres."""
     out = Elevation(x=x, y=y, radius_m=radius_m)
-    limit = radius_m * 100.0
     for s in samples:
-        d = math.dist((x, y), (s.x, s.y))
-        if d <= limit:
-            out.samples.append(Sample(s.source, s.x, s.y, s.z, d / 100.0))
+        d = geo.distance_m((x, y), (s.x, s.y))
+        if d <= radius_m:
+            out.samples.append(Sample(s.source, s.x, s.y, s.z, d))
     out.samples.sort(key=lambda s: s.dist_m)
     return out

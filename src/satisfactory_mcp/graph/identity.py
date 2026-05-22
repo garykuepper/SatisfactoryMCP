@@ -22,7 +22,6 @@ sets rather than to any one of these.
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -165,7 +164,7 @@ def _cluster(machines: list[str], pos: dict, link_m: float) -> list[list[str]]:
         while changed:
             changed = False
             for cand in list(remaining):
-                if any(math.dist(pos[cand][:2], pos[m][:2]) <= link_m * 100 for m in group):
+                if any(geo.distance_m(pos[cand][:2], pos[m][:2]) <= link_m for m in group):
                     group.append(cand)
                     remaining.remove(cand)
                     changed = True

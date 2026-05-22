@@ -30,7 +30,6 @@ nodes 40 m apart but on opposite sides of the run are not on the same pipe.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
@@ -88,12 +87,9 @@ class Trunk:
 
         A LOWER BOUND on pipe: there is no terrain here, so any real route is longer.
         """
-        return (
-            sum(
-                math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
-                for a, b in zip(self.members, self.members[1:], strict=False)
-            )
-            / 100.0
+        return sum(
+            geo.distance_3d_m((a.x, a.y, a.z), (b.x, b.y, b.z))
+            for a, b in zip(self.members, self.members[1:], strict=False)
         )
 
     @property
@@ -139,7 +135,7 @@ def _chain(members: list[TrunkMember], start: TrunkMember) -> list[TrunkMember]:
     out = [start]
     while remaining:
         last = out[-1]
-        nxt = min(remaining, key=lambda m: math.dist((last.x, last.y), (m.x, m.y)))
+        nxt = min(remaining, key=lambda m: geo.distance_m((last.x, last.y), (m.x, m.y)))
         remaining.remove(nxt)
         out.append(nxt)
     return out
@@ -219,7 +215,7 @@ def plan_trunks(
                 rank = 0
             else:
                 rank = 2
-            return rank, math.dist((r["x"], r["y"]), (cx, cy))
+            return rank, geo.distance_m((r["x"], r["y"]), (cx, cy))
 
         pool.sort(key=_cost)
         chosen = pool[:wanted]
@@ -257,7 +253,7 @@ def plan_trunks(
         target = destination or geo.centroid([(m.x, m.y) for m in members])
         # Start at the far end so the chain runs INWARD, which is the direction the
         # fluid moves and the direction lift_m is measured in.
-        start = max(members, key=lambda m: math.dist((m.x, m.y), target))
+        start = max(members, key=lambda m: geo.distance_m((m.x, m.y), target))
         for run in _split(_chain(members, start), capacity):
             out.trunks.append(
                 Trunk(

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 37 tools, 4 resources, 3 prompts, 652 tests passing. See README.md for usage.
+**Status:** implemented. 37 tools, 4 resources, 3 prompts, 654 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2038,13 +2038,27 @@ And spread compares **`i < j` only**: the inline copies iterated
 Same answer, double the work — 317k distance calls instead of 158k at 563 machines — and
 a test pins that the cheaper form changed no number.
 
-**`math.dist(...) / 100` vs `geo.distance_m`.** The helper exists and 12 call sites use
-it; `graph/*`, `trunks` and `elevation` retype the centimetre conversion by hand. Cosmetic
-until it isn't — §9's standing note is that getting this wrong silently searches 100× too
-far.
+**`math.dist(...) / 100` vs `geo.distance_m` — fixed, with one deliberate exception.**
+`cohere`, `identity`, `select`, `trunks`, `elevation` and `tools/spatial` each retyped the
+centimetre conversion by hand, in three different shapes: `/ 100.0` after the fact,
+`<= link_m * 100` scaling the threshold instead, and `limit = radius_m * 100.0` hoisted
+into a variable. All now compare in metres.
 
-Only the first was fixed. The rest are recorded rather than swept up, because each touches
-a module with its own tests and the sweep is worth doing deliberately.
+`graph/structure.py` keeps raw `math.dist`, and that is correct: it works in centimetres
+throughout, against cm thresholds (`LINK_XY`, `LINK_Z`, `STAND_ON`) measured in the save's
+own units, and reports nothing to a caller in metres. There is no conversion there to get
+wrong, and introducing one would mean dividing by 100 only to compare against constants
+that would have to be rewritten. Said in the module, so it does not get "fixed" later.
+
+`trunks.run_m` needed the other thing entirely — a **3D** length, because the vertical leg
+of a pipe is real pipe. It was passing 3-tuples to `math.dist` and letting it silently do
+3D, which put the distinction in the shape of a tuple rather than the name of a function.
+Now `geo.distance_3d_m`, separate from `distance_m` rather than a flag on it, because
+dropping Z is a modelling decision: for "is this near that", a 40 m climb is noise against
+a 400 m walk.
+
+A test walks the source tree and fails if `math.dist` appears anywhere outside those two
+modules, so a hand-typed conversion cannot creep back in.
 
 ### 8.6 Diff vs save — what to actually change
 

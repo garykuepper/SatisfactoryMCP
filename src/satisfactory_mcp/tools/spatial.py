@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Annotated
 
 from pydantic import Field
@@ -234,7 +233,7 @@ def search_resource_nodes(
         rows_all = [r for r in rows_all if not r["tapped"]]
     if origin is not None:
         for r in rows_all:
-            r["_d"] = math.dist((r["x"], r["y"]), origin) / 100.0
+            r["_d"] = geo.distance_m((r["x"], r["y"]), origin)
     if not rows_all:
         return render.envelope(
             f"# no nodes in {sel.description}",

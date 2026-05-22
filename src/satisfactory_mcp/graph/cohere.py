@@ -55,6 +55,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
+from ..spatial import geo
 from .model import FactoryGraph
 from .structure import Structures
 
@@ -169,7 +170,7 @@ def _feature_fn(
 
     def features(a: str, b: str) -> tuple[dict[str, float], float]:
         pa, pb = pos.get(a), pos.get(b)
-        distance_m = math.dist(pa[:2], pb[:2]) / 100.0 if pa and pb else math.inf
+        distance_m = geo.distance_m(pa[:2], pb[:2]) if pa and pb else math.inf
         sa, sb = slab.get(a), slab.get(b)
         prod_a, prod_b = products.get(a), products.get(b)
         feats = {

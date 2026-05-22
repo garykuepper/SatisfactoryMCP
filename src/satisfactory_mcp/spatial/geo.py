@@ -26,6 +26,7 @@ __all__ = [
     "cluster",
     "diameter_m",
     "direction_of",
+    "distance_3d_m",
     "distance_m",
     "grid_cell",
     "in_direction",
@@ -130,6 +131,21 @@ def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
 
     Z is deliberately excluded: it spans only 0.64 km and matters for pipe head,
     not for proximity.
+    """
+    return math.dist(a, b) / CM_PER_M
+
+
+def distance_3d_m(a: Sequence[float], b: Sequence[float]) -> float:
+    """Straight-line distance including Z, in metres.
+
+    Separate from ``distance_m`` rather than a flag on it, because the choice is a
+    modelling decision and not a detail. ``distance_m`` drops Z on purpose: for
+    "is this near that" a 40 m climb is noise against a 400 m walk.
+
+    A pipe RUN is the opposite case -- the vertical leg is real pipe you have to build and
+    pump through -- so a trunk's length includes it. Passing 3-tuples to ``math.dist`` and
+    letting it silently do 3D, which is what this replaced, meant the distinction lived in
+    the shape of a tuple rather than in the name of the function.
     """
     return math.dist(a, b) / CM_PER_M
 
