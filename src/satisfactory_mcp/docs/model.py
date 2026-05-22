@@ -160,6 +160,18 @@ class Building:
     # logistics
     items_per_min: float = 0.0
     flow_m3_min: float = 0.0
+    #: Metres of head a pipeline pump lifts, from ``mDesignPressure``. 20 on Mk1, 50 on
+    #: Mk2.
+    #:
+    #: This project spent a while asserting that head-per-pump was "a game rule with no
+    #: data behind it" and refusing to give pump counts on that basis. It was in
+    #: Docs.json the whole time, under a name nobody grepped for -- *pressure*, not
+    #: *head* or *lift*. The refusal was right in spirit and wrong in fact.
+    #:
+    #: ``mMaxPressure`` is higher (22 and 55) and is the point of failure rather than the
+    #: rating, so the design figure is the one to plan against.
+    head_lift_m: float = 0.0
+    max_head_lift_m: float = 0.0
 
     @property
     def max_clock(self) -> float:

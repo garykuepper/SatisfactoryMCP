@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 38 tools, 4 resources, 3 prompts, 671 tests passing. See README.md for usage.
+**Status:** implemented. 38 tools, 4 resources, 3 prompts, 672 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1739,9 +1739,21 @@ overflow. Capacitated clustering would give tighter blobs and a worse answer: tw
 **This is where the head span becomes actionable.** `search_resource_nodes` reports the
 Spire crude field spanning 40 m (§ 8.5b). Attached to a trunk, the answer is sharper --
 five of the six runs are flat and *one* climbs the whole 40 m. `lift_m` is signed and
-measured inward, so the sign is the answer: downhill needs no pumping. Still no pump count,
-same rule as before. Head is reported for **pipes only**; a belt does not care that its
-sulfur climbs 218 m, and a number there invites a pump that cannot exist.
+measured inward, so the sign is the answer: downhill needs no pumping. Head is reported for
+**pipes only**; a belt does not care that its sulfur climbs 218 m.
+
+**And the pump count is now real.** This section previously said head-per-pump was a game
+constant with no source and refused to give a number. It is `mDesignPressure` in Docs.json
+— **20 m on a Mk1 pump, 50 m on a Mk2** — and it was there all along under a name nobody
+grepped for, because the search terms were "head" and "lift" and the game calls it
+*pressure*. The third instance in one session of treating a failed grep as proof of
+absence (§ 6.9 has the other two). So T6 reads `UP 40m (1x Pipeline Pump Mk.2)`.
+
+Two things keep it honest. It quotes **the best pump the player has actually unlocked**,
+not the best that exists — quoting Mk2 to someone without it understates the build by more
+than half. And it stays a **lower bound**, because pipe friction and the head a full pipe
+holds on its own are not modelled: it answers "at least this many", which is what sizing a
+build needs.
 
 Two cases are surfaced rather than smoothed over. A single node above one line's capacity
 (a pure Crude Oil node at 250% makes exactly 600 m3/min) gets a run of its own instead of

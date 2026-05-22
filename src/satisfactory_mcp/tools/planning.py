@@ -831,6 +831,15 @@ def plan_layout(
                 )
                 target_label = resolved_name
         tp = plan_trunks(prepared, g, target, target_label)
+        # The best pump the player can actually build, not the best that exists: a Mk2
+        # lifts 50 m against a Mk1's 20, so quoting Mk2 to someone who has not unlocked it
+        # understates the build by more than half.
+        pumps = [
+            b for c, b in g.buildings.items() if b.head_lift_m and c in st.unlocked_building_ids
+        ]
+        best = max(pumps, key=lambda b: b.head_lift_m, default=None)
+        pump_head = best.head_lift_m if best else 0.0
+        pump_name = best.name if best else "pump"
         rows = []
         for i, t in enumerate(tp.trunks, 1):
             # Head is a FLUID concern only. A belt does not care that its coal climbs
@@ -838,6 +847,10 @@ def plan_layout(
             climb = ""
             if t.carrier == "pipe" and abs(t.lift_m) >= 1.0:
                 climb = f"{'down' if t.lift_m > 0 else 'UP'} {abs(t.lift_m):.0f}m"
+                # A real count now: mDesignPressure is the pump's head lift in metres.
+                need = t.pumps(pump_head)
+                if need:
+                    climb += f" ({need}x {pump_name})"
             rows.append(
                 (
                     f"T{i}",
@@ -861,7 +874,9 @@ def plan_layout(
             f"trunks converge on {tp.destination_label}. `run` is the straight-line chain "
             "node to node, so it is a LOWER BOUND on pipe -- no terrain data exists here. "
             "`head` is the climb from the far end inward: UP needs pumping, down does not. "
-            "No pump count is given, because head-per-pump is not in any data this reads"
+            f"Pump counts assume {pump_name} at {pump_head:.0f}m head (mDesignPressure) and "
+            "are a LOWER bound: pipe friction and the head a full pipe holds on its own are "
+            "not modelled"
         )
         for name, rate, count in tp.placeless:
             notes.append(

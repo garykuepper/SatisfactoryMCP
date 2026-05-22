@@ -15,9 +15,12 @@ Two things this deliberately does not do
 What comes out is a grouping plus straight-line distances, which is a lower bound on pipe
 and is labelled as one.
 
-**No pump counts.** Head is reported as a span in metres, the same rule as
-`search_resource_nodes`: head-per-pump is a game constant this project has no source for,
-and a guessed pump count reads as measured.
+**No routing, but pump counts are now real.** For a long time this said head-per-pump was
+a game constant with no source, and refused to give a number. It is ``mDesignPressure`` in
+Docs.json -- 20 m on a Mk1 pump, 50 m on a Mk2 -- and was there the whole time under a name
+nobody grepped for. Counts are still a LOWER bound, because pipe friction and the head a
+full pipe holds on its own are not modelled, and they quote the best pump the player has
+actually unlocked rather than the best that exists.
 
 Why a chain and not a cluster
 -----------------------------
@@ -30,6 +33,7 @@ nodes 40 m apart but on opposite sides of the run are not on the same pipe.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ..docs.model import GameData
@@ -97,6 +101,27 @@ class Trunk:
         """Elevation span across the trunk's nodes, in metres."""
         zs = [m.z / 100.0 for m in self.members]
         return (max(zs) - min(zs)) if zs else 0.0
+
+    def pumps(self, head_lift_m: float) -> int:
+        """Pipeline pumps needed to lift this trunk's climb, at a given pump's head.
+
+        Zero when the run falls: fluid flows downhill unaided, which is the whole reason
+        `lift_m` is signed.
+
+        This project refused to answer this for a long time, on the grounds that
+        head-per-pump was a game rule with no data behind it. It is `mDesignPressure` in
+        Docs.json -- 20 m on a Mk1 pump, 50 m on a Mk2 -- and was there all along under a
+        name nobody grepped for. The refusal was the right instinct applied to a wrong
+        fact, and the honest fix is to give the number, not to keep hedging.
+
+        Still a LOWER bound, for a reason that has not gone away: pumps also have to
+        overcome pipe friction and the head a full pipe holds on its own, neither of which
+        is modelled here. It answers "at least this many", which is what sizing a build
+        needs.
+        """
+        if head_lift_m <= 0 or self.lift_m >= 0:
+            return 0
+        return math.ceil(-self.lift_m / head_lift_m - 1e-9)
 
     @property
     def lift_m(self) -> float:

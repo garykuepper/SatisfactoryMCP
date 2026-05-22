@@ -233,6 +233,8 @@ def _build_buildings(dump: DocsDump, items: dict[str, Item]) -> dict[str, Buildi
                 fuels=_fuels(c.get("mFuel")),
                 items_per_min=speed * BELT_SPEED_TO_IPM if speed else 0.0,
                 flow_m3_min=_f(c.get("mFlowLimit")) * 60,
+                head_lift_m=_f(c.get("mDesignPressure")),
+                max_head_lift_m=_f(c.get("mMaxPressure")),
                 footprint=extract_footprint(c.get("mClearanceData")),
             )
     return out

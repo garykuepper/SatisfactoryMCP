@@ -186,12 +186,55 @@ def test_plan_layout_renders_trunks(game):
     assert "LOWER BOUND" in out
 
 
-def test_no_pump_count_appears(game):
-    """Same rule as the node table: head-per-pump is in no data this reads."""
+def test_a_climbing_trunk_gets_a_real_pump_count(game):
+    """This used to assert that NO count was given, on the grounds that head-per-pump had
+    no data behind it. It does: mDesignPressure, 20 m on a Mk1 pump and 50 m on a Mk2. The
+    40 m Spire climb is therefore one Mk2."""
     out = srv.plan_layout(detail="trunks", limit=12, **SPIRE)
-    assert "pump" in out.lower()  # it explains why there is no count
-    assert "pumps needed" not in out
-    assert "1 pump" not in out
+    assert "UP 40m (1x Pipeline Pump Mk.2)" in out
+    assert "mDesignPressure" in out
+    assert "LOWER bound" in out
+
+
+def test_a_falling_trunk_needs_no_pumps(game):
+    """The reason lift_m is signed. Fluid runs downhill unaided."""
+    from satisfactory_mcp.planning.trunks import Trunk, TrunkMember
+
+    downhill = Trunk(
+        item="x",
+        name="X",
+        carrier="pipe",
+        capacity=600.0,
+        members=[
+            TrunkMember("a", 0.0, 0.0, 5000.0, "normal", 100.0),
+            TrunkMember("b", 100.0, 0.0, 0.0, "normal", 100.0),
+        ],
+    )
+    assert downhill.lift_m == pytest.approx(50.0)
+    assert downhill.pumps(50.0) == 0
+
+
+def test_pump_counts_round_up_per_pump_head(game):
+    """A 51 m climb is two Mk2 pumps, not one and a bit."""
+    from satisfactory_mcp.planning.trunks import Trunk, TrunkMember
+
+    def climb(metres: float) -> Trunk:
+        return Trunk(
+            item="x",
+            name="X",
+            carrier="pipe",
+            capacity=600.0,
+            members=[
+                TrunkMember("a", 0.0, 0.0, 0.0, "normal", 1.0),
+                TrunkMember("b", 100.0, 0.0, metres * 100.0, "normal", 1.0),
+            ],
+        )
+
+    assert climb(50.0).pumps(50.0) == 1
+    assert climb(51.0).pumps(50.0) == 2
+    assert climb(50.0).pumps(20.0) == 3
+    # An unknown pump head answers 0 rather than dividing by zero.
+    assert climb(50.0).pumps(0.0) == 0
 
 
 def test_a_belt_trunk_reports_no_head(game):
