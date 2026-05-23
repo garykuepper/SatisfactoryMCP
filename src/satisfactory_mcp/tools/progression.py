@@ -308,3 +308,71 @@ def mam_research(
         ),
         notes,
     )
+
+
+@mcp.tool(structured_output=False)
+def somersloops(save: str | None = None, world: str | None = None) -> str:
+    """Somersloops held, slotted and owned -- the sibling of power_shards.
+
+    `sloop_budget` has existed since sloops became spendable and nothing exposed it, so
+    the only way to learn how many you had was to guess a `sloops=` budget and read the
+    shortfall warning: you had to guess the budget to discover the budget.
+
+    Free and committed are both exact. Slotted ones live in `InventoryPotential`, the same
+    component as Power Shards, so this counts slot contents rather than inverting a boost
+    multiplier.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    budget = st.sloop_budget()
+    gate = st.research_gate("production_boost")
+    rows = [
+        (
+            h["name"],
+            h["instance"][-18:],
+            f"{h['sloops']:.0f}",
+            f"{h['boost']:g}x" if h["boost"] else "",
+        )
+        for h in budget["holders"][:20]
+    ]
+    notes = []
+    if gate is not None:
+        bill = ", ".join(f"{r['need']:g} {r['name']}" for r in gate["cost"])
+        notes.append(
+            f"PRODUCTION AMPLIFIER IS NOT RESEARCHED, so none of these can go in a machine "
+            f"yet. Research {gate['schematic_name']} in the MAM ({bill})"
+        )
+    notes.append(
+        "only FREE sloops can fund a plan; committed ones are counted so you know there "
+        "is something to pull out, not added to what is spendable"
+    )
+    notes.append(
+        "free pools carried, crates and the Dimensional Depot -- the same set as "
+        "power_shards, and never machine buffers"
+    )
+    if not budget["committed_measured"]:
+        notes.append(
+            "this projection predates schema 10, so slotted sloops are unreadable and "
+            "'committed' is unknown rather than zero"
+        )
+    notes.append(
+        "Mercer Spheres share the WAT prefix and do nothing for production, so they are "
+        "reported apart and never added in"
+    )
+    return render.envelope(
+        f"# {st.age_note}\n"
+        + render.kv(
+            [
+                ("free", f"{budget['free']:.0f}"),
+                ("committed", f"{budget['committed']:.0f}"),
+                ("owned", f"{budget['owned']:.0f}"),
+                ("where", ", ".join(f"{k} {v:.0f}" for k, v in budget["by_place"].items()) or "-"),
+                ("mercer_spheres", f"{budget['mercer_spheres']:.0f}"),
+            ]
+        ),
+        render.table(("building", "instance", "sloops", "boost"), rows),
+        notes,
+    )

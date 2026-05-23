@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 39 tools, 4 resources, 3 prompts, 725 tests passing. See README.md for usage.
+**Status:** implemented. 40 tools, 4 resources, 3 prompts, 739 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2227,6 +2227,36 @@ genuinely site-scoped is **water access**, since water is only at sea level: cap
 reference plan to 27 extractors cost 18.7% and shifted the recipe mix. Making
 `water_extractors` per-site is the one piece that needs the solver, and it should wait for
 a case where it binds.
+
+### 8.5l Four ways the surface refused to answer
+
+From a second planner's session review. Each cost real hand-work, and none needed new
+modelling — only a surface that reached what the data already held.
+
+**A site keyed on the item it produces matched nothing, silently.** Generators produce
+`__MW__`, so a site spec of `{"hall": ["MW"]}` matched no process LABEL, came back empty,
+and dropped 460 generators into `unassigned` — taking the 9,200 m³/min fuel flow, the one
+number a multi-building plan exists to report, out of the interface table. The
+incompleteness note fired, but nothing said *which* site was empty. Empty sites and dead
+patterns are now named, and the note says what a pattern matches: a label, a building or a
+recipe, never a produced item.
+
+**`sloop_budget` existed and nothing exposed it.** The only way to learn how many
+Somersloops you held was to guess a `sloops=` budget and read the shortfall warning — you
+had to guess the budget to discover the budget. `somersloops` mirrors `power_shards`:
+free / committed / owned, where they are, and which machines hold them.
+
+**`list_buildings(kind="all")` matched nothing**, and the AWESOME Sink and both Pipeline
+Pumps fell through every branch of the kind filter. So sink draw could not be checked
+against the 30 MW the optimizer actually charges, and pump head — added the same day —
+was unlistable. A caller fell back on general knowledge, which is the exact failure the
+rest of this surface is written to prevent. Kinds are a table now; every building is
+reachable and an unknown kind lists the valid ones.
+
+**`recipe_detail` refused a display name** it could resolve, sending a caller to
+`search_recipes` and back. It uses `match_recipes` now — the same resolution
+`exclude_recipes` has always had — and an ambiguous name lists its candidates rather than
+pretending to be unknown.
 
 ### 8.6 Diff vs save — what to actually change
 

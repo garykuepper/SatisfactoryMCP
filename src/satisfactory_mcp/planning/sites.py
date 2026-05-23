@@ -107,11 +107,16 @@ class SitePlan:
     contested: list[tuple[str, list[str]]] = field(default_factory=list)
     #: Items some site consumes that no site produces and no extractor supplies.
     unsupplied: list[tuple[str, str]] = field(default_factory=list)
+    #: Declared sites that matched no process at all, and patterns that matched none.
+    #: A site silently coming back empty is how a whole building's flows vanish from the
+    #: interface table -- see the module docstring.
+    empty: list[str] = field(default_factory=list)
+    dead_patterns: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.unassigned and not self.contested and not self.unsupplied
+        return not (self.unassigned or self.contested or self.unsupplied or self.empty)
 
 
 def _matches(proc: dict, pattern: str) -> bool:
@@ -210,7 +215,28 @@ def partition(
                     )
                 )
 
+    # A site that matched nothing, and a pattern that matched nothing. Both were silent,
+    # and the silence cost a caller the entire fuel interface: they keyed a generator site
+    # on the item it produces (MW), which matches no process LABEL, so the site came back
+    # empty, its 460 generators landed in `unassigned`, and the one flow the whole
+    # multi-building design turns on was missing from the table.
+    for site in out.sites:
+        if site.machines == 0:
+            out.empty.append(site.name)
+        for pattern in site.patterns:
+            if not any(_matches(proc, pattern) for proc in processes):
+                out.dead_patterns.append((site.name, pattern))
+
     out.interfaces.sort(key=lambda i: -i.rate)
+    for name in out.empty:
+        out.notes.append(
+            f"site {name!r} matched NO process, so nothing it should contain is in the "
+            "interface table. Patterns match a process LABEL, its building or its recipe "
+            "-- not the item it produces, so a generator site is 'Fuel-Powered Generator' "
+            "or 'Build_GeneratorFuel_C', never 'MW'"
+        )
+    for name, pattern in out.dead_patterns[:4]:
+        out.notes.append(f"{name}: pattern {pattern!r} matches nothing in this plan")
     if out.unassigned:
         out.notes.append(
             f"{len(out.unassigned)} process(es) match no site: "

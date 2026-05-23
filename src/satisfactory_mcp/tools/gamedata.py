@@ -32,9 +32,26 @@ def search_items(query: str, limit: Limit = 10, offset: int = 0) -> str:
 
 @mcp.tool(structured_output=False)
 def recipe_detail(recipe_id: str) -> str:
-    """Exact numbers for one recipe: rates, machine, power, unlock source."""
+    """Exact numbers for one recipe: rates, machine, power, unlock source.
+
+    Takes a class id OR a display name. Refusing the name cost a caller two round trips
+    to fetch an id this function could resolve itself, which is a poor trade for strictness
+    that buys nothing -- `match_recipes` already does exactly this resolution for
+    `exclude_recipes`.
+    """
+    from ..planning.scenario import match_recipes
+
     g = game()
     r = g.recipes.get(recipe_id)
+    if r is None:
+        hits = match_recipes(g, recipe_id, list(g.recipes))
+        if len(hits) == 1:
+            r = g.recipes[hits[0]]
+        elif hits:
+            # Ambiguous is not the same as unknown, and listing the candidates is the
+            # answer rather than an invitation to search again.
+            shown = ", ".join(g.recipes[h].name for h in hits[:8])
+            return f"{recipe_id!r} matches {len(hits)} recipes: {shown}"
     if r is None:
         return f"unknown recipe {recipe_id!r} -- use search_recipes to find the id"
     b = g.machine(r)
@@ -191,19 +208,23 @@ def list_buildings(
     except Exception:
         # Game data alone is still a useful answer; the columns just go blank.
         st, unlocked, built = None, None, {}
-    picks = []
-    for b in g.buildings.values():
-        if (
-            kind == "production"
-            and b.is_manufacturer
-            or kind == "extractor"
-            and b.is_extractor
-            or kind == "generator"
-            and b.is_generator
-            or kind == "logistics"
-            and (b.items_per_min or b.flow_m3_min)
-        ):
-            picks.append(b)
+    # Every kind reachable, and nothing unreachable. "all" used to match nothing at all,
+    # and the AWESOME Sink and both Pipeline Pumps fell through every branch -- so a
+    # caller could not check sink draw or pump head from the data and fell back on
+    # general knowledge, which is precisely the failure the rest of this surface works to
+    # prevent. Pumps are logistics: they move fluid, and their head lift is the number
+    # a fluid plan needs.
+    kinds = {
+        "production": lambda b: b.is_manufacturer,
+        "extractor": lambda b: b.is_extractor,
+        "generator": lambda b: b.is_generator,
+        "logistics": lambda b: bool(b.items_per_min or b.flow_m3_min or b.head_lift_m),
+        "all": lambda b: True,
+    }
+    want = kinds.get((kind or "").strip().casefold())
+    if want is None:
+        return f"! unknown kind {kind!r}. Choose from: {', '.join(sorted(kinds))}"
+    picks = [b for b in g.buildings.values() if want(b)]
     picks.sort(key=lambda b: b.name)
     rows = []
     for b in picks:
@@ -218,6 +239,10 @@ def list_buildings(
             detail = f"{render.num(b.items_per_min)} items/min"
         elif b.flow_m3_min:
             detail = f"{render.num(b.flow_m3_min)} m3/min"
+        elif b.head_lift_m:
+            detail = (
+                f"lifts {render.num(b.head_lift_m)}m head (max {render.num(b.max_head_lift_m)})"
+            )
         fp = b.footprint
         have = "" if unlocked is None else ("HAVE" if b.cls in unlocked else "LOCKED")
         rows.append(

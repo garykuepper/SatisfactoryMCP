@@ -147,3 +147,36 @@ def test_site_power_excludes_the_sink_charge(decoupled, game):
     assert all(s.slice.sink_mw == 0.0 for s in sp.sites)
     out = srv.plan_layout(plan="spire-coast-full", detail="sites", sites=THREE)
     assert "excludes the AWESOME Sink charge" in out
+
+
+# ------------------------------------------------------- a site that matched nothing
+
+
+def test_an_empty_site_is_reported_not_silent(decoupled, game):
+    """The failure that cost a caller the entire fuel interface: they keyed a generator
+    site on the item it produces (MW), which matches no process LABEL. The site came back
+    empty, its 460 generators fell into `unassigned`, and the one flow the whole
+    multi-building design turns on was missing from the table."""
+    sp = partition(decoupled, game, {"hall": ["MW"], "rest": [*RIG, "Residual"]})
+    assert not sp.ok
+    assert sp.empty == ["hall"]
+    assert any("matched NO process" in n for n in sp.notes)
+    # And it says what a pattern actually matches, since that is the misconception.
+    assert any("not the item it produces" in n for n in sp.notes)
+
+
+def test_a_dead_pattern_is_named(decoupled, game):
+    """A site can match SOMETHING while one of its patterns matches nothing -- a typo in
+    a four-pattern list would otherwise never surface."""
+    sp = partition(decoupled, game, {"hall": [*HALL, "Nuclear Pasta"], "rest": [*RIG, "Residual"]})
+    assert ("hall", "Nuclear Pasta") in sp.dead_patterns
+    assert any("matches nothing in this plan" in n for n in sp.notes)
+
+
+def test_a_generator_site_works_by_label_or_by_class(decoupled, game):
+    """Both spellings a caller would reach for, so the fix is not one magic string."""
+    for pattern in ("Fuel-Powered Generator", "Build_GeneratorFuel_C"):
+        sp = partition(decoupled, game, {"hall": [pattern], "rest": [*RIG, "Residual"]})
+        hall = next(s for s in sp.sites if s.name == "hall")
+        assert hall.machines == 460, pattern
+        assert any(i.name == "Fuel" and i.target == "hall" for i in sp.interfaces), pattern

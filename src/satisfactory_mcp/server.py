@@ -61,7 +61,7 @@ from .tools.planning import (
     plan_layout,
     rank_unlocks,
 )
-from .tools.progression import mam_research, phase_requirements, power_shards
+from .tools.progression import mam_research, phase_requirements, power_shards, somersloops
 from .tools.prompts import design_factory, pick_hard_drive, plan_power_plant
 from .tools.resources import current_save, docs_summary, factory_labels, map_regions
 from .tools.spatial import (
@@ -131,6 +131,7 @@ __all__ = [
     "search_resource_nodes",
     "select_machines",
     "show_on_map",
+    "somersloops",
     "unlocked_recipes",
     "whereami",
     "world_summary",
