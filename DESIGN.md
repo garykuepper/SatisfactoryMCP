@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 39 tools, 4 resources, 3 prompts, 721 tests passing. See README.md for usage.
+**Status:** implemented. 39 tools, 4 resources, 3 prompts, 725 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2150,12 +2150,32 @@ case. Measuring first removed the need for the cleverness.
 missing anything here" is the decision the hand-walk was producing. So the sweep reports
 how many were tried, not only the winners.
 
-Two things keep the number honest. `gain` is oriented so larger is always better, because
+Three things keep the number honest. `gain` is oriented so larger is always better, because
 `objective_value` is already sign-normalised for max/min and a `min_raw` plan that halved
-its ore would otherwise report a large *negative* gain and sort last. And every delta is an
+its ore would otherwise report a large *negative* gain and sort last. Every delta is an
 **upper bound**: a candidate is solved as if any machine it needs already existed — Turbo
 Blend Fuel wants a Blender this world has never built — with that machine named beside the
 number.
+
+And each row names **what the gain switches on**. That began as a plan to flag "consumes an
+item that crosses no site boundary", which the planner correctly called fuzzy — Turbo Blend
+Fuel also drags in Sulfur and Petroleum Coke, a bigger architectural change than the fuel
+return. Listing the processes the counterfactual *activates* and the baseline did not needs
+no judgement at all: `Coal-Powered Generator on Coal, Petroleum Coke`. A headline that turns
+on reintroducing a chain you deleted on purpose is a decision, not a free win.
+
+**The trap this tool set for its own author.** Run with ad-hoc arguments it measures a
+different plant from the one saved, and the answers genuinely differ:
+
+| plan | movers / 79 | Turbo Blend Fuel |
+|---|---|---|
+| ad-hoc Spire Coast, no exclusions | 1 | +14,540 MW, +13.6% |
+| `spire-coast-full` as saved | **0** | — |
+
+The saved plan bans Turbofuel and coal generators, so the recipe produces a fuel it cannot
+burn and is worth exactly nothing. Both answers are correct; only one is about the factory
+being built — and this write-up originally reported the wrong one. A call without `plan=`
+now says so and names the saved plans it might be ignoring.
 
 ### 8.5k Sites: accounting, not optimisation
 

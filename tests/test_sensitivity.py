@@ -160,3 +160,47 @@ def test_an_unmatched_search_refuses_rather_than_sweeping_everything(game):
 def test_an_infeasible_plan_has_nothing_to_rank(game):
     out = srv.rank_unlocks(objective="max_mw", sources=["region:Nowhere"], exports=["MW"])
     assert "nothing to rank against" in out
+
+
+# ------------------------------------------------------------ what a gain depends on
+
+
+def test_a_gain_names_what_it_switches_on(sweep):
+    """The difference between "+13.6%" and "+13.6% if you reintroduce the chain you
+    deleted on purpose". Turbo Blend Fuel drags in a coal generator and Petroleum Coke --
+    a whole second supply chain, not a free win."""
+    top = sweep.movers[0]
+    assert top.activates
+    assert any("Coal" in a for a in top.activates)
+
+
+def test_activates_lists_only_what_the_baseline_was_not_already_running(sweep):
+    """Otherwise every row would repeat the whole plan and say nothing."""
+    for row in sweep.movers:
+        assert row.name not in row.activates
+        assert len(row.activates) < 20
+
+
+def test_the_same_sweep_against_the_saved_plan_finds_nothing(game, live):
+    """The trap this tool set for its own author. Ad-hoc arguments measure a DIFFERENT
+    plant: Turbo Blend Fuel is worth +13.6% against unconstrained Spire Coast and exactly
+    zero against the saved plan, which bans Turbofuel and coal generators. Both answers
+    are right; only one is about the factory being built."""
+    stored = live.plans.find("spire-coast-full")
+    if stored is None:
+        pytest.skip("the reference plan is not saved on this machine")
+    saved = sweep_unlocks(build_scenario(game, live, **stored.kwargs()), live)
+    assert saved.tried == len(live.locked_alternates)
+    assert saved.movers == []
+
+
+def test_ad_hoc_arguments_warn_that_a_saved_plan_exists(game, live):
+    """Because the author of this tool read the ad-hoc number and reported it as if it
+    were about the saved architecture."""
+    if not live.plans.plans:
+        pytest.skip("no saved plans on this machine")
+    out = srv.rank_unlocks(**SPIRE)
+    assert "measured against the ARGUMENTS GIVEN" in out
+    assert "pass plan=" in out
+    # And recalling a plan drops the warning, because then it is not true.
+    assert "measured against the ARGUMENTS GIVEN" not in srv.rank_unlocks(plan="spire-coast-full")

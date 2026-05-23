@@ -62,6 +62,10 @@ class UnlockDelta:
     needs: list[str] = field(default_factory=list)
     #: Schematics that grant it -- how the player would actually get it.
     unlocked_by: list[str] = field(default_factory=list)
+    #: Processes the counterfactual switches ON that the baseline did not use. This is
+    #: what the gain actually DEPENDS on, and it is the difference between "+13.6%" and
+    #: "+13.6% if you reintroduce the Turbofuel chain you deleted on purpose".
+    activates: list[str] = field(default_factory=list)
     ok: bool = True
 
     @property
@@ -116,6 +120,7 @@ def sweep_unlocks(
     sc = request.scenario
     objective = sc.objective
     base: Solution = _solve_with(sc, state, [])
+    running = {p["label"] for p in base.processes}
     out = UnlockSweep(objective=objective, baseline=_better(objective, base.objective_value))
     if not base.ok:
         out.notes.append("the plan itself is infeasible, so there is nothing to compare against")
@@ -143,6 +148,15 @@ def sweep_unlocks(
                 for s in (recipe.unlocked_by or ())
                 if s in state.game.schematics
             ),
+            # Mechanically exact, and better than the heuristic it replaced. The first
+            # instinct was to flag "consumes an item that crosses no boundary", which is
+            # fuzzy and picks the wrong culprit: Turbo Blend Fuel also drags in Sulfur and
+            # Petroleum Coke, a bigger architectural change than the fuel return. Naming
+            # what the solve SWITCHES ON needs no judgement and catches every case where a
+            # headline gain is unavailable under the reader's own constraints.
+            activates=sorted({p["label"] for p in after.processes} - running - {recipe.name})
+            if after.ok
+            else [],
             ok=after.ok,
         )
         out.rows.append(row)

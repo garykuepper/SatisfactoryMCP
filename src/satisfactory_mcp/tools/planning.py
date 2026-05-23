@@ -2021,7 +2021,8 @@ def rank_unlocks(
             r.name[:34],
             render.num(r.machines),
             f"drive {on_offer[r.recipe]}" if r.recipe in on_offer else "",
-            ", ".join(r.needs)[:22],
+            ", ".join(r.needs)[:18],
+            ", ".join(r.activates)[:40],
         )
         for r in movers[: render.clamp(limit, default=15)]
     ]
@@ -2037,6 +2038,23 @@ def rank_unlocks(
         "deltas are an UPPER bound: a candidate is solved as if any machine it needs "
         "already existed, and that machine is named in 'needs'"
     )
+    notes.append(
+        "'activates' is what the gain DEPENDS on -- processes the counterfactual switches "
+        "on that this plan does not currently use. A headline number that turns on "
+        "reintroducing a chain you deleted is a decision, not a free win"
+    )
+    # The trap this tool set for its own author. Run with ad-hoc arguments it measures a
+    # DIFFERENT plant from the one saved, and the answers genuinely differ: Turbo Blend
+    # Fuel is worth +13.6% against unconstrained Spire Coast and exactly nothing against
+    # the saved plan, which bans Turbofuel and coal generators.
+    if not plan and st.plans.plans:
+        notes.append(
+            "measured against the ARGUMENTS GIVEN, not against a saved plan. This world "
+            f"has {len(st.plans.plans)} saved plan(s) ("
+            + ", ".join(x.name for x in st.plans.plans[:3])
+            + ") whose exclusions may forbid these gains -- pass plan=<name> to rank "
+            "against the architecture you actually chose"
+        )
     claimable = [r for r in movers if r.recipe in on_offer]
     if claimable:
         notes.append(
@@ -2056,7 +2074,7 @@ def rank_unlocks(
             ]
         ),
         render.table(
-            ("gain", "vs base", "alternate", "machines", "on offer", "needs"),
+            ("gain", "vs base", "alternate", "machines", "on offer", "needs", "activates"),
             rows,
             total=len(movers),
             limit=limit,

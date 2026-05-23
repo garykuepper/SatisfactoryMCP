@@ -28,6 +28,20 @@ the LP's equality rows. What it CAN do is state where each flow lands -- 8,060 t
 partition is incomplete, the unassigned processes are named rather than quietly folded into
 "external", because an unassigned refinery is precisely how a supplier goes missing.
 
+A process cannot be split across sites
+--------------------------------------
+The unit of assignment is a PROCESS, not a machine, so shared infrastructure has to live
+wholly in one site and export. This surfaced immediately on the reference plan: the design
+says the resin plant draws its own ~1,100 m3/min from its own shore, but the partition put
+all 64 Water Extractors in the rig, so the table reports `A-rig -> C-resin Water 1100`.
+Both are physically valid builds and the written design had never said which was meant --
+the tool exposing that ambiguity is it working.
+
+The cost is real though: a water farm serving two coastal sites appears as an interface
+that may not exist on the ground. Splitting a process would mean per-MACHINE assignment,
+which is a much larger idea and would break the "a machine is in one place" rule that
+makes `contested` meaningful. Stated here rather than worked around.
+
 Why a zero interface is a row
 -----------------------------
 The decoupled design is characterised entirely by ONE flow being zero: no fuel returns from
