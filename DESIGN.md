@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 40 tools, 4 resources, 3 prompts, 739 tests passing. See README.md for usage.
+**Status:** implemented. 40 tools, 4 resources, 3 prompts, 750 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2257,6 +2257,40 @@ reachable and an unknown kind lists the valid ones.
 `search_recipes` and back. It uses `match_recipes` now — the same resolution
 `exclude_recipes` has always had — and an ambiguous name lists its candidates rather than
 pretending to be unknown.
+
+### 8.5m Ordering floors by head, and paying for the risers
+
+`fluid_head` has always said *"water can only be drawn at sea level, so putting its
+extractors at the bottom with consumers above lets the rest of the stack fall"* — and then
+ordered floors by chain depth anyway. Naming a cost and defaulting to the arrangement that
+pays it is the gap; a planner reordered it by hand and halved the water lift.
+
+`order_floors_by="head"` searches the orders. Floors may be permuted freely, because a pipe
+runs in either direction and only the **upward** leg costs pumps — chain depth is a
+correctness property (a consumer above its producer reads in build order), not a physics
+one. The one fixed point is **Water Extractors pinned to the bottom deck**: water cannot be
+drawn anywhere but sea level, so a stack that lifts water to reach it is not a build
+however good its arithmetic.
+
+| | chain | head |
+|---|---|---|
+| water lift | 4 floors | **2 floors** |
+| Heavy Oil Residue | +2 floors | **−4 (falls)** |
+| pipe-storeys | 66 | **52** |
+| pumps | 48 | **46** |
+
+**The search metric is a proxy, and it is checked.** It minimises pipe-storeys weighted by
+LINE COUNT — pumps serve one pipe each, so 10,300 m³/min of water is eighteen risers, not
+"10,300 units of badness". But pumps round *up* per line, so a 21% better proxy bought only
+4% of pumps here. A proxy that can be wrong in the small can be wrong in the large, so both
+stacks are built and their real pump counts compared, and the head order is discarded if it
+does not win. Two floor builds, against 40,320 if the search itself counted pumps.
+
+**And the risers are now in the bill.** Pumps were absent from `detail="materials"`
+entirely, so a fluid-heavy plan understated its own build by 46 buildings. Metres come from
+the floors actually crossed rather than storeys times an assumed storey, head per pump from
+`mDesignPressure`, and the tier is the best the save can place. Still a lower bound: pipe
+friction and the head a full pipe holds are not modelled.
 
 ### 8.6 Diff vs save — what to actually change
 

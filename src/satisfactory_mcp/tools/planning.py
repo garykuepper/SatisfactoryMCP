@@ -614,6 +614,9 @@ def plan_layout(
         int,
         Field(description="cap a deck at this many 8m foundations; 0 = one stage per deck"),
     ] = 0,
+    order_floors_by: Annotated[
+        str, Field(description='"chain" (build order) or "head" (minimise fluid lift)')
+    ] = "chain",
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -744,6 +747,7 @@ def plan_layout(
         belt_ipm=belt_ipm,
         pipe_m3min=pipe_m3min,
         max_floor_foundations=max_floor_foundations,
+        order_floors_by=order_floors_by,
     )
     production = [f for f in lay.floors if f.kind == "production"]
     logistics = [f for f in lay.floors if f.kind == "logistics"]
@@ -751,7 +755,15 @@ def plan_layout(
     # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
     # nothing about head. Chain depth tends to make every fluid climb; the model has no
     # terrain and no view of where crude arrives, so the cost is named, not optimised.
-    climbing = [d for d in fluid_head(lay) if d["direction"] == "climbs"]
+    # The best pump the player can build, so a riser count is against a real tier.
+    pump = max(
+        (b for c, b in g.buildings.items() if b.head_lift_m and c in st.unlocked_building_ids),
+        key=lambda b: b.head_lift_m,
+        default=None,
+    )
+    pump_head = pump.head_lift_m if pump else 0.0
+    pump_name = pump.name if pump else "pump"
+    climbing = [d for d in fluid_head(lay, pump_head) if d["direction"] == "climbs"]
 
     summary = "\n".join(
         [
@@ -899,7 +911,18 @@ def plan_layout(
         # sizes the site -- floors stack, so the ground you need is the biggest one. But
         # you pour concrete for every floor, so charging the peak would understate the
         # deck by however many storeys the stack has.
-        bill = build_materials(g, sol.processes, st.stock(), lay.total_foundations)
+        # Risers are part of the build and were missing entirely, so a fluid-heavy plan's
+        # bill understated itself. Counted from the floors the fluid actually crosses,
+        # priced at the best pump this save can place.
+        riser_pumps = sum(
+            row["pumps"] for row in fluid_head(lay, pump_head) if row["direction"] == "climbs"
+        )
+        extra = (
+            [{"building_id": pump.cls, "machines": riser_pumps}]
+            if pump is not None and riser_pumps
+            else []
+        )
+        bill = build_materials(g, [*sol.processes, *extra], st.stock(), lay.total_foundations)
         rows = [
             (
                 line.name[:26],
@@ -943,6 +966,11 @@ def plan_layout(
             "stock is spendable only -- carried, crates and the Dimensional Depot -- "
             "never machine buffers, which are not carryable"
         )
+        if riser_pumps:
+            notes.append(
+                f"includes {riser_pumps} {pump_name}(s) for the fluid risers -- these were "
+                "missing entirely, so a fluid-heavy plan used to understate its own bill"
+            )
         notes.append(
             "belts and pipes are NOT costed: their cost is per metre and there is no "
             "route, so a length here would be invented. Use detail='buses' for line "
@@ -1115,6 +1143,18 @@ def plan_layout(
         body = "\n".join(head) + "\n\n" + body
         plan_notes = [*plan_notes, *fit.notes]
 
+    pumps_total = sum(row["pumps"] for row in climbing)
+    if pumps_total:
+        notes.append(
+            f"risers need at least {pumps_total} {pump_name}(s): "
+            + ", ".join(
+                f"{d['item']} {d['lines']}x pipe up {d['metres']:.0f}m = {d['pumps']}"
+                for d in climbing
+                if d["pumps"]
+            )
+            + ". A LOWER bound -- pipe friction and the head a full pipe holds are not "
+            "modelled"
+        )
     if climbing:
         notes.append(
             "floors follow chain depth, not fluid head: "
