@@ -220,10 +220,10 @@ def test_every_tool_module_is_imported_by_the_package():
 
 def test_the_registered_surface_survives_the_split():
     """Pinned counts, because the split moved 36 tools between files and a decorator
-    that fails to run is invisible. 40: +commission_plan, +mam_research, +rank_unlocks, +somersloops."""
+    that fails to run is invisible. 41: +commission_plan, +mam_research, +rank_unlocks, +somersloops, +trace_upstream."""
     tools = _run(srv.mcp.list_tools())
-    assert len(tools) == 40
-    assert {"commission_plan", "mam_research", "rank_unlocks", "somersloops"} <= {
+    assert len(tools) == 41
+    assert {"commission_plan", "mam_research", "rank_unlocks", "somersloops", "trace_upstream"} <= {
         t.name for t in tools
     }
     assert len(_run(srv.mcp.list_resources())) == 4

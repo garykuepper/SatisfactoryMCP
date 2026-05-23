@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 40 tools, 4 resources, 3 prompts, 750 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 762 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2291,6 +2291,45 @@ entirely, so a fluid-heavy plan understated its own build by 46 buildings. Metre
 the floors actually crossed rather than storeys times an assumed storey, head per pump from
 `mDesignPressure`, and the tier is the best the save can place. Still a lower bound: pipe
 friction and the head a full pipe holds are not modelled.
+
+### 8.5n Tracing what feeds what
+
+`factory_query` answers this between labelled sets. The question underneath was
+unanswerable, and it is the one a cutover asks: thirteen Oil Extractors sit on the Spire
+nodes, twenty Fuel Generators are burning, and repiping the wrong extractor first drops
+several GW.
+
+**The measured answer is one.** Of sixteen built Oil Extractors, exactly one reaches the
+running generators; the other fifteen reach nothing. So "repipe the extractors" is fifteen
+safe moves and one that browns out the base — and `commission_plan` now says so beside the
+wave rather than leaving it to a tool you have to remember to call.
+
+**Direction is read, not inferred.** Every material edge already carried the connector
+role at each end. Of 2,300 connectors landing on a production machine:
+
+| connector | count | oriented |
+|---|---|---|
+| `Input` / `Output` | 2,002 | ✅ |
+| `PipeInputFactory` / `PipeOutputFactory` | 126 | ✅ |
+| `FGPipeConnectionFactory` | 172 | ❌ by name |
+
+**92.5% state it outright, and every one of the remaining 172 sits on an extractor or a
+generator** — an extractor only produces and a generator only consumes, so the machine's
+own nature settles the edge exactly. Segments with neither end known (belt-to-belt,
+pipe-to-pipe) are walked **both ways**: over-reporting a feeder is recoverable, missing one
+is what costs 5 GW.
+
+A measurement trap worth recording: asking whether *both* ends name a direction reports
+**0% of 11,664 edges orientable**, which is true and useless. The far end is nearly always
+a belt, and a belt has no direction as an object — only the machine end does.
+
+**Logistics is traversed, not reported.** A trace from the generators touches 331 nodes at
+depth 72, almost all conveyor. The walk passes through and lists only machines, the same
+thing `graph.query` does to find a factory boundary.
+
+**Only proven-running generators are charged.** `power_at_risk` counts a generator that
+produced inside the last complete 300 s window; one that did not may be idle for a dozen
+reasons, and charging it would inflate the risk of touching a line that is already dead.
 
 ### 8.6 Diff vs save — what to actually change
 

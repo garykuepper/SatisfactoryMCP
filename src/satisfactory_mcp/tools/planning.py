@@ -1767,6 +1767,28 @@ def bom(
     return bom_mod.render_bom(result, limit=render.clamp(limit, default=20))
 
 
+def _live_feeders(g, st, floor_mw: float = 1.0) -> list[tuple[str, float]]:
+    """Built extractors whose output currently reaches a running generator.
+
+    The cutover question a startup order cannot answer on its own: which of the machines
+    already on the ground are load-bearing right now. On the reference save exactly ONE of
+    sixteen Oil Extractors carries all 5,000 MW of running fuel generation, and the other
+    fifteen carry nothing -- so "repipe the extractors" is fifteen safe moves and one that
+    browns out the base.
+    """
+    from ..graph.trace import power_at_risk
+
+    out: list[tuple[str, float]] = []
+    for record in st.projection.get("extractors", ()):
+        instance = record["instance"].rsplit(".", 1)[-1]
+        mw, _, running = power_at_risk(st, g, [instance])
+        if running and mw >= floor_mw:
+            building = g.buildings.get(record.get("cls", ""))
+            out.append((f"{building.name if building else record.get('cls')} {instance[-10:]}", mw))
+    out.sort(key=lambda pair: -pair[1])
+    return out
+
+
 @mcp.tool(structured_output=False)
 def commission_plan(
     objective: str = "max_mw",
@@ -1930,6 +1952,18 @@ def commission_plan(
             "build EVERYTHING first, unpowered: a machine draws only when it runs, so "
             "construction is never the constraint. These waves are switch-ons"
         )
+        # What the sequence is standing on. A wave that repipes an extractor already
+        # feeding live generators takes that power down mid-startup, which is exactly the
+        # moment the plan has least headroom to spare. Read from the save's own
+        # connections rather than assumed, and only PROVEN-running generators are charged.
+        live = _live_feeders(g, st)
+        if live:
+            notes.append(
+                "CUTOVER RISK -- these are already feeding running generators, so "
+                "repiping one mid-startup takes that power out at the worst moment: "
+                + "; ".join(f"{name} ({mw:,.0f} MW)" for name, mw in live[:4])
+                + ". trace_upstream on any of them shows what hangs off it"
+            )
         notes.append(
             "wire one Power Switch per block before starting. Energising is then a "
             "switch flip, and a block that misbehaves can be isolated -- without one, "

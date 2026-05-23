@@ -10,11 +10,12 @@ from typing import Annotated
 from pydantic import Field
 
 from .. import render
-from ..app import Limit, _resolve_factory, _state, mcp
+from ..app import Limit, _resolve_factory, _state, game, mcp
 from ..graph.query import ASPECTS as QUERY_ASPECTS
 from ..graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from ..graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from ..graph.select import SelectorError
+from ..graph.trace import power_at_risk, trace
 
 
 def _cand_row(c, store, labelled: set[str]) -> tuple:
@@ -816,3 +817,109 @@ def forget_factory(name: str, save: str | None = None, world: str | None = None)
     store.remove(label.name)
     store.save()
     return f"forgot {label.name!r} ({len(label.anchors)} machine(s) released)"
+
+
+@mcp.tool(structured_output=False)
+def trace_upstream(
+    seed: Annotated[
+        str, Field(description="a machine instance, a factory label, or a building name")
+    ],
+    direction: Annotated[
+        str, Field(description="up (what feeds it) | down (what it feeds)")
+    ] = "up",
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 20,
+) -> str:
+    """What feeds a machine, or what it feeds -- walked on the save's own connections.
+
+    `factory_query` answers this between LABELLED sets. This answers it for one machine or
+    one building type, which is the question a cutover actually asks: thirteen Oil
+    Extractors sit on the Spire nodes and twenty Fuel Generators are burning, and repiping
+    the wrong extractor first drops several GW.
+
+    Direction is READ, not guessed. Every material edge carries its connector role, and
+    92.5% of the connectors landing on a machine name their direction outright; the rest
+    are all on extractors or generators, whose own nature settles them. Where even that
+    fails the edge is walked BOTH ways -- over-reporting a feeder is recoverable, missing
+    one is not.
+
+    Belts and pipes are walked THROUGH and left out of the table: a trace from the
+    generators touches 331 nodes at depth 72, nearly all of it conveyor.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    records = {r["instance"].rsplit(".", 1)[-1]: r for r in st._all_records()}
+    seeds: list[str] = []
+    what = seed.strip()
+    if what in records:
+        seeds = [what]
+        subject = f"{records[what].get('cls', '?')} {what}"
+    else:
+        by_class = [
+            inst
+            for inst, rec in records.items()
+            if rec.get("cls") == what
+            or (
+                rec.get("cls") in g.buildings
+                and g.buildings[rec["cls"]].name.casefold() == what.casefold()
+            )
+        ]
+        if by_class:
+            seeds, subject = by_class, f"{len(by_class)}x {what}"
+        else:
+            try:
+                name, machines = _resolve_factory(st, what)
+            except SelectorError as exc:
+                return f"! {exc}"
+            seeds = [m["instance"].rsplit(".", 1)[-1] for m in machines]
+            subject = f"factory {name!r} ({len(seeds)} machines)"
+    if not seeds:
+        return f"! nothing matches {seed!r} -- give a machine instance, a building name, or a factory label"
+
+    way = (direction or "up").strip().casefold()
+    if way not in ("up", "down"):
+        return f"! unknown direction {direction!r}. Choose from: up, down"
+    result = trace(st, g, seeds, way)
+
+    rows = []
+    for name, group in sorted(result.by_class().items(), key=lambda kv: -len(kv[1])):
+        hops = [r.hops for r in group]
+        rows.append(
+            (
+                name[:28],
+                group[0].kind,
+                len(group),
+                f"{min(hops)}..{max(hops)}" if min(hops) != max(hops) else str(min(hops)),
+                ", ".join(r.instance[-10:] for r in group[:3]),
+            )
+        )
+    notes = [
+        (
+            f"walked {result.visited} node(s) to depth {result.deepest}; belts and pipes are "
+            "traversed but not listed, because a path through them is unreadable"
+        ),
+        (
+            "direction comes from each edge's connector role, and from the machine's own "
+            "nature where the role does not say. Segments with neither are walked both "
+            "ways, which can over-report a feeder but never miss one"
+        ),
+    ]
+    mw, gens, running = power_at_risk(st, g, seeds)
+    if gens:
+        notes.append(
+            f"downstream of this sits {gens} generator(s), {running} of them PROVEN running "
+            f"in the last 300s window, worth {mw:,.0f} MW. Cutting this feed stops that "
+            "power -- idle generators are not counted, since they are already not producing"
+        )
+    return render.envelope(
+        f"# {st.age_note}\n# {'what feeds' if way == 'up' else 'what is fed by'} {subject}",
+        render.table(
+            ("building", "kind", "count", "hops", "examples"), rows, total=len(rows), limit=limit
+        ),
+        notes,
+    )

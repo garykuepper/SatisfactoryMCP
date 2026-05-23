@@ -38,6 +38,7 @@ from .tools.factories import (
     name_factory,
     propose_factories,
     select_machines,
+    trace_upstream,
 )
 from .tools.gamedata import (
     alternates_for_item,
@@ -132,6 +133,7 @@ __all__ = [
     "select_machines",
     "show_on_map",
     "somersloops",
+    "trace_upstream",
     "unlocked_recipes",
     "whereami",
     "world_summary",
