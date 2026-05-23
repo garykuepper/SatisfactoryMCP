@@ -23,6 +23,7 @@ from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.scenario import build_scenario, resolve_item
 from ..planning.sensitivity import sweep_unlocks
+from ..planning.sites import partition
 from ..planning.slice import slice_of
 from ..planning.trunks import plan_trunks
 
@@ -605,6 +606,10 @@ def plan_layout(
         int,
         Field(description="Somersloops the plan may spend; 0 spends none"),
     ] = 0,
+    sites: Annotated[
+        dict[str, list[str]] | None,
+        Field(description='detail="sites": {"rig": ["Heavy Oil Residue", ...], ...}'),
+    ] = None,
     max_floor_foundations: Annotated[
         int,
         Field(description="cap a deck at this many 8m foundations; 0 = one stage per deck"),
@@ -628,8 +633,9 @@ def plan_layout(
 
     Same arguments as plan_factory, plus ``detail``: "floors" (default, the stack),
     "blocks" (every module with its size and rates), "buses" (item flows),
-    "trunks" (which resource nodes share each pipe or belt run into the site), or
-    "materials" (what the whole thing costs to build, machines plus deck).
+    "trunks" (which resource nodes share each pipe or belt run into the site),
+    "materials" (what the whole thing costs to build, machines plus deck), or
+    "sites" (cut the plan into named modules and report what crosses between them).
 
     This is a SCHEMATIC, not a blueprint. It gives modules, connections, floor
     assignment and a space budget. It deliberately does NOT give world coordinates or
@@ -670,6 +676,7 @@ def plan_layout(
     ]
     if tier_errors:
         return render.envelope("# unknown carrier tier", "", tier_errors)
+    asked_belt, asked_pipe = bool(belt_tier), bool(pipe_tier)
     belt_tier, pipe_tier = _tier(belt_tier, ""), _tier(pipe_tier, "")
     # Blank means "what this save can actually build". A hardcoded Mk5/Mk2 default ran
     # unverified through an entire design session; it happened to be right, which is not
@@ -707,8 +714,13 @@ def plan_layout(
         # while the solve kept the default is the same drift 8.5a documents: the trunk
         # view reads sc.pipe_m3min, so pipe_tier="Mk1" changed the block split and left
         # the trunk count untouched, describing two different plants in one response.
-        belt_ipm=belt_ipm,
-        pipe_m3min=pipe_m3min,
+        #
+        # Only when the caller ASKED for a tier, though. Passing the resolved default
+        # through made every recalled plan report "overridden this call: belt_ipm,
+        # pipe_m3min" -- an override the user never made, which is exactly the kind of
+        # noise that trains a reader to skip the override line that does matter.
+        belt_ipm=belt_ipm if asked_belt else None,
+        pipe_m3min=pipe_m3min if asked_pipe else None,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -811,6 +823,71 @@ def plan_layout(
             rows,
             total=len(lay.blocks),
             limit=limit,
+        )
+    elif detail == "sites":
+        if not sites:
+            return render.envelope(
+                "# detail='sites' needs sites=",
+                "",
+                [
+                    (
+                        'sites maps a name to patterns, e.g. {"rig": ["Heavy Oil '
+                        'Residue", "Diluted Fuel", "Water Extractor"], "hall": '
+                        '["Fuel-Powered Generator"]}'
+                    ),
+                    (
+                        "patterns match the same way exclude_recipes does: process "
+                        "label, building name, or recipe"
+                    ),
+                ],
+            )
+        sp = partition(prepared, g, sites)
+        rows = [
+            (
+                i.source[:14],
+                "->",
+                i.target[:14],
+                i.name[:20],
+                render.num(i.rate),
+                f"{i.lines}x {i.carrier}",
+            )
+            for i in sp.interfaces[: render.clamp(limit, default=20)]
+        ]
+        body = render.table(
+            ("from", "", "to", "item", "rate", "carrier"),
+            rows,
+            total=len(sp.interfaces),
+            limit=limit,
+        )
+        body = (
+            render.table(
+                ("site", "machines", "net_MW"),
+                [(x.name, x.machines, render.num(x.net_mw)) for x in sp.sites],
+            )
+            + "\n\n"
+            + body
+        )
+        notes.extend(sp.notes)
+        if sp.ok:
+            notes.append(
+                "every process is assigned to exactly one site, so this interface table "
+                "is complete: each flow's destination is stated rather than assumed"
+            )
+        else:
+            notes.append(
+                "the partition is INCOMPLETE, so the interface table is missing flows. "
+                "This is the error a hand reconciliation makes -- a rig's whole fuel "
+                "output looks like it reaches the generators until you notice something "
+                "else was drinking it"
+            )
+        notes.append(
+            "a shared flow is split between consumers by SHARE. The LP gives net balances "
+            "and never who fed whom, so any exact producer-consumer pairing would be "
+            "invented -- the same reason a layout models a bus rather than pairs"
+        )
+        notes.append(
+            "site net_MW excludes the AWESOME Sink charge, which belongs to the plan as a "
+            "whole and cannot be attributed to one site"
         )
     elif detail == "materials":
         # Foundations live here and nowhere else -- they are not machines, so no build

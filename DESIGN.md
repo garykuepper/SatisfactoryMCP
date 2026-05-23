@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 39 tools, 4 resources, 3 prompts, 712 tests passing. See README.md for usage.
+**Status:** implemented. 39 tools, 4 resources, 3 prompts, 721 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -2156,6 +2156,57 @@ its ore would otherwise report a large *negative* gain and sort last. And every 
 **upper bound**: a candidate is solved as if any machine it needs already existed — Turbo
 Blend Fuel wants a Blender this world has never built — with that machine named beside the
 number.
+
+### 8.5k Sites: accounting, not optimisation
+
+A planner asked for a joint multi-site solver, then talked himself out of it while
+answering what the sites were:
+
+> The thing that actually bit me wasn't optimisation across sites — it was accounting
+> across sites.
+
+His three-module oil plant (rig / generator hall / resin plant) turned out to be
+**preference-driven**. Only the rig's siting is forced, by water being drawable at sea
+level; the hall has no siting constraint at all and the resin plant only wants a shoreline
+of its own. A joint LP with no per-site cap would collapse all three into one — and that
+collapse would be **correct**, because nothing in the model prices distance. Honouring a
+preference the user never expressed as a constraint would be the optimiser being wrong.
+
+So `plan_layout detail="sites"` builds the half with a defensible answer: declare a
+partition, report what crosses it.
+
+```
+site     machines  net_MW        from      to        item           rate   carrier
+A-rig    284       -13,982.82    A-rig ->  B-hall    Fuel           9200   16x pipe
+B-hall   460       115,000       A-rig ->  C-resin   Polymer Resin  2300   3x belt
+C-resin  43        -1,270.29     A-rig ->  C-resin   Water          1100   2x pipe
+```
+
+That reproduces his hand-built interface table exactly, and the coupled variant reproduces
+the other one: A→B drops to 14 pipes and a new A→C Fuel link appears at 1,150 m³/min on 2.
+**One interface going from zero to nonzero is the whole difference between the two
+architectures** — 99,729.62 MW against 83,470.97, both pinned as regression tests.
+
+**The error it exists to catch.** Reconciling by hand, he computed generator count from the
+rig's total fuel output, assuming all 9,200 m³/min reached the hall. The resin plant's
+plastic cycle was drinking some. A partition cannot make that mistake — the plan it cuts is
+already mass-balanced by the LP's equality rows — but an *incomplete* partition can hide
+it, so unassigned processes are named and the table is declared incomplete. A process
+claimed by two sites is reported rather than resolved: a machine is in one place, and
+first-wins would hide the ambiguity behind a plausible table.
+
+Two attributions are refused. A shared flow is split between consumers **by share**,
+because the LP gives net balances and never who fed whom — the same reason § 8.5 models a
+bus rather than producer-consumer pairs. And site power **excludes the AWESOME Sink
+charge**, which belongs to the plan as a whole (§ 8.2e).
+
+**What is deliberately not built:** the joint solve. It becomes worth having when two sites
+compete for one scarce input — *"I need 2,000 plastic: Spire Coast oil or Western
+Beaches?"* — which this plant never did. The one constraint that was observed to bind and is
+genuinely site-scoped is **water access**, since water is only at sea level: capping the
+reference plan to 27 extractors cost 18.7% and shifted the recipe mix. Making
+`water_extractors` per-site is the one piece that needs the solver, and it should wait for
+a case where it binds.
 
 ### 8.6 Diff vs save — what to actually change
 
