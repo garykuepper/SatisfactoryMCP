@@ -488,6 +488,26 @@ def plan_factory(
             "Whatever produces them must export at least these rates, or the chain does "
             "not balance and the surplus you think you have is not there"
         )
+    # A POWER-BLIND objective drives clocks up, and the cost is invisible in its own
+    # answer. Phase 2 pins the goal and minimises MACHINE COUNT, so among all solutions
+    # that hit the target it picks the fewest machines -- which means the highest clocks,
+    # and power goes as clock**1.32. Measured while chaining modules: a rig solved for
+    # max_item Fuel ran 31 Water Extractors at 247% for 2,052 MW where 64 at 120% cost
+    # 1,625, and the whole 344 MW "cost of decomposition" turned out to be this and
+    # nothing else. Re-solved with min_power, the chain BEAT the single plan.
+    overclocked = [p for p in sol.processes if p["clock"] > 1.01 and p["kind"] != "extractor"] + [
+        p for p in sol.processes if p["clock"] > 1.01 and p["kind"] == "extractor"
+    ]
+    if objective in ("max_item", "min_raw", "min_machines") and overclocked and sol.net_mw < 0:
+        worst = max(overclocked, key=lambda p: p["clock"])
+        notes.append(
+            f"objective {objective!r} does not price POWER, and phase 2 breaks ties by "
+            f"minimising machines -- so clocks are pushed up ({worst['machines']}x "
+            f"{worst['label'][:28]} at {worst['clock']:.0%}) and power rises as clock^1.32. "
+            "If this plan feeds a power plant, solve it as min_power with "
+            "export_minimums instead; the same output on more machines can cost "
+            "hundreds of MW less"
+        )
     if req.excluded:
         notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:

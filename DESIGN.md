@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 782 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 786 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1618,9 +1618,39 @@ Residual Rubber** — the hand-built module, derived. Chained across all three:
 | three loops | 765 | 99,386 |
 | one solve | 787 | **99,730** |
 
-**Decomposition costs 0.35%**, because each module optimises locally and cannot see the
-others' trades. Small enough that building in modules is nearly free — and the number is
-what makes that a decision rather than a hunch.
+That looked like decomposition costing **0.35%**. It was not. Chasing where 344 MW went
+found the whole of it in **one row**: the same 10,300 m³/min of water, on 31 pumps at 247%
+drawing 2,052 MW, where the single plan used 64 at 134% for 1,887.
+
+**A power-blind objective overclocks, and the cost is invisible in its own answer.**
+`max_item Fuel` does not price power, and phase 2 breaks ties by minimising **machine
+count** — so among all solutions hitting the target it takes the fewest machines, which
+means the highest clocks, and power goes as `clock**1.32`:
+
+| pumps | clock | draw for the same water |
+|---|---|---|
+| 31 | 247% | 2,178 MW |
+| 52 | 165% | 2,017 MW |
+| 64 | 134% | 1,887 MW |
+| 86 | 100% | **1,716 MW** |
+
+Re-solved with `min_power` and `export_minimums`, the rig runs 64 pumps at 120% and the
+chain comes to **99,806 MW against the single plan's 99,730** — decomposition *wins* by
+77 MW, on 798 machines against 787. So the real rule is not "splitting costs optimality",
+it is **a module must price whatever the whole plant cares about**; a power-blind module in
+a power plant is the bug. `plan_factory` now says so when an objective that ignores power
+produces overclocked rows.
+
+### Solver tolerance at an interface
+
+The rig exports **2299.9998** Polymer Resin. That is not instability and not a real
+fraction: the build is 115 refineries at 100% making 20/min each, which is exactly 2,300.
+HiGHS returned **114.99999** machine-equivalents — a relative residue of 8.7 × 10⁻⁸, right
+at its default tolerance — and the printed clock rounds to `1.000000` and hides it. The
+displayed row and the displayed rate simply do not reconcile in the last digit.
+
+It is harmless inside one solve and not harmless **across** two, which is why `raw_caps`
+carries the tolerance described below.
 
 **A module needs a selector that selects nothing.** `sources=["bbox:…"]` over open water
 gives zero nodes, which is what stops the resin plant tapping crude and re-deriving the

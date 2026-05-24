@@ -202,3 +202,92 @@ def test_supplied_changes_the_plan_id(game, live):
     a = build_scenario(game, live, **kw)
     b = build_scenario(game, live, supplied={"Polymer Resin": 2300}, **kw)
     assert a.plan_id != b.plan_id
+
+
+# ------------------------------------------------------------ where the MW went
+
+
+def test_a_power_blind_objective_overclocks_and_it_costs_hundreds_of_MW(game, live):
+    """The whole "cost of decomposition" turned out to be this. `max_item` does not price
+    power, and phase 2 breaks ties by minimising MACHINE COUNT -- so it takes the fewest
+    machines, which means the highest clocks, and power goes as clock**1.32.
+
+    Measured: the same 9,200 m3/min of water on 31 pumps at 247% draws 2,052 MW where 64
+    at 120% draws 1,625."""
+    kw = dict(
+        exports=["Fuel", "Polymer Resin"],
+        sources=["region:Spire Coast"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        allow_sinks=False,
+        exclude_recipes=[
+            "Turbofuel",
+            "Alternate: Compacted Coal",
+            "Coal-Powered Generator",
+            *NORECYC,
+        ],
+        water_extractors=64,
+    )
+    blind = prepare(game, live, dict(objective="max_item", target_item="Fuel", **kw))
+    priced = prepare(
+        game,
+        live,
+        dict(
+            objective="min_power",
+            export_minimums={"Fuel": 9200, "Polymer Resin": 2300},
+            **kw,
+        ),
+    )
+    assert blind.ok and priced.ok
+
+    def pumps(sol):
+        return next((p for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"), None)
+
+    a, b = pumps(blind.solution), pumps(priced.solution)
+    assert a["clock"] > b["clock"], "the blind objective runs them faster"
+    assert a["machines"] < b["machines"], "on fewer machines"
+    assert abs(a["mw"]) > abs(b["mw"]), "for more power"
+
+
+def test_the_tool_warns_when_the_objective_ignores_power(game):
+    """Because the cost is invisible in the answer that causes it: max_item reports the
+    fuel it achieved and says nothing about having paid 400 MW for the privilege."""
+    out = srv.plan_factory(
+        objective="max_item",
+        target_item="Fuel",
+        exports=["Fuel", "Polymer Resin"],
+        sources=["region:Spire Coast"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        allow_sinks=False,
+        water_extractors=64,
+        limit=2,
+    )
+    assert "does not price POWER" in out
+    assert "clock^1.32" in out
+
+
+def test_max_mw_gets_no_such_warning(game):
+    """It prices power by construction, so the note would be noise."""
+    out = srv.plan_factory(
+        objective="max_mw",
+        exports=["MW"],
+        sources=["region:Spire Coast"],
+        extractor_clocks=[1, 1.5, 2, 2.5],
+        limit=2,
+    )
+    assert "does not price POWER" not in out
+
+
+def test_the_exported_rate_carries_solver_tolerance_not_a_real_fraction(game, live, rig):
+    """2299.9998 is not instability and not a structural fraction: the build is 115
+    refineries at 100% making 20 resin each, which is exactly 2300. HiGHS returned
+    114.99999 machine-equivalents, an 8.7e-8 relative residue -- right at its default
+    tolerance. The printed clock rounds to 1.000000 and hides it, which is what made the
+    number look mysterious."""
+    resin = rig.solution.exports["Desc_PolymerResin_C"]
+    assert resin == pytest.approx(2300.0, rel=1e-6)
+    assert resin != 2300.0, "the residue is real, just tiny"
+    row = next(r for r in rig.solution.processes if r["label"] == "Alternate: Heavy Oil Residue")
+    assert row["machines"] == 115
+    assert row["clock"] == pytest.approx(1.0, abs=1e-5)
+    # 115 machines x 20/min is the exact figure the build table implies.
+    assert 115 * 20 == 2300
