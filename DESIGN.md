@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 765 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 773 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1563,6 +1563,46 @@ empty solve for the same reason it runs on INFEASIBLE — a bare zero is not a d
 ! this plan is EMPTY -- it solved to zero machines. That is optimal, not broken
 ! missing raw: Water (water comes from water volumes, and no Water Extractor is unlocked)
 ```
+
+### 8.2h Running a cycle once, without banning it
+
+*"The Recycled recipes are wanted, just not recursively."* `exclude_recipes` cannot say
+that — banning the recipe also bans the useful single pass.
+
+`recycle_once` names processes that may run but must not feed each other. For every item
+the named set both makes and eats, consumption INSIDE the set is capped by production
+OUTSIDE it:
+
+```
+Σ(consumed by named)  ≤  Σ(produced by everything else)
+```
+
+That is exactly one pass, and there is no pass counting anywhere. On the coupled Spire
+plan:
+
+| | free | once |
+|---|---|---|
+| net MW | 83,471 | **81,254** (−2.7%) |
+| plastic eaten inside the loop | 100 | 150 |
+| plastic made **outside** | **0** | **150** |
+| Residual Plastic | never built | **8** |
+
+Unconstrained, plastic is made *entirely* inside the loop and some goes straight back in
+while Residual Plastic never runs. Constrained, Residual Plastic supplies the single pass
+and the constraint binds exactly (150 ≤ 150). Both Recycled recipes still run, which is
+the whole point of not reaching for `exclude_recipes`. The 2.7% is the price of refusing
+to recurse, and quoting it makes this a decision rather than a preference.
+
+**The cycle is NAMED, not detected, and that is the design.** The first attempt detected
+cycles automatically and found **24 items** on this recipe set — because every
+package/unpackage pair is a cycle (Water → Packaged Water → Water), as are the aluminium
+and fuel loops. Constraining all of them made every plan INFEASIBLE. Only the caller knows
+which loop they mean, so the argument takes patterns in the same grammar as
+`exclude_recipes`, and a pattern matching nothing is refused rather than ignored.
+
+**Not a pass count.** `max_cycle_passes=2` would need the cycle unrolled into indexed
+copies with its items split per pass — a different formulation, not a flag. One pass is
+exactly expressible; a number that only looks precise is worse than a named mode.
 
 ### 8.3 Guards
 

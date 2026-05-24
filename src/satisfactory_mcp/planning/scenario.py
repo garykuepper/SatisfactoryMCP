@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from dataclasses import replace as replace_scenario
 from typing import TYPE_CHECKING
 
 from ..docs.model import GameData
@@ -155,6 +156,7 @@ def build_scenario(
     only_recipes: list[str] | None = None,
     water_extractors: int | None = None,
     sloops: int = 0,
+    recycle_once: list[str] | None = None,
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
@@ -305,6 +307,24 @@ def build_scenario(
         grid_import_mw=None if MW in export_ids else 1e6,
     )
 
+    if recycle_once:
+        # Same widening match as exclude_recipes, against the recipe name and the process
+        # label, because a caller names "Recycled" and means both halves of the loop.
+        from .optimize import build_processes as _procs
+
+        wanted: set[str] = set()
+        for pattern in recycle_once:
+            needle = pattern.strip().casefold()
+            for proc in _procs(sc):
+                if needle in proc.label.casefold() or (
+                    proc.recipe in game.recipes
+                    and needle in game.recipes[proc.recipe].name.casefold()
+                ):
+                    wanted.add(proc.pid)
+            if not any(needle in p.label.casefold() for p in _procs(sc)):
+                recipe_errors.append(f"recycle_once: nothing matches {pattern!r}")
+        sc = replace_scenario(sc, recycle_once=frozenset(wanted))
+
     if pending_process_bans:
         sc, process_hits, misses = _ban_processes(sc, pending_process_bans)
         excluded.extend(process_hits)
@@ -347,6 +367,7 @@ def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
             "clocks": list(sc.clocks),
             "extractor_clocks": list(sc.extractor_clocks or ()),
             "machine_cost_mw": sc.machine_cost_mw,
+            "recycle_once": sorted(sc.recycle_once),
             "sloop_budget": sc.sloop_budget,
             "belt_ipm": sc.belt_ipm,
             "pipe_m3min": sc.pipe_m3min,

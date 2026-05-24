@@ -48,6 +48,7 @@ PLAN_ARGS = (
     "sloops",
     "belt_ipm",
     "pipe_m3min",
+    "recycle_once",
 )
 
 

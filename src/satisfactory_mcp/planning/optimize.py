@@ -157,6 +157,25 @@ class Scenario:
     #: in the build table matched nothing, and the user had to drop 20 generators by
     #: hand after noticing coal happened to be a leaf.
     excluded_pids: frozenset[str] = frozenset()
+    #: Process ids that may run but must NOT feed each other -- "use this cycle once".
+    #:
+    #: Recycled Plastic and Recycled Rubber consume each other's output, and left free the
+    #: solver runs the pair at whatever ratio wins. That is correct and not always what a
+    #: player wants to BUILD: "the Recycled recipes are wanted, just not recursively" is a
+    #: request `exclude_recipes` cannot express, since banning the recipe also bans the
+    #: useful single pass.
+    #:
+    #: The set is NAMED rather than detected, and that is the whole design. Detecting
+    #: cycles automatically finds 24 items on this recipe set, because every
+    #: package/unpackage pair is a cycle -- Water to Packaged Water and back -- and
+    #: constraining all of them makes any plan infeasible. Only the caller knows which
+    #: loop they mean.
+    #:
+    #: Deliberately not a pass COUNT: a literal "twice round" needs the cycle unrolled
+    #: into indexed copies with its items split per pass, which is a different
+    #: formulation. One pass is exactly expressible; a number that only looks precise is
+    #: not worth the confusion.
+    recycle_once: frozenset[str] = frozenset()
     sloop_budget: int = 0
     max_machines: float | None = None
     #: What one machine costs, in MW, when the objective is power.
@@ -519,6 +538,25 @@ def solve(sc: Scenario) -> Solution:
         if item in sc.export_minimums:
             lb[col_e(j)] = sc.export_minimums[item]
     ub[col_grid] = grid_cap
+
+    # ---- recipe cycles ------------------------------------------------
+    if sc.recycle_once:
+        named = {i for i, p in enumerate(procs) if p.pid in sc.recycle_once}
+        # Items the named set both makes and eats -- the loop the caller pointed at.
+        made = {i for x in named for i, rate in procs[x].rates.items() if rate > 0 and i != MW}
+        eaten = {i for x in named for i, rate in procs[x].rates.items() if rate < 0 and i != MW}
+        for item in sorted(made & eaten):
+            row = np.zeros(n)
+            for i, p in enumerate(procs):
+                rate = p.rates.get(item, 0.0)
+                if i in named and rate < 0:
+                    row[col_p(i)] += -rate  # consumed inside the loop
+                elif i not in named and rate > 0:
+                    row[col_p(i)] -= rate  # the single pass of outside feedstock
+            # consumed_inside <= produced_outside. The loop may run on material the rest
+            # of the plant made, and may not run on its own output -- which is "once"
+            # exactly, with no pass counting anywhere.
+            constraints.append(LinearConstraint(row, -np.inf, 0.0))
 
     # ---- somersloop budget --------------------------------------------
     if sc.sloop_budget:

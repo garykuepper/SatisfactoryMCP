@@ -49,6 +49,7 @@ PLAN_DEFAULTS: dict = {
     "only_recipes": None,
     "water_extractors": None,
     "sloops": 0,
+    "recycle_once": None,
     # Carrier throughput SHAPES THE SOLVE -- belt_ipm prices sinks and both split blocks
     # and trunks -- so it belongs with the stored arguments, not with presentation.
     "belt_ipm": None,
@@ -173,6 +174,10 @@ def plan_factory(
         int,
         Field(description="Somersloops the plan may spend; 0 spends none"),
     ] = 0,
+    recycle_once: Annotated[
+        list[str] | None,
+        Field(description="recipes that may run but must not feed each other, e.g. ['Recycled']"),
+    ] = None,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
@@ -257,6 +262,7 @@ def plan_factory(
         only_recipes=only_recipes,
         water_extractors=water_extractors,
         sloops=sloops,
+        recycle_once=recycle_once,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
