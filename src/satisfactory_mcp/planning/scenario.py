@@ -229,12 +229,17 @@ def build_scenario(
             ext[key] = ext.get(key, 0) + 1
             break
     if "Build_WaterPump_C" in state.unlocked_building_ids:
-        # Water has no nodes to count, so this is an ASSUMPTION standing in for
-        # shoreline the model cannot see. A caller who has measured their platform
-        # should override it; see WATER_EXTRACTOR_CAP_ASSUMED.
-        ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = (
-            int(water_extractors) if water_extractors else WATER_EXTRACTOR_CAP_ASSUMED
-        )
+        # Water has no nodes to count, so this is an ASSUMPTION standing in for the site
+        # the model cannot see. A caller who has measured theirs should override it; see
+        # WATER_EXTRACTOR_CAP_ASSUMED.
+        #
+        # `is None`, NOT falsiness. Zero is a meaningful answer -- "this site has no water
+        # at all" is exactly the question you ask of an inland plan -- and `or`-style
+        # defaulting silently turned it into the 200-pump assumption. A plan asked to run
+        # on no water came back happily making 480 Aluminium Ingots on 480 m3/min of it.
+        cap = WATER_EXTRACTOR_CAP_ASSUMED if water_extractors is None else int(water_extractors)
+        if cap > 0:
+            ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = cap
 
     recipes = [r.cls for r in state.unlocked_recipes("part")]
     #: Kept for the miss check: a pattern that banned a recipe is not a miss even

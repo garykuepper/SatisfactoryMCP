@@ -109,6 +109,21 @@ def prepare(
 
     prepared.solution = solution
     prepared.notes = list(solution.warnings)
+    # An all-zero solve is OPTIMAL and useless, and it reads as success: "buildings=0,
+    # exports:" with no complaint. It happens whenever a needed input is capped out of
+    # existence -- water_extractors=0 on an aluminium plan, say -- where every recipe is
+    # present and unlocked so `unmakeable` finds nothing to report. The supply probe is
+    # run for the same reason it is run on INFEASIBLE: a bare zero is not a diagnosis.
+    if solution.machines_total <= 0:
+        prepared.notes.append(
+            "this plan is EMPTY -- it solved to zero machines. That is optimal, not "
+            "broken: nothing can be made under these arguments, so making nothing is the "
+            "best available answer"
+        )
+        if diagnose:
+            prepared.notes += supply.describe(
+                supply.diagnose(request, game, state.unlocked_building_ids), game
+            )
     # An export nothing produces is pinned to 0 rather than conjured, but zero output is
     # a quiet answer, so the reason is said out loud on the success path too.
     for line in supply.unmakeable(request, game):

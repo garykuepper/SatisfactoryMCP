@@ -379,3 +379,83 @@ def test_the_default_block_is_a_shape_someone_would_build(game):
     assert block.foundations == 448
     # The ribbon is still reachable when explicitly asked for.
     assert fp.pack(77, columns=2).foundations < block.foundations
+
+
+# ----------------------------------------------------- water recycling and zero caps
+
+
+def test_a_recycled_fluid_balances_without_being_asked_for(game, state):
+    """Aluminium is the canonical loop: Alumina Solution drinks water and Aluminum Scrap
+    gives some back. Nothing recycles it explicitly -- water is ONE balance row and the
+    equality does the work, which is why a byproduct cannot pile up here."""
+    from satisfactory_mcp.planning.prepare import prepare
+
+    plan = prepare(
+        game,
+        state,
+        dict(
+            objective="max_item",
+            target_item="Aluminum Ingot",
+            exports=["Aluminum Ingot"],
+            sources=["region:Titan Forest"],
+        ),
+    )
+    if not plan.ok or not plan.solution.exports:
+        pytest.skip("no aluminium plan on this save")
+    water = {
+        r["label"]: r["rates"]["Desc_Water_C"]
+        for r in plan.solution.processes
+        if r["rates"].get("Desc_Water_C")
+    }
+    assert sum(water.values()) == pytest.approx(0.0, abs=1e-6)
+    # Some of the supply is RECYCLED, not extracted -- that is the whole point.
+    assert any(v > 0 and "Extractor" not in k for k, v in water.items())
+    # And none of it is sunk, because a fluid cannot be.
+    assert "Desc_Water_C" not in plan.solution.sunk
+    assert game.items["Desc_Water_C"].sinkable is False
+
+
+def test_zero_water_extractors_means_zero(game, state):
+    """`int(x) if x else DEFAULT` turned an explicit 0 into the 200-pump assumption, so a
+    plan told it had no water came back making 480 Aluminium Ingots on 480 m3/min of it.
+    Zero is a meaningful answer -- it is what you ask of an inland site."""
+    from satisfactory_mcp.planning.scenario import build_scenario
+
+    key = ("Build_WaterPump_C", "Desc_Water_C", "normal")
+    kw = dict(objective="max_item", target_item="Aluminum Ingot", exports=["Aluminum Ingot"])
+    assert (
+        build_scenario(game, state, water_extractors=0, **kw).scenario.extractor_nodes.get(key)
+        is None
+    )
+    assert (
+        build_scenario(game, state, water_extractors=27, **kw).scenario.extractor_nodes.get(key)
+        == 27
+    )
+    # None still means "use the assumption", which is a different statement from zero.
+    assert (
+        build_scenario(game, state, water_extractors=None, **kw).scenario.extractor_nodes.get(key)
+        == 200
+    )
+
+
+def test_an_empty_plan_says_why_it_is_empty(game, state):
+    """An all-zero solve is OPTIMAL and reads as success: "buildings=0, exports:" with no
+    complaint. Every recipe is present and unlocked, so `unmakeable` finds nothing to
+    report -- the supply probe has to run for the same reason it runs on INFEASIBLE."""
+    from satisfactory_mcp.planning.prepare import prepare
+
+    plan = prepare(
+        game,
+        state,
+        dict(
+            objective="max_item",
+            target_item="Aluminum Ingot",
+            exports=["Aluminum Ingot"],
+            sources=["region:Titan Forest"],
+            water_extractors=0,
+        ),
+    )
+    assert plan.ok
+    assert plan.solution.machines_total == 0
+    assert any("EMPTY" in n for n in plan.notes)
+    assert any("Water" in n for n in plan.notes)

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 762 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 765 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1526,6 +1526,43 @@ this save under any of the three plausible property names, nor in Docs.json. `fr
 loose sloops only — 16 on the reference save, 1 carried and 15 in the Depot — and the note
 says so, because reporting 0 committed as if measured would overstate the pool for anyone
 past mid-game. Mercer Spheres share the WAT prefix and are counted separately.
+
+### 8.2g A recycled fluid needs no recycling logic
+
+Aluminium is the canonical loop: **Alumina Solution** drinks 180 Water/min and
+**Aluminum Scrap** hands 120 back, and water cannot be sunk (§5.6), so the returned water
+has to go somewhere. Nothing in this project recycles it, and nothing needs to.
+
+Water is ONE balance row. The scrap recipe is a producer on that row, the alumina recipe a
+consumer, the extractors another producer, and the equality settles it:
+
+```
+4x Alumina Solution                 -720.0 m3/min
+4x Water Extractor on normal Water  +480.0
+2x Aluminum Scrap                   +240.0
+                              NET     +0.0
+```
+
+The loop is not a loop in the LP — it is two columns touching one row, which is the same
+reason § 8.2 gives for equality balances in the first place. A tree walk would have to
+decide how many times to go round; the LP has no notion of "round".
+
+**Two bugs fell out of checking it.**
+
+`water_extractors=0` did not mean zero. `int(x) if x else DEFAULT` treated an explicit
+zero as absent and substituted the 200-pump assumption, so a plan told it had **no water**
+came back making 480 Aluminium Ingots on 480 m³/min of it. Zero is a meaningful answer —
+it is exactly what you ask of an inland site — and it is now `is None`, not falsiness.
+
+With that fixed the plan solved to **nothing, and said nothing**: `buildings=0, exports:`
+with no complaint, because an all-zero solve is genuinely optimal. Every recipe was present
+and unlocked so `unmakeable` had nothing to report either. The supply probe now runs on an
+empty solve for the same reason it runs on INFEASIBLE — a bare zero is not a diagnosis:
+
+```
+! this plan is EMPTY -- it solved to zero machines. That is optimal, not broken
+! missing raw: Water (water comes from water volumes, and no Water Extractor is unlocked)
+```
 
 ### 8.3 Guards
 
