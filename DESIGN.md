@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 773 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 782 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -1603,6 +1603,44 @@ which loop they mean, so the argument takes patterns in the same grammar as
 **Not a pass count.** `max_cycle_passes=2` would need the cycle unrolled into indexed
 copies with its items split per pass — a different formulation, not a flag. One pass is
 exactly expressible; a number that only looks precise is worse than a named mode.
+
+### 8.2i Solving a plant in pieces
+
+*"Three loops instead of one."* A module is a plan with no nodes of its own and declared
+inputs: `supplied={item: rate}` hands it what another plan makes, as a free raw input up to
+that rate. `Scenario.raw_caps` had always supported this and nothing reached it.
+
+Given the rig's 2,300 Polymer Resin, the resin plant solves to **30 Residual Plastic + 13
+Residual Rubber** — the hand-built module, derived. Chained across all three:
+
+| | machines | net MW |
+|---|---|---|
+| three loops | 765 | 99,386 |
+| one solve | 787 | **99,730** |
+
+**Decomposition costs 0.35%**, because each module optimises locally and cannot see the
+others' trades. Small enough that building in modules is nearly free — and the number is
+what makes that a decision rather than a hunch.
+
+**A module needs a selector that selects nothing.** `sources=["bbox:…"]` over open water
+gives zero nodes, which is what stops the resin plant tapping crude and re-deriving the
+rig; water survives it, because water is placeless and has no node to lose.
+
+**The boundary trap, which is inherent to chaining.** `Solution.exports` is rounded to 4 dp,
+so the rig exports **2299.9998** resin while the resin plant's demand needs exactly 2300.
+Fed on as an exact cap, the module comes back **INFEASIBLE** — a whole plant lost to two
+ten-thousandths. `raw_caps` now carries the same kind of tolerance phase 2 already uses to
+pin its objective (1e-6 relative, 0.002/min on 2,300). The `binding` check had to move with
+it: a cap nudged up by a relative epsilon and compared against a fixed absolute one stopped
+reporting an input consumed to the last drop, so the constraint still bit and the response
+stopped saying so.
+
+**Supplied items are free, and the output says so loudly.** `advisor` records what
+forgetting this costs — a basket fed in as free raw inflated a northern baseline from
+92,269 MW to 171,882. Correct for a module, whose inputs are paid for where they are made;
+badly wrong as a whole-plant comparison. So a plan using `supplied` is labelled a MODULE
+PLAN, its inputs are named with their rates, and it says outright that whatever produces
+them must export at least that much or the chain does not balance.
 
 ### 8.3 Guards
 

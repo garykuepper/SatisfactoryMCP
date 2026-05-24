@@ -854,8 +854,13 @@ def solve(sc: Scenario) -> Solution:
         if used >= group_cap[key] - 1e-6:
             binding.append(f"{labelled[key]}: all {group_cap[key]:g} available")
     for j, item in enumerate(raw_items):
-        if x[col_r(j)] >= sc.raw_caps[item] - 1e-6:
-            binding.append(f"{g.item_name(item)} capped at {sc.raw_caps[item]:g}")
+        # Tolerance matched to the slack `build_scenario` adds to a supplied rate. A cap
+        # nudged up by 1e-6 relative, compared with a fixed 1e-6 absolute, meant an input
+        # consumed to the last drop stopped reporting as binding -- the constraint still
+        # bit, and the response stopped saying so.
+        cap = sc.raw_caps[item]
+        if x[col_r(j)] >= cap - max(1e-6, abs(cap) * 1e-6):
+            binding.append(f"{g.item_name(item)} capped at {cap:g}")
 
     if dropped:
         worst = max(rate for _, rate in dropped)

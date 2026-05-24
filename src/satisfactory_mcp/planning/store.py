@@ -49,6 +49,7 @@ PLAN_ARGS = (
     "belt_ipm",
     "pipe_m3min",
     "recycle_once",
+    "supplied",
 )
 
 

@@ -50,6 +50,7 @@ PLAN_DEFAULTS: dict = {
     "water_extractors": None,
     "sloops": 0,
     "recycle_once": None,
+    "supplied": None,
     # Carrier throughput SHAPES THE SOLVE -- belt_ipm prices sinks and both split blocks
     # and trunks -- so it belongs with the stored arguments, not with presentation.
     "belt_ipm": None,
@@ -178,6 +179,10 @@ def plan_factory(
         list[str] | None,
         Field(description="recipes that may run but must not feed each other, e.g. ['Recycled']"),
     ] = None,
+    supplied: Annotated[
+        dict[str, float] | None,
+        Field(description="items another plan hands this one, {item: per-minute}"),
+    ] = None,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
@@ -263,6 +268,7 @@ def plan_factory(
         water_extractors=water_extractors,
         sloops=sloops,
         recycle_once=recycle_once,
+        supplied=supplied,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
@@ -468,6 +474,20 @@ def plan_factory(
             f"{aside}{why}"
         )
 
+    # Supplied items are FREE here, which is the point and also the trap. advisor.py
+    # records what it costs to forget: feeding a basket in as free raw inflated a
+    # northern baseline from 92,269 MW to 171,882. Correct for a MODULE, whose inputs are
+    # paid for in the plan that makes them, and badly wrong for a whole-plant comparison.
+    if req.scenario.raw_caps:
+        given = ", ".join(
+            f"{v:g} {g.item_name(k)}/min" for k, v in sorted(req.scenario.raw_caps.items())
+        )
+        notes.append(
+            f"MODULE PLAN -- {given} arrive free, so this net_MW is NOT comparable with a "
+            "whole-plant plan: the cost of making them is charged wherever they are made. "
+            "Whatever produces them must export at least these rates, or the chain does "
+            "not balance and the surplus you think you have is not there"
+        )
     if req.excluded:
         notes.append("excluded by request: " + ", ".join(req.excluded))
     if not audit_ok:

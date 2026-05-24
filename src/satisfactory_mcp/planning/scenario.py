@@ -157,6 +157,7 @@ def build_scenario(
     water_extractors: int | None = None,
     sloops: int = 0,
     recycle_once: list[str] | None = None,
+    supplied: dict[str, float] | None = None,
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
@@ -194,6 +195,29 @@ def build_scenario(
     if pipe_m3min is None:
         best = state.best_pipe()
         pipe_m3min = best[1] if best else 600.0
+
+    # Items another plan hands this one, as a free input up to a rate. This is what makes
+    # a plant solvable in PIECES: give module C its 2,300 Polymer Resin and it reproduces
+    # the hand-built resin plant exactly, without needing to re-derive the rig that makes
+    # it. The cost of producing them is charged in the plan that does, and NOT here --
+    # which is exactly why `advisor` warns against feeding a basket in this way for a
+    # baseline. It is correct for a module and wrong for a whole-plant comparison, and the
+    # response says so.
+    raw_caps: dict[str, float] = {}
+    for name, rate in (supplied or {}).items():
+        resolved, err = _export_token(game, name)
+        if resolved is None or resolved == MW:
+            export_errors.append(f"supplied: {err or 'MW cannot be supplied as an item'}")
+            continue
+        # A hair of slack, for the same reason phase 2 pins its objective with a
+        # tolerance rather than exactly: a rate read out of ANOTHER solve is rounded to
+        # 4dp on the way out. Chaining the reference plant hands the resin plant
+        # 2299.9998 Polymer Resin, its demand needs exactly 2300, and the module comes
+        # back INFEASIBLE for a rounding error of two ten-thousandths. The slack is
+        # 1e-6 relative -- 0.002/min on 2,300, far below anything physical -- and it
+        # removes a whole class of false infeasibility at the interface.
+        rate = float(rate)
+        raw_caps[resolved] = rate + max(1e-6, abs(rate) * 1e-6)
 
     table = nodes_mod.load_nodes()
     # The player position goes in as `player`, NOT as `origin`. origin would also
@@ -289,6 +313,7 @@ def build_scenario(
         exports=tuple(export_ids),
         export_minimums=minimums,
         extractor_nodes=ext,
+        raw_caps=raw_caps,
         allow_sinks=allow_sinks,
         clocks=tuple(clocks) if clocks else (1.0,),
         extractor_clocks=tuple(extractor_clocks) if extractor_clocks else None,
@@ -368,6 +393,7 @@ def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
             "extractor_clocks": list(sc.extractor_clocks or ()),
             "machine_cost_mw": sc.machine_cost_mw,
             "recycle_once": sorted(sc.recycle_once),
+            "supplied": dict(sorted(sc.raw_caps.items())),
             "sloop_budget": sc.sloop_budget,
             "belt_ipm": sc.belt_ipm,
             "pipe_m3min": sc.pipe_m3min,
