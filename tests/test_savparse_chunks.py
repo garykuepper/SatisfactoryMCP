@@ -85,3 +85,38 @@ def test_trailing_bytes_are_refused():
 def test_offset_is_honoured():
     payload = b"skip me" * 100
     assert decompress_body(b"\xff" * 16 + _chunk(payload), 16) == payload
+
+
+def test_a_chunk_whose_blob_is_cut_short_names_the_chunk_and_the_shortfall():
+    """The commonest real failure in this whole parser, and it used to be the least legible.
+
+    Truncating two real saves at fourteen different fractions of their length put the failure
+    on this exact read every single time: the 49-byte preamble of the last chunk survives the
+    cut and the compressed blob it promises does not. Left to ``Reader._take`` the report was
+    "read of 5131 at 974874 runs past end (978615)" -- three numbers, no mention of a chunk,
+    and nothing to tell a reader that the file is simply mid-write rather than the walk being
+    lost. If this regresses, every torn autosave goes back to looking like a parser bug.
+    """
+    whole = _chunk(b"conveyor" * 400)
+    with pytest.raises(ValueError, match=r"chunk at 0 declares \d+ compressed bytes"):
+        decompress_body(whole[:-20], 0)
+    with pytest.raises(ValueError, match="shortfall of 20"):
+        decompress_body(whole[:-20], 0)
+    # And the tear is attributed to the chunk it is in, not to the first one.
+    good = _chunk(b"belt" * 300)
+    with pytest.raises(ValueError, match=f"chunk at {len(good)} declares"):
+        decompress_body(good + whole[:-20], 0)
+
+
+def test_a_negative_compressed_size_is_refused_by_the_same_guard():
+    """A torn preamble can put any int64 in the size field, including a negative one.
+
+    ``Reader._take`` renders that as "read of -5 at 49 runs past end", which is not merely
+    unhelpful but actively misleading -- nothing ran past any end. Folding it into the
+    shortfall check costs one comparison and keeps the message true.
+    """
+    broken = bytearray(_chunk(b"q" * 100))
+    broken[33:41] = (-5).to_bytes(8, "little", signed=True)  # second compressed size
+    broken[17:25] = (-5).to_bytes(8, "little", signed=True)  # first copy, kept in agreement
+    with pytest.raises(ValueError, match="declares -5 compressed bytes"):
+        decompress_body(bytes(broken), 0)

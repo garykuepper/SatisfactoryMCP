@@ -19,6 +19,8 @@ Property-access hazards handled here, all of which fail SILENTLY otherwise:
   * ObjectReference defines __str__ but not __repr__, so any repr()-based search
     finds nothing.
   * mItemsPickedUp is a MapProperty keyed by player state containing an inner map.
+
+Which parser reads the file is chosen by SATISFACTORY_SAVPARSE; see ENGINE below.
 """
 
 from __future__ import annotations
@@ -29,9 +31,43 @@ import sys
 import traceback
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sat_sav_parse"))
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE / "vendor" / "sat_sav_parse"))
+sys.path.insert(0, str(_HERE))
 
-import sav_parse
+#: Environment variable naming the save parser. "vendor" is the vendored GPL-3.0
+#: sat_sav_parse; "own" is sidecar/savparse, the reimplementation written to replace it.
+#:
+#: The DEFAULT IS DELIBERATELY "vendor". Flipping it is the user's call, not this module's,
+#: and until then the switch exists for one purpose: running the same save through both and
+#: diffing the projection JSON. Two parsers reachable from one process boundary is the only
+#: way that diff is a measurement rather than an argument.
+#:
+#: The two agree on every projection field except `lightweight_counts` and `structures`,
+#: which come from an object's trailing class-specific bytes that savparse hands on
+#: undecoded. Anything that needs those two must run with "vendor" today.
+SAVPARSE_ENV = "SATISFACTORY_SAVPARSE"
+VENDOR, OWN = "vendor", "own"
+ENGINE = (os.environ.get(SAVPARSE_ENV) or VENDOR).strip().lower()
+
+if ENGINE == OWN:
+    import savparse
+
+    read_save_info = savparse.read_info
+    read_full_save = savparse.read_full_save
+    #: What "this save cannot be read" looks like, per parser. Resolved here rather than
+    #: at the raise site so that main()'s except clause names one thing.
+    PARSE_ERROR: tuple[type[BaseException], ...] = (savparse.ParseError,)
+elif ENGINE == VENDOR:
+    import sav_parse
+
+    read_save_info = sav_parse.readSaveFileInfo
+    read_full_save = sav_parse.readFullSaveFile
+    PARSE_ERROR = (sav_parse.ParseError,)
+else:
+    # Loudly, at import: a typo'd engine name silently falling back to the vendored parser
+    # would make a parity run report agreement it never measured.
+    raise RuntimeError(f"{SAVPARSE_ENV}={ENGINE!r}; expected {OWN!r} or {VENDOR!r}")
 
 SCHEMA_VERSION = 10
 
@@ -156,7 +192,7 @@ def pos_of(header) -> list | None:
 
 
 def header_info(path: str) -> dict:
-    i = sav_parse.readSaveFileInfo(path)
+    i = read_save_info(path)
     st = os.stat(path)
     return {
         "path": os.path.abspath(path),
@@ -192,7 +228,13 @@ def _map_items(value) -> dict:
 
 
 def extract(path: str) -> dict:
-    save = sav_parse.readFullSaveFile(path)
+    save = read_full_save(path)
+    # Diagnostics, and only to stderr: stdout is the projection and has to stay parseable.
+    # savparse reports what it skipped rather than silently approximating it, and those
+    # notes are worth seeing without becoming a projection field -- adding them to `out`
+    # would make the two parsers' output differ for a reason that is not a disagreement.
+    for offset, what in getattr(save, "warnings", None) or []:
+        print(f"savparse: at body offset {offset}: {what}", file=sys.stderr)
 
     out: dict = {
         "schema_version": SCHEMA_VERSION,
@@ -753,7 +795,7 @@ def main(argv: list[str]) -> int:
             payload = {"schema_version": SCHEMA_VERSION, "header": header_info(path)}
         else:
             payload = extract(path)
-    except sav_parse.ParseError as exc:
+    except PARSE_ERROR as exc:
         json.dump({"error": "parse_error", "detail": str(exc), "path": path}, sys.stdout)
         return 1
     except Exception as exc:  # unexpected: surface the type, keep stdout valid JSON

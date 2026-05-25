@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import struct
 
+from .errors import ParseError
+
 __all__ = ["Reader"]
 
 
@@ -38,7 +40,9 @@ class Reader:
     def _take(self, count: int) -> bytes:
         end = self.pos + count
         if count < 0 or end > len(self.data):
-            raise ValueError(f"read of {count} at {self.pos} runs past end ({len(self.data)})")
+            # The commonest failure on a file the running game is rewriting under us, and
+            # the reason ParseError is defined below this layer rather than above it.
+            raise ParseError(f"read of {count} at {self.pos} runs past end ({len(self.data)})")
         chunk = self.data[self.pos : end]
         self.pos = end
         return chunk

@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 804 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 877 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -3181,8 +3181,13 @@ with knowing what is actually used, and the answer is small: **three entry point
 | what | used by | replaces |
 |---|---|---|
 | `readSaveFileInfo(path)` | `header_info` — 9 fields | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties | pending |
-| `ParseError` | one `except` | pending |
+| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties | ✅ `savparse.read_full_save` — 17 of 19 projection fields exact; `lightweight_counts` and `structures` come out **empty** |
+| `ParseError` | one `except` | ✅ `savparse.ParseError` |
+
+All three are **wired in and selectable**: `SATISFACTORY_SAVPARSE=own|vendor`, resolved at
+import, **defaulting to `vendor`**. Nothing changes for users yet. What the switch buys is
+that "the two parsers agree" is a diff someone can run rather than a claim — see *Both ways,
+diffed* below.
 
 Its 6,800 lines of `sav_data/` tables are **build-time only** — `tools/gen_*.py` uses them to
 produce committed artifacts. Different question, different answer.
@@ -3225,13 +3230,114 @@ and uncompressed sizes **written twice, identically**. The duplication is real o
 chunk of every save checked, and both copies are read and compared — it is a free
 integrity check on a format that has no other one.
 
-Verified on all 31 readable saves: **1,194 MB of body inflated in 1.3 s**, none failed. The
-reference save is 2.9 MB on disk and 44.4 MB inflated, in 0.05 s.
+Verified on all 31 readable saves: **1,194 MB of body inflated in 1.39 s**, none failed. The
+reference save is 2.94 MB on disk and 44.4 MB inflated, in 0.047 s. All **9,125** chunks of all
+31 saves declare a max chunk size of 131072 with both of their sizes inside it — which is why
+that field is checked as a self-contradiction rather than against the constant, since the block
+size is the writer's choice and not the format's.
 
 The tag is checked **per chunk**, not once. This project reads autosaves, which are
 rewritten every few minutes, so a file torn mid-write is routine — it now fails on the
 chunk where the tear is, with the offset, instead of inflating garbage into the object walk
 and failing somewhere unrelated.
+
+### The two layers that carry the complexity
+
+The body walk and the tagged property serialiser are 1,791 of the package's 2,420 lines
+and all of the format that could not be read off a hex dump. They have a section of their
+own, [§13b](#13b-the-object-walk-and-the-property-serialiser), because the argument that
+they are *right* is a different kind of argument from the one above: the header and the
+chunk stream are proved by a tag landing where it must, and these two are proved by a
+length check balancing 2,269,824 times.
+
+### Both ways, diffed
+
+The composition is one module, `savparse/save.py`, and it holds two decisions rather than
+glue. **The inflated body is retained** — every object slice and every `extra_offset` is an
+absolute index into it, nothing is copied, and that is what keeps a 44 MB body at a fifth of
+a second. And **there is deliberately no `actorSpecificInfo` attribute**, because
+`_lightweight` and `_structures` read it through `getattr(..., None)`: its absence is what
+makes them return empty, which is a *visible* gap. A partial decode there would turn an
+undercount into a silent one, and a foundation census reporting 40 slabs where 8,347 pieces
+are built reads exactly like a real answer.
+
+Getting there also collapsed two exception types into one. `ParseError` moved below `Reader`,
+because the commonest failure of all — a walk running off the end of a file the game is
+rewriting — was raised by the primitive layer as a bare `ValueError`, fell through the
+sidecar's single `except`, and was reported as `{"error": "ValueError"}` with no offset for a
+file that was merely mid-write.
+
+**The result, over all 67 files in the save folder, JSON compared leaf by leaf:**
+
+* **31 readable and 36 refused, by both, the same 36**, each reported as `parse_error` on both
+  sides. (One of the 36 is not a save at all: `ServerManager_V2.sav` opens `MSGF`.)
+* **17 of the 19 projection keys are identical on all 31 saves**, and identical means leaf by
+  leaf, not key by key: **zero leaves anywhere where the two disagree on a value.** The two
+  that differ are `lightweight_counts` and `structures`, and only ever by being **empty** —
+  488 absent count keys, 62 zero-length lists, and **224,530 structure instances in 488
+  classes** that the vendored parser reports and this one does not.
+* `n_objects` agrees on every save, 29,734 to 44,643. `Han Solo_270726-215626`: **44,307**
+  objects, **566** machine/extractor/generator records, **11,554** material edges,
+  `schema_version` **10** — both parsers, and 8,347 structure instances under `vendor` only.
+* `--list` over the folder: same 31/36 split, and **zero differences in any header field**.
+* Whole sidecar including interpreter start, summed over the 31 readable saves: **vendor
+  75.7 s, own 59.2 s** — 1.28×. The per-layer split is in
+  [§13b](#13b-the-object-walk-and-the-property-serialiser); the short version is that
+  inflation is 2% of a parse and the property bodies are 87%.
+
+Every figure above was re-measured on the finished tree rather than carried forward. That
+matters here for a specific reason: the package was edited by several agents in parallel, so
+numbers taken mid-way describe code that no longer exists, and a parity claim about code that
+no longer exists is not a parity claim.
+
+### Torn files, fuzzed
+
+Autosaves rewrite the save in place every few minutes, so a file read mid-write is routine.
+About **60,000 mutations** of two real saves, each classified by outcome rather than eyeballed:
+1,750 truncation points, 600 single-bit flips in the chunk stream, every byte of three chunk
+preambles, every length field the body walk reads in both committed fixtures, ~30,000 mutations
+inside real property blocks, and every int32 of two real headers. **Nothing hung** once the
+container-count bound in [§13b](#13b-the-object-walk-and-the-property-serialiser) was in place —
+no case took longer than one clean parse — and, after the four fixes below, nothing raises
+anything but `ParseError`.
+
+Two results worth keeping. **The realistic tear is caught by one int64**: a file half-rewritten
+is a prefix of the new chunk stream followed by a suffix of the old, every chunk of it
+individually valid — right tag, matching size copies, clean adler32 — and the only thing
+between this project and a confidently-reported chimera of two factories is the body's own
+`len(body) - 8`. Spliced at 14 chunk boundaries between two real autosaves, refused every time.
+And **everything the property serialiser reads sits behind a per-chunk adler32**, so silently
+corrupting the inflated body takes a deliberate re-compression rather than a tear: of 600 bit
+flips, 599 were refused and the survivor landed in a deflate block's unused padding bits and
+inflated to byte-identical output.
+
+Four defects, now fixed with tests in `tests/test_savparse_robustness.py`:
+
+* **Nested `StructProperty` tags raised `RecursionError`, not `ParseError`.** 29 KB of crafted
+  payload was enough; through the sidecar it came out as `{"error": "RecursionError"}` with a
+  traceback and no offset — the report `errors.py` exists to abolish, arriving through the one
+  door it did not cover. Property lists now count their own depth against 32; the deepest real
+  one is 4.
+* **A property list terminating early was absorbed in silence.** Every property is size-checked
+  but nothing looked at the payload as a whole, so the bytes after the `"None"` terminator
+  absorbed anything: overwriting one property's name with the terminator made a
+  `Build_ConstructorMk1` read as 2 properties instead of 13 and the sidecar emit **exit 0 and a
+  complete projection** — 438 machines, one of them with no recipe and no inventories. Now
+  bounded by what 1,243,288 objects actually do: no trailer is shorter than 4 bytes, and a
+  *component's* is exactly 8 on 562,556 of them and 4 on the other 5,300, never anything else.
+  Injecting the terminator into every component of two real saves is refused 104 times of 104
+  and was silent 104 of 104 before. An **actor's** stays unchecked, because an actor may
+  legitimately carry any amount and bounding it needs the eight-class whitelist that belongs to
+  whoever decodes those bytes — refusing a whole save because a patch taught a ninth class to
+  carry data is a worse failure than the one prevented. That is the one stated gap here, and it
+  is defence in depth rather than urgent: every byte involved sits behind a per-chunk adler32,
+  so only a parser misread or a deliberate forgery can produce it, never a tear.
+* **The chunk preamble's `max chunk size` was read and discarded** — 99 of 588 preamble
+  mutations undetected, all of them its eight bytes. Checked now as a contradiction (a maximum
+  below the sizes beside it), not as the constant 131072, which is the writer's choice.
+* **The `PACKAGE_FILE_TAG` proof was skipped when the file ended at the header**, so a save cut
+  to exactly its 453 header bytes returned a full `SaveInfo` and failed two layers down at "an
+  offset into a body that does not exist".
 
 ### Opportunities this turned up
 
@@ -3241,15 +3347,235 @@ and failing somewhere unrelated.
 * **`saveDataHash` is in the header**: two int64s, read without inflating anything. Cache
   validity currently keys on `mtime_ns`, so a rewritten-but-identical autosave invalidates.
   A content hash would not.
-* **Decompression is not the cost.** 44 MB in 0.05 s; whatever the sidecar spends, it
-  spends in the object walk.
+* **The grid table is a cell→size map of the whole world** that nothing reads. Seven grids on
+  the reference save, and only three hold cells: `MainGrid` at 12800 uu with **1,288** cells,
+  `ExplorationGrid` at 20480 with 758, `ExplorationGridFar` at 20480 with 43;
+  `LandscapeGrid` (51200), `FoliageGrid` (26500) and `HLOD0_256m_1023m` (25600) are declared
+  and empty. A list of exactly which 12.8 km cells the player has touched, at ~71 KB, may be
+  worth something to spatial work.
 
-### What is left
+### What is left, and the verdict
 
-The body preamble carries a version block, a UE custom-version GUID array, and then a large
-world-partition table — about 774 KB of level names before the first `Persistent_Level` on
-the reference save. After that come the object headers and the property serialiser, which
-is the bulk of the remaining work and the part where the bugs live.
+**One thing is left: the trailing class-specific bytes** after an object's property list —
+`actorSpecificInfo` in the old parser's naming. Re-measured over all 31 saves, **88,066 of
+675,432 actors carry them, in exactly eight classes and no others**: `FGConveyorChainActor`
+and its `RepSizeMedium`/`Large`/`Huge` variants, `Build_PowerLine_C`, and once per save each
+`FGLightweightBuildableSubsystem`, `BP_CircuitSubsystem_C` and `BP_PlayerState_C`. On the
+reference save that is 3,209 actors and 7,370,871 bytes, of which the lightweight subsystem
+alone is 3.10 MB of foundations, walls and ramps that appear in **no object header at all**.
+They are handed on as `(extra_offset, extra_length)` and not decoded, and they are the only
+reason `lightweight_counts` and `structures` still need the vendored parser. Every other object
+in every save leaves exactly 4 or 8 trailing bytes.
+
+**Is the own parser ready to be the default? No, and it is one gap away.** Everything a save is
+read *for* agrees: 17 of 19 projection keys leaf-identical on all 31 readable saves, the same 36
+files refused, every header field equal, `n_objects` equal everywhere, 1.28× faster end to end,
+and no input yet found — real or synthesized — on which it returns a plausible-but-different
+factory. What blocks it is that the two remaining keys come out **empty**, and empty is the
+dangerous kind of wrong here: `structures` is what `graph/structure.py` builds foundation slabs
+from and what `spatial/elevation.py` samples ground height with, so `factory_sites` and every
+terrain answer would return *nothing* instead of failing, and `lightweight_counts` is half of
+`WorldState.building_counts`, so "unlocked but never built" would start listing buildings the
+player has dozens of. `test_the_sidecar_still_defaults_to_the_vendored_parser` fails if the
+default moves before that is fixed.
+
+**To delete `sidecar/vendor/`:** decode those bytes; re-run the same whole-folder diff and get
+**19 of 19 keys on all 31 saves**, including all 224,530 structure instances; flip the default
+and the tests that pin it; re-diff *after* the flip, over the whole folder rather than a sample,
+because the same measurement is the acceptance test; and settle `sav_data/`'s licence
+separately, since it is build-time input to `tools/gen_*.py` and not on this path. The deletion
+itself is the user's call and nothing here should make it for them.
+
+Decoding those bytes also closes two things deliberately left open: the eight-class whitelist
+that would let an **actor's** trailer be length-checked the way a component's already is (see
+*Torn files, fuzzed*), and [§16](#16-parked-site-outlines-and-visualisation)'s foundation work,
+which today depends on the vendored parser's output for the one blob whose shape is already
+known.
+
+## 13b. The object walk and the property serialiser
+
+The two layers `savparse` spends its lines on: `objects.py` (652 lines) walks the inflated
+body into levels, object headers and one property-block slice per object, and
+`properties.py` (1,139) turns a slice into the `[name, value]` pairs the projection reads.
+Together they are 74% of the package and all of the format that could not be read off a hex
+dump.
+
+They belong in one section because they share one safety argument, and it is not the one the
+header and the chunk stream use. Those two are proved by a constant landing where it must —
+`PACKAGE_FILE_TAG`, the chunk tag, two copies of a size. These two are proved by
+**self-describing lengths agreeing with each other**: every level, every block, every
+property and every container declares its own byte count, and the reader is required to land
+exactly on each declared end. Nothing is recognised by pattern-matching and nothing is
+searched for. That is why an unknown property type costs one property rather than the file,
+and it is why the reader can be confident about bytes it does not understand.
+
+### The body, walked by its own lengths
+
+The body opens with an int64 that equals `len(body) - 8`, then a world-partition grid table,
+then one record per level. Each record holds a **header block and a property-blob block
+separately** — parallel lists, not interleaved — so an object's header and its properties are
+matched by index, which is a fact about the format rather than a convenience. Each block is
+length-prefixed; each object entry inside the second block declares its own size; each
+property inside that declares its own size again. Four levels of nesting, four independent
+lengths, and the walk cross-checks them against each other.
+
+Two facts cost the most to establish. **There are two body layouts:** saveVersion 60 opens
+with a 59-byte archive version header and a count-terminated array of `(GUID, int32)` custom
+versions (13 of them), and saveVersion 52 — **25 of the 31 readable saves** — goes straight to
+the grid table and has no per-level archive headers either. And **object save versions are per
+object**: 36, 52 and 60 all occur in one file, because an untouched world-partition cell keeps
+the bytes it was written with, and a version-60 entry carries an extra int32 that its
+predecessors do not.
+
+Where that int32 sits could not be settled by arithmetic. As a fourth header field or as a
+trailer it makes an entry `16 + size` bytes either way, and both readings balance every length
+in the file. It took parsing 18,369 version-60 actors' reference lists and asking where the
+first property name begins. That is the character of this layer: the lengths have several
+self-consistent readings and only the payload's own content picks one.
+
+**The object header identified its own flags word.** Both kinds open with an int32 (1 for an
+actor, 0 for a component), three strings, and an unexplained uint32 — which is `0x280008` on
+every actor and `0x2C0008` on every component, differing by exactly `0x40000`,
+`RF_DefaultSubObject`. That is UE's `EObjectFlags`, and knowing it is what confirmed the two
+header shapes were being told apart correctly rather than coincidentally. Actors then carry
+a transform (quaternion, position, scale as `x y z w` / three / three floats) and components a
+parent actor name.
+
+One deliberate naming choice: the bytes **do** name a component's class, and it is exposed as
+`class_path` and not `typePath`, because `iter_objects` reads `getattr(header, "typePath", "")`
+and the projection's class-based branching depends on a component resolving to `""`. Exposing
+it under the obvious name would have silently changed which objects every downstream census
+counts.
+
+Two claims from the earlier working notes were **wrong and are corrected**: there is no 774 KB
+partition table — that figure measured to the first literal `Persistent_Level` in the bytes;
+the grid table is ~71 KB and ends at body offset 71578 — and the reference save has **44,634**
+objects, not 44,307, which is a different autosave of the same world.
+
+**Measured, over every readable save:** 31 bodies, **86,403 levels and 1,243,288 objects walked
+in 7.77 s**, zero warnings, and **zero unparsed bytes** — every byte is either read or stepped
+over by a length the file declares. The reference save's 44 MB body walks in **0.231 s**. What
+is stepped over is the destroyed-actor list at the tail of each level's table of contents,
+**2,414,398 bytes across the 31 saves** (97,250 on the reference save), reported as
+`SaveBody.skipped_toc_bytes` rather than dropped quietly. The skip is validated by two
+independent lengths agreeing: the header walk must end inside the block, and the next block's
+size field must land exactly where the block's declared end says it will.
+
+**Verified black-box on all 31 readable saves:** identical level counts, identical per-level
+header *and* object counts, identical `typePath` multisets. Object by object on the reference
+save — 23,821 actors and 20,813 components over 3,124 levels, the actors covering 184 distinct
+class paths — `instanceName`, the actor/component split and `position` agree, **0 differences in
+44,634**. The one divergence anywhere is the persistent level's name, `None` in the vendored
+parser and `"Persistent_Level"` here; nothing reads level names.
+
+### The property serialiser
+
+Every property announces its own length before its bytes, and that one field is what makes
+this layer tractable: an unrecognised type costs that property and nothing else. Two tag
+layouts occur, keyed by the *object's* version — UE5 writes a **type-name tree**
+(`ArrayProperty(StructProperty(InventoryStack(/Script/FactoryGame)))`, each node a name plus a
+parameter count), UE4 writes the same information as fixed tag-data fields. Both are
+normalised into one tree, so there is one value reader per type instead of two.
+
+**The flags byte on a version-60 tag is the most useful field in the format**, and it
+identified itself from data. `0x10` is set on a `BoolProperty` whose declared size is 0 and
+which therefore has nowhere else to keep its value — so that bit *is* the bool, and it is
+exactly the "16 means True" that `extract_save.truthy` has always documented without knowing
+why. `0x08` is set on precisely the structs whose payload is raw numbers (`Box`, `Vector`,
+`Guid`, `InventoryItem`) and clear on the ones written as nested property lists
+(`InventoryStack`, `FeetOffset`, `FactoryCustomizationData`).
+
+**The per-property size check is the whole safety argument.** After reading a value the cursor
+must be exactly `size` past the payload start. That found every format detail worth recording
+here, including two that were expensive: the version-60 terminator is a **bare name with no
+type after it** (reading a type tree first turned the four trailing bytes into a string length
+and broke 16,445 objects), and `InventoryItem` writes one extra int32 on object version **36
+only, not 52** — the single place those two versions disagree, worth 87 pickups.
+
+**Struct bodies are decided by name, not by the flag.** The flag is not reliably per-element:
+the foliage subsystem's `mSaveData` is one MapProperty with `0x08` set whose keys are native
+`IntVector` and whose values are property lists. Nine native structs cover every save —
+`Vector` (three **doubles**, on version-52 objects too, because the width follows the writer and
+every readable save is UE5-written), `Quat`, `Box`, `LinearColor`, `Guid`, `IntVector`,
+`FluidBox`, `ClientIdentityInfo`, `InventoryItem`. `PlayerInfoHandle` and `UniqueNetIdRepl` are
+kept as raw bytes on purpose, so that a genuinely new struct shows up as a warning instead of
+hiding among them, and the other 36 struct names are nested property lists.
+
+**What the layer actually faces**, on the reference save: 82,660 top-level properties declaring
+**208,548 tags at every depth** (a struct's fields and a container's elements are tags too) in
+**19 distinct types**, and **47 distinct struct names** — 9 native, 2 opaque, 36 nested lists.
+The top-level distribution is led by `ObjectProperty` 34,139, `StructProperty` 22,301,
+`ArrayProperty` 18,260 and `IntProperty` 17,091; `DoubleProperty` occurs only nested, never at
+the top. Eight types occur fewer than 30 times in the whole save, which is the argument for
+deriving from a census rather than from the first object that parses.
+
+**One honest limit.** UE4's tag data for a map or a set names the element's *property* type and
+not the struct behind it, so a struct element on a version-36/52 object is genuinely ambiguous.
+Reading it as a property list and keeping the result **only when it lands exactly on the
+declared end byte** recovers `mItemsPickedUp`, `mActorsBuiltCount` and
+`mItemsManuallyCraftedCount`, and correctly refuses `mSaveData` and two `Guid` sets, which are
+skipped by declared size. That is three warnings per saveVersion 52 save and zero on a
+saveVersion 60 one — **75 over the whole folder**, in data nothing above reads.
+
+**The escape hatch had a hole, and it was where two things could not be told apart: an
+element's length and its container's.** An untagged map element with no reader was skipped to
+the *map's* declared end. With pairs still to read, the next key then came out of the bytes
+after the map and the next skip pulled the cursor back onto that end — so the size check
+balanced and the object parsed, with fabricated keys and `None` values and no error at all.
+`FText` inside an array had the same shape. Skipping *forwards* to a declared end is honest and
+skipping backwards never is, so that is now the rule, and the last element of a container —
+where the container's remaining length really is the element's — still recovers. In the same
+family: a container's element count is bounded by the bytes left in its block rather than by a
+flat ten million, because the count lives *inside* the payload where the tag's size check
+cannot reach it, and a planted count of 9,000,000 read 36 MB of the following objects and took
+13.4 seconds to fail. None of the three changed a value: the same 2,269,824 properties, the
+same digest, before and after.
+
+### Parity, property by property
+
+**Verified black-box on all 31 readable saves, both parsers in one process:** **1,243,288
+objects, 2,269,824 properties, zero objects whose property names or order differ.** Values are
+identical on 2,168,837. The 100,987 that differ all fall in one of five classes with a stated
+cause — 81,358 in the unread second element of an inventory `Item`, 19,492 in a plain byte's
+enum name (`None` against the literal string UE4 writes), 75 skipped and warned about (the same
+75 as the warnings, one for one), 31 in a `Guid` spelling and 31 in an empty soft-object
+sub-path. Nothing is unexplained, nothing is in a field the projection reads, and the table is
+in `docs/savparse-notes.md`.
+
+**Two shape differences have to be normalised before any of that can be compared**, and both
+are the ones `extract_save.struct_fields` already documents: a struct value is
+`[values, propertyTypes]` here and sometimes bare `values` in the vendored parser, and a
+`propertyTypes` entry's tail past `(fieldName, typeName)` is a rendering choice. So the
+comparison drops types from the value tree and then compares the `(fieldName, typeName)`
+sequence **separately** — 123 properties of 2,269,824 differ there, and **0** where a field both
+parsers name is given a different type. Stripping something and not checking it is how a
+cosmetic difference hides a real one, and both directions of that mistake happened here: a
+first comparison called all 21,247 struct-bearing properties mismatched, and a second, which
+compared only the top-level value, buried 2,904 real `Item` differences as "unexplained"
+because the disagreement lives three lists deep at `.0.0.1.1`.
+
+### What it costs
+
+One fresh process, reference save (2.94 MB on disk, 44.4 MB inflated, 44,634 objects):
+
+| stage | time | share |
+|---|---|---|
+| read + header | 0.001 s | — |
+| inflate 44.4 MB | 0.047 s | 2% |
+| level and object-header walk | 0.231 s | 11% |
+| every object's properties | 1.791 s | 87% |
+| **total** | **2.07 s** | against the vendored parser's **2.4–2.5 s** |
+
+So the old note that "decompression is not the cost" holds, and its second half needed
+splitting: the *walk* is 11% and the *property bodies* are 87%. A third measurement is the
+interesting one — **0.53 s of that 1.791 s is retention, not parsing.** Reading each property
+block and discarding it costs 1.257 s; keeping all 44,634 costs 1.791 s and about 136 MB. The
+projection makes exactly one pass over the objects, so a streaming `read_full_save` would pay
+for itself twice over. Not taken: it changes the shape the trailing-bytes work builds on, and
+this is a measured opportunity rather than a guess.
+
+End to end, including interpreter start, over the 31 readable saves: **vendor 75.7 s, own
+59.2 s.**
 
 ## 14. Open questions
 

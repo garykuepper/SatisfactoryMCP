@@ -115,13 +115,27 @@ def test_a_shifted_header_is_refused_not_guessed(raw):
         read_info_bytes(_shifted(raw))
 
 
-def test_the_error_names_the_versions_that_would_explain_it(raw):
-    """A future patch shifting the layout should say which version it was reading, since
-    that is the first thing anyone debugging it needs."""
-    with pytest.raises(ValueError) as exc:
-        read_info_bytes(_shifted(raw))
-    assert "saveHeaderType is 14" in str(exc.value)
-    assert "saveVersion 60" in str(exc.value)
+def test_every_refusal_names_the_versions_that_would_explain_it(raw):
+    """A refusal must say which version it was reading, since that is the first thing anyone
+    debugging it needs -- and it must say so on EVERY path out of this module, not just the
+    tag check that happens to be the last one.
+
+    It is now a prefix rather than a sentence in one message, because the reason a player
+    sees matters more than the reason a developer sees: 36 of the 67 saves on the author's
+    disk are pre-1.0, and they fail on a bounds check deep in the reader where no version is
+    in scope. "read of 473655 at 138 runs past end" is true and useless; "saveHeaderType 10
+    (only 14 is understood)" is the answer.
+    """
+    for broken in (_shifted(raw), raw[:100]):
+        with pytest.raises(ValueError) as exc:
+            read_info_bytes(broken)
+        assert "saveHeaderType 14" in str(exc.value)
+        assert "saveVersion 60" in str(exc.value)
+
+    pre_1_0 = bytearray(raw[:100])
+    pre_1_0[0:4] = (10).to_bytes(4, "little")
+    with pytest.raises(ValueError, match=r"saveHeaderType 10 \(only 14 is understood\)"):
+        read_info_bytes(bytes(pre_1_0))
 
 
 def test_a_wild_length_is_refused_by_the_bounds_check(raw):
