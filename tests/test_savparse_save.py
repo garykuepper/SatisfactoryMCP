@@ -12,12 +12,12 @@ chunk stream the game writes. That is the only way to exercise the whole path wi
 install, and it means a change in any one layer that breaks the seam between two of them
 fails here rather than on a machine that happens to have a 2.9 MB save.
 
-Parity is measured elsewhere and not repeated here: the same save through both parsers
-agrees on every projection field except ``lightweight_counts`` and ``structures``, which
-come from the trailing class-specific bytes this parser hands on undecoded. What *is*
-pinned here is that those two degrade to empty rather than to something plausible and
-wrong -- see the ``actorSpecificInfo`` test, which is the whole reason that attribute is
-deliberately absent.
+Parity is measured elsewhere and not repeated here: the same save through both parsers now
+agrees on **all 19** projection fields, on all 31 readable saves. What *is* pinned here is the
+composition's half of how the trailing class-specific bytes are handled -- the subsystem that
+holds every foundation is decoded (``test_savparse_lightweight.py`` owns the record itself),
+and the seven classes that are not decoded read as ``None`` rather than as an empty list, so a
+class nobody has taught this parser cannot pass for a class that had nothing in it.
 """
 
 from __future__ import annotations
@@ -178,19 +178,26 @@ def test_the_inflated_body_is_retained_so_undecoded_bytes_stay_addressable(save,
             assert len(chunk) == obj.extra_length
 
 
-def test_there_is_deliberately_no_actorSpecificInfo(save):
-    """The two projection fields this parser cannot fill must come out EMPTY, not wrong.
+def test_an_undecoded_class_reads_as_None_and_not_as_empty(save):
+    """A class whose trailing bytes nothing decodes must be distinguishable from one that
+    was decoded and held nothing.
 
     ``_lightweight`` and ``_structures`` both read ``getattr(obj, "actorSpecificInfo",
-    None)``. Its absence is what makes them return ``{}`` and ``{"classes": [],
-    "instances": []}`` -- a visible gap. Adding the attribute with a partial decode would
-    turn that into a silent undercount: a foundation census that reports 40 slabs where
-    8,347 pieces are built reads exactly like a real answer.
+    None)``, and both map ``None`` to ``{}`` and ``{"classes": [], "instances": []}``. That
+    is the same output an empty list would give -- which is exactly why the *attribute*
+    must not be an empty list: the day someone adds a partial decode for conveyor chains,
+    ``None`` is what says "this one is not done" rather than "this one was empty". A silent
+    undercount here reads like a real answer: a foundation census reporting 40 slabs where
+    8,347 pieces are built looks no different from a correct one.
+
+    No object in this fixture is the lightweight subsystem, so every one of them is the
+    not-decoded case. The decoded case is ``test_savparse_lightweight.py``.
     """
     sidecar = _load_sidecar("_extract_save_no_asi")
     for level in save.levels:
         for obj in level.objects:
-            assert getattr(obj, "actorSpecificInfo", None) is None
+            assert obj.actor_specific_info is None
+            assert obj.actorSpecificInfo is None
             assert sidecar._lightweight(obj) == {}
             assert sidecar._structures(obj) == {"classes": [], "instances": []}
 
@@ -277,10 +284,12 @@ def test_a_read_past_the_end_of_the_body_is_a_parse_error_too(header_prefix, bod
 def test_the_sidecar_still_defaults_to_the_vendored_parser(monkeypatch):
     """The default must not move without a decision.
 
-    ``lightweight_counts`` and ``structures`` are wrong-but-empty under the own parser, and
-    ``structures`` is what the factory-site clustering is built on. Flipping the default is
-    the user's call; this test is what makes an accidental flip a failing test rather than a
-    quietly emptier world summary.
+    Nothing technical blocks the flip any more -- the two parsers agree on all 19 projection
+    fields on all 31 readable saves. It stays put because flipping it achieves nothing on its
+    own: the licence exposure is the vendored library being in the repository, not which branch
+    of an ``if`` runs, so the flip belongs to deleting it. That is the user's call, and this
+    test is what makes an accidental flip a failing test rather than a silently different
+    parser under every tool.
     """
     monkeypatch.delenv("SATISFACTORY_SAVPARSE", raising=False)
     sidecar = _load_sidecar("_extract_save_default")

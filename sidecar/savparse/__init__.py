@@ -14,6 +14,7 @@ property and not the save.
 from .chunks import CHUNK_TAG, decompress_body
 from .errors import ParseError
 from .header import PACKAGE_FILE_TAG, SaveInfo, read_info, read_info_bytes
+from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import (
     ActorHeader,
     ComponentHeader,
@@ -28,6 +29,7 @@ from .save import ParsedLevel, ParsedSave, read_full_save, read_full_save_bytes
 
 __all__ = [
     "CHUNK_TAG",
+    "LIGHTWEIGHT_SUBSYSTEM",
     "PACKAGE_FILE_TAG",
     "ActorHeader",
     "ComponentHeader",
@@ -48,5 +50,6 @@ __all__ = [
     "read_full_save_bytes",
     "read_info",
     "read_info_bytes",
+    "read_lightweight",
     "read_object",
 ]

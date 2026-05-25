@@ -242,11 +242,25 @@ class ParsedObject:
     property_types: list[list] = field(default_factory=list)
     #: Absolute offset and length of everything after the property list's terminator:
     #: a 4- or 8-byte trailer, plus class-specific binary data on 3,209 of the reference
-    #: save's actors. Not decoded here.
+    #: save's actors. Not decoded here; ``savparse.save`` decodes the classes it knows.
     extra_offset: int = 0
     extra_length: int = 0
+    #: The trailing class-specific bytes, decoded -- ``None`` when nothing here knows the
+    #: class. Only ``FGLightweightBuildableSubsystem`` is decoded today; see
+    #: ``savparse.lightweight`` for what the other seven classes carry and why they wait.
+    actor_specific_info: list | None = None
     #: Anything skipped rather than understood, as ``(offset, what)``.
     warnings: list[tuple[int, str]] = field(default_factory=list)
+
+    @property
+    def actorSpecificInfo(self) -> list | None:
+        """The spelling the projection reads.
+
+        ``None`` rather than an empty list on purpose: the projection tells "this class
+        carries nothing we decode" from "this class carries an empty list", and only the
+        first is true of the seven classes still skipped by length.
+        """
+        return self.actor_specific_info
 
 
 def _expect(condition: bool, offset: int, message: str) -> None:

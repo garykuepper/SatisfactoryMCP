@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 877 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 899 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -3181,7 +3181,7 @@ with knowing what is actually used, and the answer is small: **three entry point
 | what | used by | replaces |
 |---|---|---|
 | `readSaveFileInfo(path)` | `header_info` — 9 fields | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties | ✅ `savparse.read_full_save` — 17 of 19 projection fields exact; `lightweight_counts` and `structures` come out **empty** |
+| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties | ✅ `savparse.read_full_save` — all 19 projection fields exact on all 31 readable saves |
 | `ParseError` | one `except` | ✅ `savparse.ParseError` |
 
 All three are **wired in and selectable**: `SATISFACTORY_SAVPARSE=own|vendor`, resolved at
@@ -3271,11 +3271,11 @@ file that was merely mid-write.
 
 * **31 readable and 36 refused, by both, the same 36**, each reported as `parse_error` on both
   sides. (One of the 36 is not a save at all: `ServerManager_V2.sav` opens `MSGF`.)
-* **17 of the 19 projection keys are identical on all 31 saves**, and identical means leaf by
-  leaf, not key by key: **zero leaves anywhere where the two disagree on a value.** The two
-  that differ are `lightweight_counts` and `structures`, and only ever by being **empty** —
-  488 absent count keys, 62 zero-length lists, and **224,530 structure instances in 488
-  classes** that the vendored parser reports and this one does not.
+* **All 19 projection keys are identical on all 31 saves**, and identical means leaf by leaf,
+  not key by key: **zero leaves anywhere where the two disagree on a value, and none present
+  under one parser and absent under the other.** The last two to fall were `lightweight_counts`
+  and `structures` — **224,530 structure instances in 488 classes**, which came out empty until
+  the lightweight blob was decoded.
 * `n_objects` agrees on every save, 29,734 to 44,643. `Han Solo_270726-215626`: **44,307**
   objects, **566** machine/extractor/generator records, **11,554** material edges,
   `schema_version` **10** — both parsers, and 8,347 structure instances under `vendor` only.
@@ -3354,43 +3354,67 @@ Four defects, now fixed with tests in `tests/test_savparse_robustness.py`:
   and empty. A list of exactly which 12.8 km cells the player has touched, at ~71 KB, may be
   worth something to spatial work.
 
+### The lightweight buildables — where every foundation lives
+
+Foundations, walls, ramps and catwalks are not actors. One `FGLightweightBuildableSubsystem`
+carries all of them in the class-specific bytes trailing its empty property list, and
+`savparse/lightweight.py` (185 lines) decodes it: **224,530 instances in 488 classes** across
+the 31 readable saves, 8,347 on the reference save alone. This is the whole of `structures` and
+`lightweight_counts`, and it was the last projection field needing the vendored parser.
+
+The record is 162 bytes plus two length-prefixed reference paths — a rotation quaternion, a
+position, a scale, seven references of which only the paint swatch and the recipe are ever
+populated, two override colours, and three small trailing fields. Its length was derived from
+the **stride between repetitions of the recipe path** (a constant 375 bytes over 4,616
+consecutive foundations) and its field boundaries from a **per-byte variability map** over those
+records: the two colour alphas are the only non-zero floats in the region, which places both
+`FLinearColor`s exactly. Full layout and the honest account of what the method cannot settle —
+how the always-zero runs are grouped — is in `docs/savparse-notes.md`.
+
+**Two blob versions, and the trap.** saveVersion 52 writes version 2, saveVersion 60 writes
+version 4, differing by exactly a trailing `(uint8, int32)`: 370 bytes per foundation against
+375. Version 2 is **25 of the 31 readable saves** — the common case, not the legacy one. The
+first pass knew only version 4 and *refused* those 25 rather than guessing, and the whole-folder
+diff surfaced it immediately as 25 files where the parsers disagreed about readability. Reading
+a 370-byte record as 375 would instead have desynchronised thousands of records later, which is
+the argument for refusing an unknown version everywhere in this parser.
+
 ### What is left, and the verdict
 
-**One thing is left: the trailing class-specific bytes** after an object's property list —
-`actorSpecificInfo` in the old parser's naming. Re-measured over all 31 saves, **88,066 of
-675,432 actors carry them, in exactly eight classes and no others**: `FGConveyorChainActor`
-and its `RepSizeMedium`/`Large`/`Huge` variants, `Build_PowerLine_C`, and once per save each
-`FGLightweightBuildableSubsystem`, `BP_CircuitSubsystem_C` and `BP_PlayerState_C`. On the
-reference save that is 3,209 actors and 7,370,871 bytes, of which the lightweight subsystem
-alone is 3.10 MB of foundations, walls and ramps that appear in **no object header at all**.
-They are handed on as `(extra_offset, extra_length)` and not decoded, and they are the only
-reason `lightweight_counts` and `structures` still need the vendored parser. Every other object
-in every save leaves exactly 4 or 8 trailing bytes.
+**Nothing the projection reads is left.** Seven classes still carry undecoded trailing bytes —
+`FGConveyorChainActor` and its `RepSizeMedium`/`Large`/`Huge` variants, `Build_PowerLine_C`, and
+once per save `BP_CircuitSubsystem_C` and `BP_PlayerState_C` — 88,066 of 675,432 actors in
+total. All are stepped over by declared length and no projection field is built from any of
+them. The conveyor chains' 76.6 MB is belt contents, which says whether a line is backed up
+right now; the planner derives throughput from recipes and clocks instead, and `factory_health`
+infers backpressure from machine state. Power lines are redundant with a `graph` that already
+agrees on every save. Every other object in every save leaves exactly 4 or 8 trailing bytes.
 
-**Is the own parser ready to be the default? No, and it is one gap away.** Everything a save is
-read *for* agrees: 17 of 19 projection keys leaf-identical on all 31 readable saves, the same 36
-files refused, every header field equal, `n_objects` equal everywhere, 1.28× faster end to end,
-and no input yet found — real or synthesized — on which it returns a plausible-but-different
-factory. What blocks it is that the two remaining keys come out **empty**, and empty is the
-dangerous kind of wrong here: `structures` is what `graph/structure.py` builds foundation slabs
-from and what `spatial/elevation.py` samples ground height with, so `factory_sites` and every
-terrain answer would return *nothing* instead of failing, and `lightweight_counts` is half of
-`WorldState.building_counts`, so "unlocked but never built" would start listing buildings the
-player has dozens of. `test_the_sidecar_still_defaults_to_the_vendored_parser` fails if the
-default moves before that is fixed.
+**Is the own parser ready to be the default? Yes on the evidence, and the decision is still the
+user's.** The acceptance test set out here is met: **19 of 19 projection keys leaf-identical on
+all 31 readable saves**, no key present under one parser and missing under the other, the same 36
+files refused for the same reasons, `n_objects` equal everywhere, 1.23× faster end to end
+(vendor 79.0 s, own 64.3 s of sidecar wall over the folder), and 899 tests passing under both
+engines. No input has been found — real, torn, fuzzed or synthesized — on which it returns a
+plausible-but-different factory.
 
-**To delete `sidecar/vendor/`:** decode those bytes; re-run the same whole-folder diff and get
-**19 of 19 keys on all 31 saves**, including all 224,530 structure instances; flip the default
-and the tests that pin it; re-diff *after* the flip, over the whole folder rather than a sample,
-because the same measurement is the acceptance test; and settle `sav_data/`'s licence
+`vendor` stays the default regardless, and `test_the_sidecar_still_defaults_to_the_vendored_parser`
+fails if that moves. **The flip buys nothing by itself:** the licence exposure comes from the
+library being in the repository, not from which branch of an `if` executes at runtime. The
+decision that matters is the deletion, and the flip belongs to it.
+
+**To delete `sidecar/vendor/`:** flip the default and the tests that pin it; re-diff *after* the
+flip, over the whole folder rather than a sample, because the same measurement is the acceptance
+test — and bank the vendored parser's projection for every save first, since after the deletion
+that comparison can never be run again; strip the last references outside `sidecar/vendor/`
+(`extract_save.py`'s switch, `tests/test_savparse_save.py`'s default pin, and prose in
+`README.md`, this file and `docs/savparse-notes.md`); and settle `sav_data/`'s licence
 separately, since it is build-time input to `tools/gen_*.py` and not on this path. The deletion
 itself is the user's call and nothing here should make it for them.
 
-Decoding those bytes also closes two things deliberately left open: the eight-class whitelist
-that would let an **actor's** trailer be length-checked the way a component's already is (see
-*Torn files, fuzzed*), and [§16](#16-parked-site-outlines-and-visualisation)'s foundation work,
-which today depends on the vendored parser's output for the one blob whose shape is already
-known.
+One thing decoding the remaining seven would still close: the eight-class whitelist that would
+let an **actor's** trailer be length-checked the way a component's already is (see *Torn files,
+fuzzed*).
 
 ## 13b. The object walk and the property serialiser
 

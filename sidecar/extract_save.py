@@ -43,9 +43,10 @@ sys.path.insert(0, str(_HERE))
 #: diffing the projection JSON. Two parsers reachable from one process boundary is the only
 #: way that diff is a measurement rather than an argument.
 #:
-#: The two agree on every projection field except `lightweight_counts` and `structures`,
-#: which come from an object's trailing class-specific bytes that savparse hands on
-#: undecoded. Anything that needs those two must run with "vendor" today.
+#: The two agree on **every** projection field, leaf by leaf, on all 31 saves the vendored
+#: parser can read -- including the 224,530 foundations and walls in `structures`, which live
+#: in an object's trailing class-specific bytes and were the last thing to be decoded. Either
+#: engine answers every tool correctly; "vendor" is the default only until it is deleted.
 SAVPARSE_ENV = "SATISFACTORY_SAVPARSE"
 VENDOR, OWN = "vendor", "own"
 ENGINE = (os.environ.get(SAVPARSE_ENV) or VENDOR).strip().lower()

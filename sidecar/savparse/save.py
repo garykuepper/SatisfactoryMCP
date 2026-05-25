@@ -33,15 +33,13 @@ as it is read, 1.72 s and ~136 MB to keep all 44,634. The projection makes exact
 so a streaming version of this would pay for itself -- recorded rather than done, because it
 would change the shape the trailing-bytes stage builds on.
 
-**What this does not do.** The trailing class-specific bytes after an object's property list
-are handed on as ``(extra_offset, extra_length)`` and left undecoded -- 3,209 actors on the
-reference save carry them, mostly conveyor chains, power lines and the lightweight-buildable
-subsystem's 3.1 MB. There is deliberately no ``actorSpecificInfo`` attribute here: the
-projection reads that name through ``getattr(obj, "actorSpecificInfo", None)``, so its
-absence is what makes ``lightweight_counts`` and ``structures`` come out empty rather than
-wrong. Those two fields are the only ones in the projection that still need the vendored
-parser, and inventing a half-decoded attribute would turn a visible gap into an invisible
-one.
+**What this does not do.** The trailing class-specific bytes are decoded for one class --
+``FGLightweightBuildableSubsystem``, which is where every foundation and wall lives, and
+which fills the projection's last two fields (see ``savparse.lightweight``). The other seven
+classes that carry them are still skipped by declared length: conveyor chains and their three
+RepSize variants, power lines, and the circuit and player-state subsystems. Nothing in the
+projection reads those, and ``actor_specific_info`` stays ``None`` for them rather than an
+empty list, so "not decoded" cannot be mistaken for "decoded, empty".
 """
 
 from __future__ import annotations
@@ -51,6 +49,7 @@ from dataclasses import dataclass, field
 
 from .chunks import decompress_body
 from .header import SaveInfo, read_info_bytes
+from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import ActorHeader, ComponentHeader, read_body
 from .properties import ParsedObject, read_object
 
@@ -125,6 +124,8 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
             obj = read_object(body, slot, actor=isinstance(header, ActorHeader))
             if obj.warnings:
                 warnings.extend(obj.warnings)
+            if getattr(header, "typePath", None) == LIGHTWEIGHT_SUBSYSTEM:
+                obj.actor_specific_info = read_lightweight(body, obj.extra_offset, obj.extra_length)
             objects.append(obj)
         levels.append(ParsedLevel(name=level.name, headers=level.headers, objects=objects))
 

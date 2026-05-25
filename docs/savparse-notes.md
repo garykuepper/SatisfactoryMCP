@@ -2,8 +2,8 @@
 
 The `.sav` format as derived, what is implemented against it, and every verification number
 with the measurement that produced it. Self-contained: a reader who has seen none of the
-conversation should be able to continue from this, and one thing does remain to be done —
-see *What is left*.
+conversation should be able to continue from this. The projection is complete; what remains
+undecoded is listed under *What is left*, and nothing reads it.
 
 **Every number in this document was re-measured against the tree as it now stands.** They
 were first taken while several agents were still editing `savparse/`, which makes them
@@ -22,13 +22,17 @@ was corrected rather than kept alongside.
 | chunk decompression | `savparse/chunks.py` (123) | done |
 | body, levels, object headers | `savparse/objects.py` (652) | done |
 | tagged property serialiser | `savparse/properties.py` (1,139) | done |
-| composition + the sidecar switch | `savparse/save.py` (149) | done |
-| an object's trailing class-specific bytes | — | **not done**, and the only gap |
+| composition + the sidecar switch | `savparse/save.py` (152) | done |
+| the lightweight buildables' trailing bytes | `savparse/lightweight.py` (185) | done |
+| the other seven classes' trailing bytes | — | skipped by declared length; nothing reads them |
 
-**91 tests** across six `tests/test_savparse_*.py` files, inside a suite of **877 passing, 1
+**113 tests** across seven `tests/test_savparse_*.py` files, inside a suite of **899 passing, 1
 skipped** — the same count with `SATISFACTORY_SAVPARSE=own` and with `=vendor`. They run
 against committed fixtures, so they pass with no game install and will survive the vendored
 library's deletion.
+
+**The projection is complete.** All **19** of 19 keys are leaf-identical on all 31 readable
+saves, including every one of the 224,530 structure instances. See *Verdict*.
 
 ## Why
 
@@ -52,12 +56,14 @@ Runtime, in `sidecar/extract_save.py`, is **three entry points**:
 | entry point | used for | status |
 |---|---|---|
 | `readSaveFileInfo(path)` | 9 header fields → projection `header` | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` | ✅ `savparse.read_full_save` — 17 of 19 projection fields exact; `lightweight_counts` and `structures` come out **empty**, because the trailing class-specific bytes (`actorSpecificInfo`) are not decoded |
+| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` | ✅ `savparse.read_full_save` — all 19 projection fields exact on all 31 readable saves |
 | `ParseError` | one `except` at the save boundary | ✅ `savparse.ParseError` |
 
 **All three are wired in**, behind `SATISFACTORY_SAVPARSE=own|vendor`, **defaulting to
-`vendor`**. Flipping the default is a decision for the user and blocked on the two fields
-above; until then the switch's job is to make the parity diff a measurement.
+`vendor`**. Nothing technical blocks the flip any more — it is a decision for the user, and it
+belongs to the deletion rather than preceding it, since the licence exposure is the library's
+presence and not which branch runs. Until then the switch's job is to make the parity diff a
+measurement.
 
 The adapter surface `extract_save.py` needs from a parsed save:
 
@@ -254,8 +260,8 @@ its component children; a component opens with nothing. Object version 60 then w
 byte before the property list (an object-reference migration flag, 0 everywhere). After the
 list's `"None"` terminator come trailing bytes: 4 or 8 on an ordinary object, and much more
 on **3,209** actors — 1,889 conveyor chains, 1,297 power lines, and the lightweight
-buildable subsystem with 3.1 MB. Those are handed on as `(extra_offset, extra_length)` and
-**not decoded**; they are what `lightweight_counts` and `structures` still need.
+buildable subsystem with 3.1 MB. All are handed on as `(extra_offset, extra_length)`; the
+subsystem's are decoded by `savparse/lightweight.py`, the rest are skipped by that length.
 
 **Two tag layouts**, keyed by the *object's* version, not the save's:
 
@@ -502,12 +508,13 @@ Two things in it are decisions rather than glue:
   what keeps a 44 MB body at a fifth of a second. Dropping it would leave the 3,209 actors
   with trailing data pointing at a freed buffer, and the failure would look like a decoding
   bug rather than a lifetime bug.
-* **There is deliberately no `actorSpecificInfo` attribute.** `_lightweight` and
-  `_structures` both read it through `getattr(obj, "actorSpecificInfo", None)`, so its
-  absence is what makes them return `{}` and `{"classes": [], "instances": []}` — a
-  *visible* gap. A partial decode there would turn an undercount into a silent one: a
-  foundation census reporting 40 slabs where 8,347 pieces are built reads exactly like a
-  real answer.
+* **`actorSpecificInfo` is `None` rather than empty when nothing decodes the class.**
+  `_lightweight` and `_structures` read it through `getattr(obj, "actorSpecificInfo", None)`.
+  It is now populated for `FGLightweightBuildableSubsystem` and `None` for the seven other
+  classes carrying trailing bytes — never `[]`, because an empty list is what a decoded blob
+  with nothing in it looks like, and "not decoded" must not be able to pass for that. A
+  partial decode would turn an undercount into a silent one: a foundation census reporting 40
+  slabs where 8,347 pieces are built reads exactly like a real answer.
 
 An unreadable *path* is left as `OSError`, not converted. A missing or locked file is not a
 save that cannot be parsed, and the sidecar reports the two differently.
@@ -522,6 +529,67 @@ server switches the parser for every save it reads.
 `savparse`'s `warnings` are printed to **stderr** and never added to the projection. They are
 worth seeing, but a projection field carrying them would make the two parsers differ for a
 reason that is not a disagreement.
+
+### The lightweight buildables (`savparse/lightweight.py`) — DONE
+
+Foundations, walls, ramps, catwalks and pillars are not actors. One
+`FGLightweightBuildableSubsystem` actor carries every one of them in the class-specific bytes
+trailing its empty property list — 3.10 MB and 8,347 pieces on the reference save, 224,530
+across the 31. This is the whole of `structures` and `lightweight_counts`.
+
+```
+int32   0                     the object's own trailer
+int32   2 or 4                version of what follows
+int32   classCount
+per class:
+    reference   the buildable class: empty level name, then the class path
+    int32       instanceCount
+    per instance — 162 fixed bytes, 157 at version 2, plus two reference paths:
+        4 x double   rotation quaternion
+        3 x double   position, world centimetres
+        3 x double   scale
+        reference    the paint swatch
+        reference x3 empty on all 224,530 instances
+        2 x 4 float  override colours, primary and secondary
+        reference    empty
+        uint8        0
+        reference    the recipe the piece was built from
+        reference    empty
+        int32        0
+        uint8        version 4 only
+        int32        version 4 only
+```
+
+**How this was derived, and what that leaves uncertain.** The class count and the first
+instance count were read off the front and matched against the oracle's census. The record
+length came from the *stride between repetitions of the recipe path*, which every instance
+carries: a constant 375 bytes across 4,616 consecutive foundations. Where the fields fall
+inside that stride came from a per-byte variability map over those 4,616 records — the two
+colour alphas are the only non-zero floats, which places both `FLinearColor`s exactly, and one
+`uint8` reads 6 on 33 records where the rest read 0, which places the trailing pair.
+
+What no measurement here can settle is how the **always-zero runs are grouped**. The 24 bytes
+after the swatch are read as three empty references; three int32 zeros would be byte-identical.
+References are the safer reading — a save that populates one still parses — but that is a
+reason to prefer it, not evidence for it. Only the swatch slot is ever populated: 224,357
+`SwatchDesc` paths across every save on disk, exactly one per instance, and not one
+`PatternDesc`, `MaterialDesc` or `SkinDesc`.
+
+**Two versions, and the trap in them.** saveVersion 52 writes blob version **2**, saveVersion
+60 writes version **4**, and the difference is exactly the trailing `(uint8, int32)` — 370
+bytes per foundation against 375. Version 2 is **25 of the 31 readable saves**, the common
+case rather than the legacy one. Refusing an unknown version rather than reading it as the
+nearest one is what caught this: the first pass knew only version 4 and turned all 25 saves
+into refusals, which the whole-folder diff reported as 25 files where the two parsers disagreed
+about readability. Had it guessed instead, it would have read a 370-byte record as 375 and
+desynchronised 4,000 records later.
+
+**Verification.** The walk must consume the blob to its last byte, and does: 3,103,373 of
+3,103,373 across 18 classes on the reference save, 2,605,860 of 2,605,860 across 15 on a
+version-2 save. Every class path is length-prefixed, so a record read one byte short lands the
+next class read on a quaternion — checked before the lengths are consumed, because a
+quaternion's second int32 is `0x80000000`, a negative length, and a four-gigabyte UTF-16 read
+would otherwise report the buffer size instead of the class the walk was looking for.
 
 ## Verification strategy — keep doing this
 
@@ -714,12 +782,10 @@ reason that is not a disagreement.
   10 × 14, 9 × 9, 8 × 12) and one, `ServerManager_V2.sav`, is not a save at all. Not a
   regression, and nothing reads them. The readable 31 split **25 at saveVersion 52 and 6 at
   60**, all `saveHeaderType` 14.
-* **The own parser is not the default and should not be until `lightweight_counts` and
-  `structures` are real.** `structures` is what `graph/structure.py` builds foundation slabs
-  from and what `spatial/elevation.py` samples ground height with, so `factory_sites` and
-  every terrain answer would come out empty rather than fail; `lightweight_counts` is half of
-  `WorldState.building_counts`, so "unlocked but never built" would start listing things the
-  player has built dozens of. There is a test that fails if the default moves.
+* **The own parser is not the default**, though the projection now agrees on all 19 keys.
+  Flipping it changes nothing about the licence, which is what the exercise is for, so the
+  flip belongs to the deletion rather than preceding it. There is a test that fails if the
+  default moves.
 * `session_visibility` and the two unnamed int32s are skipped, not understood. The fields
   either side verify, which is what makes skipping safe.
 * The 6-byte block at body offset 20 is unconfirmed.
@@ -734,9 +800,9 @@ reason that is not a disagreement.
 * The extra int32 after a version-60 payload is **always 0**, so whether it is a trailing
   field or the high half of an int64 size cannot be settled from data. It is read as a
   trailing int32 and required to be 0, which fails loudly the day that changes.
-* The **trailing bytes after a property list** are not decoded — 4 or 8 on an ordinary object
-  and much more on 3,209 actors. `lightweight_counts` and `structures` are the only two
-  projection fields that need them, and they are the only two that still differ.
+* The **trailing bytes after a property list** are decoded for one class of the eight that
+  carry them — the lightweight buildable subsystem, which is every foundation and wall in the
+  save. The other seven are skipped by declared length and no projection field reads them.
 * **An actor's trailing bytes are not length-checked, so an actor's property list terminating
   early is still silent.** The component half of that check is exact — 562,556 components leave
   exactly 8 bytes and 5,300 leave 4, over all 567,856 of them — and `>= 4` holds for every
@@ -805,20 +871,20 @@ reason that is not a disagreement.
 
 ## What is left
 
-**One thing: the trailing class-specific bytes after an object's property list** —
-`actorSpecificInfo` in the vendored parser's naming. They are handed on as
-`(extra_offset, extra_length)` on `ParsedObject` and not decoded.
+**Nothing the projection reads.** What remains undecoded is the trailing class-specific bytes
+of **seven** classes; the eighth, the lightweight subsystem, is done. They are handed on as
+`(extra_offset, extra_length)` on `ParsedObject`, stepped over by declared length, and no
+projection field is built from any of them.
 
-Who carries them, re-measured over all 31 saves — **88,066 of 675,432 actors, in exactly eight
-classes**, and no others (an earlier note said "of 588,082", which was the wrong denominator;
-the 31 saves hold 675,432 actors and 567,856 components):
+Who carries them, measured over all 31 saves — **88,066 of 675,432 actors, in exactly eight
+classes**, and no others (the 31 saves hold 675,432 actors and 567,856 components):
 
 | class | actors, all 31 saves | trailing bytes, all 31 saves |
 |---|---|---|
 | `FGConveyorChainActor` | 50,660 | 76.6 MB |
 | `Build_PowerLine_C` | 36,773 | 8.0 MB |
 | `FGConveyorChainActor_RepSizeMedium` / `Large` / `Huge` | 261 / 155 / 124 | 6.9 / 9.4 / 14.1 MB |
-| `FGLightweightBuildableSubsystem` | 31 — one per save | 81.9 MB |
+| `FGLightweightBuildableSubsystem` — **decoded** | 31 — one per save | 81.9 MB |
 | `BP_CircuitSubsystem_C` | 31 — one per save | 4,553 B |
 | `BP_PlayerState_C` | 31 — one per save | 558 B |
 
@@ -827,44 +893,67 @@ subsystem alone 3.10 MB, 1,889 conveyor chains 2.75 MB, their 20 rep-size varian
 1,297 power lines 0.28 MB, and 131 bytes between the circuit subsystem and the player state.
 Everything else — 44,634 objects less those 3,209 — leaves exactly 4 or 8 bytes.
 
-What it is worth: the projection's `lightweight_counts` and `structures`, which today come out
-empty under this parser and account for **224,530 structure instances in 488 classes** across
-the 31 saves that the vendored parser reports. `DESIGN.md` §16 already documents the shape of
-the subsystem's blob — `[count, [classPath, [instance, …]], …]` with a rotation quaternion at
-`[0]` and an exact world position at `[1]` — from the vendored parser's *output*, which is a
-legitimate oracle. Decoding it also closes two things left open here on purpose: the
-eight-class whitelist that would let an **actor's** trailer be length-checked the way a
-component's already is, and the last reason the `own` engine cannot be the default.
+The 81.9 MB in that table was the whole gap, and it is closed: **224,530 structure instances
+in 488 classes** now come out of `savparse/lightweight.py` rather than the vendored parser.
+
+What the remaining seven would be worth, if anyone wants them:
+
+* **Conveyor chains**, by far the biggest at 76.6 MB plus 30.4 MB in the RepSize variants, hold
+  what is physically *on* the belts. The projection derives throughput from recipes and machine
+  clocks instead, which is the number a planner wants; belt contents would only say whether a
+  line is backed up right now. `factory_health` infers that from machine state already.
+* **Power lines**, 8.0 MB, presumably hold their two endpoints. The power graph is already
+  built from properties and `graph` agrees with the vendored parser on every save, so this is
+  redundant rather than missing.
+* The **circuit** and **player-state** subsystems are 4.5 KB and 558 B across all 31 saves.
+
+Decoding them would also close one thing left open on purpose: with all eight classes known, an
+**actor's** trailer could be length-checked the way a component's already is, instead of being
+accepted as whatever the object declared.
 
 ## Verdict
 
-**Is the own parser ready to become the default? No, and it is one gap away.** Everything a
-save is read *for* agrees: 17 of the 19 projection keys are leaf-identical on all 31 readable
-saves, the refusal set is the same 36 files, every header field agrees, `n_objects` agrees on
-every save, and it is 1.28× faster end to end. But `lightweight_counts` and `structures` come
-out **empty**, and empty is not a harmless kind of wrong here — `structures` is what
-`graph/structure.py` builds foundation slabs from and what `spatial/elevation.py` samples
-ground height with, so `factory_sites` and every terrain answer would return *nothing* instead
-of failing, and `lightweight_counts` is half of `WorldState.building_counts`, so "unlocked but
-never built" would start listing buildings the player has dozens of. `vendor` stays the
-default, and `test_the_sidecar_still_defaults_to_the_vendored_parser` fails if that moves.
+**Is the own parser ready to become the default? Yes — on the evidence, and the decision is
+still the user's.** The acceptance test this document set is met: **19 of 19 projection keys
+leaf-identical on all 31 readable saves**, no key present under one parser and absent under the
+other, the same 36 files refused with the same reasons, `n_objects` equal everywhere, and 1.23×
+faster end to end over the folder (vendor 79.0 s, own 64.3 s of sidecar wall). 899 tests pass
+under both engines. The one thing that had blocked it — `lightweight_counts` and `structures`
+coming out empty, which `graph/structure.py` and `spatial/elevation.py` would have turned into
+`factory_sites` returning nothing rather than failing — is gone.
+
+`vendor` remains the default anyway, and `test_the_sidecar_still_defaults_to_the_vendored_parser`
+still fails if that moves. **Flipping it buys nothing on its own:** the licence exposure comes
+from the library being *in the repository*, not from which branch of an `if` runs, so the
+decision that matters is the deletion. The flip is one line, is reversible by an environment
+variable, and should happen as part of that deletion rather than before it.
 
 **What would have to be true to delete `sidecar/vendor/`:**
 
-1. The trailing bytes are decoded, and the same whole-folder diff reads **19 of 19 keys
-   identical on all 31 saves** — including all 224,530 structure instances.
+1. ~~The trailing bytes are decoded and the whole-folder diff reads 19 of 19 keys.~~ Done.
 2. `SATISFACTORY_SAVPARSE=own` becomes the default, and the tests that pin the default flip
    with it.
 3. The projection JSON is re-diffed **after** the flip, over the whole folder, not sampled —
-   the same measurement is the acceptance test.
+   the same measurement is the acceptance test. Note that after the deletion this diff can no
+   longer be run at all, so it is worth banking a copy of the vendored parser's output for
+   every save first; a committed projection per save would make the comparison repeatable
+   forever, at roughly 130 KB each.
 4. Someone decides the licence question separately for `sav_data/`, which is build-time input
    to `tools/gen_*.py` and is not on this path.
-5. The deletion is the user's call. Nothing here should make it for them.
+5. Every reference to the library outside `sidecar/vendor/` is removed or reworded:
+   `sidecar/extract_save.py`'s two-engine switch, `tests/test_savparse_save.py`'s default pin,
+   and prose in `README.md`, `DESIGN.md` and this file.
+6. The deletion is the user's call. Nothing here should make it for them.
 
 **What is still unknown about the format**, distinct from what is merely not decoded:
 
-* The **contents of those trailing bytes** for all eight classes. Only the lightweight
-  subsystem's shape is known, and that from the oracle's output rather than from the bytes.
+* The **contents of those trailing bytes** for the seven classes still skipped. The eighth,
+  the lightweight subsystem, is decoded from the bytes — but three things inside it stay
+  unknown even so: how the always-zero runs are grouped (three empty references or three
+  int32s is undecidable from any save on this disk), what the `(uint8, int32)` pair means that
+  reads `6, 0` on 33 of the reference save's 4,617 foundations and `0, -1` on the rest, and
+  what the second override colour is for, since every instance measured has both set to
+  `[0,0,0,1]`.
 * Fields read and discarded because their meaning cannot be derived from data that never
   varies: `session_visibility` and the header's two unnamed int32s, the archive header's
   6-byte block at body offset 20, per-cell grid checksums, `EObjectFlags` beyond the one bit
