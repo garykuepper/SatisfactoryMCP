@@ -11,7 +11,16 @@ understand is skipped by length rather than guessed at, so an unknown property c
 property and not the save.
 """
 
+from .chunks import CHUNK_TAG, decompress_body
 from .header import PACKAGE_FILE_TAG, SaveInfo, read_info, read_info_bytes
 from .reader import Reader
 
-__all__ = ["PACKAGE_FILE_TAG", "Reader", "SaveInfo", "read_info", "read_info_bytes"]
+__all__ = [
+    "CHUNK_TAG",
+    "PACKAGE_FILE_TAG",
+    "Reader",
+    "SaveInfo",
+    "decompress_body",
+    "read_info",
+    "read_info_bytes",
+]

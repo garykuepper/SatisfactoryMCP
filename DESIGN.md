@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 796 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 804 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -3216,6 +3216,40 @@ field is caught there and the error names the versions it was reading.
 
 Tests run against a committed 2 KiB fixture, so they survive the vendored library's removal
 and pass on a machine with no game install.
+
+### The compressed body, done
+
+Everything after the header is a run of independently zlib-compressed blocks, each with a
+**49-byte preamble**: tag, max chunk size, a one-byte compressor id, then the compressed
+and uncompressed sizes **written twice, identically**. The duplication is real on every
+chunk of every save checked, and both copies are read and compared — it is a free
+integrity check on a format that has no other one.
+
+Verified on all 31 readable saves: **1,194 MB of body inflated in 1.3 s**, none failed. The
+reference save is 2.9 MB on disk and 44.4 MB inflated, in 0.05 s.
+
+The tag is checked **per chunk**, not once. This project reads autosaves, which are
+rewritten every few minutes, so a file torn mid-write is routine — it now fails on the
+chunk where the tear is, with the offset, instead of inflating garbage into the object walk
+and failing somewhere unrelated.
+
+### Opportunities this turned up
+
+* **Header reads need no subprocess and no decompression.** `read_info` takes a 64 KiB
+  prefix. Save discovery and world grouping — which today spawn the sidecar — could run
+  in-process.
+* **`saveDataHash` is in the header**: two int64s, read without inflating anything. Cache
+  validity currently keys on `mtime_ns`, so a rewritten-but-identical autosave invalidates.
+  A content hash would not.
+* **Decompression is not the cost.** 44 MB in 0.05 s; whatever the sidecar spends, it
+  spends in the object walk.
+
+### What is left
+
+The body preamble carries a version block, a UE custom-version GUID array, and then a large
+world-partition table — about 774 KB of level names before the first `Persistent_Level` on
+the reference save. After that come the object headers and the property serialiser, which
+is the bulk of the remaining work and the part where the bugs live.
 
 ## 14. Open questions
 
