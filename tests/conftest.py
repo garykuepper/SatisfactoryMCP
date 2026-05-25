@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,10 @@ from satisfactory_mcp.docs.normalize import normalize
 from satisfactory_mcp.save.state import WorldState
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# The sidecar is a subprocess, not a package, so it is not importable by default. Its
+# own save parser is ordinary code and wants ordinary tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sidecar"))
 
 
 def _docs_available() -> bool:

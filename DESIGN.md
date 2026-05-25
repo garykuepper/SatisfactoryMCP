@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 786 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 796 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -3172,6 +3172,50 @@ against.
 **Still genuinely unknown**, and left alone: terrain (there is no heightmap in any input,
 which is why layout draws no coordinates and trunk runs are lower bounds), water-volume
 capacity, and belt/pipe length without a route.
+
+## 13a. Replacing the vendored parser
+
+The save parser is vendored GPL-3.0, which reaches the whole project. Replacing it starts
+with knowing what is actually used, and the answer is small: **three entry points**.
+
+| what | used by | replaces |
+|---|---|---|
+| `readSaveFileInfo(path)` | `header_info` — 9 fields | ✅ `savparse.read_info` |
+| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties | pending |
+| `ParseError` | one `except` | pending |
+
+Its 6,800 lines of `sav_data/` tables are **build-time only** — `tools/gen_*.py` uses them to
+produce committed artifacts. Different question, different answer.
+
+### What "cleanroom" can and cannot mean here
+
+A strict cleanroom needs an implementer who has never seen the original, and the library is
+vendored in this repo. What is done instead is a reimplementation **of the file format** —
+a fact about what the game writes, not a creative work — verified black-box: same file in,
+same values out. That is the ordinary interoperability route and it is written down here
+rather than implied, because the distinction matters and is not mine to certify.
+
+### The header, done
+
+Field order was derived by walking the bytes and checking values against what the game
+shows. It is a linear sequence with no offsets to seek by, so `save_header_type` is the
+only thing that would announce a change.
+
+The load-bearing detail is the string encoding: an int32 length then bytes, where **the
+sign of the length is the encoding** — positive is one byte per character, negative is
+UTF-16LE at two — and the count includes the terminator either way.
+
+**Verification, across 67 saves on disk:** exact agreement on all **31** the old parser can
+read, and failure on exactly the same **36** — pre-1.0 saves (`saveVersion` 52 and older)
+that it also refuses. Same answers, same limits.
+
+The header ends by asserting Unreal's `PACKAGE_FILE_TAG` (`0x9E2A83C1`) is the next four
+bytes. Every field is positional, so one wrong width silently rereads the rest and returns
+plausible nonsense; landing on the tag is the proof it did not. A patch that inserts a
+field is caught there and the error names the versions it was reading.
+
+Tests run against a committed 2 KiB fixture, so they survive the vendored library's removal
+and pass on a machine with no game install.
 
 ## 14. Open questions
 
