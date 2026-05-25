@@ -26,11 +26,13 @@ from .objects import (
 from .properties import ObjectReference, ParsedObject, TypeName, read_object
 from .reader import Reader
 from .save import ParsedLevel, ParsedSave, read_full_save, read_full_save_bytes
+from .trailers import TRAILER_READERS, read_trailer
 
 __all__ = [
     "CHUNK_TAG",
     "LIGHTWEIGHT_SUBSYSTEM",
     "PACKAGE_FILE_TAG",
+    "TRAILER_READERS",
     "ActorHeader",
     "ComponentHeader",
     "Level",
@@ -52,4 +54,5 @@ __all__ = [
     "read_info_bytes",
     "read_lightweight",
     "read_object",
+    "read_trailer",
 ]

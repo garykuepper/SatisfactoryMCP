@@ -3,7 +3,7 @@
 An MCP server that helps plan Satisfactory factories: recipe/resource lookup, save-file analysis of
 progress and unlocks, spatial resource queries, and LP/MILP factory optimization.
 
-**Status:** implemented. 41 tools, 4 resources, 3 prompts, 899 tests passing. See README.md for usage.
+**Status:** implemented. 41 tools, 4 resources, 3 prompts, 918 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
 **Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
 
@@ -3381,20 +3381,35 @@ the argument for refusing an unknown version everywhere in this parser.
 
 ### What is left, and the verdict
 
-**Nothing the projection reads is left.** Seven classes still carry undecoded trailing bytes —
-`FGConveyorChainActor` and its `RepSizeMedium`/`Large`/`Huge` variants, `Build_PowerLine_C`, and
-once per save `BP_CircuitSubsystem_C` and `BP_PlayerState_C` — 88,066 of 675,432 actors in
-total. All are stepped over by declared length and no projection field is built from any of
-them. The conveyor chains' 76.6 MB is belt contents, which says whether a line is backed up
-right now; the planner derives throughput from recipes and clocks instead, and `factory_health`
-infers backpressure from machine state. Power lines are redundant with a `graph` that already
-agrees on every save. Every other object in every save leaves exactly 4 or 8 trailing bytes.
+**Nothing is left.** All eight classes that write trailing bytes are decoded —
+`savparse/lightweight.py` for the foundations, `savparse/trailers.py` (192 lines) for the conveyor
+chains and their three `RepSize` variants, power lines, and the circuit and player-state
+subsystems. Across the 31 saves that is **88,097 records, every one consuming its declared bytes
+exactly**: 224,530 foundations, 688,282 items riding on belts, 225,686 belt spline points, 36,773
+power lines, and one circuit list and account id per save.
+
+Decoding is **lazy**, which is measured rather than stylistic: reading every chain costs 0.46 s on
+top of a 2.10 s parse — 22% — for data no projection field touches, so `actorSpecificInfo` decodes
+on first access and caches. `_attach_trailer` runs for actors only; calling it on all 1.24 M
+objects cost another 5%.
+
+Knowing all eight closed the hole this section used to end on: **an actor's trailer is now
+length-checked** the way a component's always was. An actor that is neither one of the eight nor
+leaving a plain 4 or 8 bytes warns with its class and byte count — which is what a property list
+that stopped early looks like, and it was previously silent. Measured before it was written: over
+the 31 saves, 500,350 actors leave 4 bytes, 87,016 leave 8, 88,066 are one of the eight classes,
+and nothing is left over.
+
+What the new data is worth: not throughput, which the planner derives from recipes and clocks, but
+**where each item physically sits** — a backed-up line becomes directly visible instead of inferred
+from machine state as `factory_health` does now — and **the actual routed path of every belt**,
+225,686 spline points that nothing in this project has had before.
 
 **Is the own parser ready to be the default? Yes on the evidence, and the decision is still the
 user's.** The acceptance test set out here is met: **19 of 19 projection keys leaf-identical on
 all 31 readable saves**, no key present under one parser and missing under the other, the same 36
-files refused for the same reasons, `n_objects` equal everywhere, 1.23× faster end to end
-(vendor 79.0 s, own 64.3 s of sidecar wall over the folder), and 899 tests passing under both
+files refused for the same reasons, `n_objects` equal everywhere, 1.16× faster end to end
+(vendor 78.2 s, own 67.5 s of sidecar wall over the folder), and 918 tests passing under both
 engines. No input has been found — real, torn, fuzzed or synthesized — on which it returns a
 plausible-but-different factory.
 
@@ -3412,9 +3427,9 @@ that comparison can never be run again; strip the last references outside `sidec
 separately, since it is build-time input to `tools/gen_*.py` and not on this path. The deletion
 itself is the user's call and nothing here should make it for them.
 
-One thing decoding the remaining seven would still close: the eight-class whitelist that would
-let an **actor's** trailer be length-checked the way a component's already is (see *Torn files,
-fuzzed*).
+What stays genuinely unknown is in `docs/savparse-notes.md`: individual *fields* inside records
+that are otherwise fully consumed, chiefly two of the four ints after a chain's segments and one
+float per segment that is zero on 97% of chains.
 
 ## 13b. The object walk and the property serialiser
 

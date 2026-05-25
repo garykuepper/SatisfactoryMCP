@@ -178,6 +178,53 @@ def test_the_inflated_body_is_retained_so_undecoded_bytes_stay_addressable(save,
             assert len(chunk) == obj.extra_length
 
 
+def test_an_actor_with_bytes_nothing_accounts_for_is_reported(save):
+    """The check that knowing all eight trailing-byte classes buys.
+
+    A component's trailer has always been length-checked; an actor's could not be, because an
+    actor of one of those eight classes legitimately leaves megabytes. Now that every one has a
+    reader, an actor that is neither one of them nor leaving a plain 4 or 8 bytes gets a warning
+    naming the class and the count -- which is what a property list that stopped early looks
+    like, and it used to be entirely silent.
+
+    Measured first: over all 31 readable saves, 500,350 actors leave 4 bytes and 87,016 leave 8,
+    88,066 are one of the eight classes, and **nothing** is left over. So this fires on no save
+    on this disk, which is why the fixture has to be doctored to test that it fires at all.
+    """
+    from savparse.objects import ActorHeader
+    from savparse.properties import ParsedObject
+    from savparse.save import PLAIN_TRAILER, _attach_trailer
+
+    assert not [w for w in save.warnings if "trailing bytes" in w[1]], (
+        "no real save on this disk has an unaccounted-for actor trailer"
+    )
+
+    header = ActorHeader(
+        type_path="/Game/Mods/Whatever/Build_Mystery.Build_Mystery_C",
+        root_object="Persistent_Level",
+        instance_name="Persistent_Level:PersistentLevel.Build_Mystery_C_1",
+        object_flags=0,
+        need_transform=0,
+        rotation=(0.0, 0.0, 0.0, 1.0),
+        position=(0.0, 0.0, 0.0),
+        scale=(1.0, 1.0, 1.0),
+        was_placed_in_level=0,
+    )
+    warnings: list[tuple[int, str]] = []
+    obj = ParsedObject(version=60, extra_offset=1234, extra_length=9_001)
+    _attach_trailer(b"", header, obj, warnings)
+    assert obj.decode_trailer is None, "an unknown class gets no decoder"
+    assert len(warnings) == 1
+    at, what = warnings[0]
+    assert at == 1234, "the offset is what makes it findable in a 44 MB body"
+    assert "Build_Mystery_C left 9001 trailing bytes" in what
+
+    for length in PLAIN_TRAILER:
+        quiet: list[tuple[int, str]] = []
+        _attach_trailer(b"", header, ParsedObject(version=60, extra_length=length), quiet)
+        assert quiet == [], f"{length} bytes is what an ordinary actor leaves"
+
+
 def test_an_undecoded_class_reads_as_None_and_not_as_empty(save):
     """A class whose trailing bytes nothing decodes must be distinguishable from one that
     was decoded and held nothing.

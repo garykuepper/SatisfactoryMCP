@@ -2,8 +2,8 @@
 
 The `.sav` format as derived, what is implemented against it, and every verification number
 with the measurement that produced it. Self-contained: a reader who has seen none of the
-conversation should be able to continue from this. The projection is complete; what remains
-undecoded is listed under *What is left*, and nothing reads it.
+conversation should be able to continue from this. Every class the format writes is decoded;
+what is *unexplained* rather than unread is listed at the end of the verdict.
 
 **Every number in this document was re-measured against the tree as it now stands.** They
 were first taken while several agents were still editing `savparse/`, which makes them
@@ -24,9 +24,9 @@ was corrected rather than kept alongside.
 | tagged property serialiser | `savparse/properties.py` (1,139) | done |
 | composition + the sidecar switch | `savparse/save.py` (152) | done |
 | the lightweight buildables' trailing bytes | `savparse/lightweight.py` (185) | done |
-| the other seven classes' trailing bytes | — | skipped by declared length; nothing reads them |
+| the other seven classes' trailing bytes | `savparse/trailers.py` (192) | done |
 
-**113 tests** across seven `tests/test_savparse_*.py` files, inside a suite of **899 passing, 1
+**132 tests** across eight `tests/test_savparse_*.py` files, inside a suite of **918 passing, 1
 skipped** — the same count with `SATISFACTORY_SAVPARSE=own` and with `=vendor`. They run
 against committed fixtures, so they pass with no game install and will survive the vendored
 library's deletion.
@@ -800,24 +800,21 @@ would otherwise report the buffer size instead of the class the walk was looking
 * The extra int32 after a version-60 payload is **always 0**, so whether it is a trailing
   field or the high half of an int64 size cannot be settled from data. It is read as a
   trailing int32 and required to be 0, which fails loudly the day that changes.
-* The **trailing bytes after a property list** are decoded for one class of the eight that
-  carry them — the lightweight buildable subsystem, which is every foundation and wall in the
-  save. The other seven are skipped by declared length and no projection field reads them.
-* **An actor's trailing bytes are not length-checked, so an actor's property list terminating
-  early is still silent.** The component half of that check is exact — 562,556 components leave
-  exactly 8 bytes and 5,300 leave 4, over all 567,856 of them — and `>= 4` holds for every
-  object of every save, but an actor may legitimately carry any amount:
-  88,066 of 675,432 do, in exactly **eight classes** — `FGConveyorChainActor` and its
-  `RepSizeMedium`/`Large`/`Huge` variants, `Build_PowerLine_C`, and once per save each
-  `FGLightweightBuildableSubsystem`, `BP_CircuitSubsystem_C` and `BP_PlayerState_C`. Bounding
-  it means whitelisting those eight names, and **that whitelist belongs to whoever decodes
-  those bytes**, not to a guard written before them: refusing a whole save because a patch
-  taught a ninth class to carry data would be a worse failure than the one being prevented.
-  Measured exposure: injecting the `"None"` terminator over a property name silently truncates
-  3,968 of 3,968 actors and 0 of 104 components. It is defence in depth rather than urgent —
-  every byte involved sits behind a per-chunk adler32, so no torn or bit-rotted file can
-  produce it, only a parser misread or a deliberate forgery. `_TRAILER_SIZES` in
-  `properties.py` is where to extend the check.
+* The **trailing bytes after a property list** are decoded for all eight classes that carry
+  them — `savparse/lightweight.py` for the foundations, `savparse/trailers.py` for the rest —
+  and every one of the 88,097 records consumes its declared length exactly.
+* **An actor's trailing bytes are now length-checked**, which closed the last silent
+  truncation. The component half was always exact — 562,556 components leave exactly 8 bytes
+  and 5,300 leave 4, over all 567,856 — but an actor could legitimately carry any amount, so
+  nothing bounded it. With every trailing-byte class known the bound is: one of the eight, or
+  a plain 4 or 8 bytes. Measured before it was written — 500,350 actors leave 4, 87,016 leave
+  8, 88,066 are one of the eight, nothing else exists on this disk. It **warns** rather than
+  refuses, because a patch teaching a ninth class to carry data would otherwise cost the whole
+  save, which is a worse failure than the one being prevented. Measured exposure before the
+  check: injecting the `"None"` terminator over a property name silently truncated 3,968 of
+  3,968 actors and 0 of 104 components. Still defence in depth rather than urgent — every byte
+  involved sits behind a per-chunk adler32, so only a parser misread or a deliberate forgery
+  can produce it.
 * An object payload's **version-60 leading byte** is read and discarded. It is 0 on every
   object of every save, so what it means is a guess and is not made.
 * **`Int8Property` yields raw bytes** and **`BoolProperty` yields the raw flags byte** rather
@@ -871,53 +868,61 @@ would otherwise report the buffer size instead of the class the walk was looking
 
 ## What is left
 
-**Nothing the projection reads.** What remains undecoded is the trailing class-specific bytes
-of **seven** classes; the eighth, the lightweight subsystem, is done. They are handed on as
-`(extra_offset, extra_length)` on `ParsedObject`, stepped over by declared length, and no
-projection field is built from any of them.
+**Nothing.** Every class that writes trailing bytes is decoded, and the projection needs none of
+them beyond the foundations. What is *unexplained* rather than unread is listed at the end of the
+verdict below.
 
 Who carries them, measured over all 31 saves — **88,066 of 675,432 actors, in exactly eight
 classes**, and no others (the 31 saves hold 675,432 actors and 567,856 components):
 
 | class | actors, all 31 saves | trailing bytes, all 31 saves |
 |---|---|---|
-| `FGConveyorChainActor` | 50,660 | 76.6 MB |
-| `Build_PowerLine_C` | 36,773 | 8.0 MB |
-| `FGConveyorChainActor_RepSizeMedium` / `Large` / `Huge` | 261 / 155 / 124 | 6.9 / 9.4 / 14.1 MB |
-| `FGLightweightBuildableSubsystem` — **decoded** | 31 — one per save | 81.9 MB |
-| `BP_CircuitSubsystem_C` | 31 — one per save | 4,553 B |
-| `BP_PlayerState_C` | 31 — one per save | 558 B |
+| class | actors | trailing bytes | what it holds |
+|---|---|---|---|
+| `FGConveyorChainActor` | 50,660 | 76.6 MB | belts, splines, items |
+| `Build_PowerLine_C` | 36,773 | 8.0 MB | two connections |
+| `FGConveyorChainActor_RepSizeMedium` / `Large` / `Huge` | 261 / 155 / 124 | 6.9 / 9.4 / 14.1 MB | the same record |
+| `FGLightweightBuildableSubsystem` | 31 — one per save | 81.9 MB | every foundation and wall |
+| `BP_CircuitSubsystem_C` | 31 — one per save | 4,553 B | every power circuit |
+| `BP_PlayerState_C` | 31 — one per save | 558 B | a 64-bit account id |
 
 On the reference save that is **3,209 actors and 7,370,871 bytes**: the lightweight buildable
 subsystem alone 3.10 MB, 1,889 conveyor chains 2.75 MB, their 20 rep-size variants 1.24 MB,
 1,297 power lines 0.28 MB, and 131 bytes between the circuit subsystem and the player state.
 Everything else — 44,634 objects less those 3,209 — leaves exactly 4 or 8 bytes.
 
-The 81.9 MB in that table was the whole gap, and it is closed: **224,530 structure instances
-in 488 classes** now come out of `savparse/lightweight.py` rather than the vendored parser.
+`savparse/lightweight.py` reads the subsystem; `savparse/trailers.py` reads the other seven.
+Across all 31 saves that is **224,530 foundations, 688,282 items riding on belts, 225,686 spline
+points, 36,773 power lines** and one circuit list and account id per save — **88,097 records, every
+one consuming its declared bytes exactly**, at both save versions.
 
-What the remaining seven would be worth, if anyone wants them:
+**Decoding is lazy, and that is measured.** Reading every chain costs 0.46 s on top of a 2.10 s
+parse — 22% — for data no projection field touches, so `ParsedObject.actorSpecificInfo` decodes on
+first access and caches. A malformed trailer therefore raises inside the caller rather than at the
+save boundary, which is safe because the sidecar's `except ParseError` wraps projection building
+too. `_attach_trailer` is also called for actors only: running it on all 1.24 M objects, components
+included, cost 5% of the parse for nothing.
 
-* **Conveyor chains**, by far the biggest at 76.6 MB plus 30.4 MB in the RepSize variants, hold
-  what is physically *on* the belts. The projection derives throughput from recipes and machine
-  clocks instead, which is the number a planner wants; belt contents would only say whether a
-  line is backed up right now. `factory_health` infers that from machine state already.
-* **Power lines**, 8.0 MB, presumably hold their two endpoints. The power graph is already
-  built from properties and `graph` agrees with the vendored parser on every save, so this is
-  redundant rather than missing.
-* The **circuit** and **player-state** subsystems are 4.5 KB and 558 B across all 31 saves.
+**What knowing all eight bought.** An **actor's** trailer is now length-checked the way a
+component's always was. Before, an actor could leave any number of bytes and nothing noticed —
+which is exactly what a property list that stopped early looks like. Now an actor that is neither
+one of the eight nor leaving a plain 4 or 8 bytes produces a warning naming the class and the
+count. Measured first, so it is a check and not a guess: over the 31 saves, 500,350 actors leave 4
+bytes, 87,016 leave 8, 88,066 are one of the eight classes, and **nothing at all is left over**.
 
-Decoding them would also close one thing left open on purpose: with all eight classes known, an
-**actor's** trailer could be length-checked the way a component's already is, instead of being
-accepted as whatever the object declared.
+**What the belt contents are worth.** Not throughput — the planner derives that from recipes and
+clocks, which is the number worth planning against. What a chain does say is where each item
+physically sits, so a backed-up line is visible directly rather than inferred from machine state
+the way `factory_health` does it now. The spline points are the other find: 225,686 of them are
+the actual routed path of every belt in the world, which nothing in this project has had before.
 
 ## Verdict
 
 **Is the own parser ready to become the default? Yes — on the evidence, and the decision is
 still the user's.** The acceptance test this document set is met: **19 of 19 projection keys
 leaf-identical on all 31 readable saves**, no key present under one parser and absent under the
-other, the same 36 files refused with the same reasons, `n_objects` equal everywhere, and 1.23×
-faster end to end over the folder (vendor 79.0 s, own 64.3 s of sidecar wall). 899 tests pass
+other, the same 36 files refused with the same reasons, `n_objects` equal everywhere, and 1.16×
+faster end to end over the folder (vendor 78.2 s, own 67.5 s of sidecar wall). 918 tests pass
 under both engines. The one thing that had blocked it — `lightweight_counts` and `structures`
 coming out empty, which `graph/structure.py` and `spatial/elevation.py` would have turned into
 `factory_sites` returning nothing rather than failing — is gone.
@@ -947,9 +952,11 @@ variable, and should happen as part of that deletion rather than before it.
 
 **What is still unknown about the format**, distinct from what is merely not decoded:
 
-* The **contents of those trailing bytes** for the seven classes still skipped. The eighth,
-  the lightweight subsystem, is decoded from the bytes — but three things inside it stay
-  unknown even so: how the always-zero runs are grouped (three empty references or three
+* Fields **inside** the trailing bytes, now that all eight classes are read. In a conveyor
+  chain: one float per segment that is 0 on 1,844 of 1,909 chains, and two of the four ints
+  after the segments. Why item offsets exceed the chain's own length on 1,089 of 1,909 chains.
+  In the player state, the leading `uint8` of 241 and the id type of 6. In the lightweight
+  subsystem, three things: how the always-zero runs are grouped (three empty references or three
   int32s is undecidable from any save on this disk), what the `(uint8, int32)` pair means that
   reads `6, 0` on 33 of the reference save's 4,617 foundations and `0, -1` on the rest, and
   what the second override colour is for, since every instance measured has both set to

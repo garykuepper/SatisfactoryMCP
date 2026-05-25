@@ -33,25 +33,27 @@ as it is read, 1.72 s and ~136 MB to keep all 44,634. The projection makes exact
 so a streaming version of this would pay for itself -- recorded rather than done, because it
 would change the shape the trailing-bytes stage builds on.
 
-**What this does not do.** The trailing class-specific bytes are decoded for one class --
-``FGLightweightBuildableSubsystem``, which is where every foundation and wall lives, and
-which fills the projection's last two fields (see ``savparse.lightweight``). The other seven
-classes that carry them are still skipped by declared length: conveyor chains and their three
-RepSize variants, power lines, and the circuit and player-state subsystems. Nothing in the
-projection reads those, and ``actor_specific_info`` stays ``None`` for them rather than an
-empty list, so "not decoded" cannot be mistaken for "decoded, empty".
+**The trailing class-specific bytes are decoded lazily**, and this module is where the class
+is matched to a reader -- ``savparse.lightweight`` for the subsystem holding every foundation,
+``savparse.trailers`` for the other seven classes. Nothing is decoded during the parse: the
+conveyor chains alone would add 22% to it (0.46 s on the reference save) for data no
+projection field reads, so ``ParsedObject.actorSpecificInfo`` decodes on first access instead.
+A class with no reader leaves it ``None`` rather than an empty list, so "nobody taught this
+parser that class" cannot be mistaken for "decoded, and there was nothing in it".
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from functools import partial
 
 from .chunks import decompress_body
 from .header import SaveInfo, read_info_bytes
 from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import ActorHeader, ComponentHeader, read_body
 from .properties import ParsedObject, read_object
+from .trailers import TRAILER_READERS, read_trailer
 
 __all__ = ["ParsedLevel", "ParsedSave", "read_full_save", "read_full_save_bytes"]
 
@@ -102,6 +104,50 @@ class ParsedSave:
         return sum(len(lv.objects) for lv in self.levels)
 
 
+#: What an actor leaves after its property list when its class writes nothing of its own:
+#: 500,350 actors leave 4 bytes and 87,016 leave 8, over all 31 readable saves, and nothing
+#: leaves anything else. Which of the two an actor gets is not established.
+PLAIN_TRAILER = (4, 8)
+
+
+def _attach_trailer(
+    body: bytes,
+    header: ActorHeader,
+    obj: ParsedObject,
+    warnings: list[tuple[int, str]],
+) -> None:
+    """Arrange for this object's trailing class-specific bytes to be decodable, and notice
+    when there are bytes nothing can account for.
+
+    Nothing is decoded here. Only the class is known at this point, and only here, so what
+    gets attached is the *ability* to decode -- ``ParsedObject.actorSpecificInfo`` calls it on
+    first access. Eager decoding would add 22% to a save's parse time for the conveyor chains
+    alone, which no projection field reads.
+
+    **The check is the point of knowing all eight classes.** A component's trailer has always
+    been length-checked; an actor's could not be, because an actor of one of these classes
+    legitimately leaves megabytes. Now that every such class has a reader, an actor that is
+    neither one of them nor leaving a plain 4 or 8 bytes is worth saying out loud -- that is
+    what a property list which stopped early looks like, and it used to be silent. It is a
+    warning rather than a refusal because a modded or future class carrying its own data is
+    the other thing it looks like, and that should not cost the save.
+    """
+    class_path = getattr(header, "typePath", None)
+    if class_path == LIGHTWEIGHT_SUBSYSTEM:
+        obj.decode_trailer = partial(read_lightweight, body, obj.extra_offset, obj.extra_length)
+    elif class_path in TRAILER_READERS:
+        obj.decode_trailer = partial(
+            read_trailer, class_path, body, obj.extra_offset, obj.extra_length
+        )
+    elif class_path is not None and obj.extra_length not in PLAIN_TRAILER:
+        plain = " or ".join(map(str, PLAIN_TRAILER))
+        what = (
+            f"{class_path.rsplit('.', 1)[-1]} left {obj.extra_length} trailing bytes; "
+            f"no reader knows this class and a plain actor leaves {plain}"
+        )
+        warnings.append((obj.extra_offset, what))
+
+
 def read_full_save_bytes(data: bytes) -> ParsedSave:
     """Parse a complete .sav already in memory.
 
@@ -121,11 +167,15 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
     for level in parsed.levels:
         objects = []
         for header, slot in zip(level.headers, level.objects, strict=True):
-            obj = read_object(body, slot, actor=isinstance(header, ActorHeader))
+            actor = isinstance(header, ActorHeader)
+            obj = read_object(body, slot, actor=actor)
             if obj.warnings:
                 warnings.extend(obj.warnings)
-            if getattr(header, "typePath", None) == LIGHTWEIGHT_SUBSYSTEM:
-                obj.actor_specific_info = read_lightweight(body, obj.extra_offset, obj.extra_length)
+            # Only actors carry class-specific trailing bytes, and the 562,556 components in
+            # these 31 saves outnumber the actors -- so the cheapest thing to do with them is
+            # nothing. Calling _attach_trailer for every object instead cost 5% of the parse.
+            if actor:
+                _attach_trailer(body, header, obj, warnings)
             objects.append(obj)
         levels.append(ParsedLevel(name=level.name, headers=level.headers, objects=objects))
 

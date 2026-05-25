@@ -105,9 +105,9 @@ object from one with class-specific data. On the reference save: **4** bytes on 
 actors and 113 components, **8** on 20,700 components and 3,230 actors, and more on
 **3,209** actors -- 1,889 conveyor chains, 1,297 power lines, and the lightweight-buildable
 subsystem, whose 3.1 MB of foundations and walls live there and appear in no header at all.
-Those bytes are handed on as an offset and a length, not decoded; ``props()`` never sees
-them, and the projection's ``lightweight_counts`` and ``structures`` are the two fields
-that will need them.
+Those bytes are handed on as an offset and a length; ``props()`` never sees them. Decoding
+them is ``savparse.lightweight`` and ``savparse.trailers``, reached lazily through
+``actorSpecificInfo`` -- see ``savparse.save`` for why not here.
 """
 
 from __future__ import annotations
@@ -245,21 +245,28 @@ class ParsedObject:
     #: save's actors. Not decoded here; ``savparse.save`` decodes the classes it knows.
     extra_offset: int = 0
     extra_length: int = 0
-    #: The trailing class-specific bytes, decoded -- ``None`` when nothing here knows the
-    #: class. Only ``FGLightweightBuildableSubsystem`` is decoded today; see
-    #: ``savparse.lightweight`` for what the other seven classes carry and why they wait.
+    #: The trailing class-specific bytes, decoded -- ``None`` when nothing knows the class.
+    #: Filled on first access to ``actorSpecificInfo`` rather than during the parse, because
+    #: decoding every conveyor chain costs 22% of a whole save's parse for data the projection
+    #: never asks for. ``decode_trailer`` is what does it; ``save.py`` sets it.
     actor_specific_info: list | None = None
+    #: Zero-argument decoder for this object's trailing bytes, or ``None`` when no reader
+    #: exists for its class. Set at composition time, since only there is the class known.
+    decode_trailer: object | None = None
     #: Anything skipped rather than understood, as ``(offset, what)``.
     warnings: list[tuple[int, str]] = field(default_factory=list)
 
     @property
     def actorSpecificInfo(self) -> list | None:
-        """The spelling the projection reads.
+        """The trailing class-specific bytes, decoded on first access. The spelling the
+        projection reads.
 
-        ``None`` rather than an empty list on purpose: the projection tells "this class
-        carries nothing we decode" from "this class carries an empty list", and only the
-        first is true of the seven classes still skipped by length.
+        ``None`` rather than an empty list when no reader exists for the class: an empty list
+        is what a decoded blob holding nothing looks like, and "nobody taught this parser that
+        class" must not be able to pass for it.
         """
+        if self.actor_specific_info is None and self.decode_trailer is not None:
+            self.actor_specific_info = self.decode_trailer()
         return self.actor_specific_info
 
 
