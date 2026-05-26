@@ -480,6 +480,47 @@ _NATIVE_STRUCTS = {
 # ---------------------------------------------------------------- the tags
 
 
+#: Struct names to try for a version-36/52 map KEY the bytes leave unnamed, in order.
+#:
+#: Only the key needs this. A map whose *value* is an unnamed struct is already handled --
+#: ``element`` routes it to ``property_list``, which is what those values are -- so overriding
+#: the value changes nothing, measured: dropping a value override entirely still lands exactly
+#: on all 25 saveVersion 52 saves. The key is the only field with any effect.
+#:
+#: ``IntVector`` is here because the foliage subsystem's ``mSaveData`` keys its per-cell records
+#: by world-partition cell coordinate, and because saveVersion 60 writes that type out in full:
+#: its type tree reads ``StructProperty 1 IntVector 1 /Script/CoreUObject`` for the same map's
+#: key. So this is not a guess about what the struct is -- the newer format states it -- only
+#: about the fact that UE4 declined to write it down.
+#:
+#: The empty name reproduces the previous behaviour: an unnamed struct read as a property list.
+#: It stays last so that nothing which used to parse stops parsing.
+_UNNAMED_KEY_CANDIDATES = ("IntVector", "")
+
+#: The same, for a version-36/52 SET element the bytes leave unnamed. Both sets that occur --
+#: the scanner's ``mDestroyedPickups`` and ``mLootedDropPods`` -- hold 16-byte GUIDs, which is
+#: what saveVersion 60 writes out in full for the same fields.
+_UNNAMED_SET_CANDIDATES = ("Guid", "")
+
+
+def _unnamed_element_candidates(
+    element_type: TypeName, names: tuple[str, ...]
+) -> tuple[TypeName, ...]:
+    """Element types to try, most specific first.
+
+    A named element needs no candidates: it comes back unchanged and the caller's single
+    attempt behaves exactly as it did before this existed.
+    """
+    if not _is_unnamed_struct(element_type):
+        return (element_type,)
+    return tuple(TypeName("StructProperty", [TypeName(n)]) for n in names)
+
+
+def _unnamed_key_candidates(key_type: TypeName) -> tuple[TypeName, ...]:
+    """Map-key types to try, most specific first."""
+    return _unnamed_element_candidates(key_type, _UNNAMED_KEY_CANDIDATES)
+
+
 def _is_unnamed_struct(type_name: TypeName) -> bool:
     """A struct the bytes never name, which is only possible on version 36/52.
 
@@ -766,28 +807,37 @@ class _Decoder:
         self.warnings.append((r.pos, f"skipped {end - r.pos} bytes: {what}"))
         r.pos = end
 
-    def attempt(self, what: str, end: int, decode):
-        """Try ``decode``, and keep the result only if it consumed the block exactly.
+    def attempt(self, what: str, end: int, *decoders):
+        """Try each reading in turn; keep the first that consumed the block exactly.
 
         The one place in this module where something is *guessed*, and it is a guess with a
-        referee: the property declared its length, so a reading that lands on the declared
-        end byte-for-byte over hundreds of elements is right, and one that does not is
-        discarded and skipped instead. Used for version-36/52 maps and sets, whose element
-        struct types the bytes do not name (see ``_is_unnamed_struct``) -- reading them as
-        property lists recovers ``mItemsPickedUp`` and ``mActorsBuiltCount``, and correctly
-        gives up on ``mSaveData``, whose keys are raw ``IntVector``.
+        referee: the property declared its length, so a reading that lands on the declared end
+        byte-for-byte over hundreds of elements is right, and one that does not is discarded.
+        Used for version-36/52 maps and sets, whose element struct types the bytes do not name
+        (see ``_is_unnamed_struct``).
+
+        **The referee is stronger than the landing alone**, and worth stating because a single
+        equality looks weak: every property inside the block is size-checked as it is read, so a
+        wrong reading almost always dies on one of those long before the end. On ``mSaveData``
+        that is ~911 KB of variable-length pairs all having to balance. The final position check
+        catches the residue -- a reading that stayed self-consistent and still ended up in the
+        wrong place.
+
+        Ordering matters: the narrowest guess goes first, because a wrong narrow reading
+        desynchronises at once while a permissive one can absorb a lot before it fails.
         """
         start = self.r.pos
         mark = len(self.warnings)
-        try:
-            value = decode()
-        except ValueError:
-            pass
-        else:
-            if self.r.pos == end:
-                return value
-        del self.warnings[mark:]
-        self.r.pos = start
+        for decode in decoders:
+            try:
+                value = decode()
+            except ValueError:
+                pass
+            else:
+                if self.r.pos == end:
+                    return value
+            del self.warnings[mark:]
+            self.r.pos = start
         return self.unknown(what, end)
 
     # -- enums ------------------------------------------------------------
@@ -938,12 +988,44 @@ class _Decoder:
         """
         inner = tag.type.inner
         if self.old and _is_unnamed_struct(inner):
+            # Candidates, narrowest first. The BARE reading is separate from the array one
+            # because a set does not frame its elements the way an array does: `array` routes a
+            # struct element type to `struct_array`, which on version 36/52 expects a full
+            # property tag inside the payload -- name, type, total size, struct name, guid. A
+            # set has none of that. `mDestroyedPickups` is 6,968 bytes = 8 + 435 x 16, bare
+            # GUIDs end to end, so routing it through `array` could never land.
             return self.attempt(
                 f"version-{self.version} set {tag.name!r} of unnamed structs",
                 end,
+                *(
+                    (lambda t=t: self._set_body_bare(tag, t, end))
+                    for t in _unnamed_element_candidates(inner, _UNNAMED_SET_CANDIDATES)
+                ),
                 lambda: self._set_body(tag, inner, end),
             )
         return self._set_body(tag, inner, end)
+
+    def _set_body_bare(self, tag: _Tag, inner: TypeName, end: int):
+        """A set whose elements are written back to back with no per-element framing.
+
+        Split from ``_set_body`` rather than parameterised into it because the two disagree
+        about what a set *is*: that one delegates to ``array``, which brings the version-36/52
+        struct-array header with it. Both are offered to ``attempt`` and the declared length
+        decides, so neither has to be right in advance.
+        """
+        r = self.r
+        removed = r.i32()
+        _expect(
+            removed == 0,
+            r.pos - 4,
+            f"set {tag.name!r} declares {removed} removed elements; a saved set has no "
+            "removal list and every one checked writes 0 here",
+        )
+        count = self._count(f"set {tag.name!r}", end)
+        # The struct name, not "StructProperty": this branch exists because the bytes did
+        # not name the struct, so the name that got it to parse is the informative one.
+        label = inner.inner.name or inner.name
+        return [label, [self.element(inner, end) for _ in range(count)]]
 
     def _set_body(self, tag: _Tag, inner: TypeName, end: int):
         """Split out from ``set_`` only so ``attempt`` can run it and throw it away."""
@@ -986,10 +1068,18 @@ class _Decoder:
         )
         key_type, value_type = tag.type.params
         if self.old and (_is_unnamed_struct(key_type) or _is_unnamed_struct(value_type)):
+            # Two candidate readings for a key the bytes leave unnamed, in this order, each
+            # kept only if the whole map lands on its declared end. IntVector first because
+            # it is the narrower guess: 12 raw bytes, so a wrong IntVector desynchronises
+            # immediately, while a wrong property list can absorb almost anything before it
+            # fails. See _UNNAMED_KEY_CANDIDATES for why only the KEY is substituted.
             return self.attempt(
                 f"version-{self.version} map {tag.name!r} of unnamed structs",
                 end,
-                lambda: self._map_body(tag, key_type, value_type, end),
+                *(
+                    (lambda k=k: self._map_body(tag, k, value_type, end))
+                    for k in _unnamed_key_candidates(key_type)
+                ),
             )
         return self._map_body(tag, key_type, value_type, end)
 
