@@ -802,6 +802,61 @@ next class read on a quaternion — checked before the lengths are consumed, bec
 quaternion's second int32 is `0x80000000`, a negative length, and a four-gigabyte UTF-16 read
 would otherwise report the buffer size instead of the class the walk was looking for.
 
+### The conveyor chain record, explained
+
+Everything below survived an adversarial pass that re-ran each predicate over all 31 saves --
+51,200 chains, 83,389 segments, 688,282 items -- and it cut two claims as well as confirming
+these, which is why the counts are stated as they are.
+
+**Offsets increase along the direction of travel.** The last segment starts at 0 at the chain's
+**input**; the first segment's end is the **output**. So `segments[0]`, and the reference this
+parser calls `first_belt`, are the *downstream* end. This is settled by geometry rather than
+inference: the spline points are in the chain actor's frame with `p0` at the segment's `start`
+end, and the offset-0 point sits 806 cm from a `Build_MinerMk1`/`Mk2` -- a building with only an
+output connection -- on 27-29 chains per save, against 1/0/0 at the offset-`length` end. In the
+other direction, chains whose offset-`length` end is within 1,200 cm of a Space Elevator,
+AWESOME Sink or Trading Post -- input-only buildings -- number 3/1/1 against 0 at offset 0.
+An earlier note in this file said the offsets "run backwards"; that was exactly wrong.
+
+**The item ring's capacity is derivable from the geometry**, not stored independently:
+
+    capacity == floor(length / 120) + 2 * segmentCount + 1
+
+on **51,200 of 51,200** chains. It is not arithmetic-by-coincidence: `ceil(length/120)` fits
+equally well until you look at the 3,282 chains whose length is an exact multiple of 120, where
+it fails on all 3,282. Neither neighbour of the capacity works either -- `capacity + 1` breaks
+the ring relations on 21,138 chains and `capacity - 1` on 26,399 -- and the modulus is genuinely
+exercised, since 21,138 chains have `first > last`, i.e. the ring really wraps.
+
+**The two remaining ints are the ring indices of the chain's first and last item** -- matching
+the first and last segment that *actually holds items* (43,823/43,823), not `segments[0]` and
+`segments[-1]`, which fail on 52 and 68 chains respectively. **`-1` is the sentinel**: 10,548
+segments and all 7,377 empty chains carry `(-1, -1)`, so the identity
+`(last - first) mod capacity + 1 == itemCount` holds on the 43,823 non-empty chains and returns
+a nonsensical 1 on an empty one. Every index is `-1` or in `[0, capacity)`.
+
+**The per-segment float is the part of a segment's offset range with no spline behind it** -- 0 on
+80,817 of 83,389 segments, and ~200/300/400 cm at conveyor lift junctions, always at the
+segment's low-offset end where no item ever sits.
+
+**An item offset is not confined to `[0, length]`, and any consumer must clamp both ends.**
+Exactly one item per chain can sit above `length` -- the one at the ring head, 40,921 of 40,921,
+against 0 of the other 647,361, and never two in one chain. 844 items sit *below* 0, down to
+-1024.46 cm, on 36 distinct chain instances present in every save; the pack is contiguous, so
+once `itemCount` exceeds what 120 cm spacing allows the surplus hangs off the low end.
+
+**A by-product worth recording: the belt tiers' speeds fall out of the bytes.** The head item's
+overshoot scales with belt speed -- median overrun 0.734 / 1.444 / 3.294 / 5.874 cm for Mk1 to
+Mk4 (n = 8,238 / 11,687 / 15,087 / 4,239), i.e. ratios of 1 : 1.967 : 4.487 : 8.000 against the
+published 1 : 2 : 4.5 : 8. Mk5 is unconstrained at 6 samples.
+
+**And a negative result, which is worth as much as the rest.** Do not build a "belt is backed up"
+diagnostic on this. 40,921 chains with an overrunning head item looks like a jam signal, but
+**97.94% of all 644,459 consecutive-item gaps are exactly 120.0 cm**: a belt running at full
+rated throughput is packed identically to a blocked one. Nor can a pair of saves rescue it --
+item displacement is recoverable only modulo 120 cm, which is why a 69-second pair on this disk
+shows 29 chains apparently moving one way and 16 the other.
+
 ## Verification strategy — keep doing this
 
 1. **Black-box parity** against the vendored parser on all 31 readable saves, and not on a
@@ -1203,12 +1258,12 @@ variable, and should happen as part of that deletion rather than before it.
 **What is still unknown about the format**, distinct from what is merely not decoded:
 
 * Fields **inside** the trailing bytes, now that all eight classes are read. In a conveyor
-  chain: one float per segment that is 0 on 1,844 of 1,909 chains, and two of the four ints
-  after the segments. Why item offsets exceed the chain's own length on 1,089 of 1,909 chains.
+  chain the list is down to **one**: the item's `state` int32, 0 on all 688,282 items. What was
+  here before is now explained, and the corrections matter more than the closures — see *The
+  conveyor chain record, explained* below.
   In the player state, the leading `uint8` of 241 and the id type of 6. In the lightweight
-  subsystem, three things: how the always-zero runs are grouped (three empty references or three
-  int32s is undecidable from any save on this disk), what the `(uint8, int32)` pair means that
-  reads `6, 0` on 33 of the reference save's 4,617 foundations and `0, -1` on the rest, and
+  subsystem, two things: how the always-zero runs are grouped (three empty references or three
+  int32s is undecidable from any save on this disk), and
   what the second override colour is for, since every instance measured has both set to
   `[0,0,0,1]`.
 * Fields read and discarded because their meaning cannot be derived from data that never

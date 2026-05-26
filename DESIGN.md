@@ -3510,11 +3510,15 @@ its four collectible location tables would now buy a real feature, which makes t
 half rather than the leftover half. The deletion itself is the user's call and nothing here
 should make it for them.
 
-What stays genuinely unknown is in `docs/savparse-notes.md`: individual *fields* inside records
-that are otherwise fully consumed, chiefly two of the four ints after a chain's segments and one
-float per segment that is zero on 97% of chains; plus two questions about the destroyed-actor
-lists that no save on this disk can settle — which of the three lists a given actor lands in, and
-which class an instance name like `BP_WAT112` belongs to.
+What stays genuinely unknown is in `docs/savparse-notes.md`, and the conveyor chain is no longer
+most of it: an adversarial pass over all 31 saves explained the per-segment float, derived the item
+ring's capacity from the geometry (`floor(length/120) + 2*segmentCount + 1`, on 51,200 of 51,200),
+identified the two remaining ints as ring indices with `-1` as their sentinel, and established that
+offsets increase *along* the direction of travel — the reverse of what this file previously said —
+leaving only the item's `state` int32 unexplained. What remains is the player state's two leading
+bytes, two fields in the lightweight blob, and two questions about the destroyed-actor lists that
+no save on this disk can settle: which of the three lists a given actor lands in, and which class
+an instance name like `BP_WAT112` belongs to.
 
 ## 13b. The object walk and the property serialiser
 
