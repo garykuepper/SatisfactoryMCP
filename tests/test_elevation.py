@@ -8,9 +8,12 @@ too few points reads as measured, so every assertion below is about refusing to 
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from satisfactory_mcp import server as srv
+from satisfactory_mcp.save.state import WorldState
 from satisfactory_mcp.spatial import elevation
 from satisfactory_mcp.spatial import nodes as nodes_mod
 
@@ -40,13 +43,22 @@ def _counts(points) -> dict[str, int]:
     return out
 
 
-def test_an_old_projection_loses_a_source_rather_than_failing(points, projection):
-    """The committed fixture is schema 5 and predates `structures` being extracted at
-    all, so it carries no foundations. That must cost one source and nothing else -- the
-    same tolerance `sloop_budget` and `phase_requirements` show for projections written
-    before the field they want existed."""
-    assert "structures" not in projection
-    counts = _counts(points)
+def test_an_old_projection_loses_a_source_rather_than_failing(game, state):
+    """A projection written before `structures` existed carries no foundations. That must
+    cost one source and nothing else -- the same tolerance `sloop_budget` and
+    `phase_requirements` show for projections written before the field they want existed.
+
+    The key is deleted here rather than relied on being absent. It used to be absent: the
+    committed fixture was schema 5 and predated the extraction, so this test passed without
+    doing anything. Regenerating the fixture at schema 11 silently turned it into a test of
+    the current save, which is what the other tests in this file already are."""
+    projection = deepcopy(state.projection)
+    del projection["structures"]
+    counts = _counts(
+        elevation.sample_points(
+            nodes_mod.load_nodes(), WorldState(projection=projection, game=game)
+        )
+    )
     assert "structure" not in counts
     assert counts["node"] == 608
     assert counts["building"] > 400

@@ -220,12 +220,18 @@ def test_every_tool_module_is_imported_by_the_package():
 
 def test_the_registered_surface_survives_the_split():
     """Pinned counts, because the split moved 36 tools between files and a decorator
-    that fails to run is invisible. 41: +commission_plan, +mam_research, +rank_unlocks, +somersloops, +trace_upstream."""
+    that fails to run is invisible. 42: +commission_plan, +mam_research, +rank_unlocks,
+    +somersloops, +trace_upstream, +collected_from_world."""
     tools = _run(srv.mcp.list_tools())
-    assert len(tools) == 41
-    assert {"commission_plan", "mam_research", "rank_unlocks", "somersloops", "trace_upstream"} <= {
-        t.name for t in tools
-    }
+    assert len(tools) == 42
+    assert {
+        "collected_from_world",
+        "commission_plan",
+        "mam_research",
+        "rank_unlocks",
+        "somersloops",
+        "trace_upstream",
+    } <= {t.name for t in tools}
     assert len(_run(srv.mcp.list_resources())) == 4
     assert len(_run(srv.mcp.list_prompts())) == 3
 
@@ -253,6 +259,19 @@ def test_server_still_re_exports_what_callers_reach_for():
         "_resolve_factory",
     ):
         assert hasattr(srv, name), name
+
+
+def test_every_registered_tool_is_reachable_by_name_from_the_server():
+    """The generalisation of the list above, which is a hand-kept list and therefore drifts.
+
+    Registration and re-export are two separate acts -- the decorator attaches a tool to `mcp`
+    on import, and `server.py` names it again for callers -- so a tool can be fully working over
+    MCP and still be missing from `import server`. That is invisible to every other test here,
+    because a tool the suite exercises through `mcp.list_tools()` is found and a tool the suite
+    exercises as `srv.name` is a different code path.
+    """
+    missing = sorted(t.name for t in _run(srv.mcp.list_tools()) if not hasattr(srv, t.name))
+    assert missing == [], missing
 
 
 def test_no_tool_module_imports_another():

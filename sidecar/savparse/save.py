@@ -90,6 +90,12 @@ class ParsedSave:
     info: SaveInfo
     body: bytes
     levels: list[ParsedLevel]
+    #: Every actor the save records as gone, as ``(level cell, actor path)``. The world's
+    #: collectibles -- slugs, mushrooms, Mercer spheres, somersloops, looted drop pods -- are
+    #: placed by the map and not saved, so this negative record is the only thing that says
+    #: which of them the player has taken. Merged from the three lists the save keeps; see
+    #: ``objects.SaveBody.destroyed_actors``.
+    destroyed_actors: list[tuple[str, str]] = field(default_factory=list)
     #: Everything skipped rather than understood, as ``(body offset, what)``, merged from the
     #: level walk and every object's property list. Measured across the 31 readable saves on
     #: the author's disk: empty on all **6** at saveVersion 60, and exactly **3** on each of
@@ -179,7 +185,13 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
             objects.append(obj)
         levels.append(ParsedLevel(name=level.name, headers=level.headers, objects=objects))
 
-    return ParsedSave(info=info, body=body, levels=levels, warnings=warnings)
+    return ParsedSave(
+        info=info,
+        body=body,
+        levels=levels,
+        warnings=warnings,
+        destroyed_actors=parsed.destroyed_actors,
+    )
 
 
 def read_full_save(path: str | os.PathLike[str]) -> ParsedSave:

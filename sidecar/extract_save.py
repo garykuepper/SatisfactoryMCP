@@ -70,7 +70,7 @@ else:
     # would make a parity run report agreement it never measured.
     raise RuntimeError(f"{SAVPARSE_ENV}={ENGINE!r}; expected {OWN!r} or {VENDOR!r}")
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -245,6 +245,9 @@ def extract(path: str) -> dict:
         "unlock_flags": {},
         "building_counts": {},
         "lightweight_counts": {},
+        # Map-placed actors the save records as GONE. The only record of what has been
+        # collected: nothing in a save says a power slug exists, only that one no longer does.
+        "removed": {"cells": [], "instances": [], "counts": {}},
         "structures": {"classes": [], "instances": []},
         "machines": [],
         "extractors": [],
@@ -530,10 +533,88 @@ def extract(path: str) -> dict:
         "power": power_edges,
     }
     out["building_counts"] = dict(sorted(counts.items()))
+    out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
     out["progression"].setdefault("purchased_schematics", [])
     return out
+
+
+def _removed(save) -> dict:
+    """Map-placed actors the save records as GONE -- the only record of what was collected.
+
+    Slugs, mushrooms, Mercer spheres, somersloops, shrines, crashed drop pods and world
+    debris are placed by the map and never saved, so nothing in the save says a slug exists.
+    What it says is which ones do *not* any more, and that negative record is the only way to
+    answer "how many slugs have I picked up" or "which crash sites have I looted".
+
+    Both parsers can produce this. `savparse` merges the three lists the format keeps into
+    `destroyed_actors`; the vendored parser exposes the same three separately, as each level's
+    `collectables1`/`collectables2` plus two save-level lists. Verified equal set for set on
+    the reference save -- 889 actors either way -- which is why this is a projection field and
+    not a reason the two disagree.
+
+    Interned by cell, and the actor's path is reduced to its leaf: the full path repeats
+    `Persistent_Level:PersistentLevel.` on every one of 889 entries and says nothing.
+    """
+    refs = getattr(save, "destroyed_actors", None)
+    if refs is None:
+        # The vendored parser's spelling: three lists, none of them merged.
+        # ref_path, not str(): the vendored ObjectReference's __str__ renders the whole
+        # object as "<ObjectReference: levelName=..., pathName=...>", so str() ends in ">"
+        # and every leaf name comes out unique -- 889 distinct classes instead of 270.
+        pairs: list[tuple[str, str]] = []
+        for level in getattr(save, "levels", None) or []:
+            for which in ("collectables1", "collectables2"):
+                for ref in getattr(level, which, None) or []:
+                    pairs.append((str(getattr(ref, "levelName", "")), ref_path(ref) or ""))
+        for which in ("dropPodObjectReferenceList", "extraObjectReferenceList"):
+            for ref in getattr(save, which, None) or []:
+                pairs.append((str(getattr(ref, "levelName", "")), ref_path(ref) or ""))
+        refs = list(dict.fromkeys(pairs))
+
+    cells: dict[str, int] = {}
+    instances: list[list] = []
+    counts: dict[str, int] = {}
+    # Sorted, because the order is an artefact of which of the three lists a parser walks
+    # first and means nothing. Both engines then emit byte-identical output, which keeps this
+    # field usable as a cache key and keeps the parity diff a measurement of content.
+    for cell, path in sorted(refs, key=lambda pair: (pair[0], pair[1])):
+        leaf = path.rsplit(".", 1)[-1]
+        if not leaf:
+            continue
+        ix = cells.setdefault(cell, len(cells))
+        instances.append([ix, leaf])
+        counts[_removed_class(leaf)] = counts.get(_removed_class(leaf), 0) + 1
+    return {
+        "cells": [c for c, _ in sorted(cells.items(), key=lambda kv: kv[1])],
+        "instances": instances,
+        "counts": dict(sorted(counts.items())),
+    }
+
+
+def _removed_class(leaf: str) -> str:
+    """Class of a destroyed actor, from its instance name alone.
+
+    There is no class path in these lists -- only the actor's name, and the game builds those
+    three different ways: `BP_Crystal_mk3_C_2146` (class then index), `BP_Crystal2_228` (a
+    numbered class variant then index) and `BP_MercerShrine_C_UAID_..._1397405905` (class, a
+    world id, then an index). So the class is recovered by stripping from the right: the
+    trailing index, then a `_UAID_<hex>` if present, then a trailing `_C`.
+
+    Approximate on purpose, and the reason is worth stating: `BP_Crystal2_228` cannot be told
+    from a class literally named `BP_Crystal2`, so the census groups by what the name shows
+    rather than by a class list nobody has. Callers wanting slugs should match a prefix
+    (`BP_Crystal`), which is what `save/state.py` does.
+    """
+    parts = leaf.split("_")
+    if parts and parts[-1].isdigit():
+        parts.pop()
+    if len(parts) >= 2 and parts[-2] == "UAID":
+        parts = parts[:-2]
+    if parts and parts[-1] == "C":
+        parts.pop()
+    return "_".join(parts) or leaf
 
 
 def _stored_items(raw) -> dict:

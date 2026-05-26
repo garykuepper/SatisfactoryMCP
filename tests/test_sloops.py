@@ -176,28 +176,29 @@ def test_committed_sloops_are_measured_not_guessed(game, state):
     read. The wrong conclusion came from probing a save taken before the research, where
     no somersloop existed anywhere -- absence of a value read as absence of a field.
 
-    On this fixture the component IS readable and holds only shards, so committed is
-    genuinely zero rather than unknown, and the flag says which of the two it is."""
+    This fixture settles it: one Manufacturer holds 4 sloops, so `committed` is 4 read off
+    the slots, `owned` is 11 free plus those 4, and the flag says the component was readable
+    rather than that the answer happened to be zero. The earlier fixture had none slotted,
+    which is exactly the state that made the wrong conclusion look supported."""
     budget = state.sloop_budget()
     assert budget["committed_measured"] is True
-    assert budget["committed"] == 0
-    assert budget["holders"] == []
-    assert budget["owned"] == budget["free"]
+    assert budget["committed"] == 4
+    assert [h["sloops"] for h in budget["holders"]] == [4]
+    assert budget["free"] == 11
+    assert budget["owned"] == budget["free"] + budget["committed"]
 
 
-def test_a_slotted_sloop_is_counted_and_agrees_with_the_saved_boost(game):
-    """Live save only: the fixture predates the research. The count comes from the slot
-    contents, and `mPendingProductionBoost` gives an independent check -- an Assembler with
-    one of two slots reports 1.5x, which is exactly boost_for(1)."""
-    from satisfactory_mcp.app import _state
-
-    budget = _state(None, None).sloop_budget()
-    if not budget["committed"]:
-        pytest.skip("no sloop is slotted in the live save")
+def test_a_slotted_sloop_is_counted_and_agrees_with_the_saved_boost(game, state):
+    """The count comes from the slot contents, and `mPendingProductionBoost` gives an
+    independent check: a Manufacturer with all 4 slots filled reports 2.0x, which is exactly
+    boost_for(4). Two fields written by different parts of the game agreeing is what says the
+    slot inventory is being read as slots and not as some other inventory."""
+    budget = state.sloop_budget()
+    assert budget["committed"], "the fixture must keep at least one slotted sloop"
     for holder in budget["holders"]:
         assert holder["sloops"] >= 1
-        if holder["boost_in_save"] is not None:
-            assert holder["boost"] == pytest.approx(float(holder["boost_in_save"]))
+        assert holder["boost_in_save"] is not None
+        assert holder["boost"] == pytest.approx(float(holder["boost_in_save"]))
 
 
 # ------------------------------------------------------------ the tool

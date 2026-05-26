@@ -376,3 +376,72 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
         render.table(("building", "instance", "sloops", "boost"), rows),
         notes,
     )
+
+
+@mcp.tool(structured_output=False)
+def collected_from_world(
+    group: Annotated[
+        str | None,
+        Field(description="list the individual actors of one group, e.g. 'somersloop'"),
+    ] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 25,
+) -> str:
+    """What has been picked up off the map: slugs, somersloops, spheres, looted crash sites.
+
+    The world's collectibles are placed by the map and never written into a save, so nothing
+    in a save says a slug *exists*. What it records is the negative -- which map-placed actors
+    are **gone** -- and that list is therefore an exact record of what has been collected.
+
+    Pass ``group`` to list the actors of one kind with the world-partition cell each was in.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    removed = st.removed_actors(group)
+    if "error" in removed:
+        return removed["error"]
+
+    notes = [
+        (
+            "collected, not remaining: this project ships no table of where every slug is, "
+            "so these are absolute counts and not a fraction of a known total"
+        ),
+        "'dropped_pickup' is loot the player dropped and re-collected, not a map collectible",
+    ]
+    if removed.get("other"):
+        notes.append(
+            "'other' is classes no group matched, reported rather than dropped: "
+            + ", ".join(f"{k} {v}" for k, v in list(removed["other"].items())[:6])
+        )
+    if not removed["total"]:
+        notes.append(
+            "nothing recorded as removed. On a projection older than schema 11 that means "
+            "unreadable rather than none -- re-read the save"
+        )
+
+    body = [
+        render.kv(
+            [
+                ("total_removed", str(removed["total"])),
+                ("map_cells", str(removed["cells"])),
+            ]
+        ),
+        render.table(
+            ("group", "collected"),
+            [(g, str(n)) for g, n in removed["groups"].items()],
+        ),
+    ]
+    if group is not None:
+        rows = [(a["actor"], a["cell"]) for a in removed["actors"][:limit]]
+        body.append(
+            render.table(("actor", "cell"), rows)
+            + (
+                f"\n({len(removed['actors'])} total, showing {len(rows)})"
+                if len(removed["actors"]) > len(rows)
+                else ""
+            )
+        )
+    return render.envelope(f"# {st.age_note}\n" + body[0], "\n\n".join(body[1:]), notes)

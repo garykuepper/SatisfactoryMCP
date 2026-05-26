@@ -103,14 +103,27 @@ def test_generators_match_on_building_because_fuel_is_piped_not_set(spire):
 def test_extractors_match_through_the_node_they_occupy(spire):
     """The only exact machine-level match the save supports. mExtractableResource
     resolves 13/13 oil pumps, and the plan extractor columns were built from those very
-    node rows, so the join needs no inference and no proximity guess."""
+    node rows, so the join needs no inference and no proximity guess.
+
+    On this save every crude node the plan uses already carries a pump -- 7 impure, 4
+    normal, 2 pure, the whole 13 -- so all three rows read OK with nothing to build. That
+    is the join's strongest form: purity-by-purity equality, which a proximity guess would
+    have to hit three times in a row by luck."""
     _req, _sol, rep = spire
-    impure = _row(rep, "impure Crude Oil")
-    assert (impure.have, impure.build) == (5, 2)
-    assert len(impure.targets) == 2
-    # Ids must paste straight back in as node: selectors.
-    assert all(t[0].startswith("BP_ResourceNode") for t in impure.targets)
-    assert _row(rep, "pure Crude Oil").verb == "OK"  # 2 nodes, 2 pumps already on them
+    by_purity = {p: _row(rep, f"{p} Crude Oil") for p in ("impure", "normal", "pure")}
+    assert [(r.have, r.need, r.build) for r in by_purity.values()] == [
+        (7, 7, 0),
+        (4, 4, 0),
+        (2, 2, 0),
+    ]
+    assert sum(r.have for r in by_purity.values()) == 13
+    assert all(r.verb == "OK" for r in by_purity.values())
+    # A row that DOES ask for extractors names the nodes, and the ids must paste straight
+    # back in as node: selectors.
+    coal = _row(rep, "impure Coal")
+    assert (coal.have, coal.build) == (0, 2)
+    assert len(coal.targets) == 2
+    assert all(t[0].startswith("BP_ResourceNode") for t in coal.targets)
 
 
 def test_unmatchable_extractors_report_a_range_not_a_number(spire):
@@ -173,11 +186,13 @@ def test_a_ratio_clock_plan_row_asks_nobody_to_reclock(spire):
 def test_an_overclocked_machine_is_noted_but_never_becomes_the_action(spire):
     """One oil pump runs at 250% where the plan budgets 100%, so the player already
     extracts more crude than the plan asks for. That is worth saying -- the plan is
-    understating them -- but it is not a change the plan requires."""
+    understating them -- but it is not a change the plan requires, and the verb must come
+    from the count and never from the clock: this row is OK because 7 pumps stand on 7
+    nodes, with the 250% mentioned in the note and nowhere else."""
     _req, _sol, rep = spire
     row = _row(rep, "impure Crude Oil")
     assert "250%" in row.note
-    assert row.verb == "BUILD"
+    assert row.verb == "OK"
     assert not any(r.verb == "RECLOCK" for r in rep.rows)
 
 

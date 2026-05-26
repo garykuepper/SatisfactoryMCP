@@ -2,8 +2,10 @@
 
 The `.sav` format as derived, what is implemented against it, and every verification number
 with the measurement that produced it. Self-contained: a reader who has seen none of the
-conversation should be able to continue from this. Every class the format writes is decoded;
-what is *unexplained* rather than unread is listed at the end of the verdict.
+conversation should be able to continue from this. Every class the format writes is decoded
+and, since the destroyed-actor lists were read, **no region of any body on this disk is
+stepped over by a declared length any more** — the byte budget is 100% rather than 99.8%.
+What is *unexplained* rather than unread is listed at the end of the verdict.
 
 **Every number in this document was re-measured against the tree as it now stands.** They
 were first taken while several agents were still editing `savparse/`, which makes them
@@ -20,19 +22,22 @@ was corrected rather than kept alongside.
 | one exception type | `savparse/errors.py` (27) | done |
 | header | `savparse/header.py` (183) | done |
 | chunk decompression | `savparse/chunks.py` (123) | done |
-| body, levels, object headers | `savparse/objects.py` (652) | done |
-| tagged property serialiser | `savparse/properties.py` (1,139) | done |
-| composition + the sidecar switch | `savparse/save.py` (152) | done |
-| the lightweight buildables' trailing bytes | `savparse/lightweight.py` (185) | done |
+| body, levels, object headers, destroyed actors | `savparse/objects.py` (747) | done |
+| tagged property serialiser | `savparse/properties.py` (1,160) | done |
+| composition + the sidecar switch | `savparse/save.py` (212) | done |
+| the lightweight buildables' trailing bytes | `savparse/lightweight.py` (172) | done |
 | the other seven classes' trailing bytes | `savparse/trailers.py` (192) | done |
+
+Line counts are `wc -l` on the tree as it stands; 2,969 with `__init__.py`'s 58.
 
 **132 tests** across eight `tests/test_savparse_*.py` files, inside a suite of **918 passing, 1
 skipped** — the same count with `SATISFACTORY_SAVPARSE=own` and with `=vendor`. They run
 against committed fixtures, so they pass with no game install and will survive the vendored
 library's deletion.
 
-**The projection is complete.** All **19** of 19 keys are leaf-identical on all 31 readable
-saves, including every one of the 224,530 structure instances. See *Verdict*.
+**The projection is complete.** All **20** of 20 keys are leaf-identical on all 31 readable
+saves, including every one of the 224,530 structure instances and every one of the 21,038
+destroyed-actor references behind the `removed` key. See *Verdict*.
 
 ## Why
 
@@ -56,7 +61,7 @@ Runtime, in `sidecar/extract_save.py`, is **three entry points**:
 | entry point | used for | status |
 |---|---|---|
 | `readSaveFileInfo(path)` | 9 header fields → projection `header` | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` | ✅ `savparse.read_full_save` — all 19 projection fields exact on all 31 readable saves |
+| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` + the destroyed-actor lists | ✅ `savparse.read_full_save` — all 20 projection fields exact on all 31 readable saves |
 | `ParseError` | one `except` at the save boundary | ✅ `savparse.ParseError` |
 
 **All three are wired in**, behind `SATISFACTORY_SAVPARSE=own|vendor`, **defaulting to
@@ -71,10 +76,16 @@ The adapter surface `extract_save.py` needs from a parsed save:
 - header: `.typePath` (absent on components — use `getattr` default), `.instanceName`, `.position`
 - object: `.properties` as a list of `[name, value]` pairs (`props()` flattens it)
 - struct arrays arrive as `[values, propertyTypes]`; see `struct_fields()` for both shapes
+- `save.destroyed_actors` → `(cell, actor path)` pairs, all three lists merged and
+  deduplicated. `_removed` falls back to the vendored spelling — per-level `collectables1`
+  and `collectables2` plus `dropPodObjectReferenceList` and `extraObjectReferenceList` — when
+  the attribute is absent, which is how one projection key is produced from either engine.
 
 `sav_data/` (6,800 lines of tables: crash sites, Mercer spheres, slugs, resource purity) is
 **build-time only** — `tools/gen_region_names.py` and `tools/gen_resource_nodes.py` use it to
-produce committed artifacts. Separate licence question, not on this path.
+produce committed artifacts. Separate licence question, not on this path — and now a more
+interesting one than it was, because four of those tables are location lists for exactly the
+collectibles the destroyed-actor list records as gone. See *Opportunities* below.
 
 ## Format, as derived
 
@@ -155,8 +166,9 @@ the fuzzing section for why that distinction was made after the fact.
 
 ### Body layout and object headers (`savparse/objects.py`) — DONE
 
-`read_body(body)` walks the inflated stream and returns levels, object headers, and each
-object's property block as a `(offset, length)` slice. It does not parse property bodies.
+`read_body(body)` walks the inflated stream and returns levels, object headers, each object's
+property block as a `(offset, length)` slice, and the three destroyed-actor lists. It does not
+parse property bodies.
 
 **Two layouts.** saveVersion **60** bodies open with an archive version header; saveVersion
 **52** bodies (25 of the 31 readable saves) do not, and go straight to the grid table.
@@ -188,6 +200,9 @@ i32  destroyed count ; refs      |  sub-levels only; the persistent level's plac
 i32  archive-follows flag (0/1)  /  taken by the body's closing table
 [ archive version header + custom versions, when the flag is 1 ]
 ```
+
+All three destroyed-actor lists are **read**, not stepped over; their shapes and the measured
+overlap between them are below.
 
 **The earlier "774 KB partition table" was a misreading.** That figure measured to the
 first literal `Persistent_Level\0` at body offset 774709. The grid table ends at **71578**
@@ -243,11 +258,206 @@ persistent level's `name`, where the old parser reports `None` and this reports
 `"Persistent_Level"`. The same 36 pre-1.0 saves are refused by both.
 
 Re-measured over the whole folder on the final tree: **31 bodies, 86,403 levels and
-1,243,288 objects walked in 7.77 s, with zero warnings and zero unparsed bytes** — every byte
-of every body is either read or stepped over by a length the file declares. The reference
-save's 44 MB walks in **0.231 s**. Skipped-by-declared-length totals **2,414,398 bytes** of
-destroyed-actor lists across the 31 saves (97,250 on the reference save), reported as
-`SaveBody.skipped_toc_bytes` rather than silently dropped.
+1,243,288 objects walked in 7.77 s, with zero warnings and zero unparsed bytes** — and since the
+destroyed-actor lists were decoded, *nothing is stepped over either*: every byte of every body
+is now read. The reference save's 44 MB walks in **0.231 s**. `SaveBody.skipped_toc_bytes`
+survives as the count of those bytes — **2,414,398 across the 31 saves, 97,250 on the reference
+save** — and its name is now historical: it is a number a caller can see is nonzero, not a
+confession.
+
+#### The destroyed-actor lists — read, not skipped
+
+**Why the save keeps them at all.** The world's collectibles are placed by the map and never
+written into a save. Nothing in a `.sav` says a power slug *exists*; what it says is which
+map-placed actors are **gone**. So this list is not a curiosity at the tail of a block — it is
+the only record of what the player has collected, and reading it is the whole reason the block
+stopped being skipped. What the projection does with it is `removed`; see DESIGN §6.11.
+
+Three lists, in three places, and they are three different lists rather than one written thrice:
+
+```
+per level, trailing the header block, inside the TOC size:
+    sub-level         [ i32 count ][ count x (str level, str actor path) ]
+    persistent level  [ i32 groups ][ groups x ( str cell, i32 count, count x ref ) ]
+per sub-level, in its trailer, right after the i32 version:
+                      [ i32 count ][ refs ]
+closing the body, the last structure there is:
+                      [ i32 groups ][ groups x ( str level, [i32 count][refs] TWICE ) ]
+```
+
+The two lists per closing group are looted drop pods and crashed ships in the first, Mercer
+shrines in the second — 5 and 7 on the reference save. Which shape a header block carries is
+decided by *the level*, not by a flag in the file: the persistent level groups by
+world-partition cell and a sub-level does not. Nothing announces that, so the reading is
+checked by **landing**: after the list the cursor must sit exactly on the header block's
+declared end. Over the whole folder that is **79,363 header-block lists read and 79,363 landing
+exactly on the declared end, 0 mislandings** — two independent lengths, the block's and the
+list's own counts, agreeing 79,363 times. 79,332 of the lists are the bare sub-level shape and
+31 the grouped one, one per save.
+
+**A level may write no count field at all.** TOC leftover over the 31 saves: **0 bytes on 7,040
+levels, exactly 4 (an empty list) on 72,578, more than 4 on 6,785.** 7,032 of the zero-leftover
+levels do have headers, so this is not an over-read of the headers before them; the oracle
+reports zero collectables for exactly the same levels, which is what makes "the field is absent"
+a measurement rather than an excuse.
+
+**The measured overlap, which is why all three must be merged.** On the reference save 854
+actors are in both the header blocks and the trailers, 5 only in the header blocks, 30 only in
+the trailers, and all 12 in the closing table are already in one of the other two — **889
+distinct**. Over all 31 saves two predicates hold with no exception: the header-block list is
+always a subset of trailer ∪ closing (`H − T − C = 0`, 31 of 31), and **the closing table never
+contributes an actor the other two lack** (`C \ (H∪T) = 0`, 31 of 31). Only the trailer list
+ever contributes uniquely, 0 to 47 actors depending on the save. Merging is therefore not
+belt-and-braces: picking the header-block list alone would lose up to 47 actors, and picking any
+one list would lose the monotonicity below.
+
+Eight of the 31 rows, oldest first — `H` header blocks, `T` trailers, `C` closing table, and
+`T−H−C` the trailer's unique contribution:
+
+| save | ver | H | T | C | union | cells | T−H−C |
+|---|---|---|---|---|---|---|---|
+| `Han solo` | 52 | 60 | 92 | 1 | 92 | 42 | 32 |
+| `301025-230108` | 52 | 318 | 326 | 17 | 326 | 125 | 8 |
+| `311025-200729` | 52 | 495 | 511 | 45 | 511 | 172 | 16 |
+| `151125-223640` | 52 | 720 | 724 | 66 | 727 | 231 | 7 |
+| `171125-235630` | 52 | 834 | 829 | 5 | 834 | 262 | 0 |
+| `131225-185524` | 52 | 870 | 871 | 6 | 875 | 274 | 5 |
+| `260726-212757` | 60 | 836 | 878 | 10 | 883 | 281 | 47 |
+| `280726-230847` | 60 | 859 | 884 | 12 | 889 | 284 | 30 |
+
+`H − T − C` is 0 and `C \ (H∪T)` is 0 on every one of the 31 rows, not only these eight.
+
+**Deduplication is load-bearing, not cosmetic.** The trailer list contains *internal* duplicates
+on 6 of the 31 saves — 2 on `021225-224705` and 1 on each of the five December saves — and the
+oracle reproduces the same duplicates, so they are in the bytes rather than in either reader.
+`SaveBody.destroyed_actors` dedups by `(cell, path)`.
+
+**Longitudinal check across the 31 saves, ordered by `play_duration_s`.** The merged union runs
+`92 … 889` and **never falls**; cells run `42 … 284` and never fall; and the actor-leaf set is
+**strictly nested** — every save's set is a superset of every earlier save's, no exceptions.
+That is the strongest available evidence that the list means "collected", since a playthrough
+can only collect more. Two details it also settles:
+
+* **No single list is monotone.** The header-block list alone falls **870 → 836** across the
+  v52→v60 boundary and **851 → 845** within v52, and the closing table falls **66 → 5** between
+  `151125-223640` and `171125-235630`. Merging the three is what produces a series that only
+  rises. Measured, not assumed — and the reason no caller should read one list.
+* **A ref's cell is not stable across a game update, so nothing may key on `(cell, leaf)`.**
+  The `(cell, leaf)` pair set is nested at every step but one, `131225-185524` →
+  `260726-212757`, the v52→v60 boundary, where 7 pairs disappear. All 7 are `BP_Ship*` crash
+  sites that reappear in the same save under a different partition cell (`BP_Ship_C_5` moves
+  `4WE8E45SCOKQSG5KLXDMNZY4Z` → `0O2UIH8ZOBYWRN8PY7727SVBT`). Same actors, re-keyed cell — not a
+  drop, but a reason to key on the actor alone.
+
+**Oracle parity, 31 of 31 exact.** Compared as multisets *and* index-wise per level: our
+`Level.destroyed` against `collectables1`, `trailer_destroyed` against `collectables2`,
+`closing_destroyed` against `dropPodObjectReferenceList` + `extraObjectReferenceList`, plus the
+deduplicated unions. **Zero differences on any list on any save**, duplicates included, and the
+readable/refused split unchanged — 31 readable, every other file in the folder refused by both.
+
+**What it costs: 1–3 ms, under 1.1% of the walk.** Interleaved A/B, best of 7, against a
+monkeypatched `_read_destroyed_block` that jumps straight to `end`:
+
+| save | body | read | skip | delta |
+|---|---|---|---|---|
+| `autosave_0` (v60) | 44.4 MB | 255.9 ms | 254.7 ms | +1.1 ms, +0.4% |
+| `131225-185524` (v52) | 42.5 MB | 250.4 ms | 248.2 ms | +2.2 ms, +0.9% |
+| `171125-235630` (v52) | 38.3 MB | 230.3 ms | 227.7 ms | +2.6 ms, +1.1% |
+
+Against a full parse (~2.8 s per save, 87.1 s for the folder) that is **~0.08%**. How the
+measurement can lie is worth recording: reading once and then skipping once gave 696 ms against
+280 ms — a 2.5× "cost" that was entirely first-pass page-fault and allocator warm-up on a 44 MB
+body. Interleaving the two orders and taking the minimum is what makes the number real.
+
+**`ParsedSave.warnings` are unchanged by the new read**: `SaveBody.warnings` is empty on all 31
+saves at both versions, and the save-level count is 0 on all 6 v60 saves and exactly 3 on each
+of the 25 v52 saves — 75 in total, every one the same `mSaveData` / `mDestroyedPickups` /
+`mLootedDropPods` as before.
+
+**What is in a ref, and what a ref does not say.** Each entry is two strings: a level name and
+an actor path such as `Persistent_Level:PersistentLevel.BP_Crystal_mk3_C_2146`. **There is no
+class path anywhere in these lists** — see *The class-naming limit* below, which is the one real
+limit on what can be said about them.
+
+#### The class-naming limit, stated honestly
+
+An object header carries a class path; a destroyed-actor ref carries only the instance name. So
+`extract_save._removed_class` recovers an **approximate** class by stripping from the right —
+the trailing index, then a `_UAID_<hex>` if present, then a trailing `_C` — and that is as far
+as the bytes allow. The limit is not the stripping; it is that the game builds these names two
+different ways and **only 32% of them spell their class out with `_C`**. The rest are
+level-placed names with an instance number glued directly onto the class, with no separator.
+
+Whether that matters depends entirely on the class, and the two cases are worth stating
+separately because one of them is fine and one is not:
+
+* **Harmless for slugs.** `BP_Crystal_mk21_23` is a `BP_Crystal_mk2` with `1` glued on and then
+  an index. Strip the index and the recovered class is `BP_Crystal_mk21`, which still carries
+  its `mk2`, so a prefix match files it as yellow correctly. Every slug tier survives the glue.
+* **Not harmless for artifacts.** `BP_WAT1` (somersloop) and `BP_WAT2` (Mercer sphere) differ in
+  **exactly the digit the game glues an instance number onto**. `BP_WAT112` cannot be assigned
+  without guessing, and `BP_WAT60` fits neither prefix. That is why `REMOVED_GROUPS` marks
+  somersloop and mercer_sphere `strict` — only a name that spells the class with `_C` is
+  accepted — and why the remainder falls to a deliberately vague `artifact_unsplit`: **65 of the
+  reference save's 98 artifacts** report there, with 6 unambiguous `BP_WAT1_C` and 27
+  unambiguous `BP_WAT2_C` beside them.
+
+**The cross-check that proves `artifact_unsplit` really does hold somersloops**, rather than
+being a bucket of unknowns nobody has looked into: the reference save's 6 unambiguous
+`BP_WAT1_C` names are far fewer than the somersloops the player actually holds — **11 in the
+Dimensional Depot plus 4 slotted in machines**, both read from the same projection. So at least
+nine of the 65 unsplit names must be somersloops. That inference rests on one game-behaviour
+premise, flagged rather than buried: a somersloop can only be picked up off the map. Everything
+else in the argument is a number from this disk. Longitudinally the two unambiguous runs go
+0 → 6 for `BP_WAT1_C` and 0 → 27 for `BP_WAT2_C` across the playthrough, both non-decreasing.
+
+**Census, all 31 saves: 270 distinct approximate classes and every one matched.** `other` is
+empty on all 31 saves and the group sums equal the total on all 31, so `REMOVED_GROUPS` misses
+nothing that occurs. Eight of the 31 rows, ending on the reference save's 889 over 284 cells:
+
+| save | ver | total | cells | flora | pickup | slug_b | artif | shrine | crash | debris | slug_y | slug_p |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `Han solo` | 52 | 92 | 42 | 32 | 6 | 35 | 1 | 1 | 0 | 1 | 10 | 6 |
+| `301025-230108` | 52 | 326 | 125 | 89 | 68 | 80 | 23 | 17 | 7 | 9 | 20 | 13 |
+| `311025-200729` | 52 | 511 | 172 | 108 | 97 | 110 | 63 | 54 | 16 | 15 | 26 | 22 |
+| `151125-223640` | 52 | 727 | 231 | 169 | 129 | 141 | 86 | 72 | 35 | 29 | 37 | 29 |
+| `171125-235630` | 52 | 834 | 262 | 184 | 159 | 150 | 94 | 78 | 49 | 43 | 46 | 31 |
+| `131225-185524` | 52 | 875 | 274 | 185 | 169 | 158 | 97 | 80 | 53 | 48 | 48 | 37 |
+| `260726-212757` | 60 | 883 | 281 | 185 | 170 | 159 | 97 | 80 | 55 | 51 | 49 | 37 |
+| `280726-230847` | 60 | 889 | 284 | 185 | 170 | 163 | 98 | 80 | 55 | 51 | 50 | 37 |
+
+Every one of those nine series is non-decreasing over all 31 saves, which is the same nesting
+argument as above applied per group. **`artif` is every `BP_WAT*` actor**, i.e. the sum of
+`somersloop`, `mercer_sphere` and `artifact_unsplit` — 6 + 27 + 65 = 98 on the reference save.
+The column predates the census fix below and is kept whole rather than re-measured as three,
+because the total is the number the nesting argument applies to.
+
+Two of the nine deserve a caveat when they are quoted at a player. **`dropped_pickup`
+(`FGItemPickup_Spawnable`) is not a map collectible** — it is loot the player dropped and picked
+back up, so its 170 says nothing about the world. And `flora` and `debris` are cleared as a side
+effect of building rather than sought, so they measure ground clearing, not exploration.
+
+**An inconsistency the tests caught, and the fix.** The census used to be built from
+`removed["counts"]`, whose keys have already had their trailing `_C` stripped by
+`_removed_class`, while a `strict` group requires `name.startswith(prefix + "_C")` — so **no
+strict group could ever match a census key.** `groups["somersloop"]` and
+`groups["mercer_sphere"]` were absent on all 31 saves while `removed_actors("somersloop")`
+happily returned its 6 entries: two halves of one returned dict disagreeing about whether the
+split exists. Nothing was lost (65 + 6 + 27 = 98) and no single number was wrong, which is
+exactly what made it easy to miss.
+
+Both paths now group from the **instance names**, where the `_C` survives, so the census and the
+listing agree for every group. On the reference save that reads
+
+```
+groups["somersloop"] = 6      removed_actors("somersloop")["actors"]      =  6 entries
+groups["mercer_sphere"] = 27  removed_actors("mercer_sphere")["actors"]   = 27 entries
+groups["artifact_unsplit"] = 65                                             65 entries
+```
+
+`test_the_census_and_the_listing_agree_for_every_group` walks every group and compares the two,
+so the two paths cannot diverge again. `counts` stays in the projection as a raw class census for
+diagnostics, and nothing derives a group from it.
 
 ### Properties (`savparse/properties.py`) — DONE
 
@@ -422,8 +632,9 @@ container's declared length, which is not the element's length.
 
 **None of the three changed a value.** The same walk over all 31 saves before and after:
 1,243,288 objects, 2,269,824 properties, 75 warnings, and the identical digest of every
-property value (`24e7bab3f7c7768a713f1813001d5c0c`). The projection diff is unchanged — 17
-of 19 keys exact, `lightweight_counts` and `structures` still the two.
+property value (`24e7bab3f7c7768a713f1813001d5c0c`). The projection diff was unchanged by them
+— 17 of the 19 keys that existed at the time, `lightweight_counts` and `structures` still the
+two, both since closed.
 
 **What the census says the containers actually hold**, which is what makes the guards
 correct rather than lucky:
@@ -595,9 +806,11 @@ would otherwise report the buffer size instead of the class the walk was looking
 
 1. **Black-box parity** against the vendored parser on all 31 readable saves, and not on a
    sample: object counts, per-class census, then **every property of every object**, name by
-   name and value by value. A comparison that has to strip a cosmetic rendering difference
-   should strip it and then compare the stripped values *and* the rendering separately, so
-   that "cosmetic" is a measured claim rather than an excuse.
+   name and value by value, and each of the three destroyed-actor lists against the oracle's
+   own spelling of it — as a **multiset** and index-wise per level, so an internal duplicate
+   counts as a difference rather than washing out. A comparison that has to strip a cosmetic
+   rendering difference should strip it and then compare the stripped values *and* the rendering
+   separately, so that "cosmetic" is a measured claim rather than an excuse.
 2. **Golden fixtures.** Committed real bytes, so the tests survive the library's removal and
    pass with no game install:
    * `save_header.bin` — 2 KiB file prefix;
@@ -621,20 +834,22 @@ would otherwise report the buffer size instead of the class the walk was looking
      `{"error": "parse_error"}` on both sides; only the message text differs, and it has to,
      because the two parsers hit the wrong layout at different fields. (One of the 36,
      `ServerManager_V2.sav`, is not a game save at all — it opens `MSGF`. Both refuse it.)
-   * **Of the 19 projection keys, 17 are identical on all 31 saves.** The two that differ are
-     `lightweight_counts` and `structures`, on every save, and only ever by being **empty**
-     under the own parser: **488 count keys absent, 62 zero-length lists** (two per save),
-     and — the number that matters for the verdict — **224,530 structure instances in 488
-     classes** that the vendored parser reports and this one does not. **Zero leaves where the
-     two disagree on a value**, on any save, in any key. Both gaps come from the undecoded
-     trailing bytes.
+   * **All 20 projection keys are identical on all 31 saves**, `removed` included, and
+     identical means leaf by leaf: **zero leaves anywhere where the two disagree on a value,
+     and none present under one parser and absent under the other.** The last two to fall were
+     `lightweight_counts` and `structures` — for a while they differed on every save by being
+     **empty** under the own parser (488 count keys absent, 62 zero-length lists, **224,530
+     structure instances in 488 classes** unreported), which is what decoding the lightweight
+     blob closed. `removed` was identical from the first run, because the two engines reach the
+     same three lists by different attribute names and the projection sorts before emitting.
    * `n_objects` agrees on every save, from 29,734 to 44,643.
    * Reference figures, both parsers: `Han Solo_270726-215626` → **44,307 objects**, 435
      machines + 69 extractors + 62 generators = **566** records, **11,554** material edges,
-     1,287 power edges, 6,111 interned actors, 90 building classes, `schema_version` **10**;
-     `structures` = 18 classes / **8,347** instances under vendor, empty under own.
+     1,287 power edges, 6,111 interned actors, 90 building classes, `schema_version` **11**;
+     `structures` = 18 classes / **8,347** instances.
      `Han Solo_280726-230847` (the reference save these notes measure) → 44,634 objects,
-     438 + 70 + 62 = 570 records, 11,664 material edges.
+     438 + 70 + 62 = 570 records, 11,664 material edges, and `removed` = **889 actors over 284
+     cells**.
    * `--list` over the whole folder: same 31/36 split, and **zero differences in any header
      field** of any readable save.
    * Whole-sidecar wall clock including interpreter start, summed over the 31 readable saves:
@@ -646,8 +861,9 @@ would otherwise report the buffer size instead of the class the walk was looking
 4. **Attack the awkward files, and synthesize the ones the disk does not have.** Everything
    in step 3 is the *normal* case. The saves that would break a parser are the ones nobody
    has: the whole folder is one session, one player, ASCII, unmodded. Re-run independently
-   and all of it held — same 31/36 split, no header field differing anywhere, the same two
-   projection keys and no others — and then these, which found the two fixes below:
+   and all of it held — same 31/36 split, no header field differing anywhere, and no projection
+   key differing beyond the two then outstanding — and then these, which found the two fixes
+   below:
 
    * **Truncation, twice over.** A saveVersion 60 and a saveVersion 52 save cut at fourteen
      fractions of their length each. **All 28 land on the same read**: the last chunk's
@@ -775,6 +991,21 @@ would otherwise report the buffer size instead of the class the walk was looking
   over the whole world, so it may be worth something to spatial work.
 * **`EObjectFlags` is on every header** and distinguishes a default subobject from a spawned
   one. Nothing reads it; it might separate blueprint-placed from hand-placed buildings.
+* **The destroyed-actor list answers "collected"; a location table would answer "remaining" —
+  and that is a licence decision, not an engineering one.** Everything above is an absolute
+  count: 163 blue slugs collected, 55 crash sites looted, and no denominator anywhere, because
+  the world's collectibles are not in the save. `sidecar/vendor/sat_sav_parse/sav_data/`
+  contains `slug.py`, `somersloop.py`, `mercerSphere.py` and `crashSites.py` — location tables
+  for exactly the four kinds this list records as gone. Joining them against `removed` would
+  turn *"250 slugs collected"* into *"these 12 remain, nearest at X"*, which is a different
+  class of answer and the one a player actually wants.
+
+  **The catch is the whole reason this project exists.** That data is **GPL-3.0** and it is
+  *build-time* input to `tools/gen_*.py`, which is precisely the licence question the parser
+  replacement is meant to close — see the deletion checklist in the *Verdict*, item 4. Using it
+  for a runtime feature would deepen the dependency at the moment the rest of it is being
+  removed. Written up here as a decision for the user rather than taken: nothing has been read
+  out of those files, and no code joins against them.
 
 ## Limits to keep stated
 
@@ -782,18 +1013,27 @@ would otherwise report the buffer size instead of the class the walk was looking
   10 × 14, 9 × 9, 8 × 12) and one, `ServerManager_V2.sav`, is not a save at all. Not a
   regression, and nothing reads them. The readable 31 split **25 at saveVersion 52 and 6 at
   60**, all `saveHeaderType` 14.
-* **The own parser is not the default**, though the projection now agrees on all 19 keys.
+* **The own parser is not the default**, though the projection now agrees on all 20 keys.
   Flipping it changes nothing about the licence, which is what the exercise is for, so the
   flip belongs to the deletion rather than preceding it. There is a test that fails if the
   default moves.
 * `session_visibility` and the two unnamed int32s are skipped, not understood. The fields
   either side verify, which is what makes skipping safe.
 * The 6-byte block at body offset 20 is unconfirmed.
-* The **destroyed-actor lists** are stepped over by declared length, not decoded — 97,250
-  bytes on the reference save, reported as `SaveBody.skipped_toc_bytes`. Nothing above reads
-  them. The skip is validated by two independent lengths agreeing: the header walk must end
-  inside the block, and the next block's size field must be exactly where the block's
-  declared end says it is.
+* The **destroyed-actor lists** are read, and the projection's `removed` key carries them out —
+  but what they support is a *collected* count with no denominator. How many slugs remain needs
+  the map's own table of where every slug is, which this project does not ship; see the licence
+  decision under *Opportunities*. Two smaller limits ride along: which of the three lists a
+  given actor lands in is **not** established (that they must be merged rather than chosen
+  between is), and a ref's partition cell is not stable across a game update, so nothing may key
+  on `(cell, leaf)` across saves.
+* **A destroyed-actor ref names an instance, not a class**, and only 32% of those names spell
+  the class out with `_C`. That is harmless for slugs and genuinely lossy for artifacts, where
+  `BP_WAT1` and `BP_WAT2` differ in the digit an instance number is glued onto: 65 of the
+  reference save's 98 artifacts can only be reported as `artifact_unsplit`. Full account, with
+  the cross-check that proves the unsplit bucket holds somersloops, under *The class-naming
+  limit* above — including the one place where `removed_actors()`'s own census and its per-group
+  listing disagree.
 * The level trailer's `version` (52/60) and `archive-follows` flag are read and range-checked
   but not *explained*. The flag's correlation with a following archive header is exact on all
   3,123 sub-levels, and the header's own signature is verified when it says one follows.
@@ -868,9 +1108,12 @@ would otherwise report the buffer size instead of the class the walk was looking
 
 ## What is left
 
-**Nothing.** Every class that writes trailing bytes is decoded, and the projection needs none of
-them beyond the foundations. What is *unexplained* rather than unread is listed at the end of the
-verdict below.
+**Nothing, and now that is a statement about bytes and not only about classes.** Every class that
+writes trailing bytes is decoded, and the destroyed-actor lists — the last region of the body that
+was stepped over rather than read — are read: **97,250 of the reference save's 44,376,211 body
+bytes, 0.22%**, which is what takes the byte budget from 99.8% to 100%. Over the folder that is
+2,414,398 bytes and 21,038 references. What is *unexplained* rather than unread is listed at the
+end of the verdict below.
 
 Who carries them, measured over all 31 saves — **88,066 of 675,432 actors, in exactly eight
 classes**, and no others (the 31 saves hold 675,432 actors and 567,856 components):
@@ -919,7 +1162,7 @@ the actual routed path of every belt in the world, which nothing in this project
 ## Verdict
 
 **Is the own parser ready to become the default? Yes — on the evidence, and the decision is
-still the user's.** The acceptance test this document set is met: **19 of 19 projection keys
+still the user's.** The acceptance test this document set is met: **20 of 20 projection keys
 leaf-identical on all 31 readable saves**, no key present under one parser and absent under the
 other, the same 36 files refused with the same reasons, `n_objects` equal everywhere, and 1.16×
 faster end to end over the folder (vendor 78.2 s, own 67.5 s of sidecar wall). 918 tests pass
@@ -935,7 +1178,9 @@ variable, and should happen as part of that deletion rather than before it.
 
 **What would have to be true to delete `sidecar/vendor/`:**
 
-1. ~~The trailing bytes are decoded and the whole-folder diff reads 19 of 19 keys.~~ Done.
+1. ~~The trailing bytes are decoded and the whole-folder diff reads every projection key.~~
+   Done, and it now reads **20 of 20** — the destroyed-actor lists added the twentieth,
+   `removed`, and it was identical on both engines from the first run.
 2. `SATISFACTORY_SAVPARSE=own` becomes the default, and the tests that pin the default flip
    with it.
 3. The projection JSON is re-diffed **after** the flip, over the whole folder, not sampled —
@@ -944,7 +1189,12 @@ variable, and should happen as part of that deletion rather than before it.
    every save first; a committed projection per save would make the comparison repeatable
    forever, at roughly 130 KB each.
 4. Someone decides the licence question separately for `sav_data/`, which is build-time input
-   to `tools/gen_*.py` and is not on this path.
+   to `tools/gen_*.py` and is not on this path. Note that reading the destroyed-actor lists has
+   raised the stakes on that one rather than lowered them: `slug.py`, `somersloop.py`,
+   `mercerSphere.py` and `crashSites.py` are the location tables that would turn a collected
+   count into a *remaining* one, so there is now a real feature arguing for keeping GPL data at
+   the moment the rest of it is being removed. That tension is the user's to resolve, not a
+   detail — see *Opportunities*.
 5. Every reference to the library outside `sidecar/vendor/` is removed or reworded:
    `sidecar/extract_save.py`'s two-engine switch, `tests/test_savparse_save.py`'s default pin,
    and prose in `README.md`, `DESIGN.md` and this file.
@@ -969,9 +1219,18 @@ variable, and should happen as part of that deletion rather than before it.
   whether it is a trailer or the high half of an int64 size is not decidable from any save on
   this disk. Each is read, range-checked where a range exists, and required to be what it has
   always been, so a patch that changes one fails loudly.
-* The **destroyed-actor lists**, stepped over by declared length: 2,414,398 bytes across the
-  31 saves. Their framing is known (the skip is validated by two independent lengths agreeing);
-  their contents are not read.
+* **Why an actor lands in one destroyed-actor list rather than another.** All three are read and
+  their contents agree with the oracle exactly, but the *rule* dividing them is not established:
+  the header-block list is always a subset of trailer ∪ closing on 31 of 31 saves, and the
+  closing table never contributes uniquely, which is enough to justify merging and nothing more.
+  The same applies to the closing table's two lists per group — drop pods and ships in one,
+  shrines in the other, on every save on this disk — where a class-based split is a description
+  of what is there rather than a derived rule. What would settle it: a save taken immediately
+  after collecting one known item, diffed against the save before.
+* **Which class a destroyed actor was**, beyond what its instance name shows. The refs carry no
+  class path at all, so `BP_WAT112` cannot be split from `BP_WAT1`+index by any measurement —
+  see *The class-naming limit*. What would settle it: a save taken after collecting exactly one
+  somersloop, since the new name would then be known by construction.
 * Whether **UTF-16 strings** appear where this parser expects them. 25 of 27,648,606 strings
   read have a negative length and all 25 are inside a guess that is discarded, so the branch
   is verified by construction and against the oracle by construction, never by a save a player

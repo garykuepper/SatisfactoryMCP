@@ -62,7 +62,13 @@ from .tools.planning import (
     plan_layout,
     rank_unlocks,
 )
-from .tools.progression import mam_research, phase_requirements, power_shards, somersloops
+from .tools.progression import (
+    collected_from_world,
+    mam_research,
+    phase_requirements,
+    power_shards,
+    somersloops,
+)
 from .tools.prompts import design_factory, pick_hard_drive, plan_power_plant
 from .tools.resources import current_save, docs_summary, factory_labels, map_regions
 from .tools.spatial import (
@@ -89,6 +95,7 @@ __all__ = [
     "advise_hard_drive_pick",
     "alternates_for_item",
     "bom",
+    "collected_from_world",
     "commission_plan",
     "compare_recipe_options",
     "current_save",

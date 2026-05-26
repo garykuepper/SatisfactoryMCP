@@ -201,14 +201,14 @@ def test_committed_shards_are_read_from_slots_never_derived_from_clock(state):
     while holding 3 shards: a shard raises the MAXIMUM clock and the slider is set
     separately, so the player left a slot filled and pulled the clock back.
 
-    Summing shards_for_clock over the 41 overclocked buildings gives 95. Reading
-    InventoryPotential gives 97. The 2 missing ones are really spent and really not
+    Summing shards_for_clock over the 42 overclocked buildings gives 98. Reading
+    InventoryPotential gives 100. The 2 missing ones are really spent and really not
     available to build with.
     """
     budget = state.shard_budget()
     derived = sum(h["needed"] for h in budget["holders"])
-    assert derived == 95
-    assert budget["committed"] == 97
+    assert derived == 98
+    assert budget["committed"] == 100
     assert budget["measured"] is True
 
     slack = [h for h in budget["holders"] if h["idle"]]
@@ -217,26 +217,26 @@ def test_committed_shards_are_read_from_slots_never_derived_from_clock(state):
 
 
 def test_shards_on_hand_exclude_the_ones_already_inside_machines(state):
-    """The save's "machine" inventory bucket holds 97 Power Shards and every one of
+    """The save's "machine" inventory bucket holds 100 Power Shards and every one of
     them is in an InventoryPotential component, i.e. already installed. Reading that
-    total as shards on hand overstates the free pool by more than 4x -- the player can
-    actually spend 22, all of them in the Dimensional Depot."""
-    assert state.projection["inventories"]["machine"]["Desc_CrystalShard_C"] == 97
+    total as shards on hand overstates the free pool by more than 5x -- the player can
+    actually spend 19, all of them in the Dimensional Depot."""
+    assert state.projection["inventories"]["machine"]["Desc_CrystalShard_C"] == 100
     budget = state.shard_budget()
-    assert budget["free"] == 22.0
-    assert budget["committed"] == 97
+    assert budget["free"] == 19.0
+    assert budget["committed"] == 100
     assert budget["owned"] == 119.0
 
 
 def test_every_overclocked_building_holds_shards_and_no_other_building_does(state):
-    """A cross-check that the two halves agree: 41 buildings have clock > 1.0 and 41
-    hold shards, and they are the same 41. An underclocked building holding a shard, or
+    """A cross-check that the two halves agree: 42 buildings have clock > 1.0 and 42
+    hold shards, and they are the same 42. An underclocked building holding a shard, or
     an overclocked one holding none, would mean the slot inventory is not what it looks
     like."""
     budget = state.shard_budget()
     overclocked = {r["instance"].rsplit(".", 1)[-1] for r in state.overclocked if r["clock"] > 1.0}
     holders = {h["instance"] for h in budget["holders"]}
-    assert len(overclocked) == 41
+    assert len(overclocked) == 42
     assert holders == overclocked
 
 

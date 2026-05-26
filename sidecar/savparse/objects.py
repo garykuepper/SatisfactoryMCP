@@ -75,16 +75,34 @@ actors (property name one byte later than on version 36/52) and 20,646 component
 payload is otherwise nothing but a property list). It is inside the slice, so it belongs
 to whoever parses the slice.
 
-## What is skipped, and why that is safe
+## Destroyed actors, which the save keeps three lists of
 
-The trailing bytes of a TOC block (after the headers) are a destroyed-actor list, in two
-different shapes: ``[i32 count][refs]`` on sub-levels and ``[i32 groups][str level][i32
-count][refs]`` on the persistent level. They are skipped by the block's declared length
-rather than parsed, because nothing above this reads them. The skip is validated three
-ways: the header walk must end *inside* the block, the block's declared end must be where
-the data block's size field is, and the data block must then end exactly on its own
-declared size. Two independent lengths agreeing is what makes the skip a skip and not a
-guess.
+The world is not saved. Every power slug, mushroom, Mercer sphere and crashed drop pod sits
+where the map put it, so a save cannot record collectibles by listing what exists -- it
+records the **negative**: which map-placed actors are gone. Three lists hold that, and they
+are three different lists rather than one written thrice:
+
+* trailing each level's **header block**, after the headers -- ``[i32 count][refs]`` on a
+  sub-level, and grouped by partition cell on the persistent level
+  (``[i32 groups][str cell][i32 count][refs]``). 859 actors on the reference save, 97,250
+  bytes, and this was the last thing in the body still skipped rather than read.
+* in each sub-level's **trailer**, after its version. 884 actors.
+* the **table that closes the body**, keyed by cell, two lists per group: looted drop pods
+  and crashed ships (5 on the reference save), then Mercer shrines (7).
+
+Measured overlap on the reference save: 854 actors are in both the first two, 5 only in the
+header blocks, 30 only in the trailers, and all 12 of the closing table's are already in one
+of the others. **889 distinct actors** -- ``SaveBody.destroyed_actors``. Which of the three a
+given actor lands in is not established; that they must be merged rather than picked from is.
+
+Verified against the vendored parser, which exposes the same three under different names: our
+header-block list equals its ``collectables1`` exactly, our trailer list its ``collectables2``,
+and our closing table its ``dropPodObjectReferenceList`` plus ``extraObjectReferenceList``.
+Same 889-actor union, no entry on either side that the other lacks.
+
+The reading is checked by landing: after the list, the cursor must be exactly on the header
+block's declared end. Two independent lengths agreeing -- the block's, and the list's own
+counts -- is what makes this read rather than a guess.
 """
 
 from __future__ import annotations
@@ -246,9 +264,12 @@ class Level:
     headers: list[ActorHeader | ComponentHeader]
     objects: list[ObjectSlice]
 
-    #: Bytes of the TOC block left over after the headers -- the destroyed-actor list,
-    #: skipped by declared length. Kept as a number so a caller can see it is nonzero.
+    #: Bytes of the TOC block left over after the headers -- the destroyed-actor list.
+    #: Kept as a number so a caller can see it is nonzero even though it is now read.
     toc_extra_bytes: int = 0
+    #: Actors the save records as gone: ``(level cell, actor path)`` pairs from this level's
+    #: header block. See ``_read_destroyed_block``.
+    destroyed: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def actorAndComponentObjectHeaders(self) -> list[ActorHeader | ComponentHeader]:
@@ -264,10 +285,34 @@ class SaveBody:
     #: readable saves on the author's disk; a future patch that adds a structure should
     #: show up here rather than as silently wrong output.
     warnings: list[tuple[int, str]] = field(default_factory=list)
+    #: Destroyed actors from the sub-level trailers, and from the table that closes the body.
+    #: Kept apart from ``Level.destroyed`` because the three are three different lists and
+    #: whether they hold the same actors is a measurement, not an assumption -- see
+    #: ``destroyed_actors``.
+    trailer_destroyed: list[tuple[str, str]] = field(default_factory=list)
+    closing_destroyed: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def object_count(self) -> int:
         return sum(len(lv.objects) for lv in self.levels)
+
+    @property
+    def destroyed_actors(self) -> list[tuple[str, str]]:
+        """Every actor the save records as gone, from all three lists, deduplicated.
+
+        The save keeps three: one trailing each level's header block, one in each sub-level's
+        trailer, and one closing the body. Deduplicated by ``(cell, path)`` because they do
+        overlap -- see ``docs/savparse-notes.md`` for the measured split.
+        """
+        seen: dict[tuple[str, str], None] = {}
+        for lv in self.levels:
+            for ref in lv.destroyed:
+                seen[ref] = None
+        for ref in self.trailer_destroyed:
+            seen[ref] = None
+        for ref in self.closing_destroyed:
+            seen[ref] = None
+        return list(seen)
 
     @property
     def skipped_toc_bytes(self) -> int:
@@ -436,6 +481,44 @@ def _read_object_entry(r: Reader) -> ObjectSlice:
     return ObjectSlice(version=version, flag=flag, offset=r.pos, length=size)
 
 
+def _read_destroyed_refs(r: Reader, where: str, limit: int) -> list[tuple[str, str]]:
+    """A count, then that many ``(level name, actor path)`` pairs."""
+    at = r.pos
+    count = r.i32()
+    _expect(
+        0 <= count <= 1_000_000 and r.pos + count * 8 <= limit,
+        at,
+        f"{where}: {count} destroyed actors do not fit in the {limit - r.pos} bytes left",
+    )
+    return [(r.string(), r.string()) for _ in range(count)]
+
+
+def _read_destroyed_block(
+    r: Reader, name: str, end: int, *, grouped: bool
+) -> list[tuple[str, str]]:
+    """The destroyed-actor list trailing a level's header block.
+
+    Two shapes, and which one appears is decided by the level rather than by a flag in the
+    file: a sub-level writes one bare list, and the persistent level writes the list grouped
+    by the world-partition cell the actors lived in. Reading the wrong shape lands off the
+    block's declared end, which the caller checks -- so this is verified, not assumed.
+    """
+    if not grouped:
+        return _read_destroyed_refs(r, f"level {name!r}", end)
+    at = r.pos
+    groups = r.i32()
+    _expect(
+        0 <= groups <= 100_000,
+        at,
+        f"level {name!r}: its destroyed-actor list claims {groups} cell groups",
+    )
+    out: list[tuple[str, str]] = []
+    for _ in range(groups):
+        cell = r.string()
+        out.extend(_read_destroyed_refs(r, f"level {name!r} cell {cell!r}", end))
+    return out
+
+
 def _read_level(r: Reader, *, named: bool) -> Level:
     """One level record. ``named=False`` is the persistent level at the very end.
 
@@ -475,10 +558,16 @@ def _read_level(r: Reader, *, named: bool) -> Level:
         r.pos,
         f"level {name!r}: {header_count} headers overran the header block by {-extra} bytes",
     )
-    # Whatever is left is the destroyed-actor list, in one of two shapes. Stepped over by
-    # the block's declared length rather than parsed -- see the module docstring for what
-    # validates that, and `Level.toc_extra_bytes` for the byte count.
-    r.pos = toc_end
+    # Whatever is left is a destroyed-actor list, in one of two shapes. It is read rather
+    # than stepped over, and having read it the cursor must land exactly on the block's
+    # declared end -- which is what says the shape is right and not merely plausible.
+    destroyed = _read_destroyed_block(r, name, toc_end, grouped=not named) if extra else []
+    _expect(
+        r.pos == toc_end,
+        r.pos,
+        f"level {name!r}: its destroyed-actor list ended at {r.pos}, but the header block "
+        f"declared {toc_end}. The list's shape is wrong, not its length",
+    )
 
     data_size = r.i64()
     data_start = r.pos
@@ -522,10 +611,16 @@ def _read_level(r: Reader, *, named: bool) -> Level:
         f"declared {data_end}. One payload size is wrong",
     )
 
-    return Level(name=name, headers=headers, objects=objects, toc_extra_bytes=extra)
+    return Level(
+        name=name,
+        headers=headers,
+        objects=objects,
+        toc_extra_bytes=extra,
+        destroyed=destroyed,
+    )
 
 
-def _read_level_trailer(r: Reader, name: str, *, versioned_archive: bool) -> None:
+def _read_level_trailer(r: Reader, name: str, *, versioned_archive: bool) -> list[tuple[str, str]]:
     """A sub-level's trailer: a version, a destroyed-actor list, and maybe a flag.
 
     On a saveVersion 60 body the flag is 1 on 1,905 of the reference save's 3,123
@@ -545,25 +640,20 @@ def _read_level_trailer(r: Reader, name: str, *, versioned_archive: bool) -> Non
         r.pos - 4,
         f"level {name!r} trailer version {version}, expected 52 or 60",
     )
-    count = r.i32()
-    _expect(
-        0 <= count <= 1_000_000,
-        r.pos - 4,
-        f"level {name!r} claims {count} destroyed actors",
-    )
-    for _ in range(count):
-        r.string()  # level name
-        r.string()  # actor path
+    destroyed = _read_destroyed_refs(r, f"level {name!r} trailer", len(r.data))
     if not versioned_archive:
-        return
+        return destroyed
     flag = r.i32()
     _expect(flag in (0, 1), r.pos - 4, f"level {name!r} trailer flag {flag}, expected 0 or 1")
     if flag:
         _read_archive_header(r)
         _read_custom_versions(r)
+    return destroyed
 
 
-def _read_final_destroyed_table(r: Reader, warnings: list[tuple[int, str]]) -> None:
+def _read_final_destroyed_table(
+    r: Reader, warnings: list[tuple[int, str]]
+) -> list[tuple[str, str]]:
     """The body's last structure: destroyed actors, grouped by level name.
 
     Parsed rather than skipped for one reason -- it is the only thing that can prove the
@@ -576,20 +666,16 @@ def _read_final_destroyed_table(r: Reader, warnings: list[tuple[int, str]]) -> N
     at = r.pos
     groups = r.i32()
     _expect(0 <= groups <= 100_000, at, f"the closing table claims {groups} level groups")
+    out: list[tuple[str, str]] = []
     for _ in range(groups):
         name = r.string()
         for which in (1, 2):
-            count = r.i32()
-            _expect(
-                0 <= count <= 1_000_000,
-                r.pos - 4,
-                f"closing table, level {name!r}, list {which}: {count} references",
+            out.extend(
+                _read_destroyed_refs(r, f"closing table, level {name!r}, list {which}", len(r.data))
             )
-            for _ in range(count):
-                r.string()  # level name
-                r.string()  # actor path
     if r.remaining:
         warnings.append((r.pos, f"{r.remaining} bytes after the closing destroyed-actor table"))
+    return out
 
 
 def read_body(body: bytes) -> SaveBody:
@@ -638,15 +724,24 @@ def read_body(body: bytes) -> SaveBody:
         f"the body claims {sub_count} sub-levels",
     )
     levels = []
+    trailer_destroyed: list[tuple[str, str]] = []
     for _ in range(sub_count):
         level = _read_level(r, named=True)
         levels.append(level)
-        _read_level_trailer(r, level.name, versioned_archive=preamble.has_archive_header)
+        trailer_destroyed += _read_level_trailer(
+            r, level.name, versioned_archive=preamble.has_archive_header
+        )
 
     # The persistent level closes the list: the same record with no name, and no trailer.
     # The body's last structure is a destroyed-actor table keyed by level name, which
     # takes its place.
     levels.append(_read_level(r, named=False))
-    _read_final_destroyed_table(r, warnings)
+    closing_destroyed = _read_final_destroyed_table(r, warnings)
 
-    return SaveBody(preamble=preamble, levels=levels, warnings=warnings)
+    return SaveBody(
+        preamble=preamble,
+        levels=levels,
+        warnings=warnings,
+        trailer_destroyed=trailer_destroyed,
+        closing_destroyed=closing_destroyed,
+    )

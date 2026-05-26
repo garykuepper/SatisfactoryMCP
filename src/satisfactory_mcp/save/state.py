@@ -13,6 +13,24 @@ from . import projection as proj
 __all__ = ["HardDriveOffer", "WorldState"]
 
 
+def _class_of_removed(leaf: str) -> str:
+    """Class of a removed actor from its instance name, for the `other` bucket only.
+
+    Mirrors the sidecar's `_removed_class`: strip a trailing index, a `_UAID_<hex>` if present,
+    then a trailing `_C`. Duplicated rather than imported because the sidecar runs as a separate
+    process and importing across that boundary is what the boundary exists to prevent -- and it
+    is only ever used to LABEL an unmatched class, never to decide a group.
+    """
+    parts = leaf.split("_")
+    if parts and parts[-1].isdigit():
+        parts.pop()
+    if len(parts) >= 2 and parts[-2] == "UAID":
+        parts = parts[:-2]
+    if parts and parts[-1] == "C":
+        parts.pop()
+    return "_".join(parts) or leaf
+
+
 @dataclass
 class HardDriveOffer:
     hard_drive_id: int | None
@@ -755,6 +773,120 @@ class WorldState:
     #: match nothing in a localised dump.
     SLOOP_ITEM: ClassVar[str] = "Desc_WAT1_C"
     MERCER_ITEM: ClassVar[str] = "Desc_WAT2_C"
+
+    #: What the save's removed-actor list is grouped into: ``(label, prefixes, strict)``.
+    #: First match wins, so ``BP_Crystal_mk2`` must be tried before the ``BP_Crystal`` that
+    #: is its prefix.
+    #:
+    #: **Why some groups are strict.** These lists carry no class path -- only an instance
+    #: name -- and the game builds those two ways. Some name the class outright
+    #: (``BP_WAT1_C_11``, ``BP_Crystal_mk3_C_10``); the other 68% are level-placed actors
+    #: whose name is the blueprint with a number glued straight on, no separator
+    #: (``BP_Crystal2_228``). Gluing is usually harmless: ``BP_Crystal_mk21_23`` still shows
+    #: its ``mk2``, so slug tiers survive it.
+    #:
+    #: It is *not* harmless for the alien artifacts, and that is measured rather than assumed.
+    #: A somersloop is ``BP_WAT1`` and a Mercer sphere ``BP_WAT2`` -- one digit apart, exactly
+    #: where the number gets glued -- and the save also holds ``BP_WAT60``, ``BP_WAT73`` and
+    #: ``BP_WAT84``, which no gluing of 1 or 2 produces. So the artifact names do not reliably
+    #: carry their class, and splitting them by prefix would be invention. ``strict`` groups
+    #: therefore only accept a name that spells the class with ``_C``; the rest fall through to
+    #: ``artifact_unsplit``, which is a real answer where a confident number would not be.
+    #:
+    #: The cross-check that settles it: 6 names say ``BP_WAT1_C``, but the save holds 11
+    #: somersloops in the Dimensional Depot and 4 slotted in machines. 15 > 6, so the unsplit
+    #: bucket certainly contains somersloops and the split counts are floors.
+    REMOVED_GROUPS: ClassVar[tuple[tuple[str, tuple[str, ...], bool], ...]] = (
+        ("slug_purple", ("BP_Crystal_mk3",), False),
+        ("slug_yellow", ("BP_Crystal_mk2",), False),
+        ("slug_blue", ("BP_Crystal",), False),
+        ("somersloop", ("BP_WAT1",), True),
+        ("mercer_sphere", ("BP_WAT2",), True),
+        ("artifact_unsplit", ("BP_WAT",), False),
+        ("mercer_shrine", ("BP_MercerShrine",), False),
+        ("crash_site", ("BP_DropPod", "BP_Ship", "BP_CrashSiteDebris"), False),
+        ("flora", ("BP_Shroom", "BP_SporeFlower", "BP_NutBush", "BP_BerryBush"), False),
+        ("debris", ("BP_DebrisActor", "BP_Rock", "BP_Boulder", "BP_Destructible"), False),
+        ("dropped_pickup", ("FGItemPickup_Spawnable",), False),
+    )
+
+    def removed_actors(self, group: str | None = None) -> dict:
+        """Map-placed actors this save records as GONE, grouped and listed.
+
+        **Why this is the only way to answer "how many slugs have I collected".** The world
+        is not saved. Every slug, mushroom, Mercer sphere and crashed drop pod sits where the
+        map put it, and a save never mentions the ones that are still there -- it records the
+        negative, which actors have been removed. So a count here *is* a collected count.
+
+        Grouping is by class-name prefix (``REMOVED_GROUPS``), because these lists carry no
+        class path at all -- only the actor's instance name, from which the sidecar recovers an
+        approximate class. Anything unmatched is reported under ``other`` rather than dropped,
+        so a class nobody anticipated shows up as a number instead of vanishing.
+
+        What this does NOT tell you is how many remain: that needs the map's own table of
+        where every slug is, which this project does not ship. The totals here are a floor on
+        what was collected, not a fraction of a known whole -- see ``docs/savparse-notes.md``.
+        """
+        removed = self.projection.get("removed") or {}
+        cells: list[str] = removed.get("cells") or []
+        instances: list = removed.get("instances") or []
+        counts: dict[str, int] = removed.get("counts") or {}
+        grouped: dict[str, int] = {}
+        unmatched: dict[str, int] = {}
+        # Grouped from the INSTANCE names, not from the projection's class census. The census
+        # holds classes recovered by the sidecar's `_removed_class`, which strips the trailing
+        # `_C` -- so a strict group, which by definition only accepts a name that spells its
+        # class with `_C`, could never match a census key. Counting it that way listed 6
+        # somersloops and 27 Mercer spheres individually while filing all 98 of them under
+        # `artifact_unsplit`, so the census and the listing disagreed with each other.
+        for _ix, leaf in instances:
+            label = self.removed_group(leaf)
+            if label is None:
+                cls = _class_of_removed(leaf)
+                unmatched[cls] = unmatched.get(cls, 0) + 1
+            else:
+                grouped[label] = grouped.get(label, 0) + 1
+
+        out: dict = {
+            "total": len(instances) or sum(counts.values()),
+            "groups": dict(sorted(grouped.items(), key=lambda kv: -kv[1])),
+            "cells": len(cells),
+        }
+        if unmatched:
+            out["other"] = dict(sorted(unmatched.items(), key=lambda kv: -kv[1]))
+        if group is None:
+            return out
+
+        known = [g for g, _p, _s in self.REMOVED_GROUPS]
+        if group not in known:
+            out["error"] = f"unknown group {group!r}; known: {known}"
+            return out
+        out["group"] = group
+        out["actors"] = [
+            {"cell": cells[ix] if 0 <= ix < len(cells) else "", "actor": leaf}
+            for ix, leaf in removed.get("instances") or []
+            if self.removed_group(leaf) == group
+        ]
+        return out
+
+    def removed_group(self, name: str) -> str | None:
+        """Which group a removed actor's class or instance name belongs to.
+
+        First match wins, which is the whole reason ``REMOVED_GROUPS`` is an ordered tuple:
+        ``BP_Crystal_mk3_C_2146`` starts with ``BP_Crystal`` as well as ``BP_Crystal_mk3``, so
+        testing the plain slug prefix first would file every purple slug as blue.
+
+        A ``strict`` group only accepts a name that spells its class out with ``_C``. That is
+        the artifacts: ``BP_WAT1`` and ``BP_WAT2`` differ in the one digit the game glues an
+        instance number onto, so ``BP_WAT112`` cannot be assigned without guessing.
+        """
+        for label, prefixes, strict in self.REMOVED_GROUPS:
+            if strict:
+                if any(name.startswith(f"{p}_C") for p in prefixes):
+                    return label
+            elif name.startswith(prefixes):
+                return label
+        return None
 
     # ---- MAM / hard drives ---------------------------------------------
 

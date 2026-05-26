@@ -19,10 +19,13 @@ capability the player has not got.
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.docs.constants import CAPABILITY_SCHEMATICS
+from satisfactory_mcp.save.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -59,12 +62,19 @@ def test_production_boost_is_gated_by_production_amplifier(game):
 
 
 def test_the_schematic_fallback_answers_when_the_flag_is_absent(game, state):
-    """The committed fixture is schema 5: no unlock flag for boost, because nothing
-    extracted it then. Falling back to the purchased set is what keeps an older projection
-    answering correctly instead of reporting every capability locked."""
-    assert "mIsBuildingProductionBoostUnlocked" not in (state.projection.get("unlock_flags") or {})
+    """A projection written before schema 10 has no unlock flags at all, because nothing
+    extracted them then. Falling back to the purchased set is what keeps an older cached
+    projection answering correctly instead of reporting every capability locked.
+
+    The flags are stripped here rather than assumed missing. They used to be missing -- the
+    committed fixture was schema 5 -- so this test passed without exercising the fallback,
+    and regenerating the fixture at schema 11 turned it into a test of the flag path that
+    `test_the_flag_wins_when_the_projection_carries_one` already covers."""
+    projection = deepcopy(state.projection)
+    projection.pop("unlock_flags", None)
+    older = WorldState(projection=projection, game=game)
     for capability, cls in CAPABILITY_SCHEMATICS.items():
-        assert state.has_capability(capability) == (cls in state.purchased_schematic_ids)
+        assert older.has_capability(capability) == (cls in older.purchased_schematic_ids)
 
 
 def test_the_flag_wins_when_the_projection_carries_one(game, live):
