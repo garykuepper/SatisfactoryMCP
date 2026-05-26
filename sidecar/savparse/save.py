@@ -54,8 +54,16 @@ from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import ActorHeader, ComponentHeader, read_body
 from .properties import ParsedObject, read_object
 from .trailers import TRAILER_READERS, read_trailer
+from .versions import FIRST_MODERN_BODY
 
-__all__ = ["ParsedLevel", "ParsedSave", "read_full_save", "read_full_save_bytes"]
+__all__ = [
+    "PLAIN_TRAILER",
+    "UNDECODED_TRAILER_CLASSES",
+    "ParsedLevel",
+    "ParsedSave",
+    "read_full_save",
+    "read_full_save_bytes",
+]
 
 
 @dataclass
@@ -116,11 +124,48 @@ class ParsedSave:
 PLAIN_TRAILER = (4, 8)
 
 
+#: Class paths that carry their own bytes after the property list on a save below
+#: ``FIRST_MODERN_BODY``, and that nothing here decodes.
+#:
+#: Pre-1.0 there is no ``FGConveyorChainActor``: **every belt and lift carries the items on it
+#: itself**, which is 50,532 actors and 39.5 MB across the 35 files. The list is here so that
+#: ``_attach_trailer``'s check survives on those saves -- without it every one of those actors
+#: would produce a warning, 50,532 of them would drown out a real one, and gating the check off
+#: entirely below saveVersion 52 would throw away the only thing that notices a property list
+#: which stopped early.
+#:
+#: Measured, not guessed: these eleven are **exactly** the classes leaving anything other than
+#: 4 or 8 bytes across all 35 old bodies, 49,929 actors in total. Being on this list means
+#: "known to write class-specific bytes, not decoded" -- ``actorSpecificInfo`` stays ``None``,
+#: which is what says nobody has read them.
+#:
+#: ``ConveyorBeltMk4``/``Mk5`` and the matching lifts are deliberately absent: the player had
+#: not unlocked them in 2021-2023, so no bytes on this disk say what they leave, and a save that
+#: has one should produce a warning rather than a silent pass. The same goes for the modern
+#: ``FGConveyorChainActor``, which does not exist pre-1.0 at all.
+UNDECODED_TRAILER_CLASSES = frozenset(
+    {
+        "/Game/FactoryGame/Buildable/Factory/PowerLine/Build_PowerLine.Build_PowerLine_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Build_ConveyorBeltMk1.Build_ConveyorBeltMk1_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk2/Build_ConveyorBeltMk2.Build_ConveyorBeltMk2_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk3/Build_ConveyorBeltMk3.Build_ConveyorBeltMk3_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk1/Build_ConveyorLiftMk1.Build_ConveyorLiftMk1_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk2/Build_ConveyorLiftMk2.Build_ConveyorLiftMk2_C",
+        "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk3/Build_ConveyorLiftMk3.Build_ConveyorLiftMk3_C",
+        "/Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C",
+        "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C",
+        "/Game/FactoryGame/-Shared/Blueprint/BP_GameState.BP_GameState_C",
+        "/Game/FactoryGame/-Shared/Blueprint/BP_GameMode.BP_GameMode_C",
+    }
+)
+
+
 def _attach_trailer(
     body: bytes,
     header: ActorHeader,
     obj: ParsedObject,
     warnings: list[tuple[int, str]],
+    save_version: int = FIRST_MODERN_BODY,
 ) -> None:
     """Arrange for this object's trailing class-specific bytes to be decodable, and notice
     when there are bytes nothing can account for.
@@ -139,6 +184,24 @@ def _attach_trailer(
     the other thing it looks like, and that should not cost the save.
     """
     class_path = getattr(header, "typePath", None)
+    if save_version < FIRST_MODERN_BODY:
+        # No trailer reader has been verified against pre-1.0 bytes, and one of them would
+        # otherwise be attached wrongly: `Build_PowerLine_C` has the same class path in 2021 as
+        # in 2026, so the modern reader would be handed 2021 bytes and produce numbers nobody
+        # has checked. Leaving `decode_trailer` unset keeps `actorSpecificInfo` None, which is
+        # this parser's way of saying "not decoded" rather than "decoded, and empty".
+        unexplained = (
+            class_path is not None
+            and obj.extra_length not in PLAIN_TRAILER
+            and class_path not in UNDECODED_TRAILER_CLASSES
+        )
+        if unexplained:
+            what = (
+                f"{class_path.rsplit('.', 1)[-1]} left {obj.extra_length} trailing bytes on a "
+                f"saveVersion {save_version} save, and no class is known to"
+            )
+            warnings.append((obj.extra_offset, what))
+        return
     if class_path == LIGHTWEIGHT_SUBSYSTEM:
         obj.decode_trailer = partial(read_lightweight, body, obj.extra_offset, obj.extra_length)
     elif class_path in TRAILER_READERS:
@@ -166,22 +229,27 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
     with the file, and should not be dressed up as one.
     """
     info = read_info_bytes(data)
-    body = decompress_body(data, info.body_offset)
-    parsed = read_body(body)
+    # Everything below this line is version-gated on ONE number, read once, here. The header is
+    # the only part of a save that can be parsed without knowing which format it is -- its own
+    # `save_header_type` says -- so this is the only place the choice can be made, and passing
+    # it down beats each layer sniffing for itself and two of them disagreeing.
+    old = info.save_version < FIRST_MODERN_BODY
+    body = decompress_body(data, info.body_offset, old=old)
+    parsed = read_body(body, info.save_version)
     warnings = list(parsed.warnings)
     levels = []
     for level in parsed.levels:
         objects = []
         for header, slot in zip(level.headers, level.objects, strict=True):
             actor = isinstance(header, ActorHeader)
-            obj = read_object(body, slot, actor=actor)
+            obj = read_object(body, slot, actor=actor, save_version=info.save_version)
             if obj.warnings:
                 warnings.extend(obj.warnings)
             # Only actors carry class-specific trailing bytes, and the 562,556 components in
             # these 31 saves outnumber the actors -- so the cheapest thing to do with them is
             # nothing. Calling _attach_trailer for every object instead cost 5% of the parse.
             if actor:
-                _attach_trailer(body, header, obj, warnings)
+                _attach_trailer(body, header, obj, warnings, info.save_version)
             objects.append(obj)
         levels.append(ParsedLevel(name=level.name, headers=level.headers, objects=objects))
 

@@ -23,6 +23,23 @@ The tag is checked per chunk rather than once. A save torn mid-write by an autos
 this project hits routinely, since autosaves land every few minutes -- fails here on the
 chunk where the tear is, with the offset, instead of inflating garbage into the object
 walk and failing somewhere unrelated.
+
+## The old preamble is 48 bytes, and the difference is exactly one field
+
+Pre-1.0 saves -- saveHeaderType 8, 9 and 10, saveVersion 25 to 36 -- write the same preamble
+without the **compressor byte**, and with the tag's high half zero::
+
+    int64  tag                 0x9E2A83C1, NOT 0x222222229E2A83C1
+    int64  max chunk size      131072, as on every modern chunk
+    int64  compressed size     \\
+    int64  uncompressed size   /  the same duplicated pair, minus the byte between them
+
+Which of the two a file uses is not guessed from the bytes: ``old=`` is passed in from the
+header's ``save_version``, and the tag then confirms it -- a 48-byte reading of a 49-byte
+chunk puts the compressor byte into the low end of the max-chunk-size field and the *second*
+chunk's tag check fails immediately. Measured over all 35 old saves: **5,196 chunks, 678,532,692
+inflated bytes, every file ending exactly on a chunk boundary**, every tag with a zero high
+half, every ``max chunk size`` 131072, every blob starting ``78 9c``.
 """
 
 from __future__ import annotations
@@ -32,32 +49,58 @@ import zlib
 from .errors import ParseError
 from .reader import Reader
 
-__all__ = ["CHUNK_TAG", "ZLIB", "decompress_body"]
+__all__ = [
+    "CHUNK_TAG",
+    "OLD_CHUNK_TAG",
+    "OLD_PREAMBLE_BYTES",
+    "PREAMBLE_BYTES",
+    "ZLIB",
+    "decompress_body",
+]
 
 #: PACKAGE_FILE_TAG, as the game writes it into each chunk preamble: Unreal's
 #: 0x9E2A83C1 in the low half, 0x22222222 in the high.
 CHUNK_TAG = 0x222222229E2A83C1
 
+#: The same field on a pre-1.0 save: the bare tag, with the high half left zero. Read as one
+#: int64 rather than as a u32 and a skipped u32, because that is what makes the two preambles
+#: one walk differing in a single field.
+OLD_CHUNK_TAG = 0x9E2A83C1
+
 #: The only compressor seen. Named rather than assumed so an unexpected one is refused
 #: with its value, which is a far better bug report than a zlib error.
 ZLIB = 3
 
+#: Preamble length: six int64s, plus the compressor byte on a modern save. The loop needs it
+#: only to decide whether a whole preamble is left to read before it stops.
+PREAMBLE_BYTES = 49
+OLD_PREAMBLE_BYTES = 48
 
-def decompress_body(data: bytes, offset: int) -> bytes:
-    """Inflate every chunk from ``offset`` to the end of ``data``."""
+
+def decompress_body(data: bytes, offset: int, *, old: bool = False) -> bytes:
+    """Inflate every chunk from ``offset`` to the end of ``data``.
+
+    ``old`` selects the 48-byte preamble of a pre-1.0 save. It is a parameter rather than a
+    sniff because the caller already knows: ``save.py`` has the header's ``save_version`` in
+    hand, and the tag check below then confirms the choice on every chunk.
+    """
     r = Reader(data, offset)
+    tag_wanted = OLD_CHUNK_TAG if old else CHUNK_TAG
+    preamble = OLD_PREAMBLE_BYTES if old else PREAMBLE_BYTES
     out: list[bytes] = []
-    while r.remaining >= 49:
+    while r.remaining >= preamble:
         start = r.pos
         tag = r.u64()
-        if tag != CHUNK_TAG:
+        if tag != tag_wanted:
             raise ParseError(
-                f"chunk at {start} has tag {tag:#x}, expected {CHUNK_TAG:#x} -- the body "
+                f"chunk at {start} has tag {tag:#x}, expected {tag_wanted:#x} -- the body "
                 "is not a chunk stream here, which usually means the file was still "
                 "being written"
             )
         max_plain = r.i64()
-        algo = r.i8()
+        # The compressor byte arrived with the modern preamble. Below saveVersion 52 there is
+        # no such field: the sizes follow the maximum directly.
+        algo = ZLIB if old else r.i8()
         if algo != ZLIB:
             raise ParseError(
                 f"chunk at {start} uses compressor {algo}, only {ZLIB} (zlib) is known"

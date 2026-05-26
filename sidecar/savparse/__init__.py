@@ -11,7 +11,7 @@ understand is skipped by length rather than guessed at, so an unknown property c
 property and not the save.
 """
 
-from .chunks import CHUNK_TAG, decompress_body
+from .chunks import CHUNK_TAG, OLD_CHUNK_TAG, decompress_body
 from .errors import ParseError
 from .header import PACKAGE_FILE_TAG, SaveInfo, read_info, read_info_bytes
 from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
@@ -27,10 +27,15 @@ from .properties import ObjectReference, ParsedObject, TypeName, read_object
 from .reader import Reader
 from .save import ParsedLevel, ParsedSave, read_full_save, read_full_save_bytes
 from .trailers import TRAILER_READERS, read_trailer
+from .versions import FIRST_LEVEL_LIST, FIRST_MODERN_BODY, KNOWN_HEADER_TYPES
 
 __all__ = [
     "CHUNK_TAG",
+    "FIRST_LEVEL_LIST",
+    "FIRST_MODERN_BODY",
+    "KNOWN_HEADER_TYPES",
     "LIGHTWEIGHT_SUBSYSTEM",
+    "OLD_CHUNK_TAG",
     "PACKAGE_FILE_TAG",
     "TRAILER_READERS",
     "ActorHeader",

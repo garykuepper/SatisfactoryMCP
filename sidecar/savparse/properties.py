@@ -116,6 +116,7 @@ from dataclasses import dataclass, field
 
 from .objects import ObjectSlice, ParseError
 from .reader import Reader
+from .versions import FIRST_MODERN_BODY
 
 __all__ = [
     "TAG_ARRAY_INDEX",
@@ -323,24 +324,38 @@ def _references(r: Reader, limit: int) -> list[ObjectReference]:
 
 
 def _vector(d: _Decoder) -> list[float]:
-    """FVector: three doubles.
+    """FVector: three doubles on a UE5 save, three floats on a UE4 one.
 
-    UE5 widened FVector from float to double, so this could in principle need the object's
-    version -- and it does not. Every save this project can read was written by the UE5
-    game, and the width is a property of the writer, not of the object version stamped in
-    the entry: ``mRemovedWorldLocations`` on a **version 52** object holds 24-byte vectors
-    (3 elements in a 72-byte block), and so does ``RemovedLocations`` on a version-60 one.
-    No 12-byte FVector occurs in any of the 31 readable saves, and if one ever does the
-    enclosing property's size check fails by exactly a factor of two rather than returning
-    coordinates in the wrong hemisphere.
+    **The width follows the writer, and the writer is the SAVE, not the object.** Every save at
+    saveVersion 52 or above was written by the UE5 game and writes 24 bytes even into
+    version-36 objects: ``mRemovedWorldLocations`` on a version-52 object holds 3 elements in a
+    72-byte block, and so does ``RemovedLocations`` on a version-60 one. Every save below 52 was
+    written by UE4 and writes 12 -- ``Location``, ``SpawnLocation`` and ``Translation`` declare
+    12 bytes on all 89,000 occurrences in the 35 pre-1.0 saves, which is what the 24-byte
+    reading over-read by exactly 12 each.
+
+    Keying on the *object* version instead would be an unverified guess in one direction:
+    version-36 objects do exist inside saveVersion-52 saves, and **zero of them reach this
+    function** on any of the 31, so nothing on this disk says what width they would use. Keying
+    on the save is verified in both directions -- 31 saves with the wide reading, 35 with the
+    narrow -- and the enclosing property's size check fails by a clean factor of two if it is
+    ever wrong, rather than returning coordinates in the wrong hemisphere.
     """
     r = d.r
+    if d.ue4_save:
+        return [r.f32(), r.f32(), r.f32()]
     return [r.f64(), r.f64(), r.f64()]
 
 
 def _quat(d: _Decoder) -> list[float]:
-    """FQuat: four doubles. Confirmed by ``Transform.Rotation``, a 32-byte payload."""
+    """FQuat: four doubles on a UE5 save and four floats on a UE4 one, as ``_vector``.
+
+    Confirmed by ``Transform.Rotation``: a 32-byte payload on all 31 modern saves and a
+    16-byte one on all 2,266 occurrences across the 35 pre-1.0 ones.
+    """
     r = d.r
+    if d.ue4_save:
+        return [r.f32(), r.f32(), r.f32(), r.f32()]
     return [r.f64(), r.f64(), r.f64(), r.f64()]
 
 
@@ -350,7 +365,9 @@ def _box(d: _Decoder) -> list:
     Verified against a blueprint's ``mLocalBounds``, which reads
     ``[-1600, -1600, -0.0001, 1600, 1600, 800.0001, True]`` -- a 32 m x 32 m footprint 8 m
     tall, exactly the blueprint designer's grid, and the -0.0001 is the foundation's own
-    thickness rounding.
+    thickness rounding. It inherits ``_vector``'s width, so it is 49 bytes on a UE5 save and
+    **25** on a UE4 one -- which is what ``mLevelBounds`` and ``mLocalBounds`` declare on all
+    16,595 occurrences in the 35 pre-1.0 saves.
     """
     return [*_vector(d), *_vector(d), d.r.i8() != 0]
 
@@ -408,13 +425,31 @@ def _client_identity_info(d: _Decoder) -> list:
 def _inventory_item(d: _Decoder) -> list:
     """FInventoryItem: ``[itemClassPath, state]``.
 
-    The bytes are an object reference to the item descriptor (empty level name, then the
-    asset path), then an int32 that is 1 when the stack carries per-item state and 0
+    On a UE5 save the bytes are an object reference to the item descriptor (empty level name,
+    then the asset path), then an int32 that is 1 when the stack carries per-item state and 0
     otherwise. State, when present, is another object reference naming the state class
     plus a **sized, nested property list** -- a rifle in the player's arm slot carries
     ``/Script/FactoryGame.FGWeaponItemState`` with ``CurrentAmmoCount`` 20 and the
     ammunition class, which is the game's own ammo counter and is why this is worth
     reading rather than skipping.
+
+    **On an object below version 52 it is two object references and nothing else** -- the
+    descriptor, then the ``Equip_*_C`` actor this item instance is, or two empty strings. There
+    is no has-state int32 and no nested property list.
+    ``Persistent_Level:PersistentLevel.Equip_JumpingStilts_C_2146219821`` inside a 224-byte
+    struct that adds up exactly is what pinned it. That the second reference holds an equipment
+    actor on all 177 populated occurrences is what the field *contains* here, not a claim about
+    what it is for.
+
+    **This is the one struct keyed on the OBJECT's version rather than the save's**, and it has
+    to be: version-36 and version-52 objects sit in the same saveVersion-52 file and disagree
+    here, which is not true of anything else in this module. The previous reading of the version
+    36 case -- ``i32 has_state`` and then "version 36 writes a second int32, 0 on every one of
+    them" -- was those two references' two zero length prefixes read as two integers. It
+    consumes the same eight bytes whenever the reference is empty, which is why the 1,092
+    version-36 items in the 31 modern saves have always parsed; measured, **every one of them
+    has an empty second reference**, so nothing there moves by a byte or a value. It broke only
+    on the 177 populated ones, and those occur only in the 35 pre-1.0 files.
 
     What comes out at element 0 is the **path string**, not an ``ObjectReference``,
     because ``_accumulate_inventory`` does ``ref_class(fields["Item"][0])`` and
@@ -423,15 +458,10 @@ def _inventory_item(d: _Decoder) -> list:
     """
     r = d.r
     item_class = _reference(r)
+    if d.version < FIRST_MODERN_BODY:
+        return [item_class.path_name, _reference(r).path_name or None]
     has_state = r.i32()
     if not has_state:
-        # Version **36** items -- and only 36 -- write a second int32 here, 0 on every one
-        # of them. Version 52 does not, which is the one place in this module where 36 and
-        # 52 differ: they share a tag layout but not this struct. Assuming "old" meant both
-        # over-read 87 version-52 pickups by exactly four bytes each, and the size check
-        # named every one of them.
-        if d.version < 52:
-            r.i32()
         return [item_class.path_name, None]
     state_class = _reference(r)
     size = r.i32()
@@ -497,10 +527,23 @@ _NATIVE_STRUCTS = {
 #: It stays last so that nothing which used to parse stops parsing.
 _UNNAMED_KEY_CANDIDATES = ("IntVector", "")
 
-#: The same, for a version-36/52 SET element the bytes leave unnamed. Both sets that occur --
-#: the scanner's ``mDestroyedPickups`` and ``mLootedDropPods`` -- hold 16-byte GUIDs, which is
-#: what saveVersion 60 writes out in full for the same fields.
-_UNNAMED_SET_CANDIDATES = ("Guid", "")
+#: The same, for a version-36/52 SET element the bytes leave unnamed.
+#:
+#: ``Guid`` covers the two sets that occur in the 31 modern saves -- the scanner's
+#: ``mDestroyedPickups`` and ``mLootedDropPods`` -- and saveVersion 60 writes that type out in
+#: full for the same fields, so it is the newer format stating the answer rather than a guess.
+#:
+#: ``Vector`` covers ``FGFoliageRemoval.mRemovalLocations``, which is a set of unnamed structs
+#: on saveVersion 30 and 36 and was the last remaining warning on the 35 pre-1.0 saves -- 844
+#: of them, all this one field, all closed by this entry, and the values that come out are real
+#: world coordinates. It goes AFTER ``Guid`` because ``attempt`` takes the first candidate that
+#: lands exactly on the declared end: a 16-byte GUID cannot land as a 24-byte vector, and the
+#: whole-folder check is that adding it left the property digest of all 31 modern saves
+#: byte-identical -- 1,243,288 objects, zero differences.
+#:
+#: The empty name reproduces the previous behaviour and stays last, so nothing that used to
+#: parse stops parsing.
+_UNNAMED_SET_CANDIDATES = ("Guid", "Vector", "")
 
 
 def _unnamed_element_candidates(
@@ -658,19 +701,37 @@ def _read_tag_old(r: Reader) -> _Tag:
 
 
 class _Decoder:
-    """Reads one object's properties. Holds the version and the warnings list.
+    """Reads one object's properties. Holds two versions and the warnings list.
 
-    A class rather than a pile of functions taking six arguments each: the object version
-    picks float widths and tag layout, and it has to reach every nested reader.
+    A class rather than a pile of functions taking six arguments each: both versions have to
+    reach every nested reader, and they are two versions rather than one because they answer
+    different questions.
+
+    ``version`` is the **object's**, off its own entry, and it picks the tag layout (60 is
+    UE5's ``FPropertyTag``, 36 and 52 are UE4's) and the one struct that genuinely differs
+    between 36 and 52 in the same file, ``InventoryItem``.
+
+    ``ue4_save`` is the **save's**, and it picks the width of ``FVector``, ``FQuat`` and
+    ``FBox``. Those follow the writer: a UE5 game writes 24-byte vectors even into a
+    version-36 object, so the object's version cannot answer this and the save's can. See
+    ``_vector`` for the measurement in both directions.
     """
 
-    __slots__ = ("depth", "old", "r", "version", "warnings")
+    __slots__ = ("depth", "old", "r", "ue4_save", "version", "warnings")
 
-    def __init__(self, r: Reader, version: int, warnings: list[tuple[int, str]]) -> None:
+    def __init__(
+        self,
+        r: Reader,
+        version: int,
+        warnings: list[tuple[int, str]],
+        *,
+        save_version: int = FIRST_MODERN_BODY,
+    ) -> None:
         self.r = r
         self.version = version
         self.warnings = warnings
         self.old = version < 60
+        self.ue4_save = save_version < FIRST_MODERN_BODY
         self.depth = 0
 
     # -- the list ---------------------------------------------------------
@@ -1180,12 +1241,23 @@ _SCALARS = {
 }
 
 
-def read_object(body: bytes, slot: ObjectSlice, *, actor: bool) -> ParsedObject:
+def read_object(
+    body: bytes,
+    slot: ObjectSlice,
+    *,
+    actor: bool,
+    save_version: int = FIRST_MODERN_BODY,
+) -> ParsedObject:
     """Decode one object's property block.
 
     ``body`` and ``slot`` are what ``read_body`` produced; ``actor`` comes from the
     object's header, because the payload's opening reference lists exist only on actors
     and nothing in the payload itself says which kind this is.
+
+    ``save_version`` is the *file's*, not the object's, and it exists for exactly one reason:
+    ``FVector``/``FQuat``/``FBox`` are float32 on a save the UE4 game wrote and float64 on one
+    the UE5 game wrote, whatever version the individual object is stamped with. It defaults to
+    the modern layout, which is what every caller before the pre-1.0 saves meant.
     """
     r = Reader(body, slot.offset)
     end = slot.end
@@ -1200,7 +1272,7 @@ def read_object(body: bytes, slot: ObjectSlice, *, actor: bool) -> ParsedObject:
         # version-52 one holding the same properties.
         r.i8()
 
-    decoder = _Decoder(r, slot.version, out.warnings)
+    decoder = _Decoder(r, slot.version, out.warnings, save_version=save_version)
     out.properties, out.property_types = decoder.property_list(end)
     out.extra_offset = r.pos
     out.extra_length = end - r.pos

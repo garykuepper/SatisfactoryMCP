@@ -260,19 +260,19 @@ def test_a_truncated_header_is_a_parse_error_that_names_the_save_version(sav):
     bare-``Exception`` handler and were reported as ``{"error": "ValueError"}`` -- a class
     name with no offset, for a file that is simply mid-rewrite.
 
-    The version fields in the message are what makes a refusal actionable. 36 of the 67
-    saves on the author's disk are pre-1.0, with ``saveHeaderType`` 1, 8, 9 and 10, and they
-    fail here because their field layout differs -- so the reason a player sees for half
-    their save folder has to be "saveHeaderType 10 (only 14 is understood)" rather than an
-    offset in a file they will never open.
+    The version fields in the message are what makes a refusal actionable, and the header is the
+    one layer that can refuse a *layout* rather than damage: it is the only part of a save that
+    says which format it is. saveHeaderType 8, 9 and 10 are read now -- see
+    ``test_savparse_pre_1_0.py`` -- so the refusal that has to stay legible is the one for a type
+    nobody has derived, and it has to list what is derived rather than name a single version.
     """
     with pytest.raises(ParseError, match=r"saveHeaderType 14.*saveVersion 60"):
         read_full_save_bytes(sav[:100])
 
-    fake_old = bytearray(sav[:100])
-    fake_old[0:4] = struct.pack("<i", 10)
-    with pytest.raises(ParseError, match=r"saveHeaderType 10 \(only 14 is understood\)"):
-        read_full_save_bytes(bytes(fake_old))
+    unknown = bytearray(sav[:100])
+    unknown[0:4] = struct.pack("<i", 20)
+    with pytest.raises(ParseError, match=r"saveHeaderType 20 \(known: 8, 9, 10, 14\)"):
+        read_full_save_bytes(bytes(unknown))
 
 
 def test_a_torn_chunk_stream_is_a_parse_error_with_an_offset(sav, header_prefix):

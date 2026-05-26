@@ -120,11 +120,15 @@ def test_every_refusal_names_the_versions_that_would_explain_it(raw):
     debugging it needs -- and it must say so on EVERY path out of this module, not just the
     tag check that happens to be the last one.
 
-    It is now a prefix rather than a sentence in one message, because the reason a player
-    sees matters more than the reason a developer sees: 36 of the 67 saves on the author's
-    disk are pre-1.0, and they fail on a bounds check deep in the reader where no version is
-    in scope. "read of 473655 at 138 runs past end" is true and useless; "saveHeaderType 10
-    (only 14 is understood)" is the answer.
+    It is a prefix rather than a sentence in one message, because the reason a player sees
+    matters more than the reason a developer sees: these saves fail on a bounds check deep in
+    the reader where no version is in scope, and "read of 473655 at 138 runs past end" is true
+    and useless where "saveHeaderType 20 (known: 8, 9, 10, 14)" is the answer.
+
+    saveHeaderType 8, 9 and 10 used to be the example here, because all 36 pre-1.0 files on the
+    author's disk failed. 35 of them are read now -- see ``test_savparse_pre_1_0.py`` -- so the
+    unknown type has to be a hypothetical one, and the message has to list what IS derived
+    rather than name a single version.
     """
     for broken in (_shifted(raw), raw[:100]):
         with pytest.raises(ValueError) as exc:
@@ -132,10 +136,10 @@ def test_every_refusal_names_the_versions_that_would_explain_it(raw):
         assert "saveHeaderType 14" in str(exc.value)
         assert "saveVersion 60" in str(exc.value)
 
-    pre_1_0 = bytearray(raw[:100])
-    pre_1_0[0:4] = (10).to_bytes(4, "little")
-    with pytest.raises(ValueError, match=r"saveHeaderType 10 \(only 14 is understood\)"):
-        read_info_bytes(bytes(pre_1_0))
+    unknown = bytearray(raw[:100])
+    unknown[0:4] = (20).to_bytes(4, "little")
+    with pytest.raises(ValueError, match=r"saveHeaderType 20 \(known: 8, 9, 10, 14\)"):
+        read_info_bytes(bytes(unknown))
 
 
 def test_a_wild_length_is_refused_by_the_bounds_check(raw):
