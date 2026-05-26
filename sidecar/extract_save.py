@@ -711,6 +711,32 @@ def _ongoing(raw) -> list:
     return out
 
 
+def _placed(inst) -> bool:
+    """Is this lightweight record a piece that exists, or a stale slot?
+
+    173 of the 224,530 records across the 31 saves carry **no swatch and no recipe** -- every
+    other one carries both, and not a single record carries exactly one, which is what makes
+    this a clean test rather than a heuristic. They occur on 7 saves, up to 80 in one.
+
+    Emitting them is not cosmetic. `graph/structure.py` builds foundation slabs from these
+    positions and `spatial/elevation.py` samples every one as ground height, so a stale record
+    invents floor: on `Han solo.sav` the phantom records produce an entire extra 7-tile slab,
+    and on `Han Solo_260726-212757` the newest construction measures 521 tiles where 496 exist.
+
+    Deliberately NOT positional. Our parser's instance has the swatch at index 3 and the recipe
+    at 10; the vendored parser's has them at 2 and 7, because it does not surface the scale. A
+    positional guard would therefore read a different field per engine and break the projection
+    parity that the whole reimplementation is measured by. Asking "does any field name an asset"
+    is true of a real piece and false of a stale slot under either shape.
+    """
+    for field in inst if isinstance(inst, list) else ():
+        if getattr(field, "pathName", None):
+            return True
+        if isinstance(field, str) and field:
+            return True
+    return False
+
+
 def _lightweight(obj) -> dict:
     """Build_* classes held by FGLightweightBuildableSubsystem.
 
@@ -728,7 +754,8 @@ def _lightweight(obj) -> dict:
             if isinstance(child, str) and "Build_" in child and child.endswith("_C"):
                 cls = ref_class(child)
                 nxt = node[i + 1] if i + 1 < len(node) else None
-                n = len(nxt) if isinstance(nxt, list) else 1
+                # Stale slots are skipped, not counted -- see `_placed`.
+                n = sum(1 for inst in nxt if _placed(inst)) if isinstance(nxt, list) else 1
                 if cls:
                     out[cls] = out.get(cls, 0) + n
             else:
@@ -774,7 +801,7 @@ def _structures(obj) -> dict:
             ci = index[cls] = len(classes)
             classes.append(cls)
         for inst in items:
-            if not (isinstance(inst, list) and len(inst) >= 2):
+            if not (isinstance(inst, list) and len(inst) >= 2) or not _placed(inst):
                 continue
             pos = inst[1]
             try:
