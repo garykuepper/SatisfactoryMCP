@@ -5,8 +5,8 @@
 Emits a JSON projection on stdout. Diagnostics go to stderr so stdout stays clean.
 
 Why a subprocess rather than an import:
-  * sav_parse hard-fails on unrecognised saveVersion, so a game patch breaks parsing
-    until upstream updates. One boundary means one thing to fix.
+  * the parser hard-fails on an unrecognised saveVersion, so a game patch breaks parsing
+    until the format is re-derived. One boundary means one thing to fix.
   * A torn autosave (the file is rewritten in place every ~5 min while playing) or a
     parser crash cannot take down the server.
   * The projection is small and serialisable, which makes it the test fixture -- the
@@ -20,7 +20,8 @@ Property-access hazards handled here, all of which fail SILENTLY otherwise:
     finds nothing.
   * mItemsPickedUp is a MapProperty keyed by player state containing an inner map.
 
-Which parser reads the file is chosen by SATISFACTORY_SAVPARSE; see ENGINE below.
+There is one parser: sidecar/savparse. The vendored GPL-3.0 one it replaced is deleted, and
+the switch that chose between them went with it -- see the comment above the import.
 """
 
 from __future__ import annotations
@@ -32,43 +33,25 @@ import traceback
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE / "vendor" / "sat_sav_parse"))
 sys.path.insert(0, str(_HERE))
 
-#: Environment variable naming the save parser. "vendor" is the vendored GPL-3.0
-#: sat_sav_parse; "own" is sidecar/savparse, the reimplementation written to replace it.
-#:
-#: The DEFAULT IS DELIBERATELY "vendor". Flipping it is the user's call, not this module's,
-#: and until then the switch exists for one purpose: running the same save through both and
-#: diffing the projection JSON. Two parsers reachable from one process boundary is the only
-#: way that diff is a measurement rather than an argument.
-#:
-#: The two agree on **every** projection field, leaf by leaf, on all 31 saves the vendored
-#: parser can read -- including the 224,530 foundations and walls in `structures`, which live
-#: in an object's trailing class-specific bytes and were the last thing to be decoded. Either
-#: engine answers every tool correctly; "vendor" is the default only until it is deleted.
-SAVPARSE_ENV = "SATISFACTORY_SAVPARSE"
-VENDOR, OWN = "vendor", "own"
-ENGINE = (os.environ.get(SAVPARSE_ENV) or VENDOR).strip().lower()
+# There was a second parser here until the vendored GPL-3.0 `sat_sav_parse` was deleted, and a
+# `SATISFACTORY_SAVPARSE` switch to pick between them. The switch existed for one purpose --
+# running the same save through both and diffing the projection, so that "they agree" was a
+# measurement rather than an argument -- and it has no second option left to choose.
+#
+# What that measurement said, at the moment the library was removed: the two agreed on **every
+# projection key, leaf for leaf, on all 31 saves the vendored parser could read**. That diff can
+# never be run again, so it is banked in `tests/fixtures/vendor_parity.json` as a per-save,
+# per-key digest of what the vendored parser produced, and `test_savparse_parity.py` holds this
+# parser to it. `savparse` additionally reads the 35 pre-1.0 saves the old one refused.
+import savparse
 
-if ENGINE == OWN:
-    import savparse
-
-    read_save_info = savparse.read_info
-    read_full_save = savparse.read_full_save
-    #: What "this save cannot be read" looks like, per parser. Resolved here rather than
-    #: at the raise site so that main()'s except clause names one thing.
-    PARSE_ERROR: tuple[type[BaseException], ...] = (savparse.ParseError,)
-elif ENGINE == VENDOR:
-    import sav_parse
-
-    read_save_info = sav_parse.readSaveFileInfo
-    read_full_save = sav_parse.readFullSaveFile
-    PARSE_ERROR = (sav_parse.ParseError,)
-else:
-    # Loudly, at import: a typo'd engine name silently falling back to the vendored parser
-    # would make a parity run report agreement it never measured.
-    raise RuntimeError(f"{SAVPARSE_ENV}={ENGINE!r}; expected {OWN!r} or {VENDOR!r}")
+read_save_info = savparse.read_info
+read_full_save = savparse.read_full_save
+#: What "this save cannot be read" looks like. Resolved here rather than at the raise site so
+#: that main()'s except clause names one thing.
+PARSE_ERROR: tuple[type[BaseException], ...] = (savparse.ParseError,)
 
 SCHEMA_VERSION = 11
 

@@ -265,7 +265,7 @@ class Grid:
 
     name: str
     cell_size: int
-    checksum: int
+    content_id: int
     cell_names: list[str] = field(default_factory=list)
 
 
@@ -426,8 +426,8 @@ def _read_custom_versions(r: Reader) -> list[tuple[bytes, int]]:
 def _read_grids(r: Reader) -> list[Grid]:
     """The world-partition table: 7 grids on a saveVersion 60 body, 6 on a 52 one.
 
-    Shape per grid: name, cell size, a checksum, then a count of cells, each a
-    25-character base-36 id and a checksum of its own. The reference save has
+    Shape per grid: name, cell size, a u32, then a count of cells, each a
+    25-character base-36 id and a u32 of its own. The reference save has
     ``MainGrid`` at 12800 uu with 1,288 cells, ``ExplorationGrid`` at 20480 with 758,
     ``ExplorationGridFar`` with 43, and four grids with none (a 52 body has all of those
     but ``ExplorationGridFar``).
@@ -444,7 +444,7 @@ def _read_grids(r: Reader) -> list[Grid]:
     for _ in range(count):
         name = r.string()
         cell_size = r.i32()
-        checksum = r.u32()
+        content_id = r.u32()
         n_cells = r.i32()
         _expect(
             0 <= n_cells <= 1_000_000,
@@ -454,8 +454,8 @@ def _read_grids(r: Reader) -> list[Grid]:
         cells = []
         for _ in range(n_cells):
             cells.append(r.string())
-            r.u32()  # per-cell checksum; unused, and unread by anything above this
-        grids.append(Grid(name=name, cell_size=cell_size, checksum=checksum, cell_names=cells))
+            r.u32()  # per-cell content id; unused, and unread by anything above this
+        grids.append(Grid(name=name, cell_size=cell_size, content_id=content_id, cell_names=cells))
     return grids
 
 
@@ -463,10 +463,16 @@ def _read_header(r: Reader, save_version: int) -> ActorHeader | ComponentHeader:
     """One object header. The leading int32 says which of the two kinds it is.
 
     Both kinds open the same way -- class path, root object, instance name, then UE's
-    ``EObjectFlags``. The flags word is what identified itself: components read
-    ``0x2C0008`` and actors ``0x280008``, differing in exactly bit 0x40000,
-    ``RF_DefaultSubObject``, which is precisely what a component is. That is why the
-    field is named rather than skipped.
+    ``EObjectFlags``.
+
+    **Which kind it is comes from the leading int32, not from the flags**, and that matters
+    because an earlier version of this docstring claimed the flags were a two-value invariant --
+    ``0x280008`` on actors, ``0x2C0008`` on components, differing by ``RF_DefaultSubObject``.
+    Measured over 1,243,288 objects there are **eight** distinct values, and that pair covers
+    324,765 of 675,432 actors and just 6,648 of 567,856 components. The commonest are
+    ``0x40008`` (334,988, components only), ``0x280008`` (324,765, actors only) and ``0x8``
+    (310,011, actors only). The bit does separate the two kinds in the common case; it is not
+    the invariant it was written up as, and nothing here depends on it.
 
     **The flags word arrives at saveVersion 52.** Below it the transform follows the instance
     name directly, and reading four bytes anyway put a quaternion component into

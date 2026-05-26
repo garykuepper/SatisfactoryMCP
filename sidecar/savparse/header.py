@@ -39,6 +39,7 @@ Absent fields read as ``None`` rather than as ``0``/``False``. A zero says "not 
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -50,11 +51,57 @@ from .versions import (
     KNOWN_HEADER_TYPES,
 )
 
-__all__ = ["SaveInfo", "read_info", "read_info_bytes"]
+__all__ = ["SaveInfo", "body_hash", "check_body_hash", "read_info", "read_info_bytes"]
 
 #: Marks the start of the compressed body. Unreal's PACKAGE_FILE_TAG, and the check that
 #: the header was walked to exactly the right place: land anywhere else and this is not it.
 PACKAGE_FILE_TAG = 0x9E2A83C1
+
+
+def body_hash(data: bytes, body_offset: int) -> tuple[int, int]:
+    """The digest the header's ``save_data_hash`` holds, computed from the bytes.
+
+    It is **the md5 of every byte from ``body_offset`` to the end of the file** -- the compressed
+    body: all chunk preambles and all zlib blobs, and nothing of the header. Returned as the
+    little-endian u64 pair the header stores, so it compares directly against
+    ``SaveInfo.save_data_hash``.
+
+    Measured, not inferred: equal on 31 of 31 saves that carry the field, and the boundary is
+    tight rather than approximate -- md5 over ``body_offset + 1``, ``body_offset - 1`` and
+    ``[body_offset:-1]`` each match 0 of 31, as do sha1, sha256, blake2b-128 and blake2s-128 over
+    the same region, and the same five digests over the inflated body. Editing a header field
+    leaves the value unchanged; flipping one bit 5,000 bytes into the compressed body breaks it.
+    Absent from every pre-1.0 header -- the walk lands on the tag with no room for it.
+
+    **Why this is here rather than in a note.** Reading a save never needs it: the projection is
+    derived from the body, so a wrong hash cannot make the body parse differently, and the cache
+    keys on the file's own mtime and size, which discriminate perfectly on every save measured.
+    WRITING a save does need it. Anything that modifies a body and writes it back has to
+    recompute this or the file carries a digest of bytes it no longer contains -- and nothing in
+    the save says what the field covers, so the fact is only cheap to have while it is fresh.
+    """
+    digest = hashlib.md5(data[body_offset:]).digest()
+    lo = int.from_bytes(digest[:8], "little")
+    hi = int.from_bytes(digest[8:], "little")
+    return (lo, hi)
+
+
+def check_body_hash(data: bytes, info: SaveInfo) -> bool | None:
+    """Does the header's stored digest match the body actually present?
+
+    ``None`` rather than ``False`` when the header predates the field, because "this save has no
+    hash to check" and "this save's hash is wrong" are different answers and a caller acting on
+    the second should never be handed the first.
+
+    The absence test is ``is None``, which is what the header reader sets on a pre-1.0 layout --
+    not ``== (0, 0)``. Testing for the zero pair instead reported all 35 old saves as *mismatched*
+    rather than as having no field, which is the exact confusion the return type exists to
+    prevent, and it is also why a genuinely all-zero digest on a modern save would still be
+    checked rather than waved through.
+    """
+    if info.save_data_hash is None:
+        return None
+    return body_hash(data, info.body_offset) == info.save_data_hash
 
 
 @dataclass

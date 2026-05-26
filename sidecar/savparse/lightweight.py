@@ -27,8 +27,14 @@ Layout, derived from the bytes::
             reference    recipe: what the piece was built from
             reference           empty everywhere
             int32               0 everywhere
-            uint8               version 4 only. 6 on 33 of the reference save's 4,617
-            int32               foundations, 0 on the rest; -1 and 0 respectively
+            uint8               version 4 only, and the two are ONE field: an
+            int32               FPlayerInfoHandle naming who placed the piece. `06 00 00 00 00`
+                                is a set handle and `00 ff ff ff ff` the unset one -- so (6, 0)
+                                on a piece this player placed, and (0, -1) on everything
+                                migrated from a version-2 save. 2,976 set against 47,131 unset
+                                over the 50,107 version-4 records; on the reference save 496
+                                are set, across TWO classes -- 33 Build_Foundation_8x1_01 and
+                                all 463 Build_Foundation_ConcretePolished_8x1
 
 **Why the record is trustworthy despite that many always-zero fields.** The instance count
 and both class paths are length-prefixed, so a record read one byte short desynchronises the

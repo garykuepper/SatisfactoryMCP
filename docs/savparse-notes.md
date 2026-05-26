@@ -219,7 +219,8 @@ i32  kind                       1 = actor, 0 = component
 str  class path                 exposed as `typePath` on actors only, see below
 str  root object                the owning level's name
 str  instance name
-u32  object flags               UE EObjectFlags. 0x280008 on actors, 0x2C0008 on
+u32  object flags               UE EObjectFlags. EIGHT distinct values over 1,243,288
+                                objects; 0x280008 on actors and 0x2C0008 on
                                 components -- the difference is exactly RF_DefaultSubObject
                                 (0x40000), which is what identified the field.
 actor:      i32 needTransform, f32 rotation[4] (x,y,z,w), position[3], scale[3],

@@ -59,16 +59,20 @@ def _chain(r: Reader, end: int) -> list:
             reference       the belt
             int32           pointCount
             per point:      3 x (3 x double) -- location, then two tangents
-            float32         unknown; 0 on 1,844 of the reference save's 1,909 chains
+            float32         the part of this segment's offset range with no spline behind
+                            it -- 0 on 80,817 of 83,389 segments, and ~200/300/400 cm at a
+                            conveyor lift junction, always at the low-offset end, where no
+                            item ever sits
             float32         where this segment starts, centimetres along the chain
             float32         where it ends
-            int32           index of the first item on this segment, in the ring below
-            int32           index of the last
+            int32           ring index of the first item on this segment, or -1
+            int32           ring index of the last, or -1
             int32           the segment's own index -- always equal to its position
         float32     the chain's length in centimetres -- always the first segment's end
-        int32       the item ring's capacity -- always >= the item count
-        int32       index of the chain's first item
-        int32       index of its last
+        int32       the item ring's capacity, and it is DERIVED rather than independent:
+                    floor(length / 120) + 2 * segmentCount + 1, on 51,200 of 51,200
+        int32       ring index of the chain's first item, or -1 when the chain is empty
+        int32       ring index of its last, or -1
         int32       itemCount
         per item:
             reference       the item class
@@ -76,15 +80,37 @@ def _chain(r: Reader, end: int) -> list:
             float32         how far along the chain it is, centimetres
 
     **The items are a ring buffer**, which is what makes the two index fields readable:
-    ``(last - first) mod capacity + 1`` equals the item count on every chain measured, without
-    exception, and no index is ever >= the capacity. Segments partition that ring in order, and
-    a chain's own pair matches its first and last segment's on 1,905 and 1,904 of 1,909 -- the
-    handful that differ are presumably mid-transfer, and nothing here depends on them agreeing.
+    ``(last - first) mod capacity + 1`` equals the item count on **all 43,823 non-empty chains**.
+    Note the qualifier -- ``-1`` is the sentinel, carried by 10,548 segments and by all 7,377
+    empty chains, where that identity would return a nonsensical 1. Every index is ``-1`` or in
+    ``[0, capacity)``.
 
-    Segment offsets run *backwards*: the last segment starts at 0 and the first one's end is the
-    whole chain's length, on every chain. Item offsets descend in step, 120 cm apart on a Mk1
-    belt. They are not bounded by the chain length on 1,089 of 1,909 chains, so "distance from
-    the output end" is the shape of it but not a claim this makes.
+    A chain's own pair matches the first and last segment **that actually holds items**, on
+    43,823 of 43,823. Comparing against ``segments[0]`` and ``segments[-1]`` instead fails on 52
+    and 68 chains, which is where an earlier note's "1,905 and 1,904 of 1,909" came from: it was
+    measuring the wrong pair rather than observing a real exception.
+
+    **Offsets increase along the direction of travel.** The last segment starts at 0 at the
+    chain's INPUT; the first segment's end is the OUTPUT and equals the chain length on every
+    chain. So ``segments[0]`` and ``first_belt`` are the DOWNSTREAM end -- which reads backwards
+    from their names, and is why this paragraph exists.
+
+    Settled by geometry rather than by inference. The spline points are in the chain actor's
+    frame with ``p0`` at the segment's ``start`` end, so offset 0 sits at
+    ``segments[-1].p0 + chainPos``; across three saves that point lies 806 cm from a
+    ``Build_MinerMk1``/``Mk2`` -- a building with only an output connection -- on 27-29 chains,
+    against 1/0/0 at the offset-``length`` end. The reverse holds too: 3/1/1 chains have their
+    offset-``length`` end within 1,200 cm of a Space Elevator, AWESOME Sink or Trading Post,
+    buildings with only inputs, against 0 at offset 0.
+
+    **An offset is not confined to ``[0, length]`` and a consumer must clamp both ends.** Exactly
+    one item per chain may sit ABOVE the length -- the one at ring index ``first``, 40,921 of
+    40,921 across the folder, against 0 of the other 647,361, and never two in one chain. Its
+    overshoot scales with belt speed: median 0.734 / 1.444 / 3.294 / 5.874 cm on Mk1 to Mk4,
+    ratios of 1 : 1.967 : 4.487 : 8.000 against a published 1 : 2 : 4.5 : 8. And 844 items sit
+    BELOW 0, down to -1024.46 cm, on 36 distinct chains present in every save: the pack is
+    contiguous, so once the item count exceeds what 120 cm spacing allows the surplus hangs off
+    the low end.
     """
     first_belt, last_belt = _reference(r), _reference(r)
     segments = []

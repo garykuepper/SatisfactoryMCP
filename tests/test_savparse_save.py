@@ -325,42 +325,36 @@ def test_a_read_past_the_end_of_the_body_is_a_parse_error_too(header_prefix, bod
         read_full_save_bytes(header_prefix + _chunk_stream(payload))
 
 
-# --------------------------------------------------------------- the engine switch
+# --------------------------------------------------------------- the parser it replaced
 
 
-def test_the_sidecar_still_defaults_to_the_vendored_parser(monkeypatch):
-    """The default must not move without a decision.
+def test_the_sidecar_has_exactly_one_parser_and_it_is_ours():
+    """The switch is gone with the library it chose between.
 
-    Nothing technical blocks the flip any more -- the two parsers agree on all 19 projection
-    fields on all 31 readable saves. It stays put because flipping it achieves nothing on its
-    own: the licence exposure is the vendored library being in the repository, not which branch
-    of an ``if`` runs, so the flip belongs to deleting it. That is the user's call, and this
-    test is what makes an accidental flip a failing test rather than a silently different
-    parser under every tool.
+    ``SATISFACTORY_SAVPARSE`` existed for one purpose: running a save through both parsers and
+    diffing the projection, so that "they agree" was a measurement rather than an argument. With
+    the vendored GPL-3.0 ``sat_sav_parse`` deleted there is no second option, and a switch with
+    one branch is a place for a stale code path to hide.
+
+    What this pins is that no import of the deleted library survives anywhere the sidecar
+    touches -- a leftover ``import sav_parse`` in a rarely-taken branch would not fail until a
+    user hit it.
     """
-    monkeypatch.delenv("SATISFACTORY_SAVPARSE", raising=False)
-    sidecar = _load_sidecar("_extract_save_default")
-    assert sidecar.ENGINE == sidecar.VENDOR
-    assert sidecar.read_full_save.__module__.startswith("sav_parse")
-
-
-def test_the_switch_selects_the_own_parser(monkeypatch):
-    """Both parsers have to be reachable from one process boundary, or the parity diff is
-    an argument rather than a measurement."""
-    monkeypatch.setenv("SATISFACTORY_SAVPARSE", "own")
-    sidecar = _load_sidecar("_extract_save_own")
-    assert sidecar.ENGINE == sidecar.OWN
-    assert sidecar.read_full_save is not None
+    sidecar = _load_sidecar("_extract_save_single")
+    assert sidecar.read_full_save.__module__.startswith("savparse")
     assert ParseError in sidecar.PARSE_ERROR
+    assert not hasattr(sidecar, "ENGINE"), "the engine switch should be gone, not defaulted"
+    # Imports and path manipulation, not mentions: the module comment names the deleted library
+    # on purpose, to say why the switch is gone. Prose about it is documentation; an import of
+    # it is a live dependency, and only the second is a defect.
+    lines = SIDECAR.read_text(encoding="utf-8").splitlines()
+    code = [ln.split("#", 1)[0] for ln in lines]
+    assert not [ln for ln in code if ln.strip().startswith(("import sav_parse", "from sav_parse"))]
+    assert not [ln for ln in code if "vendor" in ln and "sys.path" in ln]
+    assert not [ln for ln in code if "SATISFACTORY_SAVPARSE" in ln]
 
 
-def test_an_unknown_engine_name_fails_loudly_at_import(monkeypatch):
-    """A typo must not fall back to the vendored parser.
-
-    Silently defaulting would make a parity run report perfect agreement between the
-    vendored parser and itself, which is the one wrong answer this whole exercise cannot
-    afford to produce.
-    """
-    monkeypatch.setenv("SATISFACTORY_SAVPARSE", "onw")
-    with pytest.raises(RuntimeError, match="expected"):
-        _load_sidecar("_extract_save_typo")
+def test_the_deleted_library_is_really_gone():
+    """The licence exposure was the library being in the repository, so its absence is the
+    thing worth asserting -- not that some branch prefers ours."""
+    assert not (SIDECAR.parent / "vendor" / "sat_sav_parse").exists()

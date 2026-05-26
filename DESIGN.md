@@ -3425,7 +3425,7 @@ Four defects, now fixed with tests in `tests/test_savparse_robustness.py`:
   the reference save, and only three hold cells: `MainGrid` at 12800 uu with **1,288** cells,
   `ExplorationGrid` at 20480 with 758, `ExplorationGridFar` at 20480 with 43;
   `LandscapeGrid` (51200), `FoliageGrid` (26500) and `HLOD0_256m_1023m` (25600) are declared
-  and empty. A list of exactly which 12.8 km cells the player has touched, at ~71 KB, may be
+  and empty. `cell_size` is in CENTIMETRES, so `MainGrid` cells are **128 m**, not 12.8 km
   worth something to spatial work.
 
 ### The lightweight buildables — where every foundation lives
@@ -3562,8 +3562,9 @@ first property name begins. That is the character of this layer: the lengths hav
 self-consistent readings and only the payload's own content picks one.
 
 **The object header identified its own flags word.** Both kinds open with an int32 (1 for an
-actor, 0 for a component), three strings, and an unexplained uint32 — which is `0x280008` on
-every actor and `0x2C0008` on every component, differing by exactly `0x40000`,
+actor, 0 for a component), three strings, and an unexplained uint32 — which takes **eight**
+distinct values over 1,243,288 objects, not the two this file used to claim; `0x280008` and
+`0x2C0008` cover only about half of each kind, and differ by `0x40000`,
 `RF_DefaultSubObject`. That is UE's `EObjectFlags`, and knowing it is what confirmed the two
 header shapes were being told apart correctly rather than coincidentally. Actors then carry
 a transform (quaternion, position, scale as `x y z w` / three / three floats) and components a

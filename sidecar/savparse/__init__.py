@@ -13,7 +13,14 @@ property and not the save.
 
 from .chunks import CHUNK_TAG, OLD_CHUNK_TAG, decompress_body
 from .errors import ParseError
-from .header import PACKAGE_FILE_TAG, SaveInfo, read_info, read_info_bytes
+from .header import (
+    PACKAGE_FILE_TAG,
+    SaveInfo,
+    body_hash,
+    check_body_hash,
+    read_info,
+    read_info_bytes,
+)
 from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import (
     ActorHeader,
@@ -51,6 +58,8 @@ __all__ = [
     "SaveBody",
     "SaveInfo",
     "TypeName",
+    "body_hash",
+    "check_body_hash",
     "decompress_body",
     "read_body",
     "read_full_save",

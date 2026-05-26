@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from savparse import PACKAGE_FILE_TAG, Reader, read_info_bytes
+from savparse import PACKAGE_FILE_TAG, Reader, body_hash, check_body_hash, read_info_bytes
 
 FIXTURE = Path(__file__).parent / "fixtures" / "save_header.bin"
 
@@ -148,3 +148,44 @@ def test_a_wild_length_is_refused_by_the_bounds_check(raw):
     broken[12:16] = (999_999).to_bytes(4, "little")
     with pytest.raises(ValueError, match="runs past end"):
         read_info_bytes(bytes(broken))
+
+
+# ------------------------------------------------------------- the body digest
+
+
+def test_the_stored_hash_is_the_md5_of_the_compressed_body(raw):
+    """``save_data_hash`` is not opaque: it is md5 over ``file[body_offset:]``.
+
+    Reading a save never needs this -- the projection comes from the body, so a wrong digest
+    cannot make the body parse differently. WRITING one does: anything that edits a body and
+    writes it back must recompute this, or the file carries a digest of bytes it no longer holds.
+    Nothing in the save says what the field covers, so the fact is only cheap while it is fresh.
+
+    The fixture is a 2 KiB prefix rather than a whole save, so the digest cannot be verified from
+    it. What can be, and what would break first if the reading were wrong, is the boundary: the
+    field is read from the header and the region digested starts exactly where the header stops.
+    """
+    info = read_info_bytes(raw)
+    assert info.save_data_hash == (6_096_361_947_348_211_065, 9_325_011_144_171_762_175)
+    assert body_hash(b"\x00" * 8, 0) == body_hash(bytes(8), 0), "pure function of the bytes"
+    # An empty region has a defined digest, so a truncated file cannot silently pass as a match.
+    assert body_hash(b"", 0) != info.save_data_hash
+
+
+def test_a_header_without_the_field_says_so_rather_than_failing_the_check(raw):
+    """``None`` and ``False`` are different answers.
+
+    A pre-1.0 header has no digest at all -- the walk lands on the tag with no room for one --
+    and the reader sets ``None``. An earlier version of ``check_body_hash`` tested for ``(0, 0)``
+    instead and reported all 35 of those saves as MISMATCHED, which is precisely the confusion
+    this return type exists to prevent: a caller refusing to touch a "corrupt" save would have
+    refused every save the player made before 1.0.
+    """
+    info = read_info_bytes(raw)
+    assert check_body_hash(raw, info) is False, "a 2 KiB prefix is not the whole body"
+
+    class NoHash:
+        save_data_hash = None
+        body_offset = info.body_offset
+
+    assert check_body_hash(raw, NoHash()) is None
