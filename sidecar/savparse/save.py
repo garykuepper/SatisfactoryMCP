@@ -235,7 +235,10 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
     # it down beats each layer sniffing for itself and two of them disagreeing.
     old = info.save_version < FIRST_MODERN_BODY
     body = decompress_body(data, info.body_offset, old=old)
-    parsed = read_body(body, info.save_version)
+    # The changelist check is armed here: read_body compares the body's own build against
+    # the header's and WARNS on a mismatch -- see objects._read_archive_header for why a
+    # refusal would be wrong when the identity rests on a single build.
+    parsed = read_body(body, info.save_version, info.build_version)
     warnings = list(parsed.warnings)
     levels = []
     for level in parsed.levels:

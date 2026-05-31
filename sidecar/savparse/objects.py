@@ -37,6 +37,37 @@ at the cursor, which cannot be confused with a 52 body: that would need a save d
 zero grids, then 522 levels, then a 1017-byte level name, and no save has fewer than six
 grids. Everything from the grid table down is identical between the two.
 
+## The archive version header, and the one cross-check between body and header
+
+Its 59 bytes are four int32s ``(0, 522, 1017, 3)``, then the **engine version** as three
+uint16s, then a uint32 **changelist**, then the branch as an FString. Measured over **11,292
+occurrences** -- one outer plus 1,806 to 1,905 per-level in each of the six saveVersion-60
+saves -- every one is byte-identical: engine 5.6.1, changelist ``0x80078F35``, branch
+``'++FactoryGame+rel-main-1.2.0'``.
+
+The changelist is the field worth having. ``changelist & 0x7FFFFFFF`` equals the *header's*
+``buildVersion``, 495413, on **11,292 of 11,292**, with the top bit set on all 11,292 -- an exact
+31-bit identity across the compression boundary. ``read_body`` reports a mismatch as a warning
+when a caller hands it a ``build_version`` to compare against.
+
+**A warning and not a refusal, and the reason is worth keeping.** This check was first written to
+raise, justified as the only thing in the format tying a body to its header. That justification
+was wrong, and an adversarial pass disproved it by construction: ``header.save_data_hash`` is an
+md5 over the whole compressed body, so the header already commits to the body. Splicing the header
+of one saveVersion-60 save onto the body of another gives ``check_body_hash() is False`` -- caught
+-- while this identity *accepts* it, because both bodies came from the same build. On the case the
+justification named, the hash catches it and this does not. What this uniquely reaches is a hand
+edit of the header's ``buildVersion`` int32, which the hash does not cover.
+
+**And the limit is one number wide**, which is what settles the severity. Only ONE build_version
+has an archive header on this disk: every save from an older build is saveVersion 52 or below and
+carries none. So the identity is 11,292 observations of a single pair -- effective sample size one
+build -- and that the changelist *tracks* build_version from build to build is untested here.
+Raising on that would make every save from a future build unreadable rather than merely odd, since
+``ParseError`` is the one type the sidecar catches at the save boundary. It also assumes all ~1,905
+per-level archive headers are rewritten on every save, which cannot be observed while every
+saveVersion-60 save on the disk is the same build. What the top bit means is unknown.
+
 ## Two more layouts below saveVersion 52, and what they drop
 
 35 files on the author's disk are pre-1.0. They are the same walk with fields removed, gated
@@ -154,6 +185,7 @@ from .versions import FIRST_LEVEL_LIST, FIRST_MODERN_BODY
 
 __all__ = [
     "ARCHIVE_HEADER_LEN",
+    "CHANGELIST_MASK",
     "ActorHeader",
     "BodyPreamble",
     "ComponentHeader",
@@ -165,10 +197,16 @@ __all__ = [
     "read_body",
 ]
 
-#: Bytes of the archive version header: four int32s, a 6-byte block, the tag, and the
-#: engine branch string. Fixed only because that string has a fixed length; it is read
-#: field by field rather than skipped blindly, and its trailing null is what pins it.
+#: Bytes of the archive version header: four int32s, three uint16s of engine version, the
+#: changelist, and the engine branch string. Fixed only because that string has a fixed
+#: length; it is read field by field rather than skipped blindly, and its trailing null is
+#: what pins it.
 ARCHIVE_HEADER_LEN = 59
+
+#: Mask that takes the changelist out of the uint32 beside the engine version. The top bit is
+#: set on all 11,292 occurrences on this disk and its meaning is unknown, so it is stripped for
+#: the comparison against ``buildVersion`` rather than treated as part of the number.
+CHANGELIST_MASK = 0x7FFFFFFF
 
 #: The two int32s that open the archive header, on every occurrence in every save
 #: checked. They are the signature used to recognise the header when a level record says
@@ -281,8 +319,16 @@ class BodyPreamble:
     declared_size: int
     grids: list[Grid]
     version_fields: tuple[int, int, int, int] | None = None
-    unknown_six: bytes = b""
-    tag: int = 0
+    #: Unreal engine version the body was written by, as ``(major, minor, patch)`` from three
+    #: uint16s -- ``(5, 6, 1)`` on all 11,292 archive headers on this disk. ``None`` on a body
+    #: with no archive header, because 5.6.1 is a claim about the writer and a zero triple would
+    #: be a different one; absent has to stay distinguishable from either.
+    engine_version: tuple[int, int, int] | None = None
+    #: The uint32 after the engine version. Its low 31 bits are the header's ``buildVersion`` on
+    #: 11,292 of 11,292 -- see the module docstring for the identity ``read_body`` asserts and
+    #: for why one build_version is all this disk can confirm it at. Kept unmasked, so a caller
+    #: sees the top bit rather than a number this module has quietly edited.
+    changelist: int | None = None
     branch: str = ""
     custom_versions: list[tuple[bytes, int]] = field(default_factory=list)
 
@@ -385,12 +431,35 @@ def _at_archive_header(r: Reader) -> bool:
     return (look.i32(), look.i32(), look.i32()) == (*_ARCHIVE_MARK, 1017)
 
 
-def _read_archive_header(r: Reader) -> tuple[tuple[int, int, int, int], bytes, int, str]:
-    """The 59-byte version header. Read field by field so a change is caught here.
+def _read_archive_header(
+    r: Reader,
+    warnings: list[tuple[int, str]],
+    build_version: int | None = None,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int], int, str]:
+    """The 59-byte version header: four int32s, the engine version, the changelist, the branch.
 
-    The same header appears at the front of the body and again between level records --
-    1,906 times on the reference save -- so it is one function rather than an inline
-    skip, and the branch string is compared each time.
+    Read field by field so a change is caught here. The same header appears at the front of the
+    body and again between level records -- 1,906 times on the reference save -- so it is one
+    function rather than an inline skip, and the branch string is compared each time.
+
+    The 6 bytes after the four int32s were called ``unknown_six`` until they were measured: they
+    are three uint16s reading ``5``, ``6`` and ``1`` on all 11,292 occurrences across the six
+    saveVersion-60 saves. Called an engine version here because a major/minor/patch triple next
+    to an engine branch string is what that is; the bytes carry no label, and 5.6.1 is constant
+    on this disk, so the reading is an interpretation of one value rather than a fit to several.
+    The u32 after them was called a tag; it is a changelist, and ``build_version`` proves it.
+
+    **The identity, and why it WARNS rather than refuses.** ``changelist & CHANGELIST_MASK``
+    equals the header's ``buildVersion`` on 11,292 of 11,292 archive headers on this disk -- but
+    all 11,292 carry the same changelist and the same build, so that is one observation repeated,
+    not eleven thousand. A refusal built on it would turn the first build where the relation
+    differs into "your save cannot be read". See the module docstring for the splice test that
+    also disproved the original justification: the header's md5 of the body catches a spliced
+    header, and this check does not.
+
+    It runs only when the caller supplies the header's ``build_version``: tests and tools reach
+    ``read_body`` holding a body and no header at all, and inventing an expected value for those
+    would turn a real check into a tautology.
     """
     start = r.pos
     fields = (r.i32(), r.i32(), r.i32(), r.i32())
@@ -399,8 +468,30 @@ def _read_archive_header(r: Reader) -> tuple[tuple[int, int, int, int], bytes, i
         start,
         f"expected an archive version header starting {_ARCHIVE_MARK}, found {fields[:2]}",
     )
-    six = r.bytes(6)
-    tag = r.u32()
+    # Three uint16s, unpacked here rather than by a Reader primitive: this is the only uint16
+    # anything in this parser reads, and reader.py's vocabulary is worth keeping small.
+    raw = r.bytes(6)
+    engine_version = (
+        int.from_bytes(raw[0:2], "little"),
+        int.from_bytes(raw[2:4], "little"),
+        int.from_bytes(raw[4:6], "little"),
+    )
+    changelist_at = r.pos
+    changelist = r.u32()
+    if build_version is not None and changelist & CHANGELIST_MASK != build_version:
+        what = (
+            f"the body says changelist {changelist & CHANGELIST_MASK} "
+            f"(from {changelist:#010x}) and the header says buildVersion {build_version}; "
+            "the low 31 bits agree on all 11,292 archive headers measured, but every one of "
+            "those is the same build, so a mismatch is reported rather than refused"
+        )
+        # Reported once per DISTINCT mismatch, not once per archive header. A body whose build
+        # disagrees with its header disagrees at all ~1,906 of them, and 1,906 identical lines on
+        # stderr would bury anything else the parse had to say. A body genuinely assembled from
+        # two builds' level records still produces one line per pair, which is the case worth
+        # seeing.
+        if what not in [w for _at, w in warnings]:
+            warnings.append((changelist_at, what))
     branch = r.string()
     _expect(
         r.pos - start == ARCHIVE_HEADER_LEN,
@@ -408,7 +499,7 @@ def _read_archive_header(r: Reader) -> tuple[tuple[int, int, int, int], bytes, i
         f"archive header read {r.pos - start} bytes, expected {ARCHIVE_HEADER_LEN} "
         f"(branch string {branch!r} changed length?)",
     )
-    return fields, six, tag, branch
+    return fields, engine_version, changelist, branch
 
 
 def _read_custom_versions(r: Reader) -> list[tuple[bytes, int]]:
@@ -699,7 +790,13 @@ def _read_level(r: Reader, *, named: bool, save_version: int) -> Level:
 
 
 def _read_level_trailer(
-    r: Reader, name: str, *, save_version: int, versioned_archive: bool
+    r: Reader,
+    name: str,
+    warnings: list[tuple[int, str]],
+    *,
+    save_version: int,
+    versioned_archive: bool,
+    build_version: int | None = None,
 ) -> list[tuple[str, str]]:
     """A sub-level's trailer: a version, a destroyed-actor list, and maybe a flag.
 
@@ -732,7 +829,10 @@ def _read_level_trailer(
     flag = r.i32()
     _expect(flag in (0, 1), r.pos - 4, f"level {name!r} trailer flag {flag}, expected 0 or 1")
     if flag:
-        _read_archive_header(r)
+        # Checked, not skipped: 1,905 of the reference save's 1,906 archive headers are these
+        # per-level ones, and they carry the same changelist the outer one does -- so a body
+        # assembled from two builds' level records is caught here rather than only at the front.
+        _read_archive_header(r, warnings, build_version)
         _read_custom_versions(r)
     return destroyed
 
@@ -839,7 +939,9 @@ def _read_flat_levels(r: Reader, save_version: int) -> list[Level]:
     return list(grouped.values())
 
 
-def read_body(body: bytes, save_version: int = FIRST_MODERN_BODY) -> SaveBody:
+def read_body(
+    body: bytes, save_version: int = FIRST_MODERN_BODY, build_version: int | None = None
+) -> SaveBody:
     """Walk the inflated body up to (not into) the property blocks.
 
     ``body`` is the concatenation of the inflated chunks. The returned slices index into
@@ -851,6 +953,12 @@ def read_body(body: bytes, save_version: int = FIRST_MODERN_BODY) -> SaveBody:
     carries no version of its own, so nothing in these bytes could supply one. The two modern
     layouts, 52 and 60, still tell themselves apart from the bytes, which is why the default is
     the modern one and why every existing caller keeps working unchanged.
+
+    ``build_version`` is the header's, and passing it turns on the one check that spans the
+    compression boundary: every archive version header in the body declares a changelist whose
+    low 31 bits are exactly it, on 11,292 of 11,292 occurrences. Left ``None`` -- which is what a
+    caller with a bare body and no header must do -- the changelist is read and reported but
+    nothing is compared, because an expected value invented here would only ever match itself.
     """
     old = save_version < FIRST_MODERN_BODY
     size_width = 4 if old else 8
@@ -872,20 +980,24 @@ def read_body(body: bytes, save_version: int = FIRST_MODERN_BODY) -> SaveBody:
         0,
         f"the body says it is {declared} bytes; {len(body) - size_width} follow the size field",
     )
+    # Declared before the preamble is read: the archive header's changelist check reports
+    # into this, and it is the first thing the walk touches.
+    warnings: list[tuple[int, str]] = []
     preamble = BodyPreamble(declared_size=declared, grids=[])
     if not old:
         # No world partition and no archive versioning below saveVersion 52: the level list --
         # or, below 30, the header run -- starts straight after the size.
         if _at_archive_header(r):
-            fields, six, tag, branch = _read_archive_header(r)
+            fields, engine_version, changelist, branch = _read_archive_header(
+                r, warnings, build_version
+            )
             preamble.version_fields = fields
-            preamble.unknown_six = six
-            preamble.tag = tag
+            preamble.engine_version = engine_version
+            preamble.changelist = changelist
             preamble.branch = branch
             preamble.custom_versions = _read_custom_versions(r)
         preamble.grids = _read_grids(r)
 
-    warnings: list[tuple[int, str]] = []
     levels: list[Level] = []
     trailer_destroyed: list[tuple[str, str]] = []
 
@@ -904,8 +1016,10 @@ def read_body(body: bytes, save_version: int = FIRST_MODERN_BODY) -> SaveBody:
             trailer_destroyed += _read_level_trailer(
                 r,
                 level.name,
+                warnings,
                 save_version=save_version,
                 versioned_archive=preamble.has_archive_header,
+                build_version=build_version,
             )
 
         # The persistent level closes the list: the same record with no name, and no trailer.

@@ -33,6 +33,40 @@ string growth and not a new field: ``map_options`` gains ``?skiponboarding`` and
 **Nothing in the header distinguishes saveHeaderType 8 from 9.** Whatever version 9 bumped
 is not a field here. That is a limit of what these bytes can say, not a conclusion.
 
+## ``session_visibility``: spelled out on the old saves, open on the new ones
+
+**On the 35 pre-1.0 saves this byte is not merely positioned, it is explained.** ``map_options``
+in the same header writes the visibility as text -- ``?Visibility=SV_Private`` or
+``?Visibility=SV_FriendsOnly`` -- and the byte agrees with it on **35 of 35** with no exception:
+``(0, 'SV_Private')`` on 23 and ``(1, 'SV_FriendsOnly')`` on 12. That makes it a rarity in this
+header pinned by *meaning* as well as position, since every other one rests on the walk landing
+on the tag; an off-by-one anywhere before it would break the correlation.
+
+**On the 31 modern saves the same byte is a different animal, and the cross-check is gone.** No
+modern ``map_options`` contains ``SV_`` at all -- it is ``?skiponboarding?ClientIdentity=...`` --
+so nothing in the header states the answer. Measured: ``0x00`` on all 6 saveVersion-60 saves and
+``0x18``/``0x58``/``0x98``/``0xD8`` on the 25 at saveVersion 52, so ``value & 0x3F`` is 24 on all
+25 and 0 on all 6. Only bits 6 and 7 vary, and all four of their combinations occur.
+
+**The four modern values cannot be reconciled with the old meaning.** 24 is not in the old value
+space, which is 0 and 1, and the low six bits are *pinned* at 24 on all 25 while the two top bits
+take all four combinations -- so whatever the byte now holds, its low bits are not a 0/1 enum.
+Corroboration: all 31 modern saves are one session (same ``save_identifier``, same
+``session_name``), yet the byte reads ``0x98`` at 2025-10-31 13:38 and ``0xD8`` 69 seconds later,
+and a visibility setting that changed twice within a minute would be a strange way to play.
+
+The one alignment available is too weak to be a bridge: bit 0 is 0 on all 31, and 0 meant
+``SV_Private``. A byte whose bit 0 is never set cannot tell "still the enum, and always private"
+from "no longer that field", so this is a coincidence that fits, not evidence. The modern meaning
+is **unknown**, and it is not derivable from the rest of the header either: ``value >> 6`` matches
+no 2-bit slice of ``save_datetime_ticks``, ``play_duration_s``, ``build_version``, the file size,
+``body_offset`` or either half of ``save_data_hash`` -- 448 slices tested, zero hits.
+
+Position is still sound on the modern layout: ``editor_object_version`` reads 40 in the four bytes
+immediately after this one on all 54 saves from saveVersion 28 up (38 on the twelve saveVersion-25
+ones), and the walk lands on the tag. It is the byte's *meaning* after 1.0 that is open, not its
+offset.
+
 Absent fields read as ``None`` rather than as ``0``/``False``. A zero says "not creative";
 ``None`` says "this header has no such field", and the two must not be confusable.
 """
@@ -118,6 +152,12 @@ class SaveInfo:
     session_name: str
     play_duration_s: int
     save_datetime_ticks: int
+    #: One byte. On the 35 pre-1.0 saves it is the session's visibility and ``map_options``
+    #: proves it -- 0 with ``SV_Private``, 1 with ``SV_FriendsOnly``, 35 of 35. On the 31 modern
+    #: ones it takes five values (``0x00`` at saveVersion 60, ``0x18``/``0x58``/``0x98``/``0xD8``
+    #: at 52), whose low six bits are 24 or 0 rather than the old 0 or 1, so it is not that enum
+    #: any more and what it *is* is unknown. See the module docstring; do not read a visibility
+    #: off this on a 1.0 save.
     session_visibility: int
     editor_object_version: int
     mod_metadata: str

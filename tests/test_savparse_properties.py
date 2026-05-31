@@ -29,6 +29,11 @@ exercised by bytes the game actually wrote:
 The container format is invented here and only this test reads it: an int32 count, then per
 entry a name, the object version, an is-actor flag, a length, and that many payload bytes.
 
+Two sections use hand-built bytes instead, and each says why where it starts: the escape
+hatches, which no save on this disk reaches, and the version-36/52 containers whose element
+struct the bytes never name, whose three occurrences are all in fields the projection does not
+read -- so the parity digest cannot notice them breaking.
+
 What would go wrong without these: the whole module is offset arithmetic over a
 self-describing format, and the only thing that catches a wrong width is the declared size.
 A regression that reads four bytes too few does not produce a wrong number -- it produces a
@@ -115,6 +120,26 @@ def _component(*tags: bytes) -> tuple[bytes, ObjectSlice]:
     """A whole version-60 component payload: migration byte, tags, ``"None"``, trailer."""
     payload = b"\0" + b"".join(tags) + _s("None") + b"\0\0\0\0"
     return payload, ObjectSlice(60, 0, 0, len(payload))
+
+
+def _old_tag(name: str, type_name: str, tag_data: bytes, payload: bytes) -> bytes:
+    """A version-36/52 tag: name, type, size, array index, type-specific data, guid flag.
+
+    ``tag_data`` is what that type writes between the array index and the guid flag -- the
+    element type for an array or a set, both element types for a map, nothing for a scalar.
+    That field is the whole reason the tests below exist: it is where UE4 keeps the
+    information version 60 puts in its type tree, and for a container of structs it keeps
+    less of it.
+    """
+    return (
+        _s(name) + _s(type_name) + struct.pack("<ii", len(payload), 0) + tag_data + b"\0" + payload
+    )
+
+
+def _old_component(*tags: bytes) -> tuple[bytes, ObjectSlice]:
+    """A version-52 component payload. No migration byte -- that is version 60's."""
+    payload = b"".join(tags) + _s("None") + b"\0\0\0\0"
+    return payload, ObjectSlice(52, 0, 0, len(payload))
 
 
 # ------------------------------------------------------------ every block parses
@@ -706,3 +731,145 @@ def test_the_bool_bit_and_the_native_bit_are_the_documented_ones():
     """
     assert TAG_BOOL_TRUE == 0x10
     assert TAG_NATIVE_SERIALIZE == 0x08
+
+
+# ------------------------------------- version-36/52 containers of structs the bytes do not name
+#
+# UE4's tag data for a map or a set carries the element's *property* type -- literally the string
+# "StructProperty" -- and stops there, because the engine got the struct's name from reflection.
+# So three properties on every saveVersion 52 save cannot be told apart from a property list by
+# anything in the file: the foliage subsystem's `mSaveData` and the scanner's `mDestroyedPickups`
+# and `mLootedDropPods`, 918,917 bytes on the reference v52 save. They are read by offering
+# candidate struct types to `attempt` and keeping the one that lands exactly on the property's
+# declared end -- `IntVector` for a map key, `Guid` then `Vector` for a set element, each of them
+# a type version 60 writes out in full for the same field.
+#
+# That reading shipped with no test of its own. The only thing exercising it was a real save, and
+# the check there is a digest of the projection -- which reads none of these three fields, so the
+# digest would not move if they broke. Nothing else can reach it: version 60 names its structs,
+# and both committed property fixtures are blocks the game wrote, neither of which contains a
+# saveVersion-52 map or set of unnamed structs. Hence hand-built bytes, in the shapes the census
+# over all 31 saves says occur.
+#
+# Two things here are deliberately NOT tested, because no test of them could fail today:
+#
+# * that the candidates are tried narrowest-first. No two of them can land on the same bytes --
+#   16, 24 and a property list of any length differ -- so a test asserting the order would only
+#   restate the constant it reads.
+# * that `attempt` throws away the warnings a rejected candidate produced. It was measured for:
+#   a map whose keys are property lists and whose values hold an unknown property type produces
+#   the same two warnings with the discard and without it, because the `IntVector` candidate
+#   fails on the first key and never reaches a value. Nothing observable distinguishes the two,
+#   so the discard is unpinned and this comment is the record of that.
+
+
+def _old_set(name: str, payload: bytes) -> bytes:
+    """A set whose tag says its elements are structs and does not say which struct."""
+    return _old_tag(name, "SetProperty", _s("StructProperty"), payload)
+
+
+def test_an_unnamed_map_key_is_read_as_the_int_vector_version_60_names():
+    """``FoliageRemovalSubsystem.mSaveData``: cell coordinate keys, 12 raw bytes each.
+
+    Version 60's type tree for this very field reads ``StructProperty 1 IntVector 1
+    /Script/CoreUObject``, so ``IntVector`` is the newer format stating the answer rather than a
+    guess -- and ``[-7, -25, -1]`` below is a real cell from the reference save's foliage grid.
+    Before this reading the whole property was skipped by its declared size.
+    """
+    keys = ((-7, -25, -1), (3, 4, 5))
+    body = struct.pack("<ii", 0, len(keys)) + b"".join(
+        struct.pack("<iiii", *k, i) for i, k in enumerate(keys)
+    )
+    payload, slot = _old_component(
+        _old_tag("mSaveData", "MapProperty", _s("StructProperty") + _s("IntProperty"), body)
+    )
+    parsed = read_object(payload, slot, actor=False, save_version=52)
+    assert parsed.warnings == [], "a landed candidate leaves no warning behind"
+    assert props(parsed)["mSaveData"] == [[[-7, -25, -1], 0], [[3, 4, 5], 1]]
+
+
+def test_an_unnamed_map_key_that_is_a_property_list_still_reads():
+    """The candidate that is not native: the same tag bytes, a key written as a property list.
+
+    This is the reading that existed before ``IntVector`` was offered, and it has to survive --
+    it is why the empty struct name stays last in the candidate list. The referee is the only
+    thing choosing between the two: 12 raw bytes cannot land as a property list and a property
+    list cannot land as 12 raw bytes, so the same tag resolves both ways from the payload alone.
+    """
+    key = (
+        _s("X")
+        + _s("IntProperty")
+        + struct.pack("<ii", 4, 0)
+        + b"\0"
+        + struct.pack("<i", 9)
+        + _s("None")
+    )
+    body = struct.pack("<ii", 0, 2) + (key + struct.pack("<i", 1)) * 2
+    payload, slot = _old_component(
+        _old_tag("mListData", "MapProperty", _s("StructProperty") + _s("IntProperty"), body)
+    )
+    parsed = read_object(payload, slot, actor=False, save_version=52)
+    assert parsed.warnings == []
+    (first_key, first_value), _second = props(parsed)["mListData"]
+    assert first_value == 1
+    values, types = first_key
+    assert values == [["X", 9]], "the key is a nested property list, not three ints"
+    assert [t[:2] for t in types] == [["X", "IntProperty"]]
+
+
+def test_an_unnamed_set_element_is_read_as_a_guid():
+    """``ScannableSubsystem.mDestroyedPickups``: 6,968 bytes = 8 + 435 x 16, bare GUIDs.
+
+    "Bare" is the part that needed its own reader. A set's elements carry none of the framing
+    an array's do -- on version 36/52 an array of structs writes a full property tag inside its
+    payload -- so routing this through the array path could never have landed, whatever struct
+    was guessed.
+    """
+    body = struct.pack("<ii", 0, 2) + struct.pack("<QQ", 1, 2) + struct.pack("<QQ", 3, 4)
+    payload, slot = _old_component(_old_set("mDestroyedPickups", body))
+    parsed = read_object(payload, slot, actor=False, save_version=52)
+    assert parsed.warnings == []
+    assert props(parsed)["mDestroyedPickups"] == ["Guid", [[1, 2], [3, 4]]]
+
+
+def test_the_same_set_tag_of_vectors_is_read_as_vectors():
+    """``FGFoliageRemoval.mRemovalLocations``, the other set shape, and the referee at work.
+
+    Byte for byte the tag is identical to the GUID set above -- ``SetProperty`` of
+    ``StructProperty``, nothing more -- and only the payload's length decides. A ``Guid``
+    reading of two elements consumes 32 bytes and this block is 48, so it is discarded and
+    ``Vector`` lands. Twenty-four bytes because a saveVersion 52 file writes doubles; on the
+    pre-1.0 saves the same field is float32 and 12, which
+    ``test_savparse_pre_1_0.py`` covers on real bytes.
+    """
+    body = (
+        struct.pack("<ii", 0, 2)
+        + struct.pack("<ddd", 1.0, 2.0, 3.0)
+        + struct.pack("<ddd", 4.0, 5.0, 6.0)
+    )
+    payload, slot = _old_component(_old_set("mRemovalLocations", body))
+    parsed = read_object(payload, slot, actor=False, save_version=52)
+    assert parsed.warnings == [], "a landed candidate leaves no warning behind"
+    assert props(parsed)["mRemovalLocations"] == [
+        "Vector",
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+    ]
+
+
+def test_a_set_no_candidate_lands_on_is_skipped_and_said_so():
+    """No candidate fits: the property is skipped by its declared size, with a warning.
+
+    12 bytes for one element is neither a GUID nor a vector nor a property list, which is what
+    a patch introducing a new struct into one of these sets would look like from in here. It has
+    to cost that property and not the object -- and it has to be *said*, because a silent skip
+    is how a field nobody reads today becomes a field somebody reads tomorrow and finds empty.
+    """
+    payload, slot = _old_component(
+        _old_set("mMystery", struct.pack("<ii", 0, 1) + b"\x01" * 12),
+        _old_tag("after", "IntProperty", b"", struct.pack("<i", 42)),
+    )
+    parsed = read_object(payload, slot, actor=False, save_version=52)
+    assert props(parsed) == {"mMystery": None, "after": 42}, "the next property still reads"
+    assert [w for _, w in parsed.warnings] == [
+        "skipped 20 bytes: version-52 set 'mMystery' of unnamed structs"
+    ]
