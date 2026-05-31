@@ -16,6 +16,7 @@ from ..graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from ..graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from ..graph.select import SelectorError
 from ..graph.trace import power_at_risk, trace
+from ..spatial import nodes as nodes_mod
 
 
 def _cand_row(c, store, labelled: set[str]) -> tuple:
@@ -364,6 +365,13 @@ def factory_query(
             chunks.append(f"## issues ({len(view.issues)})\n{body}")
 
     notes = []
+    # `left` in the nodes aspect is mResourcesLeft joined to the node table by instance
+    # name, and resource/purity in that table come from the same join -- so a node a game
+    # update renamed shows "?" for all three with no stated reason. Identity only: this
+    # tool quotes no coordinate, so position drift is not its problem.
+    notes += nodes_mod.identity_notes(
+        nodes_mod.skew_for_save(st.header), [row[0] for row in view.nodes]
+    )
     loose = view.links.get("(unlabelled)")
     if loose:
         notes.append(

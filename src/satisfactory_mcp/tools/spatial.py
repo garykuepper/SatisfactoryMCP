@@ -101,7 +101,8 @@ def describe_location(
         st = _state(save, world)
     except Exception:
         pass
-    near = elevation.probe(x, y, elevation.sample_points(nodes_mod.load_nodes(), st), radius_m)
+    table = nodes_mod.load_nodes()
+    near = elevation.probe(x, y, elevation.sample_points(table, st), radius_m)
 
     fields = [
         ("region", label.describe()),
@@ -146,6 +147,13 @@ def describe_location(
             "resource node is near, so the height is genuinely unknown -- widen radius_m "
             "or accept that this is unsurveyed ground"
         )
+    # Ground elevation here IS node z, so a stale node row is a stale ground level -- and
+    # it can flip the 1 m threshold the fill note above is quoted at. Only the nodes inside
+    # the probe radius are in scope, so an untouched location stays silent.
+    notes += nodes_mod.position_notes(
+        nodes_mod.skew_for_save(st.header if st else None, table),
+        [n["instance"] for n in table.filter(center=(x, y), radius_m=radius_m)],
+    )
     return render.envelope(render.kv(fields), "", notes)
 
 
@@ -264,6 +272,13 @@ def search_resource_nodes(
                 f"{len(unres)} extractor(s) unmatched to a node (mostly water pumps), "
                 "so free may be overstated"
             )
+        # This tool quotes z per node AND joins the save by instance name, so both halves
+        # of a stale table bite here. Scoped to the rows in THIS answer: a query that
+        # returns none of the drifted rows says nothing at all.
+        notes += nodes_mod.skew_notes(
+            nodes_mod.skew_for_save(st.header, table),
+            [r["instance"] for r in rows_all],
+        )
 
     if mode in ("nodes", "nearest"):
         if mode == "nearest":
@@ -440,6 +455,14 @@ def show_on_map(
     )
     tokens = layers or maplink.layers_for(resources, kinds or None)
 
+    # Identity only. A metre of drift is far below one pixel of a map link at any zoom
+    # this emits, so the position note would be noise -- but "your save does not call it
+    # that" is something the reader will hit again the next time they paste the id.
+    if node is not None:
+        notes += nodes_mod.identity_notes(
+            nodes_mod.skew_for_save(st.header if st else None, table), [node["instance"]]
+        )
+
     url = maplink.map_url(origin[0], origin[1], tokens, zoom=zoom)
     body = url
     if tokens:
@@ -536,6 +559,11 @@ def rank_build_sites(
     )
     if st.consumer_z() is None:
         notes.append("no refineries found, so altitude is not shown")
+    # `alt` is a node z minus a refinery z, and it decides whether a fluid run needs pumps.
+    # Scoped to the candidate nodes, not the whole table.
+    notes += nodes_mod.skew_notes(
+        nodes_mod.skew_for_save(st.header, table), [r["instance"] for r in rows]
+    )
 
     return render.envelope(
         f"# {len(scored)} candidate {g.item_name(rid)} field(s) in {sel.description}, "
@@ -616,6 +644,11 @@ def whereami(
         default=None,
     )
     notes = [f"use near:me,{radius_m:g} as a source selector to plan around here"]
+    # Distances here are measured FROM the table's coordinates, so a stale row makes
+    # "nearest node" quietly wrong. Scoped to what is actually within radius_m.
+    notes += nodes_mod.skew_notes(
+        nodes_mod.skew_for_save(st.header, table), [n["instance"] for n in near]
+    )
     if closest is not None:
         d = geo.distance_m((closest["pos"][0], closest["pos"][1]), (x, y))
         name = g.buildings[closest["cls"]].name if closest["cls"] in g.buildings else closest["cls"]

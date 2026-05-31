@@ -3758,6 +3758,49 @@ that means fluid flows downhill and needs no pipeline pumps.
 
 ---
 
+## 15b. Parked: derive the map tables from the installed game, on game update
+
+**Decided in principle, not built.** Every artifact under `data/` that describes map placements is a
+pinned snapshot with a shelf life, and the shelf life is a game update: *"in updates, resource nodes
+tend to move if the map gets changed"* (Lukas, 2026-07-30). That is not an anomaly to document once,
+it is the normal lifecycle, and it is already visible in the tree.
+
+Measured against the installed build, `data/world_resource_nodes.mit.json` — pinned to an older
+one — has **25 `BP_ResourceNode` rows moved 9.5–80.4 cm vertically**, and one renamed:
+`BP_ResourceNode11` on all 25 saveVersion-52 saves became
+`BP_ResourceNode20_UAID_04D9F5D42711A7C902_1245462149` on all 6 saveVersion-60 saves, 150 cm away.
+`data/resource_nodes.json`'s `_meta.cross_validation.positions` itemises every one.
+
+**Two silent failure modes, which is why this is worth doing rather than merely noting.** A join by
+instance name simply *misses* after a rename — and a per-kind count check cannot see it, because
+459 == 459 across a rename. And a position can be a metre out while the answer stays confident.
+`§13c`'s runtime gate makes the skew visible; deriving on update would remove it.
+
+**Why it is now cheap.** The collectibles work built a reader for the game's own IoStore container:
+4,521 `GameLevel01` `.umap` packages decompress in ~3 s with zero failures, positions agree with
+live save actors to a **median 0.0000 cm**, and the extraction reproduces the deleted GPL tables
+class-for-class. So `resource_nodes.json` and `world_collectibles.json` could become **caches keyed
+on the game's `build_version`** rather than committed snapshots, regenerated when a save reports a
+build the cache does not know.
+
+**What has to be settled before building it**, and none of it is hard, only unexamined:
+
+* **Oodle.** The decompressor is `pyooz`, GPL-3.0, and today it is deliberately an offline
+  generation-time tool that never enters `pyproject.toml`, `src/` or `sidecar/`. Regenerating *at
+  runtime* would put it in the dependency graph and undo the licence position this project spent
+  months reaching. Either the cache is refreshed by an explicit `tools/` run the user invokes after
+  a patch — which keeps the current posture and is the conservative answer — or a permissively
+  licensed Kraken decoder is found first.
+* **Cost.** ~3 s of extraction is fine for a build-time step and not for a tool call, so the
+  refresh must be explicit or lazily cached, never per-request.
+* **What survives a refresh.** `data/world_collectibles.json` carries per-instance `state`
+  (`collected` / `present` / `unknown`) folded from the save history. A regenerated placement set
+  must re-fold that rather than reset it, and instance renames mean the fold cannot key on the name
+  alone — position within a tolerance is the fallback, and `§13c` shows the tolerance has to be
+  chosen against the rounding floor rather than guessed.
+* **No first-party escape for the region layer.** The game ships no biome geometry, so
+  `data/satisfactory_regions.json` stays a CC BY-SA trace whatever happens here.
+
 ## 16. Parked: site outlines and visualisation
 
 Deliberately out of scope for now. Recorded because the enabling investigation was

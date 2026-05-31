@@ -47,12 +47,67 @@ def test_node_table_matches_the_save_in_both_directions(table, projection):
     assert by_kind["geyser"] == counts["BP_ResourceNodeGeyser_C"]
 
 
+#: Where the recovered pure Limestone node stands, centimetres. See the test below for
+#: why this is the anchor and an instance name is not.
+_RECOVERED_LIMESTONE_XY = (-279_020.0, -186_294.0)
+
+
 def test_the_recovered_limestone_node_is_present(table):
-    """BP_ResourceNode11: in the game assets and in the save, absent from SCIM."""
-    node = next((n for n in table.nodes if n["instance"].endswith(".BP_ResourceNode11")), None)
-    assert node is not None
-    assert node["resource"] == "Desc_Stone_C"
-    assert node["purity"] == "pure"
+    """A pure Limestone node that the third-party extract omitted is in this table.
+
+    The node it protects is the one recovered from the game's own assets: the SCIM extract
+    was missing it, both counts read 607, and only counting save actors against table rows
+    caught it. That requirement is unchanged and is what is asserted here.
+
+    What changed is the ANCHOR. This test used to name ``BP_ResourceNode11``, and a game
+    update renamed that instance -- it exists in no current save, so the assertion had
+    quietly become a claim about a build nobody runs. An instance name is exactly the wrong
+    identity for a node that a map change can rename, which is the failure the skew gate
+    exists to make loud. Position, resource and purity are what actually survive: the
+    installed build confirms both attributes on every compared row, and the renamed row
+    moved 150 cm, so a metres-wide tolerance around the recorded spot still names one node
+    and only one. The nearest other pure Limestone node is 51 m away.
+    """
+    hits = [
+        n
+        for n in table.nodes
+        if n["resource"] == "Desc_Stone_C"
+        and n["purity"] == "pure"
+        and geo.distance_m((n["x"], n["y"]), _RECOVERED_LIMESTONE_XY) <= 10.0
+    ]
+    assert len(hits) == 1, [n["instance"] for n in hits]
+    assert hits[0]["kind"] == "node"
+
+
+def test_the_recovered_limestone_node_is_joinable_or_disclosed(table, projection):
+    """The other half of the old docstring: "and in the save".
+
+    That clause is no longer true of the id the table ships, and it is the reason the
+    count check above cannot see the problem -- 459 stays 459 across a rename. So the
+    requirement becomes a disjunction, and either branch is acceptable: the row's instance
+    name is one this save can join, OR the software says out loud that it cannot. What is
+    NOT acceptable is a row whose name no save carries while every tool stays quiet,
+    because that is the case that answers confidently and wrongly.
+    """
+    node = next(
+        n
+        for n in table.nodes
+        if n["resource"] == "Desc_Stone_C"
+        and n["purity"] == "pure"
+        and geo.distance_m((n["x"], n["y"]), _RECOVERED_LIMESTONE_XY) <= 10.0
+    )
+    skew = nodes_mod.skew_for_save(projection["header"], table)
+    disclosed = nodes_mod.identity_notes(skew, [node["instance"]])
+    unjoinable = node["instance"] in (skew.unjoinable if skew else ())
+
+    if unjoinable:
+        assert disclosed, "the row this save cannot join is reported by nothing"
+        assert node["instance"].rsplit(".", 1)[-1] in disclosed[0]
+        # And the disclosure must lead somewhere: a name with no replacement is a dead
+        # end for anyone trying to find the node in their own save.
+        assert skew.renamed_to.get(node["instance"]), skew
+    else:
+        assert disclosed == [], disclosed
 
 
 def test_deposits_and_cores_are_excluded_from_the_node_table(table):
