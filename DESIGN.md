@@ -182,8 +182,8 @@ SatisfactoryMcp/
       gamedata.py  world.py  progression.py  factories.py
       spatial.py   planning.py  harddrives.py  resources.py  prompts.py
   sidecar/
-    extract_save.py    # imports sav_parse, emits JSON projection on stdout
-    vendor/sat_sav_parse/
+    extract_save.py    # imports savparse, emits JSON projection on stdout
+    savparse/          # our parser: reads all 66 saves, six saveVersions
   tests/
     fixtures/          # tiny Docs slice + ~9 kB save projection (committed)
 ```
@@ -3242,8 +3242,10 @@ Details in `docs/savparse-notes.md`.
 
 ## 13a. Replacing the vendored parser
 
-The save parser is vendored GPL-3.0, which reaches the whole project. Replacing it starts
-with knowing what is actually used, and the answer is small: **three entry points**.
+The save parser WAS vendored GPL-3.0, which reached the whole project. It is now deleted and
+`sidecar/savparse` is the only parser; this section records how that was done and what the
+agreement between the two measured, because the diff cannot be re-run. Replacing it started
+with knowing what was actually used, and the answer was small: **three entry points**.
 
 | what | used by | replaces |
 |---|---|---|

@@ -148,23 +148,34 @@ src/satisfactory_mcp/
   planning/   LP optimizer, hard-drive advisor
   render.py   ALL response formatting (context budget is the binding constraint)
   server.py   FastMCP tool registration only
-sidecar/      separate process: vendored GPL save parser, emits a JSON projection
+sidecar/      separate process: savparse (ours), emits a JSON projection
 tools/        one-off data generators
 ```
 
-Save parsing lives behind one subprocess boundary. `sav_parse` hard-fails on unrecognised
-`saveVersion`, so a game patch breaks exactly one module; a torn autosave or parser crash cannot take
-down the server; and the ~130 kB JSON projection is the committed test fixture, so the suite runs with
-no game install.
+Save parsing lives behind one subprocess boundary. The parser refuses an unrecognised
+`saveHeaderType` rather than guessing, so a game patch breaks exactly one module; a torn autosave or
+parser crash cannot take down the server; and the ~130 kB JSON projection is the committed test
+fixture, so the suite runs with no game install. `sidecar/savparse` is ours, derived from the bytes,
+and reads all 66 saves on the author's disk back to 2021 — six `saveVersion`s, 100% of every body.
 
 ## Licence
 
-None — this is a private project, all rights reserved by default. Note that `sidecar/vendor/sat_sav_parse`
-is GPL-3.0-only; its copyleft attaches on *distribution*, so publishing this would require licensing the
-combined work GPL-3.0.
+None — this is a private project, all rights reserved by default. **No copyleft licence reaches this
+repository.** A GPL-3.0 save parser was vendored here until it was replaced by `sidecar/savparse` and
+deleted; the agreement between the two, measured leaf for leaf across every projection key of all 31
+saves it could read, is banked as digests in `tests/fixtures/vendor_parity.json` and replayed by
+`tests/test_savparse_parity.py`, because deleting the library destroyed the ability to re-run the diff.
+
+One open question, of a different kind: `data/satisfactory_regions.json`'s region geometry is traced
+from [satisfactory.wiki.gg](https://satisfactory.wiki.gg)'s Biome Map image, which is **CC BY-SA 4.0**.
+The game ships no biome geometry, so unlike the node data this cannot be re-derived first-party. It is
+build-time input only — nothing at runtime reads that file — and the region names it produces are
+labelled advisory and never feed a computation.
 
 `data/resource_nodes.json` is merged from two sources, both recorded in the file's `_meta`: an
 MIT-licensed set extracted from the game's own map assets
 ([rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)) for
-resource, purity and position, plus the vendored SCIM-derived table for the satellite→core link it
-lacks. They agree on purity for all 607 shared nodes to within 0.69 cm of position.
+resource, purity and position, plus the satellite→core link it lacks — which is now read from the
+game's own `Persistent_Level.umap`, where every `BP_FrackingSatellite` export carries an `mCore`
+reference to its core, 118 of 118. That replaced a GPL table, and the regenerated file is
+byte-identical to the one that table produced, which is what proves the replacement complete.
