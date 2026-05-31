@@ -10,22 +10,274 @@
     "role": "authoritative node set, resource, purity, position"
    },
    "secondary": {
-    "name": "sat_sav_parse sav_data/resourcePurity.py",
-    "licence": "none stated; data extracted from SCIM, a third party",
-    "game_version_pinned": "1.2.0.0",
-    "role": "satellite -> fracking core link only"
+    "name": "_WELL_CORES in tools/gen_resource_nodes.py",
+    "licence": "none needed; read from the installed game's own assets",
+    "derivation": "mCore ObjectProperty on each BP_FrackingSatellite export in FactoryGame/Content/FactoryGame/Map/GameLevel01/Persistent_Level.umap, read out of the IoStore container",
+    "role": "satellite -> fracking core link only",
+    "kind": "reference present in the shipped data, not an inference",
+    "game_version_pinned": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
+    "transcribed": "2026-07-30"
    }
   },
   "cross_validation": {
-   "shared_nodes": 607,
-   "purity_mismatches": [],
-   "resource_mismatches": [],
-   "max_position_delta_cm": 0.685,
-   "in_scim_not_in_game_assets": [],
-   "in_game_assets_not_in_scim": [
-    "BP_ResourceNode11"
-   ],
-   "satellites_without_core_link": 0
+   "satellites": 118,
+   "fracking_cores_referenced": 17,
+   "satellites_without_core_link": [],
+   "cores_with_no_satellites": [],
+   "core_resource_conflicts": [],
+   "unknown_purity_values": [],
+   "geometry": {
+    "method": "nearest fracking core by MIT position, vs the embedded mCore link",
+    "satellites_checked": 118,
+    "nearest_core_agrees": 118,
+    "distance_to_own_core_cm": {
+     "min": 2126.1,
+     "median": 3383.6,
+     "max": 6553.5
+    },
+    "runner_up_core_distance_ratio_min": 3.81
+   },
+   "positions": {
+    "against_the_build_this_table_was_cut_from": {
+     "measured": "2026-07-30",
+     "build": "saveVersion 52 -- 25 of the 66 saves on this machine",
+     "method": "node actor transforms in every .sav on disk, grouped by saveVersion; a save's node transforms come from the build that made the level",
+     "rows_missing_from_the_save": [],
+     "median_position_delta_cm": 0.48,
+     "max_position_delta_cm": 0.83,
+     "rows_past_the_rounding_floor": [],
+     "note": "Every shipped row is present in those saves and every one is inside the whole-centimetre rounding floor, so this table is that build exactly. The same rows against a saveVersion 60 save instead give max 80.38 cm over 25 rows, which is the figure under against_the_installed_build reached a second, independent way.",
+     "rows_compared": 608,
+     "rounding_floor_cm": 0.866
+    },
+    "against_the_installed_build": {
+     "measured": "2026-07-30",
+     "build": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
+     "method": "mPurity, mResourceClass and the composed root-component transform of every node export in the installed build's Persistent_Level.umap, read out of the IoStore container",
+     "purity_mismatches": [],
+     "resource_mismatches": [],
+     "resource_rows_compared": 576,
+     "resource_not_compared": "31 geysers: BP_ResourceNodeGeyser carries no mResourceClass, and the resource is a synthetic label on both sides -- Desc_Geyser_C here, Desc_GeothermalEnergy_C in the MIT rows",
+     "rows_compared": 607,
+     "rows_only_in_this_table": [
+      "Persistent_Level:PersistentLevel.BP_ResourceNode11"
+     ],
+     "rows_only_in_the_installed_build": [
+      "Persistent_Level:PersistentLevel.BP_ResourceNode20_UAID_04D9F5D42711A7C902_1245462149"
+     ],
+     "renamed_row_moved_cm": 150.12,
+     "max_position_delta_cm": 80.38,
+     "rounding_floor_cm": 0.866,
+     "rows_past_the_rounding_floor": [
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode143_1543",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 4210.0,
+       "installed_z": 4129.62,
+       "dz_cm": -80.38,
+       "delta_cm": 80.38
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode124_5785",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -1650.0,
+       "installed_z": -1700.31,
+       "dz_cm": -50.31,
+       "delta_cm": 50.32
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode137_2248",
+       "resource": "Desc_RawQuartz_C",
+       "shipped_z": 13370.0,
+       "installed_z": 13410.25,
+       "dz_cm": 40.25,
+       "delta_cm": 40.25
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode586",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -3851.0,
+       "installed_z": -3810.86,
+       "dz_cm": 40.14,
+       "delta_cm": 40.14
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode566",
+       "resource": "Desc_OreBauxite_C",
+       "shipped_z": 21106.0,
+       "installed_z": 21066.0,
+       "dz_cm": -40.0,
+       "delta_cm": 40.0
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode553",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -2576.0,
+       "installed_z": -2545.57,
+       "dz_cm": 30.43,
+       "delta_cm": 30.43
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode556",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -5380.0,
+       "installed_z": -5349.68,
+       "dz_cm": 30.32,
+       "delta_cm": 30.32
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode40",
+       "resource": "Desc_OreIron_C",
+       "shipped_z": 2281.0,
+       "installed_z": 2250.75,
+       "dz_cm": -30.25,
+       "delta_cm": 30.25
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode469",
+       "resource": "Desc_Coal_C",
+       "shipped_z": 9441.0,
+       "installed_z": 9410.77,
+       "dz_cm": -30.23,
+       "delta_cm": 30.24
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode12_91",
+       "resource": "Desc_OreIron_C",
+       "shipped_z": 3592.0,
+       "installed_z": 3561.89,
+       "dz_cm": -30.11,
+       "delta_cm": 30.11
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode466",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 1557.0,
+       "installed_z": 1587.06,
+       "dz_cm": 30.06,
+       "delta_cm": 30.06
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode229",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 3390.0,
+       "installed_z": 3420.02,
+       "dz_cm": 30.02,
+       "delta_cm": 30.02
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode545",
+       "resource": "Desc_OreIron_C",
+       "shipped_z": -2573.0,
+       "installed_z": -2543.12,
+       "dz_cm": 29.88,
+       "delta_cm": 29.89
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode550",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -3854.0,
+       "installed_z": -3824.18,
+       "dz_cm": 29.82,
+       "delta_cm": 29.82
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode464_UAID_40B076DF2F7914E201_2026233335",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 671.0,
+       "installed_z": 700.68,
+       "dz_cm": 29.68,
+       "delta_cm": 29.68
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode486",
+       "resource": "Desc_OreBauxite_C",
+       "shipped_z": 23972.0,
+       "installed_z": 24001.52,
+       "dz_cm": 29.52,
+       "delta_cm": 29.52
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode53_510",
+       "resource": "Desc_OreCopper_C",
+       "shipped_z": 10042.0,
+       "installed_z": 10021.68,
+       "dz_cm": -20.32,
+       "delta_cm": 20.33
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode442",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 9417.0,
+       "installed_z": 9437.14,
+       "dz_cm": 20.14,
+       "delta_cm": 20.14
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode85",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 978.0,
+       "installed_z": 998.07,
+       "dz_cm": 20.07,
+       "delta_cm": 20.07
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode144_1644",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 804.0,
+       "installed_z": 823.98,
+       "dz_cm": 19.98,
+       "delta_cm": 19.99
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode620",
+       "resource": "Desc_Coal_C",
+       "shipped_z": 3940.0,
+       "installed_z": 3920.43,
+       "dz_cm": -19.57,
+       "delta_cm": 19.57
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode573_UAID_40B076DF2F7983E001_1840982787",
+       "resource": "Desc_Coal_C",
+       "shipped_z": 6682.0,
+       "installed_z": 6662.46,
+       "dz_cm": -19.54,
+       "delta_cm": 19.54
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode464_UAID_40B076DF2F790EE201_1850696287",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -1387.0,
+       "installed_z": -1397.12,
+       "dz_cm": -10.12,
+       "delta_cm": 10.13
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode441",
+       "resource": "Desc_Stone_C",
+       "shipped_z": 9352.0,
+       "installed_z": 9362.03,
+       "dz_cm": 10.03,
+       "delta_cm": 10.05
+      },
+      {
+       "instance": "Persistent_Level:PersistentLevel.BP_ResourceNode554",
+       "resource": "Desc_Stone_C",
+       "shipped_z": -3066.0,
+       "installed_z": -3056.46,
+       "dz_cm": 9.54,
+       "delta_cm": 9.54
+      }
+     ]
+    }
+   }
+  },
+  "known_game_version_skew": {
+   "measured": "2026-07-30",
+   "what": "This table is cut from an older build than the installed one. The two comparisons under cross_validation.positions say by how much; the rows that predate the installed build are named individually in cross_validation.positions.against_the_installed_build.rows_past_the_rounding_floor.",
+   "impact": "Positions: the 25 named rows are 9.54-80.38 cm stale in z, and horizontally within rounding, so a plan sited from this table picks the right node with a z up to 80 cm behind the game's. Identity: the one renamed row cannot be joined against a saveVersion 60 or later save at all -- the save carries the new name, which has no row here, so that node's mResourcesLeft is unreadable and its position is 150 cm off. Resource and purity are unaffected on every row, and so is the whole well group: every satellite and core keeps its id, and its position matches the installed build to within rounding.",
+   "fix": "refresh data/world_resource_nodes.mit.json, then delete _INSTALLED_BUILD_POS and _INSTALLED_BUILD_RENAME from the generator; not done here"
   },
   "excluded": {
    "BP_ResourceDeposit_C": "hand-mineable only, no extractor can be placed",

@@ -12,7 +12,7 @@ that made that file unusable as-is:
 
 1. **No void class.** All 900 raster cells carried a land label, so a lookup for open
    ocean confidently returned "Rocky Desert". Fixed by building a land mask from
-   2,669 known static world objects (resource nodes, crash sites, power slugs,
+   2,688 known static world objects (resource nodes, crashed drop pods, power slugs,
    somersloops, Mercer shrines/spheres) and blanking cells that are far from all of
    them.
 2. **Raster spilling outside its own bboxes.** The shipped bboxes disagreed with the
@@ -24,24 +24,43 @@ that made that file unusable as-is:
    taken from the hand-verified oil clusters.
 4. **A second implementation that contradicted the prose.** data/geo_reference.py is
    deleted; src/satisfactory_mcp/spatial/regions.py is the only implementation.
+
+The land mask is drawn from two committed, non-copyleft tables: `world_resource_nodes.mit.json`
+(MIT, extracted from the game's map assets) and `world_collectibles.json` (read out of the
+installed game's own cooked map packages). Neither carries a copyleft licence, and no
+third-party world table is imported here.
+
+The mask is heavily over-determined at 256 m, which is why swapping its sources changed no
+cell. Measured: the 2,062 collectibles alone reproduce the whole 900-cell raster, and so does
+dropping any one resource class. The 626 resource nodes *alone* do not -- they move 27 cells --
+so both tables stay, and the node table is the cheap redundancy that keeps the raster stable if
+a collectibles rebuild changes shape.
 """
 
 from __future__ import annotations
 
 import json
 import math
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "sidecar" / "vendor" / "sat_sav_parse"))
-
-import sav_data.crashSites as crash_sites
-import sav_data.mercerSphere as mercer
-from sav_data import slug, somersloop
-from sav_data.resourcePurity import RESOURCE_PURITY
 
 VOID = "."
+
+#: Collectible categories that stand on land and so mark it. Mercer shrines and spheres,
+#: all three slug colours, somersloops and crashed drop pods, matching the object set the
+#: mask has always used. Somersloop shrines, tape and customization pickups are excluded
+#: for that reason alone -- including them moves no cell (measured), because they sit
+#: beside objects already in the set.
+LAND_MASK_CATEGORIES = (
+    "crashed_drop_pod",
+    "mercer_shrine",
+    "mercer_sphere",
+    "power_slug_blue",
+    "power_slug_purple",
+    "power_slug_yellow",
+    "somersloop",
+)
 
 #: A cell whose centre is farther than this from any known static object is treated
 #: as void (ocean or off-map). Chosen from the measured distribution: cell-to-nearest
@@ -54,22 +73,39 @@ VOID_DISTANCE_M = 1000.0
 UNCERTAIN_DISTANCE_M = 400.0
 
 
-def reference_points() -> list[tuple[float, float]]:
-    """Static world objects, used purely as a land mask."""
+def load(name: str, key: str) -> list[dict]:
+    path = ROOT / "data" / name
+    if not path.exists():
+        raise SystemExit(f"{path.relative_to(ROOT)} missing -- the land mask needs it")
+    rows = json.loads(path.read_text(encoding="utf-8"))[key]
+    missing = [r for r in rows if "x" not in r or "y" not in r]
+    if missing:
+        raise SystemExit(f"{name}: {len(missing)} of {len(rows)} {key} carry no x/y")
+    return rows
+
+
+def reference_points() -> tuple[list[tuple[float, float]], dict[str, int]]:
+    """Static world objects, used purely as a land mask.
+
+    Positions only. Nothing else about these objects reaches the output: node purity is
+    not consulted, and neither is a collectible's collected/present state, which is a
+    fact about one save rather than about the world the mask describes.
+    """
     pts: list[tuple[float, float]] = []
-    for entry in RESOURCE_PURITY.values():
-        pts.append((entry[2][0], entry[2][1]))
-    for entry in crash_sites.CRASH_SITES.values():
-        pts.append((entry[2][0], entry[2][1]))
-    for table in (slug.POWER_SLUGS_BLUE, slug.POWER_SLUGS_PURPLE, slug.POWER_SLUGS_YELLOW):
-        for pos in table.values():
-            pts.append((pos[0], pos[1]))
-    for entry in somersloop.SOMERSLOOPS.values():
-        pts.append((entry[2][0], entry[2][1]))
-    for table in (mercer.MERCER_SHRINES, mercer.MERCER_SPHERES):
-        for entry in table.values():
-            pts.append((entry[2][0], entry[2][1]))
-    return pts
+    counts: dict[str, int] = {}
+    nodes = load("world_resource_nodes.mit.json", "nodes")
+    for node in nodes:
+        pts.append((node["x"], node["y"]))
+    counts["resource_nodes"] = len(nodes)
+    for row in load("world_collectibles.json", "collectibles"):
+        category = row.get("category")
+        if category in LAND_MASK_CATEGORIES:
+            pts.append((row["x"], row["y"]))
+            counts[category] = counts.get(category, 0) + 1
+    for category in LAND_MASK_CATEGORIES:
+        if category not in counts:
+            raise SystemExit(f"world_collectibles.json: no {category} rows -- schema changed?")
+    return pts, counts
 
 
 def nearest_distance_m(x: float, y: float, pts: list[tuple[float, float]]) -> float:
@@ -87,8 +123,10 @@ def main() -> int:
     gm = src["grid_meta"]
     x0, y0, cell, nx, ny = gm["x0"], gm["y0"], gm["cell"], gm["nx"], gm["ny"]
 
-    pts = reference_points()
+    pts, pt_counts = reference_points()
     print(f"land mask from {len(pts)} static world objects")
+    for category, n in sorted(pt_counts.items()):
+        print(f"   {category:20s} {n}")
 
     # ---- 1. void mask ---------------------------------------------------
     rows: list[str] = []
@@ -221,6 +259,28 @@ def main() -> int:
             "void_distance_m": VOID_DISTANCE_M,
             "uncertain_distance_m": UNCERTAIN_DISTANCE_M,
             "land_mask_reference_points": len(pts),
+            "land_mask": {
+                "role": (
+                    "positions only, used to tell land from ocean. No name, purity or "
+                    "collected-state from these tables reaches this file, and no "
+                    "calculation reads the mask -- it only decides which cells go void."
+                ),
+                "sources": {
+                    "data/world_resource_nodes.mit.json": (
+                        "MIT (Copyright (c) 2024 Leonardo Ascione), extracted from "
+                        "FactoryGame/Map/GameLevel01/Persistent_Level.umap"
+                    ),
+                    "data/world_collectibles.json": (
+                        "the game's own cooked map packages, read from the installed game"
+                    ),
+                },
+                "categories": dict(sorted(pt_counts.items())),
+                "licence": (
+                    "no copyleft table contributed to this file. Nothing from "
+                    "sat_sav_parse/sav_data was read; that vendored GPL-3.0 parser and "
+                    "its world tables are deleted."
+                ),
+            },
             "cell_counts": counts,
             "boundary_cells": boundary,
             "validation_vs_hand_verified_oil_clusters": {
@@ -244,9 +304,21 @@ def main() -> int:
                     "shipped locally; validation here uses the 14 hand-verified oil "
                     "clusters instead."
                 ),
+                (
+                    "source_file_provenance below is quoted from "
+                    "data/satisfactory_regions.json and still credits a GPL-3.0 world "
+                    "table for its coordinates. It describes how that file was built, not "
+                    "this one: the land mask here reads only the two sources named under "
+                    "land_mask. That stale credit belongs to satisfactory_regions.json and "
+                    "has to be settled there."
+                ),
             ],
-            "provenance": src["_meta"].get("provenance"),
             "source_file": "data/satisfactory_regions.json",
+            "source_file_provenance": src["_meta"].get("provenance"),
+            # Carried, not restated: the region geometry this file rasterises is a trace of
+            # a CC BY-SA 4.0 image, and share-alike follows the derived layer. A consumer
+            # holding only this artifact must be able to see that without opening the source.
+            "source_file_licences": src["_meta"].get("licences"),
         },
         "grid_meta": {"x0": x0, "y0": y0, "cell": cell, "nx": nx, "ny": ny, "void": VOID},
         "legend": legend,
@@ -259,11 +331,6 @@ def main() -> int:
     dest = ROOT / "data" / "region_names.json"
     dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"wrote {dest.relative_to(ROOT)}  {dest.stat().st_size} B  {len(regions)} regions")
-
-    legacy = ROOT / "data" / "geo_reference.py"
-    if legacy.exists():
-        legacy.unlink()
-        print("removed data/geo_reference.py (superseded; it contradicted its own spec)")
     return 0
 
 

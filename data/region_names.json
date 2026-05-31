@@ -12,7 +12,25 @@
   },
   "void_distance_m": 1000.0,
   "uncertain_distance_m": 400.0,
-  "land_mask_reference_points": 2669,
+  "land_mask_reference_points": 2688,
+  "land_mask": {
+   "role": "positions only, used to tell land from ocean. No name, purity or collected-state from these tables reaches this file, and no calculation reads the mask -- it only decides which cells go void.",
+   "sources": {
+    "data/world_resource_nodes.mit.json": "MIT (Copyright (c) 2024 Leonardo Ascione), extracted from FactoryGame/Map/GameLevel01/Persistent_Level.umap",
+    "data/world_collectibles.json": "the game's own cooked map packages, read from the installed game"
+   },
+   "categories": {
+    "crashed_drop_pod": 118,
+    "mercer_shrine": 298,
+    "mercer_sphere": 298,
+    "power_slug_blue": 596,
+    "power_slug_purple": 257,
+    "power_slug_yellow": 389,
+    "resource_nodes": 626,
+    "somersloop": 106
+   },
+   "licence": "no copyleft table contributed to this file. Nothing from sat_sav_parse/sav_data was read; that vendored GPL-3.0 parser and its world tables are deleted."
+  },
   "cell_counts": {
    "land": 590,
    "uncertain": 178,
@@ -30,16 +48,21 @@
   "known_limitations": [
    "Boundaries are accurate to about one 256 m cell; adjacent-region confusion is expected and is what the 'b' confidence flags.",
    "Region geometry is hand-derived from the wiki biome map. The game ships no biome geometry, so this cannot be regenerated from game data and will not track map changes.",
-   "Per-crash-site validation needs the wiki Region column, which is not shipped locally; validation here uses the 14 hand-verified oil clusters instead."
+   "Per-crash-site validation needs the wiki Region column, which is not shipped locally; validation here uses the 14 hand-verified oil clusters instead.",
+   "source_file_provenance below is quoted from data/satisfactory_regions.json and still credits a GPL-3.0 world table for its coordinates. It describes how that file was built, not this one: the land mask here reads only the two sources named under land_mask. That stale credit belongs to satisfactory_regions.json and has to be settled there."
   ],
-  "provenance": [
-   "coords: GreyHak/sat_sav_parse sav_data/resourcePurity.py + the users .sav",
+  "source_file": "data/satisfactory_regions.json",
+  "source_file_provenance": [
+   "node coordinates: rounded from actor positions in FactoryGame/Content/FactoryGame/Map/GameLevel01/Persistent_Level.umap, read out of the installed game's own IoStore container (2026-07-30, v1.2.2.1). All 48 oil-cluster members are the componentwise integer rounding of their asset position, 48/48, and equally of their position in the reference .sav read by sidecar/savparse (build 495413) -- assets and save agree to a median of 0.0001 cm and at worst 0.015 cm.",
+   "node purity and the satellite->well link: the same map package. Purity is the actor's mPurity, serialised only when it differs from the class template, so an absent property means RP_Normal; the link is each satellite's mCore object reference. Neither is in a save -- these 48 actors carry only mResourcesLeft and mDoSpawnParticle there -- so a table was always needed for it. Cross-checked against data/world_resource_nodes.mit.json (MIT), which agrees on purity and node kind for all 48.",
+   "history of the two lines above: this file used to credit 'GreyHak/sat_sav_parse sav_data/resourcePurity.py + the users .sav' for coords. That table was GPL-3.0 and is deleted. Re-derived from the game's assets on 2026-07-30 and no value moved: same 48 instance names, same purities, same 14 clusters, same centroids and spreads, same totals. What the table actually supplied was purity and the well grouping -- not the coordinates, which were in the save all along.",
    "region labels: satisfactory.wiki.gg Crash_Site table (118 drop pods with Region + save coords)",
-   "region geometry: satisfactory.wiki.gg File:Biome_Map.jpg (5000x5000) + its printed 1.024 km grid",
-   "map->world transform: px_x = 2231.4 + x/149.598 ; px_y = 2526.4 + y/149.598 (cm/px = 102400/684.5)",
-   "grid: cell X_i spans x in [-319600 + i*102400, +102400); cell Y_j spans y in (302800-(j+1)*102400, 302800-j*102400]"
+   "region geometry: satisfactory.wiki.gg File:Biome_Map.jpg (5000x5000) + its printed 1.024 km grid. Hand-traced, with no generator. No node coordinate enters it, which is why swapping the coordinate source left region_grid and every region's bbox, centroid, area_km2 and grid_cells bit-identical.",
+   "map->world transform: px_x = 2231.4 + x/149.598 ; px_y = 2526.4 + y/149.598 (cm/px = 102400/684.5). Anchored on the printed grid rather than on any node: the scale is the printed 1.024 km spacing of 684.5 px, and the offsets put the X0 west edge at px 95.011 and the Y0 south edge at px 4550.488 -- within 0.012 px of the half-pixel values reading grid lines off a 5000 px image gives. Its only product is each oil cluster's region, read off the image by eye. The coordinate re-derivation moves a member by at most 0.71 cm = 0.005 px, against a 158 m distance from the closest cluster centroid to the nearest raster cell of a different region, so no region reading can turn on it.",
+   "grid: cell X_i spans x in [-319600 + i*102400, +102400); cell Y_j spans y in (302800-(j+1)*102400, 302800-j*102400]",
+   "frame.content_bbox: min/max over the 2688 static world objects in data/world_resource_nodes.mit.json (626 nodes) and data/world_collectibles.json (2062 drop pods, slugs, Mercer spheres and shrines, somersloops, read from the installed game). Reproduces all six numbers exactly. midline_y is the mean of its y extent."
   ],
-  "source_file": "data/satisfactory_regions.json"
+  "source_file_licences": "The node data is first-party: the game's own packaged assets, with an MIT table (data/world_resource_nodes.mit.json) as a cross-check. Nothing copyleft contributes and no value here depends on the deleted GPL-3.0 sat_sav_parse tables. The region layer is a SEPARATE and unsettled question: satisfactory.wiki.gg content is CC BY-SA 4.0, region_grid and every region bbox are a hand trace of that wiki's Biome Map image, and the region labels come from its Crash_Site table. Tracing an image is a more substantial borrowing than joining a coordinate, and the game ships no biome geometry to replace it with. Flagged for a decision, not resolved here."
  },
  "grid_meta": {
   "x0": -336000.0,

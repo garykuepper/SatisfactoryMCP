@@ -70,13 +70,94 @@ def test_every_well_satellite_keeps_its_core_link(table):
 
 
 def test_sources_are_recorded_with_licences(table):
+    """Every source names a licence and the game build it was read at.
+
+    The literal this once asserted -- ``"1.2.0.0" in ...`` -- described the GPL-3.0 SCIM table
+    that supplied the satellite/core mapping. That table is deleted and the mapping now comes
+    from an ``mCore`` reference in the game's own map package, so the literal describes a source
+    that no longer exists. The requirement is unchanged and is what matters: a consumer must be
+    able to tell whether a table predates the build they are running.
+    """
     sources = table.meta["sources"]
     assert sources["primary"]["licence"] == "MIT"
-    assert "1.2.0.0" in sources["secondary"]["game_version_pinned"]
-    xval = table.meta["cross_validation"]
-    assert xval["purity_mismatches"] == []
-    assert xval["resource_mismatches"] == []
-    assert xval["max_position_delta_cm"] < 1.0
+    for role in ("primary", "secondary"):
+        assert sources[role]["licence"], role
+    assert "495413" in sources["secondary"]["game_version_pinned"]
+
+
+def test_purity_and_resource_agree_with_the_installed_game(table):
+    """Purity and resource were checked against the game's own assets, and agreed.
+
+    These two assertions used to read the same keys off a flat ``cross_validation`` block,
+    where they meant "agrees with the SCIM table". SCIM is gone; the comparison behind them
+    is now ``mPurity`` and ``mResourceClass`` on each node export in the installed build's
+    ``Persistent_Level.umap``, which is a strictly better comparand -- the game itself rather
+    than a third party -- so the keys moved under the comparison that produced them.
+    """
+    vs = table.meta["cross_validation"]["positions"]["against_the_installed_build"]
+    assert vs["purity_mismatches"] == []
+    assert vs["resource_mismatches"] == []
+    # Resource is compared on fewer rows than purity, so the shortfall has to be explained
+    # rather than passed over: geysers carry no mResourceClass on either side.
+    assert vs["resource_rows_compared"] <= vs["rows_compared"]
+    if vs["resource_rows_compared"] < vs["rows_compared"]:
+        assert vs["resource_not_compared"]
+
+
+def test_position_deltas_are_recorded_against_both_builds(table):
+    """A single position delta cannot be honest, so the table records two, and names rows.
+
+    This replaces one assertion, ``max_position_delta_cm < 1.0``, which was true of a
+    comparison nobody makes any more -- MIT against SCIM, two extracts of the same old build.
+    The table is cut from an older build than the installed one, so "how far off is a
+    position" has two answers: exact against the build it was cut from, and up to 80 cm
+    against the installed build. Asserting only the first would flatter the table; loosening
+    the bound to 81 cm would assert nothing at all.
+
+    What is asserted instead is stronger than the old bound in three ways. The sub-centimetre
+    bound survives, attached to the comparison it is actually true of. Both comparisons must
+    declare their rounding floor -- the MIT rows are whole centimetres, so no comparison can
+    read below half a centimetre per axis -- and any comparison claiming a delta past that
+    floor must name every row responsible, so a summary number can never stand alone. And
+    each named row is pinned to the ``z`` the table actually ships, so the disclosure cannot
+    drift away from the data it describes: moving a node without updating the note fails here.
+    """
+    positions = table.meta["cross_validation"]["positions"]
+    by_instance = {n["instance"]: n for n in table.nodes}
+
+    # The bound the old assertion carried, on the comparison that supports it.
+    cut_from = positions["against_the_build_this_table_was_cut_from"]
+    assert cut_from["max_position_delta_cm"] < 1.0
+    assert cut_from["rows_past_the_rounding_floor"] == []
+
+    for name, block in positions.items():
+        floor = block["rounding_floor_cm"]
+        worst = block["max_position_delta_cm"]
+        assert isinstance(worst, (int, float)), f"{name} states no measured delta"
+        assert 0 < floor < 1.0, name
+        assert block["measured"] and block["build"] and block["method"], name
+
+        named = block["rows_past_the_rounding_floor"]
+        if worst > floor:
+            assert named, f"{name} claims {worst} cm but names no row"
+            assert max(r["delta_cm"] for r in named) == worst, name
+        else:
+            assert named == [], name
+
+        for row in named:
+            node = by_instance.get(row["instance"])
+            assert node is not None, f"{name} names {row['instance']}, which is not a row"
+            assert node["z"] == row["shipped_z"], f"{name}: {row['instance']} z has moved"
+            assert row["delta_cm"] > floor, name
+            assert abs(row["dz_cm"]) <= row["delta_cm"], name
+
+    # "Only in" has to mean what it says, in both directions.
+    vs = positions["against_the_installed_build"]
+    for instance in vs["rows_only_in_this_table"]:
+        assert instance in by_instance, instance
+    for instance in vs["rows_only_in_the_installed_build"]:
+        assert instance not in by_instance, instance
+    assert vs["rows_compared"] == len(table.nodes) - len(vs["rows_only_in_this_table"])
 
 
 # ------------------------------------------------------- defect 1: void class
