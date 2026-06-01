@@ -14,22 +14,21 @@ from ..graph.resolve import resolve_factory
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
 from ..planning import compare
+from ..planning.carrier import resolve_tiers
 from ..planning.commission import Tracking, commission, track
 from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
-from ..planning.layout import build_layout, fluid_head
-from ..planning.materials import build_materials
+from ..planning.layout_service import LayoutReport, build_layout_report
 from ..planning.prepare import prepare
 from ..planning.recall import PLAN_DEFAULTS
 from ..planning.recall import recall_plan as _plan_kwargs
 from ..planning.report import build_plan_report
 from ..planning.scenario import build_scenario
 from ..planning.sensitivity import sweep_unlocks
-from ..planning.sites import partition
-from ..planning.trunks import plan_trunks
 from ..presenters.text import byproducts as byproducts_text
 from ..presenters.text.bom import render_bom
 from ..presenters.text.compare import render_comparison
+from ..presenters.text.layout import render_layout
 from ..presenters.text.plan_factory import render_plan_factory
 
 #: The stored-argument defaults, re-exported under their old home for ``server``.
@@ -334,47 +333,16 @@ def plan_layout(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    # Keyed on a NORMALISED tier token, because these lookups were dead. The keys used to
-    # be `name.replace("Conveyor Belt ", "")`, which yields "Mk.5" -- while the parameter
-    # defaults were "Mk5" and "Mk2". Nothing ever matched, every call silently fell back to
-    # the hardcoded 780/600, and it looked correct only because those were the same
-    # numbers. Passing belt_tier="Mk3" would have quietly planned at Mk5 speed.
-    def _tier(name: str, prefix: str) -> str:
-        return name.replace(prefix, "").replace(".", "").strip().casefold()
-
-    belts = {
-        _tier(b.name, "Conveyor Belt "): b.items_per_min
-        for b in g.buildings.values()
-        if b.native == st.BELT_NATIVE
-    }
-    pipes = {
-        _tier(b.name, "Pipeline "): b.flow_m3_min
-        for b in g.buildings.values()
-        if b.native == st.PIPE_NATIVE and "Clean" not in b.name
-    }
-    tier_errors = [
-        f"unknown {what}_tier {given!r}; known: {', '.join(sorted(table))}"
-        for what, given, table in (("belt", belt_tier, belts), ("pipe", pipe_tier, pipes))
-        if given and _tier(given, "") not in table
-    ]
-    if tier_errors:
-        return render.envelope("# unknown carrier tier", "", tier_errors)
-    asked_belt, asked_pipe = bool(belt_tier), bool(pipe_tier)
-    belt_tier, pipe_tier = _tier(belt_tier, ""), _tier(pipe_tier, "")
-    # Blank means "what this save can actually build". A hardcoded Mk5/Mk2 default ran
-    # unverified through an entire design session; it happened to be right, which is not
-    # the same as being checked.
-    best_belt, best_pipe = st.best_belt(), st.best_pipe()
-    belt_ipm = belts.get(belt_tier) or (best_belt[1] if best_belt else 780.0)
-    pipe_m3min = pipes.get(pipe_tier) or (best_pipe[1] if best_pipe else 600.0)
-    belt_tier = belt_tier or (g.buildings[best_belt[0]].name if best_belt else "Mk5")
-    pipe_tier = pipe_tier or (g.buildings[best_pipe[0]].name if best_pipe else "Mk2")
-    tier_note = (
-        f"carriers are the fastest you have UNLOCKED: {belt_tier} at "
-        f"{render.num(belt_ipm)}/min and {pipe_tier} at {render.num(pipe_m3min)} m3/min. "
-        "Pass belt_tier/pipe_tier to plan against a different one -- an unlocked tier "
-        "assumed rather than checked changes every line count in this schematic"
-    )
+    tiers = resolve_tiers(g, st, belt_tier, pipe_tier)
+    if tiers.errors:
+        return render_layout(
+            g,
+            st,
+            LayoutReport(prepared=None, tiers=tiers),
+            objective=objective,
+            detail=detail,
+            limit=limit,
+        )
 
     # Same solve-shaping arguments as plan_factory, so a layout can be asked for
     # directly rather than only via a saved plan.
@@ -402,451 +370,41 @@ def plan_layout(
         # through made every recalled plan report "overridden this call: belt_ipm,
         # pipe_m3min" -- an override the user never made, which is exactly the kind of
         # noise that trains a reader to skip the override line that does matter.
-        belt_ipm=belt_ipm if asked_belt else None,
-        pipe_m3min=pipe_m3min if asked_pipe else None,
+        belt_ipm=tiers.belt_ipm if tiers.asked_belt else None,
+        pipe_m3min=tiers.pipe_m3min if tiers.asked_pipe else None,
     )
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
-    if prepared.failure:
-        suffix = " -- nothing to lay out" if "INFEASIBLE" in prepared.failure.headline else ""
-        return render.envelope(
-            f"# {prepared.failure.headline}{suffix}",
-            "",
-            [*prepared.failure.notes, "see plan_factory for why"],
+    try:
+        report = build_layout_report(
+            g,
+            st,
+            plan_kwargs,
+            tiers,
+            objective=objective,
+            detail=detail,
+            sites=sites,
+            max_floor_foundations=max_floor_foundations,
+            order_floors_by=order_floors_by,
+            factory=factory,
+            plan=plan,
         )
-    req, sol = prepared.request, prepared.solution
-    sel = req.selection
+    except SelectorError as exc:
+        return f"! {exc}"
 
-    lay = build_layout(
+    return render_layout(
         g,
-        sol,
-        belt_ipm=belt_ipm,
-        pipe_m3min=pipe_m3min,
-        max_floor_foundations=max_floor_foundations,
-        order_floors_by=order_floors_by,
+        st,
+        report,
+        objective=objective,
+        detail=detail,
+        limit=limit,
+        plan_name=plan_name,
+        plan_notes=plan_notes,
     )
-    production = [f for f in lay.floors if f.kind == "production"]
-    logistics = [f for f in lay.floors if f.kind == "logistics"]
-
-    # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
-    # nothing about head. Chain depth tends to make every fluid climb; the model has no
-    # terrain and no view of where crude arrives, so the cost is named, not optimised.
-    # The best pump the player can build, so a riser count is against a real tier.
-    pump = max(
-        (b for c, b in g.buildings.items() if b.head_lift_m and c in st.unlocked_building_ids),
-        key=lambda b: b.head_lift_m,
-        default=None,
-    )
-    pump_head = pump.head_lift_m if pump else 0.0
-    pump_name = pump.name if pump else "pump"
-    climbing = [d for d in fluid_head(lay, pump_head) if d["direction"] == "climbs"]
-
-    summary = "\n".join(
-        [
-            f"# layout for {objective} over {sel.description}",
-            f"# {st.age_note}",
-            render.kv(
-                [
-                    ("net_MW", render.num(sol.net_mw)),
-                    ("machines", lay.machines),
-                    ("blocks", len(lay.blocks)),
-                    ("floors", f"{len(production)} production + {len(logistics)} logistics"),
-                    ("stack_height", f"{lay.height_m:g}m"),
-                ]
-            ),
-            render.kv(
-                [
-                    ("peak_floor_foundations", lay.foundations),
-                    ("site", f"~{lay.site_side_m():g}x{lay.site_side_m():g}m"),
-                    (
-                        "carriers",
-                        (
-                            f"{belt_tier} belt {render.num(belt_ipm)}/min, "
-                            f"{pipe_tier} pipe {render.num(pipe_m3min)}m3/min"
-                        ),
-                    ),
-                ]
-            ),
-        ]
-    )
-
-    notes = [*lay.warnings, tier_note]
-    notes.append(
-        "schematic only: no world coordinates or belt routing -- there is no terrain "
-        "data available, so those would be invented"
-    )
-    needed = {b.building_id for b in lay.blocks if b.building_id and st.built(b.building_id) == 0}
-    if needed:
-        notes.append(
-            "must build first: "
-            + ", ".join(g.buildings[c].name for c in needed if c in g.buildings)
-        )
-
-    if detail == "blocks":
-        rows = [
-            (
-                b.name[:36],
-                f"F{b.stage}",
-                b.machines,
-                f"{b.clock * 100:.4g}%",
-                f"{b.width_m:g}x{b.depth_m:g}",
-                b.foundations,
-                ", ".join(
-                    f"{render.num(v)} {g.item_name(k)}"
-                    for k, v in sorted(b.inputs.items(), key=lambda kv: -kv[1])[:2]
-                )
-                or "-",
-                ", ".join(
-                    f"{render.num(v)} {g.item_name(k)}"
-                    for k, v in sorted(b.outputs.items(), key=lambda kv: -kv[1])[:2]
-                )
-                or "-",
-            )
-            for b in sorted(lay.blocks, key=lambda b: (b.stage, -b.machines))[
-                : render.clamp(limit, default=20)
-            ]
-        ]
-        body = render.table(
-            ("block", "floor", "n", "clock", "each(m)", "found", "in/min", "out/min"),
-            rows,
-            total=len(lay.blocks),
-            limit=limit,
-        )
-    elif detail == "sites":
-        if not sites:
-            return render.envelope(
-                "# detail='sites' needs sites=",
-                "",
-                [
-                    (
-                        'sites maps a name to patterns, e.g. {"rig": ["Heavy Oil '
-                        'Residue", "Diluted Fuel", "Water Extractor"], "hall": '
-                        '["Fuel-Powered Generator"]}'
-                    ),
-                    (
-                        "patterns match the same way exclude_recipes does: process "
-                        "label, building name, or recipe"
-                    ),
-                ],
-            )
-        sp = partition(prepared, g, sites)
-        rows = [
-            (
-                i.source[:14],
-                "->",
-                i.target[:14],
-                i.name[:20],
-                render.num(i.rate),
-                f"{i.lines}x {i.carrier}",
-            )
-            for i in sp.interfaces[: render.clamp(limit, default=20)]
-        ]
-        body = render.table(
-            ("from", "", "to", "item", "rate", "carrier"),
-            rows,
-            total=len(sp.interfaces),
-            limit=limit,
-        )
-        body = (
-            render.table(
-                ("site", "machines", "net_MW"),
-                [(x.name, x.machines, render.num(x.net_mw)) for x in sp.sites],
-            )
-            + "\n\n"
-            + body
-        )
-        notes.extend(sp.notes)
-        if sp.ok:
-            notes.append(
-                "every process is assigned to exactly one site, so this interface table "
-                "is complete: each flow's destination is stated rather than assumed"
-            )
-        else:
-            notes.append(
-                "the partition is INCOMPLETE, so the interface table is missing flows. "
-                "This is the error a hand reconciliation makes -- a rig's whole fuel "
-                "output looks like it reaches the generators until you notice something "
-                "else was drinking it"
-            )
-        notes.append(
-            "a shared flow is split between consumers by SHARE. The LP gives net balances "
-            "and never who fed whom, so any exact producer-consumer pairing would be "
-            "invented -- the same reason a layout models a bus rather than pairs"
-        )
-        notes.append(
-            "site net_MW excludes the AWESOME Sink charge, which belongs to the plan as a "
-            "whole and cannot be attributed to one site"
-        )
-    elif detail == "materials":
-        # Foundations live here and nowhere else -- they are not machines, so no build
-        # table counts them, and at 5 Concrete each a big deck outweighs most of the
-        # machine bill. This is why the construction bill hangs off plan_layout rather
-        # than plan_factory: only the layout knows how many tiles the plan stands on.
-        #
-        # TOTAL, not `lay.foundations`. That property is the PEAK floor, which is what
-        # sizes the site -- floors stack, so the ground you need is the biggest one. But
-        # you pour concrete for every floor, so charging the peak would understate the
-        # deck by however many storeys the stack has.
-        # Risers are part of the build and were missing entirely, so a fluid-heavy plan's
-        # bill understated itself. Counted from the floors the fluid actually crosses,
-        # priced at the best pump this save can place.
-        riser_pumps = sum(
-            row["pumps"] for row in fluid_head(lay, pump_head) if row["direction"] == "climbs"
-        )
-        extra = (
-            [{"building_id": pump.cls, "machines": riser_pumps}]
-            if pump is not None and riser_pumps
-            else []
-        )
-        bill = build_materials(g, [*sol.processes, *extra], st.stock(), lay.total_foundations)
-        rows = [
-            (
-                line.name[:26],
-                render.num(line.needed),
-                render.num(line.held),
-                render.num(line.short) if line.short else "",
-                ", ".join(line.wanted_by)[:38],
-            )
-            for line in bill.lines[: render.clamp(limit, default=20)]
-        ]
-        body = render.table(
-            ("item", "need", "have", "short", "for"),
-            rows,
-            total=len(bill.lines),
-            limit=limit,
-        )
-        biggest = sorted(bill.buildings, key=lambda b: -b.items)[:3]
-        body = (
-            f"machines={bill.machines}  foundations={bill.foundations}  "
-            f"distinct_parts={len(bill.lines)}\n"
-            + "costliest: "
-            + ", ".join(f"{b.count}x {b.name} = {b.items:,} parts" for b in biggest)
-            + "\n\n"
-            + body
-        )
-        notes.extend(bill.notes)
-        short = bill.shortfall
-        notes.append(
-            "you can afford every part of this from stock"
-            if not short
-            else "short of "
-            + ", ".join(f"{render.num(x.short)} {x.name}" for x in short[:4])
-            + (f", and {len(short) - 4} more" if len(short) > 4 else "")
-        )
-        notes.append(
-            "construction cost only, and NOT the same question as diff_vs_save's cost "
-            "table: this prices the WHOLE plan, that one prices what is left to place "
-            "and lists only what you are short of"
-        )
-        notes.append(
-            "stock is spendable only -- carried, crates and the Dimensional Depot -- "
-            "never machine buffers, which are not carryable"
-        )
-        if riser_pumps:
-            notes.append(
-                f"includes {riser_pumps} {pump_name}(s) for the fluid risers -- these were "
-                "missing entirely, so a fluid-heavy plan used to understate its own bill"
-            )
-        notes.append(
-            "belts and pipes are NOT costed: their cost is per metre and there is no "
-            "route, so a length here would be invented. Use detail='buses' for line "
-            "counts and detail='trunks' for a straight-line lower bound on the runs"
-        )
-        notes.append(
-            "these are build-gun components, not ore. Call bom on any row to expand it "
-            "-- flattening here would have to guess a depth through the Recycled loop"
-        )
-    elif detail == "trunks":
-        # The destination decides which end of each chain is "far", so it decides the
-        # sign of every lift. A named factory is the honest answer when there is one;
-        # otherwise the field's own centroid, said out loud rather than assumed.
-        target, target_label = None, "the node field's centroid"
-        if factory:
-            try:
-                resolved_name, machines = resolve_factory(st, factory)
-            except SelectorError as exc:
-                return f"! {exc}"
-            pts = [m["pos"] for m in machines if m.get("pos")]
-            if pts:
-                target = (
-                    sum(p[0] for p in pts) / len(pts),
-                    sum(p[1] for p in pts) / len(pts),
-                )
-                target_label = resolved_name
-        tp = plan_trunks(prepared, g, target, target_label)
-        # The best pump the player can actually build, not the best that exists: a Mk2
-        # lifts 50 m against a Mk1's 20, so quoting Mk2 to someone who has not unlocked it
-        # understates the build by more than half.
-        pumps = [
-            b for c, b in g.buildings.items() if b.head_lift_m and c in st.unlocked_building_ids
-        ]
-        best = max(pumps, key=lambda b: b.head_lift_m, default=None)
-        pump_head = best.head_lift_m if best else 0.0
-        pump_name = best.name if best else "pump"
-        rows = []
-        for i, t in enumerate(tp.trunks, 1):
-            # Head is a FLUID concern only. A belt does not care that its coal climbs
-            # 218 m, and printing a number there invites a pump that cannot exist.
-            climb = ""
-            if t.carrier == "pipe" and abs(t.lift_m) >= 1.0:
-                climb = f"{'down' if t.lift_m > 0 else 'UP'} {abs(t.lift_m):.0f}m"
-                # A real count now: mDesignPressure is the pump's head lift in metres.
-                need = t.pumps(pump_head)
-                if need:
-                    climb += f" ({need}x {pump_name})"
-            rows.append(
-                (
-                    f"T{i}",
-                    t.name[:16],
-                    len(t.members),
-                    f"{render.num(t.rate)}/{render.num(t.capacity)}",
-                    f"{t.used:.0%}",
-                    f"{t.run_m:.0f}m",
-                    climb,
-                    ", ".join(f"{m.short}:{m.purity[:3]}" for m in t.members[:4]),
-                )
-            )
-        body = render.table(
-            ("trunk", "item", "nodes", "rate", "full", "run", "head", "nodes tapped"),
-            rows,
-            total=len(tp.trunks),
-            limit=limit,
-        )
-        notes.extend(tp.notes)
-        notes.append(
-            f"trunks converge on {tp.destination_label}. `run` is the straight-line chain "
-            "node to node, so it is a LOWER BOUND on pipe -- no terrain data exists here. "
-            "`head` is the climb from the far end inward: UP needs pumping, down does not. "
-            f"Pump counts assume {pump_name} at {pump_head:.0f}m head (mDesignPressure) and "
-            "are a LOWER bound: pipe friction and the head a full pipe holds on its own are "
-            "not modelled"
-        )
-        for name, rate, count in tp.placeless:
-            notes.append(
-                f"{count}x {name} extractor(s) carrying {render.num(rate)}/min sit on no "
-                "node, so they get no trunk -- water comes from water volumes, which "
-                "carry no geometry here. Site them at the shore and pipe inward"
-            )
-    elif detail == "buses":
-        rows = [
-            (
-                b.name[:24],
-                f"{render.num(b.rate)}{b.unit}",
-                b.carrier,
-                b.lines,
-                f"F{b.from_stage}->F{b.to_stage}",
-                len(b.producers),
-                len(b.consumers),
-                "leaves site" if b.external else "",
-            )
-            for b in lay.buses[: render.clamp(limit, default=20)]
-        ]
-        body = render.table(
-            ("item", "rate", "carrier", "lines", "flow", "from", "to", "note"),
-            rows,
-            total=len(lay.buses),
-            limit=limit,
-        )
-    else:
-        rows = []
-        for f in lay.floors:
-            if f.kind == "production":
-                contents = ", ".join(
-                    f"{b.machines}x {b.label[:22]}"
-                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:2]
-                )
-                rows.append(
-                    (
-                        f"F{f.index}",
-                        f"stage {f.stage}",
-                        len(f.blocks),
-                        f.machines,
-                        f"{f.height_m:g}m",
-                        f.foundations,
-                        contents,
-                    )
-                )
-            else:
-                rows.append(
-                    (
-                        f"L{f.index}",
-                        "logistics",
-                        len(f.buses),
-                        "",
-                        f"{f.height_m:g}m",
-                        "",
-                        ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:4]),
-                    )
-                )
-        body = render.table(
-            ("floor", "kind", "n", "machines", "height", "found", "contents"),
-            rows,
-            total=len(lay.floors),
-            limit=limit,
-        )
-        notes.append(
-            'detail="blocks" for every module, detail="buses" for item flows, '
-            'detail="trunks" for which nodes share a pipe, detail="materials" for '
-            "what it costs to build"
-        )
-
-    if plan_name:
-        plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
-
-    scope_name = factory
-    if scope_name is None and plan:
-        stored = st.plans.find(plan)
-        scope_name = (stored.factory or None) if stored else None
-    if scope_name:
-        from ..planning.fit import assess_fit
-
-        try:
-            resolved_name, machines = resolve_factory(st, scope_name)
-        except SelectorError as exc:
-            return f"! {exc}"
-        fit = assess_fit(resolved_name, machines, lay, st.structures, st.projection)
-        still = ", ".join(fit.to_build[:8]) if fit.to_build else ""
-        head = [
-            f"## fit against {resolved_name}",
-            fit.headline(),
-            (
-                f"blocks: {len(fit.standing)} standing ({fit.machines_standing} machines), "
-                f"{len(fit.to_build)} to build ({fit.machines_to_build} machines)"
-            ),
-        ]
-        if still:
-            head.append(f"still to build: {still}")
-        body = "\n".join(head) + "\n\n" + body
-        plan_notes = [*plan_notes, *fit.notes]
-
-    pumps_total = sum(row["pumps"] for row in climbing)
-    if pumps_total:
-        notes.append(
-            f"risers need at least {pumps_total} {pump_name}(s): "
-            + ", ".join(
-                f"{d['item']} {d['lines']}x pipe up {d['metres']:.0f}m = {d['pumps']}"
-                for d in climbing
-                if d["pumps"]
-            )
-            + ". A LOWER bound -- pipe friction and the head a full pipe holds are not "
-            "modelled"
-        )
-    if climbing:
-        notes.append(
-            "floors follow chain depth, not fluid head: "
-            + ", ".join(
-                f"{d['item']} climbs {d['floors']} floor(s) at {render.num(d['rate'])}{d['unit']}"
-                for d in climbing[:4]
-            )
-            + ". Water can only be drawn at sea level, so putting its extractors at the "
-            "bottom with consumers above lets the rest of the stack fall instead"
-        )
-
-    return render.envelope(summary, body, [*plan_notes, *notes])
 
 
 #: Said on every stage report, because it is the one thing about this feature that a
