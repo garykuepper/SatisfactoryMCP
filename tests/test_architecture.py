@@ -62,21 +62,12 @@ ALLOWED: dict[str, frozenset[str]] = {
     "interfaces": frozenset({"interfaces", "presenters", "domain", "core", "sdk"}),
 }
 
-#: The exact violations present at the start of the refactor. Every one of these
-#: is render leakage out of a non-presenter module and dies in phase 1, when the
-#: renderers move behind the presenter seam.
-#:
-#: Note the first entry: the measured sore-point list named the four planning
-#: modules, but ``docs.search`` leaks render too. Reading the AST found the fifth.
-WHITELIST = frozenset(
-    {
-        ("satisfactory_mcp.docs.search", "satisfactory_mcp.render"),  # dies in phase 1
-        ("satisfactory_mcp.planning.bom", "satisfactory_mcp.render"),  # dies in phase 1
-        ("satisfactory_mcp.planning.byproducts", "satisfactory_mcp.render"),  # dies in phase 1
-        ("satisfactory_mcp.planning.compare", "satisfactory_mcp.render"),  # dies in phase 1
-        ("satisfactory_mcp.planning.diff", "satisfactory_mcp.render"),  # dies in phase 1
-    }
-)
+#: Empty, and it stays that way. It held five render leakages at the start of the
+#: refactor -- the four planning modules the sore-point list named, plus
+#: ``docs.search``, which reading the AST found -- and phase 1 moved every one of
+#: them behind ``presenters.text``. The ratchet is kept rather than deleted: a new
+#: violation now has to be argued for by adding a line here, which is the point.
+WHITELIST: frozenset[tuple[str, str]] = frozenset()
 
 
 def _layer(module: str) -> str | None:

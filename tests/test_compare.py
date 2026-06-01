@@ -5,11 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning.compare import (
-    PROBE_RATE,
-    compare_routes,
-    render_comparison,
-)
+from satisfactory_mcp.planning.compare import PROBE_RATE, compare_routes
+from satisfactory_mcp.presenters.text.compare import render_comparison
 
 pytestmark = pytest.mark.integration
 

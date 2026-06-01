@@ -38,7 +38,7 @@ import hashlib
 import math
 from dataclasses import dataclass, field
 
-from .. import render
+from ..core.text import plural
 from ..docs.model import GameData
 from ..save.state import WorldState
 from ..spatial import geo
@@ -464,8 +464,7 @@ def _row_for(
         away = [d for d in (_nearest_m(_xy(r), [anchor] if anchor else []) for r in reused) if d]
         where = f" {sum(away) / len(away) / 1000:.1f}km out" if away else ""
         notes.append(
-            f"{setrecipe} idle {render.plural(group['building'], setrecipe)}"
-            f"{where}, no output today"
+            f"{setrecipe} idle {plural(group['building'], setrecipe)}{where}, no output today"
         )
 
     reclock = _reclock_note([*records, *reused])
@@ -487,7 +486,7 @@ def _row_for(
             if cls == group["building_id"] and rid != group["recipe"]
         )
         if busy:
-            notes.append(f"{busy} {render.plural(group['building'], busy)} busy on other recipes")
+            notes.append(f"{busy} {plural(group['building'], busy)} busy on other recipes")
     if group["building_id"] and state.built(group["building_id"]) == 0:
         notes.append("NEW BUILDING TYPE")
 

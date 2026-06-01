@@ -11,8 +11,9 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.bom import build_bom, live_processes, render_bom
+from satisfactory_mcp.planning.bom import build_bom, live_processes
 from satisfactory_mcp.planning.optimize import Solution
+from satisfactory_mcp.presenters.text.bom import render_bom
 
 pytestmark = pytest.mark.integration
 

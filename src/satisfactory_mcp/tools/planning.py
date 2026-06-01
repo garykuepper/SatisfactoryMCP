@@ -13,7 +13,7 @@ from ..app import Limit, _item_id, _resolve_factory, _state, game, mcp
 from ..docs.constants import WATER_EXTRACTOR_WARN_AT
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
-from ..planning import byproducts, compare
+from ..planning import compare
 from ..planning.commission import Tracking, commission, track
 from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
@@ -26,6 +26,9 @@ from ..planning.sensitivity import sweep_unlocks
 from ..planning.sites import partition
 from ..planning.slice import slice_of
 from ..planning.trunks import plan_trunks
+from ..presenters.text import byproducts as byproducts_text
+from ..presenters.text.bom import render_bom
+from ..presenters.text.compare import render_comparison
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -1720,7 +1723,7 @@ def explain_byproducts(
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    return byproducts.explain(
+    return byproducts_text.explain(
         g,
         st,
         objective=objective,
@@ -1770,7 +1773,7 @@ def compare_recipe_options(
         outlets=outlets,
         per_resource=_item_id(per_resource) if per_resource else None,
     )
-    return compare.render_comparison(result, limit=render.clamp(limit, default=10))
+    return render_comparison(result, limit=render.clamp(limit, default=10))
 
 
 @mcp.tool(structured_output=False)
@@ -1810,7 +1813,7 @@ def bom(
         )
     except ValueError as exc:
         return str(exc)
-    return bom_mod.render_bom(result, limit=render.clamp(limit, default=20))
+    return render_bom(result, limit=render.clamp(limit, default=20))
 
 
 def _live_feeders(g, st, floor_mw: float = 1.0) -> list[tuple[str, float]]:

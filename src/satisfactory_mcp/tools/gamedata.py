@@ -7,6 +7,7 @@ from __future__ import annotations
 from .. import render
 from ..app import Limit, _item_id, _state, game, mcp
 from ..docs import search
+from ..presenters.text.search import render_search
 
 
 @mcp.tool(structured_output=False)
@@ -185,7 +186,7 @@ def search_recipes(
         subject += f" and match {query!r}"
     if only_alternates:
         subject += " (alternates only)"
-    return search.render_search(
+    return render_search(
         g, hits, census, subject, column, limit=limit, offset=offset, kind=kind, notes=notes
     )
 

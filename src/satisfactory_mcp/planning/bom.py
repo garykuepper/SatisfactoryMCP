@@ -40,13 +40,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from .. import render
+from ..core.text import num
 from ..docs.model import GameData
 from ..save.state import WorldState
 from .optimize import Solution, solve
 from .scenario import build_scenario, resolve_item
 
-__all__ = ["BOM", "BomRow", "build_bom", "render_bom"]
+__all__ = ["BOM", "BomRow", "build_bom"]
 
 #: Stand-in for "unlimited". Every resource needs a cap because ``min_raw`` only
 #: prices resources that HAVE a raw column; one left out has no column at all and
@@ -246,9 +246,7 @@ def build_bom(
             qty=qty,
             status="raw",
             raw={target: qty},
-            notes=[
-                f"{name} is a raw resource: its bill of materials is {render.num(qty)} of itself"
-            ],
+            notes=[f"{name} is a raw resource: its bill of materials is {num(qty)} of itself"],
         )
 
     # build_scenario is the one path from tool arguments to a Scenario, so the recipe
@@ -313,14 +311,14 @@ def build_bom(
 
     if not sol.ok:
         bom.notes.append(
-            f"no unlocked chain makes {name} at {render.num(qty)}/min -- "
+            f"no unlocked chain makes {name} at {num(qty)}/min -- "
             "a byproduct with no consumer makes a plan infeasible rather than wasteful; "
             "try explain_byproducts, or outlets=[...] to let one leave"
         )
         return bom
 
     live = live_processes(sol)
-    # A raw draw of 1e-4/min is the same LP residue as a 1e-6 machine, and render.num
+    # A raw draw of 1e-4/min is the same LP residue as a 1e-6 machine, and core.text.num
     # prints it as a flat "0" -- a bill line reading "0 Water" invites the reader to
     # go looking for a water supply that the plan does not need.
     raw = {k: v for k, v in sol.raw_used.items() if v > 1e-3}
@@ -340,78 +338,3 @@ def build_bom(
         }
     )
     return bom
-
-
-def render_bom(bom: BOM, limit: int = 20) -> str:
-    if bom.status == "raw":
-        return render.envelope(f"# BOM {render.num(bom.qty)} {bom.item_name}/min", "", bom.notes)
-    if not bom.ok:
-        return render.envelope(
-            f"# BOM {render.num(bom.qty)} {bom.item_name}/min: INFEASIBLE", "", bom.notes
-        )
-
-    raw = ", ".join(
-        f"{render.num(v)} {_short_item(bom, k)}"
-        for k, v in sorted(bom.raw.items(), key=lambda kv: -kv[1])
-    )
-    intermediates = sum(1 for r in bom.rows if not r.is_raw and not r.is_target)
-    summary = (
-        f"# BOM {render.num(bom.qty)} {bom.item_name}/min: raw {raw or 'none'}"
-        f" -- {bom.machines} machines, {render.num(abs(bom.mw))} MW,"
-        f" {intermediates} intermediate(s). All figures /min."
-    )
-
-    notes = list(bom.notes)
-    for members in bom.loops:
-        notes.append(
-            f"production loop: {' <-> '.join(members)}. Their 'made' figures exceed what "
-            "leaves the plant because the loop recirculates -- this is why a bill cannot "
-            "be expanded recursively"
-        )
-    if bom.byproducts:
-        notes.append(
-            "byproducts needing an outlet: "
-            + ", ".join(f"{render.num(v)} {_short_item(bom, k)}" for k, v in bom.byproducts.items())
-        )
-    if bom.sunk:
-        notes.append(
-            "sunk (needs a belt to an AWESOME Sink or the line stalls): "
-            + ", ".join(f"{render.num(v)} {_short_item(bom, k)}" for k, v in bom.sunk.items())
-        )
-    if bom.alternates:
-        notes.append(f"{len(bom.alternates)} alternate(s) chosen: " + ", ".join(bom.alternates))
-    notes.append(
-        "min_raw is degenerate over this recipe set: one optimal raw vector of several. "
-        "Water is priced last by a lexicographic tie-break; pin the chain with "
-        "only_recipes/exclude_recipes for an arithmetic answer"
-    )
-
-    page = bom.rows[: render.clamp(limit, default=20)]
-    rows = [
-        (
-            r.name,
-            render.num(r.made),
-            render.num(r.used),
-            ", ".join(r.recipes) or "-",
-            r.machines or "-",
-            r.building or "-",
-        )
-        for r in page
-    ]
-    body = render.table(
-        ("item", "made", "used", "recipe", "machines", "building"),
-        rows,
-        total=len(bom.rows),
-        limit=limit,
-    )
-    ids = render.ids_footer(
-        (r.name, r.recipe_ids[0]) for r in page if r.recipe_ids and len(r.recipe_ids) == 1
-    )
-    return render.envelope(summary, body + ("\n" + ids if ids else ""), notes)
-
-
-def _short_item(bom: BOM, item: str) -> str:
-    for row in bom.rows:
-        if row.item == item:
-            return row.name
-    return item
