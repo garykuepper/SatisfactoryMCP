@@ -265,11 +265,17 @@ def test_the_three_planning_tools_share_one_pipeline(game, state):
     re-solved at defaults. One implementation cannot drift from itself."""
     import inspect
 
+    from satisfactory_mcp.planning import report as report_mod
     from satisfactory_mcp.tools import planning
 
+    # plan_factory reaches the pipeline through build_plan_report, which is prepare plus
+    # the world lookups a plan implies. Still one implementation, not a fourth copy.
+    assert "prepare(" in inspect.getsource(report_mod)
     for name in ("plan_factory", "plan_layout", "diff_vs_save"):
         src = inspect.getsource(getattr(planning, name))
-        assert "prepare(" in src, f"{name} does not use the shared pipeline"
+        assert "prepare(" in src or "build_plan_report(" in src, (
+            f"{name} does not use the shared pipeline"
+        )
         assert "build_scenario(" not in src, f"{name} still builds its own scenario"
         assert "= solve(" not in src, f"{name} still solves for itself"
 

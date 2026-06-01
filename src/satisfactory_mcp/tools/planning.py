@@ -10,7 +10,6 @@ from pydantic import Field
 
 from .. import render
 from ..app import Limit, _item_id, _state, game, mcp
-from ..docs.constants import WATER_EXTRACTOR_WARN_AT
 from ..graph.resolve import resolve_factory
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
@@ -20,18 +19,18 @@ from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
 from ..planning.diff import build_diff
 from ..planning.layout import build_layout, fluid_head
 from ..planning.materials import build_materials
-from ..planning.optimize import MW
 from ..planning.prepare import prepare
 from ..planning.recall import PLAN_DEFAULTS
 from ..planning.recall import recall_plan as _plan_kwargs
-from ..planning.scenario import build_scenario, resolve_item
+from ..planning.report import build_plan_report
+from ..planning.scenario import build_scenario
 from ..planning.sensitivity import sweep_unlocks
 from ..planning.sites import partition
-from ..planning.slice import slice_of
 from ..planning.trunks import plan_trunks
 from ..presenters.text import byproducts as byproducts_text
 from ..presenters.text.bom import render_bom
 from ..presenters.text.compare import render_comparison
+from ..presenters.text.plan_factory import render_plan_factory
 
 #: The stored-argument defaults, re-exported under their old home for ``server``.
 _ = (PLAN_DEFAULTS,)
@@ -227,354 +226,37 @@ def plan_factory(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    prepared = prepare(g, st, plan_kwargs, objective_label=objective, audit=True)
-    if prepared.failure:
-        hint = (
-            "with equality balances, infeasible usually means a byproduct has no "
-            "consumer and no legal sink -- try adding it to exports"
-        )
-        notes = (
-            [*prepared.failure.notes, hint]
-            if "INFEASIBLE" in prepared.failure.headline
-            else prepared.failure.notes
-        )
-        return render.envelope(f"# {prepared.failure.headline}", "", notes)
-    req, sol = prepared.request, prepared.solution
-    sel = req.selection
-    sel = req.selection
-    audit_ok, audit_val = prepared.audit_ok, prepared.audit_value
+    report = build_plan_report(g, st, plan_kwargs, logistics_items, objective=objective)
 
-    rows_out = [
-        (
-            p["machines"],
-            f"{p['clock'] * 100:.4g}%",
-            p["label"][:42],
-            p["building"][:20],
-            render.num(p["mw"]),
-            "BUILD" if p["building_id"] and st.built(p["building_id"]) == 0 else "",
-        )
-        for p in sol.processes[: render.clamp(limit, default=15)]
-    ]
-    notes = [*sel.errors, *req.recipe_errors, *prepared.notes]
-
-    # Water has no nodes, no purity and no geometry in any data this project can read, so
-    # the extractor count is bounded by an ASSUMPTION rather than by the map.
-    #
-    # What that assumption stands in for was WRONG until the player corrected it: pumps go
-    # on foundation platforms built out over open water, so shoreline frontage plays no
-    # part. This note used to quote "m of shoreline if placed in a single line", which
-    # made a perfectly ordinary 105-pump plan look impossible. Area and concrete are the
-    # honest costs, and both are small.
-    n_water = sum(
-        p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"
-    )
-    if n_water >= WATER_EXTRACTOR_WARN_AT and not plan_kwargs.get("water_extractors"):
-        pump = g.buildings.get("Build_WaterPump_C")
-        size = pump.footprint if pump else None
-        space = ""
-        if size:
-            # Both shapes, because the length is the number you lay platforms against and
-            # the block is the cheapest way to buy it. Packed, not n x footprint: that
-            # product ignores shared edges and overstates the concrete by about a third.
-            block, pier = size.pack(n_water), size.pack(n_water, columns=1)
-            space = (
-                f" Each is {size}, so {n_water} of them pack into {block} "
-                f"({block.foundations:,} foundations, {block.foundations * 5:,} Concrete), "
-                f"or a single pier {pier.width_m:,.0f}x{pier.depth_m:,.0f} m "
-                f"({pier.foundations:,} foundations). Counting each machine's "
-                f"{size.foundations} foundations separately would say "
-                f"{n_water * size.foundations:,} -- that ignores shared edges."
-            )
-        # OQ5 said water pumps carry no geometry and could not be matched to anything.
-        # The volume SHAPE is level geometry and genuinely absent, but its IDENTITY is in
-        # every pump's mExtractableResource and the sidecar has stored it all along. Sea
-        # level falls out of the same rows, which turns "must be drawn at sea level" from
-        # a rule of thumb into a number.
-        water = st.water_volumes()
-        existing = ""
-        if water["pumps"]:
-            bodies = ", ".join(f"{k} ({n})" for k, n in list(water["volumes"].items())[:3])
-            existing = (
-                f" You already run {water['pumps']} pump(s) across "
-                f"{len(water['volumes'])} distinct water bod(ies): {bodies}."
-            )
-            if water["sea_level_m"] is not None:
-                existing += (
-                    f" They all sit at {water['sea_level_m']:.1f}m"
-                    f" (spread {water['sea_level_span_m']:.2f}m), which is this world's"
-                    " sea level and the height any new pump has to be drawn at."
-                )
-        notes.append(
-            f"{n_water} Water Extractor(s): the COUNT is capped by assumption -- a water "
-            "volume's shape is level geometry and is not in the save, so nothing here "
-            "knows how many a body of water holds. Shoreline is NOT the limit: pumps sit "
-            "on platforms built out over open water, so only area and concrete cost "
-            "anything. What does bind is vertical -- water is the only fluid that must be "
-            f"drawn at sea level and cannot be gravity-fed, so it sets deck order.{space}"
-            f"{existing} Pass water_extractors=<what your site holds> for a measured limit"
-        )
-    # Shards and sloops, from the clocks the plan already chose. Hand-totalling this is
-    # error-prone in a specific way: a shard raises the MAXIMUM clock by 0.5, so a
-    # machine at 150% needs one and only a machine at 250% needs three. Assuming three
-    # apiece overstates a mixed plan badly.
-    bill = slice_of(prepared, g)
-    if bill.shard_rows:
-        budget = st.shard_budget()
-        detail = ", ".join(
-            f"{r.machines}x {r.label.split(' on ')[0]} @{r.clock:.0%} = {r.total}"
-            for r in bill.shard_rows[:4]
-        )
-        verdict = (
-            "already free"
-            if bill.shards <= budget["free"]
-            else "affordable after crafting slugs"
-            if bill.shards <= budget["potential"]
-            else f"SHORT by {bill.shards - budget['potential']:.0f}"
-        )
-        notes.append(
-            f"power shards: {bill.shards} needed ({detail}); you hold "
-            f"{budget['free']:.0f} free + {budget['craftable']:.0f} craftable "
-            f"= {budget['potential']:.0f} -- {verdict}"
-        )
-    aside = (
-        f" A further {bill.unboostable_slots} slot(s) sit in generators and extractors, "
-        "which this model cannot production-boost, so they are not counted as capacity."
-        if bill.unboostable_slots
-        else ""
-    )
-    budget = int(plan_kwargs.get("sloops") or 0)
-    # A sloop budget is only spendable if Production Amplifier is researched. Same class
-    # of check as the unlocked recipe set and the buildable set, which build_scenario
-    # already applies -- a plan using a locked capability is not a plan. It is a note
-    # rather than a refusal because planning ahead of the research is legitimate, and the
-    # research itself is cheap; what is not acceptable is being silent about it.
-    gate = st.research_gate("production_boost") if budget else None
-    if gate is not None:
-        bill_line = ", ".join(f"{r['need']:g} {r['name']}" for r in gate["cost"])
-        verdict = (
-            "you can afford that now"
-            if gate["affordable"]
-            else "short of "
-            + ", ".join(f"{r['need'] - r['have']:.0f} {r['name']}" for r in gate["short"])
-        )
-        notes.append(
-            f"sloops={budget} but PRODUCTION AMPLIFIER IS NOT RESEARCHED, so no somersloop "
-            f"can go in a machine yet and this plan is not buildable as printed. Research "
-            f"{gate['schematic_name']} in the MAM ({bill_line}) -- {verdict}. "
-            "The save carries no flag for this; it is read from your purchased schematics"
-        )
-    if bill.sloop_used_rows:
-        spent = ", ".join(
-            f"{r.machines}x{r.slots_each} in {r.label[:26]} = {r.total} ({r.boost:g}x)"
-            for r in bill.sloop_used_rows[:4]
-        )
-        held = st.sloop_budget()
-        # The overshoot guard. The LP spends sloops against machine-EQUIVALENTS and the
-        # build table rounds those up to whole machines, so an honest bill can exceed the
-        # budget it was solved under. Same shape as the extractor cap that reported 64
-        # machines under a limit of 54; caught here rather than left for the player to
-        # discover at the workbench.
-        over = (
-            f" -- ROUNDING UP to whole machines needs {bill.sloops_used - budget} more "
-            f"than the budget of {budget}; drop a machine or raise it"
-            if bill.sloops_used > budget
-            else ""
-        )
-        short = (
-            f" You hold {held['free']:.0f} free, so this is SHORT by "
-            f"{bill.sloops_used - held['free']:.0f}."
-            if bill.sloops_used > held["free"]
-            else f" You hold {held['free']:.0f} free."
-        )
-        # Committed sloops are read from InventoryPotential, the same component as shards.
-        # Only FREE ones can pay for this plan, so the committed count is context and never
-        # added in -- but it is worth showing, because pulling one out of a machine is a
-        # legitimate way to fund a plan and the player cannot do that if nobody says where
-        # they are.
-        unmeasured = (
-            f" A further {held['committed']:.0f} sit in {len(held['holders'])} machine(s) "
-            "and would have to be pulled out first."
-            if held["committed_measured"] and held["committed"]
-            else ""
-            if held["committed_measured"]
-            else " Slotted sloops are unreadable on this projection (pre-schema-10), so "
-            "'held' may undercount what you own."
-        )
-        spare = (
-            f" {bill.sloop_slots} boostable slot(s) are still empty, so a bigger budget "
-            "has somewhere to go."
-            if bill.sloop_slots
-            else ""
-        )
-        notes.append(
-            f"somersloops: {bill.sloops_used} spent ({spent}){over}.{short}{unmeasured}"
-            f"{spare}{aside}"
-        )
-    elif bill.sloop_rows:
-        top = bill.sloop_rows[0]
-        why = (
-            " The budget bought nothing here: every boost costs 4x power for 2x output, "
-            "and this plan is power-limited."
-            if budget
-            else " Reported, not spent -- pass sloops=<how many you will commit> to "
-            "let the solver use them"
-        )
-        notes.append(
-            f"somersloops: {bill.sloop_slots} boostable slot(s), none used. Filling "
-            f"{top.label[:28]} ({top.machines}x{top.slots_each}={top.total}) would run "
-            f"it at {top.boost:g}x output for 4x power, halving that block."
-            f"{aside}{why}"
-        )
-
-    # Supplied items are FREE here, which is the point and also the trap. advisor.py
-    # records what it costs to forget: feeding a basket in as free raw inflated a
-    # northern baseline from 92,269 MW to 171,882. Correct for a MODULE, whose inputs are
-    # paid for in the plan that makes them, and badly wrong for a whole-plant comparison.
-    if req.scenario.raw_caps:
-        given = ", ".join(
-            f"{v:g} {g.item_name(k)}/min" for k, v in sorted(req.scenario.raw_caps.items())
-        )
-        notes.append(
-            f"MODULE PLAN -- {given} arrive free, so this net_MW is NOT comparable with a "
-            "whole-plant plan: the cost of making them is charged wherever they are made. "
-            "Whatever produces them must export at least these rates, or the chain does "
-            "not balance and the surplus you think you have is not there"
-        )
-    # A POWER-BLIND objective drives clocks up, and the cost is invisible in its own
-    # answer. Phase 2 pins the goal and minimises MACHINE COUNT, so among all solutions
-    # that hit the target it picks the fewest machines -- which means the highest clocks,
-    # and power goes as clock**1.32. Measured while chaining modules: a rig solved for
-    # max_item Fuel ran 31 Water Extractors at 247% for 2,052 MW where 64 at 120% cost
-    # 1,625, and the whole 344 MW "cost of decomposition" turned out to be this and
-    # nothing else. Re-solved with min_power, the chain BEAT the single plan.
-    overclocked = [p for p in sol.processes if p["clock"] > 1.01 and p["kind"] != "extractor"] + [
-        p for p in sol.processes if p["clock"] > 1.01 and p["kind"] == "extractor"
-    ]
-    if objective in ("max_item", "min_raw", "min_machines") and overclocked and sol.net_mw < 0:
-        worst = max(overclocked, key=lambda p: p["clock"])
-        notes.append(
-            f"objective {objective!r} does not price POWER, and phase 2 breaks ties by "
-            f"minimising machines -- so clocks are pushed up ({worst['machines']}x "
-            f"{worst['label'][:28]} at {worst['clock']:.0%}) and power rises as clock^1.32. "
-            "If this plan feeds a power plant, solve it as min_power with "
-            "export_minimums instead; the same output on more machines can cost "
-            "hundreds of MW less"
-        )
-    if req.excluded:
-        notes.append("excluded by request: " + ", ".join(req.excluded))
-    if not audit_ok:
-        notes.append(f"GUARD FAILED: free-lunch audit returned {audit_val} MW, not 0")
-    for b in sol.binding[:6]:
-        notes.append(f"binding: {b}")
-    needed = {
-        p["building_id"]
-        for p in sol.processes
-        if p["building_id"] and st.built(p["building_id"]) == 0
-    }
-    if needed:
-        notes.append(
-            "must build first: "
-            + ", ".join(g.buildings[c].name for c in needed if c in g.buildings)
-        )
-
-    # Water is modelled as unlimited (it effectively is on this map), so the honest
-    # thing is to surface the extractor count and pipe lines it implies rather than
-    # let that burden hide inside a ratio.
-    water_extractors = sum(
-        p["machines"] for p in sol.processes if p["building_id"] == "Build_WaterPump_C"
-    )
-    # Rows rank by volume, and a two-item question usually lives in the tail: at the
-    # old hard cap of 6, Plastic and Rubber fell off the bottom of a large oil plan --
-    # the exact pair that plan existed to size. So the cap is the caller's `limit`,
-    # and named items are pinned above it whatever they rank.
-    flows = [e for e in sol.logistics if e["rate"] > 0]
-    pin: list[str] = []
-    for name in logistics_items or []:
-        item_id = resolve_item(g, name)
-        if item_id is None:
-            notes.append(f"logistics_items: no item matches {name!r}")
-        elif not any(e["item"] == item_id for e in flows):
-            notes.append(f"logistics: nothing moves {g.item_name(item_id)} in this plan")
-        else:
-            pin.append(item_id)
-    # Pins are ADDITIVE to the limit, not carved out of it: naming two small items
-    # must not silently drop two big ones, or the fix trades one blind spot for another.
-    rest = [e for e in flows if e["item"] not in pin]
-    top_flows = [e for e in flows if e["item"] in pin] + rest[: render.clamp(limit, default=15)]
-    if len(top_flows) < len(flows):
-        notes.append(
-            f"logistics: showing {len(top_flows)} of {len(flows)} flows by volume "
-            "-- raise limit, or name items in logistics_items to pin them"
-        )
-    logistics_block = ""
-    if top_flows:
-        logistics_block = "\n# logistics (lines at Mk5 belt / Mk2 pipe)\n" + render.table(
-            ("item", "rate", "carrier", "lines"),
-            [
-                (e["name"], f"{render.num(e['rate'])}{e['unit']}", e["carrier"], e["lines"])
-                for e in top_flows
-            ],
-        )
-
-    summary = "\n".join(
-        [
-            (
-                f"# {objective} over {sel.description} "
-                f"({'free nodes only' if only_free_nodes else 'all nodes'})"
-            ),
-            f"# {st.age_note}",
-            render.kv(
-                [
-                    ("net_MW", render.num(sol.net_mw)),
-                    ("buildings", render.num(sol.machines_total)),
-                    ("water_extractors", water_extractors or None),
-                    ("grid_import_MW", render.num(sol.grid_import_mw)),
-                ]
-            ),
-            "exports: "
-            + render.kv(
-                [
-                    ("MW" if k == MW else g.item_name(k), render.num(v))
-                    for k, v in sol.exports.items()
-                ]
-            ),
-            "raw: " + render.kv([(g.item_name(k), render.num(v)) for k, v in sol.raw_used.items()]),
-            "sunk: "
-            + (
-                render.kv([(g.item_name(k), render.num(v)) for k, v in sol.sunk.items()])
-                or "nothing"
-            ),
-        ]
-    )
-    if plan_name:
-        summary = f"# recalled plan {plan_name!r}\n" + summary
-    notes = [*plan_notes, *notes]
-
-    if save_as:
+    # Persistence is an interface side effect, not part of the answer: the plan is stored
+    # here and the resulting sentence handed to the presenter like any other note.
+    save_as_note = ""
+    if save_as and report.prepared.failure is None:
+        plan_id = report.prepared.request.plan_id
         stored = st.plans.put(
             save_as,
             plan_kwargs,
-            req.plan_id,
+            plan_id,
             notes=plan_notes_text,
             factory=for_factory,
             when=str(st.header.get("save_datetime") or st.header.get("filename") or ""),
         )
         path = st.plans.save()
-        notes.append(
-            f"saved as {stored.name!r} (plan_id {req.plan_id}) in {path}. "
+        save_as_note = (
+            f"saved as {stored.name!r} (plan_id {plan_id}) in {path}. "
             f"Recall with plan={stored.name!r} on plan_factory, plan_layout or diff_vs_save"
         )
 
-    return render.envelope(
-        summary,
-        render.table(
-            ("build", "clock", "process", "building", "MW", "note"),
-            rows_out,
-            total=len(sol.processes),
-            limit=limit,
-        )
-        + logistics_block,
-        notes,
+    return render_plan_factory(
+        g,
+        st,
+        report,
+        objective=objective,
+        only_free_nodes=only_free_nodes,
+        limit=limit,
+        plan_name=plan_name,
+        plan_notes=plan_notes,
+        save_as_note=save_as_note,
     )
 
 
