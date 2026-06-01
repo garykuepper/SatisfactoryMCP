@@ -10,8 +10,9 @@ from typing import Annotated
 from pydantic import Field
 
 from .. import render
-from ..app import Limit, _resolve_factory, _state, game, mcp
+from ..app import Limit, _state, game, mcp
 from ..graph.query import ASPECTS as QUERY_ASPECTS
+from ..graph.resolve import resolve_factory
 from ..graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
 from ..graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from ..graph.select import SelectorError
@@ -214,7 +215,7 @@ def factory_query(
     except Exception as exc:
         return f"could not read save: {exc}"
     try:
-        name, machines = _resolve_factory(st, factory)
+        name, machines = resolve_factory(st, factory)
     except SelectorError as exc:
         return f"! {exc}"
     if not machines:
@@ -476,7 +477,7 @@ def factory_health(
         )
 
     try:
-        name, machines = _resolve_factory(st, factory)
+        name, machines = resolve_factory(st, factory)
     except SelectorError as exc:
         return f"! {exc}"
     if not machines:
@@ -881,7 +882,7 @@ def trace_upstream(
             seeds, subject = by_class, f"{len(by_class)}x {what}"
         else:
             try:
-                name, machines = _resolve_factory(st, what)
+                name, machines = resolve_factory(st, what)
             except SelectorError as exc:
                 return f"! {exc}"
             seeds = [m["instance"].rsplit(".", 1)[-1] for m in machines]

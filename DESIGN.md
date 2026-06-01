@@ -2928,9 +2928,11 @@ Three rules hold it together, each with a test:
   import, and that is what attaches a tool to the shared `mcp`. Those imports look unused
   and are not — a module dropped from that list would leave the server starting cleanly and
   simply not offering its tools. A test walks the directory and asserts nothing is missing.
-- **Tool modules never import each other.** Shared resolvers (`_resolve_factory`,
-  `_origin_for`) live in `app` alongside `mcp` and `_state`, because more than one group
-  needs each. A sibling import is the first step back toward one file, so a test forbids it.
+- **Tool modules never import each other.** Shared resolvers live with their domains —
+  `graph.resolve.resolve_factory`, `spatial.origin.resolve_origin` — because more than one
+  group needs each, and a resolver is a domain decision rather than an app detail. `app`
+  keeps the old private names bound so `server`'s re-exports still resolve. A sibling
+  import is the first step back toward one file, so a test forbids it.
 - **`server` re-exports every public name.** Tests and scripts reach for
   `server.plan_factory`, and a caller should not need to know which module a tool landed in.
 

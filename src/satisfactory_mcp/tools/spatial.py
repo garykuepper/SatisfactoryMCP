@@ -10,8 +10,6 @@ from .. import render
 from ..app import (
     Limit,
     _item_id,
-    _origin_for,
-    _player_xy,
     _state,
     game,
     mcp,
@@ -20,6 +18,7 @@ from ..spatial import elevation, geo
 from ..spatial import nodes as nodes_mod
 from ..spatial import ranking as ranking_mod
 from ..spatial import regions as regions_mod
+from ..spatial.origin import player_xy, resolve_origin
 from ..spatial.select import SELECTOR_HELP, select_nodes
 
 
@@ -221,13 +220,13 @@ def search_resource_nodes(
     where = ""
     if near:
         try:
-            origin, where = _origin_for(st, near)
+            origin, where = resolve_origin(st, near)
         except ValueError as exc:
             return f"! {exc}"
     if mode == "nearest" and origin is None:
         return "! mode='nearest' needs near=<x,y | me | factory name> to measure from"
 
-    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, player=_player_xy(st))
+    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, player=player_xy(st))
     if sel.errors and not sel.nodes:
         return render.envelope("# no nodes selected", "", [*sel.errors, SELECTOR_HELP])
 
@@ -439,7 +438,7 @@ def show_on_map(
         )
     else:
         try:
-            origin, where = _origin_for(st, text)
+            origin, where = resolve_origin(st, text)
         except ValueError as exc:
             return f"! {exc}"
 
@@ -503,7 +502,7 @@ def rank_build_sites(
         )
 
     spec = [*(sources or []), f"resource:{rid}"]
-    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id, player=_player_xy(st))
+    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id, player=player_xy(st))
     if sel.errors and not sel.nodes:
         return render.envelope("# no candidates", "", [*sel.errors, SELECTOR_HELP])
 

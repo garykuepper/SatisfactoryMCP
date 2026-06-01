@@ -10,9 +10,10 @@ from typing import Annotated
 from pydantic import Field
 
 from .. import render
-from ..app import Limit, _origin_for, _state, mcp
+from ..app import Limit, _state, mcp
 from ..docs.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
 from ..spatial import geo
+from ..spatial.origin import resolve_origin
 
 
 @mcp.tool(structured_output=False)
@@ -712,7 +713,7 @@ def _listing(st, removed: dict, table, group: str | None, mode: str, near, limit
     if mode == "nearest":
         if near:
             try:
-                origin, where = _origin_for(st, near)
+                origin, where = resolve_origin(st, near)
             except ValueError as exc:
                 return f"! {exc}"
         else:
