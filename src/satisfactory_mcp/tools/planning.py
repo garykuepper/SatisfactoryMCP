@@ -10,14 +10,12 @@ from pydantic import Field
 
 from .. import render
 from ..app import Limit, _item_id, _state, game, mcp
-from ..graph.resolve import resolve_factory
 from ..graph.select import SelectorError
 from ..planning import bom as bom_mod
 from ..planning import compare
 from ..planning.carrier import resolve_tiers
-from ..planning.commission import Tracking, commission, track
-from ..planning.diff import NEIGHBOUR_RADIUS_M as DIFF_NEIGHBOUR_M
-from ..planning.diff import build_diff
+from ..planning.commission_service import build_commission_report
+from ..planning.diff_service import build_diff_report
 from ..planning.layout_service import LayoutReport, build_layout_report
 from ..planning.prepare import prepare
 from ..planning.recall import PLAN_DEFAULTS
@@ -27,12 +25,16 @@ from ..planning.scenario import build_scenario
 from ..planning.sensitivity import sweep_unlocks
 from ..presenters.text import byproducts as byproducts_text
 from ..presenters.text.bom import render_bom
+from ..presenters.text.commission import render_commission
 from ..presenters.text.compare import render_comparison
+from ..presenters.text.diff import ENERGISED_CAVEAT, RANGE_CAVEAT, render_diff
 from ..presenters.text.layout import render_layout
 from ..presenters.text.plan_factory import render_plan_factory
 
-#: The stored-argument defaults, re-exported under their old home for ``server``.
-_ = (PLAN_DEFAULTS,)
+#: The stored-argument defaults, re-exported under their old home for ``server``. The
+#: two stage caveats keep their old home too: they were read from here before they had
+#: a presenter to live in.
+_ = (PLAN_DEFAULTS, ENERGISED_CAVEAT, RANGE_CAVEAT)
 
 
 @mcp.tool(structured_output=False)
@@ -407,165 +409,6 @@ def plan_layout(
     )
 
 
-#: Said on every stage report, because it is the one thing about this feature that a
-#: reader will otherwise get wrong. `built` is exact; `running` is the only positive
-#: evidence of power the save carries, and its absence is not evidence of no power.
-ENERGISED_CAVEAT = (
-    "built and ENERGISED are different states and the save separates them only one way: "
-    "a machine that produced inside the last 300s window certainly had power, while a "
-    "machine that did not may be unpowered, starved, blocked or simply idle. mHasPower "
-    "and the circuit id are not SaveGame properties and the circuit subsystem stores "
-    "nothing, so grid membership is rebuilt at load and is NOT in the file. A fully "
-    "built, wholly dark block is a valid state here, not an anomaly"
-)
-
-#: Emitted only when some row's built count is an interval. Without it "built 1..11,
-#: running 11" reads as a contradiction; it is not, because the two columns have
-#: different denominators.
-RANGE_CAVEAT = (
-    "a built count is a RANGE wherever a machine cannot be attributed to this plan "
-    "(Water Extractors, OQ5): the low bound counts only the ones standing among the "
-    "plan's own. 'running' is measured over every MATCHED machine, so it can sit above "
-    "the low bound without contradicting it"
-)
-
-
-def _stage_state(stage) -> str:
-    """One phrase per stage, saying only what the save supports."""
-    if stage.built_max <= 0:
-        return "not built"
-    if not stage.complete:
-        span = f"{stage.fraction_built:.0%}"
-        if stage.built_max != stage.built and stage.machines:
-            span = f"{span}-{stage.built_max / stage.machines:.0%}"
-        return f"{span} built"
-    if stage.running >= stage.machines:
-        return "built, all running"
-    if stage.running:
-        return f"built, {stage.running} running"
-    return "built, none running"
-
-
-def _stage_overview(tracking: Tracking) -> tuple[str, list[str]]:
-    """The whole partition against the save: which stage the player is in."""
-    if not tracking.ok:
-        return "", tracking.warnings
-    rows = [
-        (
-            f"S{s.index}",
-            s.machines,
-            f"{s.built}..{s.built_max}" if s.built_max != s.built else s.built,
-            s.running,
-            f"{render.num(-s.draw_mw)}/+{render.num(s.generation_mw)}",
-            f"{s.available_after:,.0f}",
-            _stage_state(s),
-        )
-        for s in tracking.stages
-    ]
-    if tracking.current:
-        done = tracking.current - 1
-        here = next(s for s in tracking.stages if s.index == tracking.current)
-        headline = (
-            f"# you are in STAGE {tracking.current} of {len(tracking.stages)}: "
-            + (f"stages 1-{done} complete, " if done > 1 else "stage 1 complete, " if done else "")
-            + f"stage {tracking.current} is {here.fraction_built:.0%} built "
-            f"({here.built}/{here.machines}) and {here.running} machine(s) in it are "
-            "proven running"
-        )
-    else:
-        headline = (
-            f"# every stage is built ({tracking.built}/{tracking.machines} machines). "
-            f"{tracking.running} are proven running; the rest may be built-and-unpowered, "
-            "which is what this plan expects until you energise them"
-        )
-    body = (
-        "# STAGES: the commission_plan startup order, matched against the save\n"
-        + render.table(("stage", "on", "built", "running", "MW", "free after", "state"), rows)
-        + "\n"
-        + headline
-    )
-    notes = [*tracking.warnings, ENERGISED_CAVEAT]
-    if any(s.built_max != s.built for s in tracking.stages):
-        notes.append(RANGE_CAVEAT)
-    if tracking.monitored:
-        notes.append(
-            f"{tracking.monitored} built machine(s) carry a productivity monitor, so "
-            "'running' is measured for those and unknown for the rest. Pass stage=<n> "
-            "for one stage's rows, or factory_health for why a machine is stopped"
-        )
-    if not tracking.plan_name:
-        notes.append(
-            "these stage numbers came from THIS CALL's arguments, not a stored plan, so "
-            "they renumber whenever the arguments or the world move. Save the plan "
-            "(plan_factory save_as=...) before treating a stage number as a milestone"
-        )
-    return body, notes
-
-
-def _stage_detail(tracking: Tracking, index: int, limit: int) -> tuple[str, list[str]]:
-    """One stage's own rows: what it energises, what stands, what is proven running."""
-    stage = next((s for s in tracking.stages if s.index == index), None)
-    if stage is None:
-        available = ", ".join(f"{s.index}" for s in tracking.stages) or "(none)"
-        return "", [f"no stage {index} in this plan; it has stages {available}"]
-    rows = []
-    for r in stage.rows:
-        # The free action belongs to the whole build job, not to this slice of it: three
-        # paused pumps are three dropdowns however the waves cut them. Rendering it as
-        # this stage's verb would tell the player to unpause them twice.
-        note = f"{r.verb} {r.free} first, plan-wide" if r.free else ""
-        note = f"{note}; {r.note}" if note and r.note else note or r.note
-        rows.append(
-            (
-                "BUILD" if r.to_build else "OK",
-                r.machines,
-                f"{r.built}..{r.built_max}" if r.built_max != r.built else r.built,
-                r.running,
-                r.label[:34],
-                r.building[:18],
-                render.num(-r.draw_mw) if r.draw_mw else f"+{render.num(r.generation_mw)}",
-                note[:44],
-            )
-        )
-    body = (
-        f"# STAGE {index} of {len(tracking.stages)}: {stage.machines} machine(s), "
-        f"{_stage_state(stage)}\n"
-        + render.kv(
-            [
-                ("draw_MW", render.num(stage.draw_mw)),
-                ("generation_MW", render.num(stage.generation_mw)),
-                ("free_before_MW", render.num(stage.available_before)),
-                ("free_after_MW", render.num(stage.available_after)),
-            ]
-        )
-        + "\n"
-        + render.table(
-            ("act", "on", "built", "running", "process", "building", "MW", "note"),
-            rows[: render.clamp(limit, default=20)],
-            total=len(rows),
-            limit=limit,
-        )
-    )
-    notes = [
-        *tracking.warnings,
-        ENERGISED_CAVEAT,
-        (
-            "materials are NOT split by stage, and the cost table is left out here for "
-            "that reason: a stage is a switch-on, not a build step, so the whole plant "
-            "is built first and the bill belongs to the plan as a whole"
-        ),
-    ]
-    if any(r.built_max != r.built for r in stage.rows):
-        notes.append(RANGE_CAVEAT)
-    if stage.dark:
-        notes.append(
-            f"{stage.dark} machine(s) in this stage are dark with no supply cause the "
-            "save can name -- consistent with not being energised yet, but the file "
-            "cannot confirm it"
-        )
-    return body, notes
-
-
 @mcp.tool(structured_output=False)
 def diff_vs_save(
     objective: str = "max_mw",
@@ -651,236 +494,31 @@ def diff_vs_save(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
-    if prepared.failure:
-        # Hand back the plan's own reason. An empty diff table would read as "you
-        # already have it", which is the opposite of what infeasible means.
-        suffix = " -- no plan to diff against" if "INFEASIBLE" in prepared.failure.headline else ""
-        return render.envelope(
-            f"# {prepared.failure.headline}{suffix}",
-            "",
-            [*prepared.failure.notes, "see plan_factory for why; there is nothing to change yet"],
-        )
-    req, sol = prepared.request, prepared.solution
-    sel = req.selection
-
-    if not sol.processes:
-        # Feasible but empty. Rendering an empty table would read as "nothing to do",
-        # when what happened is that the objective walked away from the resource --
-        # every crude route here emits Polymer Resin, and with MW as the only export
-        # the LP abandons oil entirely.
-        return render.envelope(
-            f"# EMPTY PLAN ({objective} over {sel.description}) -- nothing to change",
-            "",
-            [
-                *sol.warnings,
-                (
-                    "the solve chose to build nothing, which usually means a byproduct "
-                    "has no outlet -- widen exports and re-run plan_factory first"
-                ),
-            ],
-        )
-
-    # A plan saved with for_factory carries its own scope, so `diff_vs_save(plan=...)`
-    # already answers "how far along is THAT factory" without naming it again.
-    scope_name = factory
-    if scope_name is None and plan:
-        stored = st.plans.find(plan)
-        scope_name = (stored.factory or None) if stored else None
-
-    scope = None
-    if scope_name:
-        try:
-            resolved_name, machines = resolve_factory(st, scope_name)
-        except SelectorError as exc:
-            return f"! {exc}"
-        if not machines:
-            return f"! {scope_name!r} resolved to no machines that still exist in this save"
-        scope = set(machines)
-        plan_notes.append(
-            f"scoped to {resolved_name!r} ({len(scope)} machines): everything outside it "
-            "counts as not built, and nodes tapped by other factories are unavailable"
-        )
-
-    rep = build_diff(g, st, sol, req, scope=scope)
-    pw = st.power_report()
-
-    # Stage detection is the same partition commission_plan emits, matched against the
-    # save -- nothing is stored and nothing is re-solved. It is off unless asked for,
-    # because the numbering is only stable for a STORED plan and because a diff that
-    # nobody asked a stage question of should not pay the context for one.
-    tracking: Tracking | None = None
-    if plan or stage is not None:
-        tracking = track(
-            prepared,
-            commission(prepared, g, pw["headroom_mw"], "power_report, nameplate"),
-            rep,
+    try:
+        report = build_diff_report(
             g,
             st,
+            plan_kwargs,
+            objective=objective,
+            plan=plan,
             plan_name=plan_name,
+            stage=stage,
+            factory=factory,
         )
-        if plan_name and (stored := st.plans.find(plan_name)) and stored.plan_id != req.plan_id:
-            # The same drift list_plans reports, said where it bites hardest: a stage
-            # number is a milestone the player remembers, and a re-solve against a moved
-            # world can renumber the whole partition under them.
-            plan_notes.append(
-                f"plan {plan_name!r} was saved against plan_id {stored.plan_id} and "
-                f"re-solves to {req.plan_id} -- the WORLD moved, so these stage numbers "
-                "may not be the ones you were given before"
-            )
+    except SelectorError as exc:
+        return f"! {exc}"
 
-    if stage:
-        body, stage_notes = _stage_detail(tracking, stage, limit)
-        if not body:
-            return render.envelope(
-                f"# no stage {stage} [plan {req.plan_id}/save {rep.save_id}]",
-                "",
-                [*plan_notes, *stage_notes],
-            )
-        return render.envelope(
-            "\n".join(
-                [
-                    (
-                        f"# stage {stage} of plan {objective}|{sel.description} "
-                        f"[plan {req.plan_id}/save {rep.save_id}]"
-                    ),
-                    f"# {st.age_note}",
-                ]
-            ),
-            body,
-            [*plan_notes, *stage_notes],
-        )
-
-    rows = []
-    targets: list[str] = []
-    for r in rep.rows[: render.clamp(limit, default=20)]:
-        count = "" if r.verb == "OK" else render.num(r.count)
-        if r.verb == "BUILD" and r.build_max is not None and r.build_max != r.build:
-            count = f"{r.build}..{r.build_max}"
-        note = r.note
-        if r.targets:
-            # Ids go in one footer, per the house rule -- a node instance name runs to
-            # 51 characters and would crowd every other column off the row.
-            spans = [t[1] / 1000 for t in r.targets]
-            reach = (
-                f"{min(spans):.2g}km"
-                if max(spans) - min(spans) < 0.1
-                else f"{min(spans):.2g}-{max(spans):.2g}km"
-            )
-            head = f"on {len(r.targets)} free node(s) @{reach}"
-            note = f"{head}; {note}" if note else head
-            targets += [t[0] for t in r.targets]
-        rows.append(
-            (
-                r.stage,
-                r.verb,
-                count,
-                r.process[:30],
-                r.building[:20],
-                r.have,
-                render.where_bands(r.have_distances),
-                note[:56],
-            )
-        )
-
-    to_place = (
-        render.num(rep.to_build)
-        if rep.to_build_max == rep.to_build
-        else f"{rep.to_build}..{rep.to_build_max}"
+    return render_diff(
+        g,
+        st,
+        report,
+        objective=objective,
+        limit=limit,
+        show_cost=show_cost,
+        stage=stage,
+        plan_name=plan_name,
+        plan_notes=plan_notes,
     )
-    summary = "\n".join(
-        [
-            f"# diff vs plan {objective}|{sel.description} [plan {req.plan_id}/save {rep.save_id}]",
-            f"# {st.age_note}",
-            render.kv(
-                [
-                    ("target_MW", render.num(sol.net_mw)),
-                    ("plan_buildings", render.num(sol.machines_total)),
-                    ("to_place", to_place),
-                    ("actionable", sum(1 for r in rep.rows if r.actionable)),
-                ]
-            ),
-            render.kv(
-                [
-                    ("now_gen_MW", render.num(pw["generation_mw"])),
-                    ("draw_MW", render.num(pw["draw_mw"])),
-                    ("headroom_MW", render.num(pw["headroom_mw"])),
-                ]
-            ),
-        ]
-    )
-
-    notes = [*rep.notes]
-    for r in [r for r in rep.rows if r.build_max is not None and r.build_max != r.build][:2]:
-        notes.append(
-            f"{r.building}s cannot be matched to a job, so {r.need} needed vs {r.have} "
-            f"built is a RANGE: build {r.build}..{r.build_max}"
-        )
-    spread = [t[1] for r in rep.rows for t in r.targets]
-    if spread and max(spread) - min(spread) > 1000:
-        notes.append(
-            f"the plan's build targets span {min(spread) / 1000:.2g}-"
-            f"{max(spread) / 1000:.2g}km from your plant -- this is one plan, not one site"
-        )
-    if any("plan budgets 100%" in r.note for r in rep.rows):
-        notes.append(
-            "matched machines running off 100% are noted, not actioned: the plan "
-            "budgets 100%, so it understates what you already produce"
-        )
-
-    parts = [
-        render.table(
-            ("st", "act", "n", "process", "building", "have", "where(km)", "note"),
-            rows,
-            total=len(rep.rows),
-            limit=limit,
-        )
-    ]
-    if targets:
-        parts.append(
-            "# build targets, reusable as node: selectors -- "
-            + " ".join(targets[:4])
-            + (f" (+{len(targets) - 4} more)" if len(targets) > 4 else "")
-        )
-    if rep.neighbours:
-        near = ", ".join(f"{n}x {label}" for label, n in rep.neighbours[:3])
-        parts.append(
-            f"# within {int(DIFF_NEIGHBOUR_M)}m and competing for the plan's own "
-            f"materials, but NOT in it: {near}"
-            "\n#   yours to keep or reclaim; no action proposed"
-        )
-    if show_cost and rep.cost:
-        parts.append(
-            "# cost of the build counts. stock is spendable only, never machine buffers."
-            "\n"
-            + render.table(
-                ("item", "need", "stock", "your_lines"),
-                [
-                    (c.name[:24], render.num(c.need), render.num(c.stock), c.lines)
-                    for c in rep.cost[:5]
-                ],
-            )
-        )
-    # Suppressed when the stage table is present: "place it in >=18 proportional slices"
-    # is the answer from BEFORE the startup-order re-frame, and printing it beside the
-    # startup order would tell the player to partition a build that is not partitioned.
-    if rep.deficit_mw > 0 and rep.slices > 1 and tracking is None:
-        parts.append(
-            "# ORDER: an LP solution is a ray, so any fraction of the plan is itself "
-            f"feasible and self-powered.\n# The build dips {render.num(rep.deficit_mw)} MW "
-            f"against {render.num(rep.headroom_mw)} MW of headroom, so place it in "
-            f">={rep.slices} proportional slices."
-        )
-    if tracking is not None:
-        block, stage_notes = _stage_overview(tracking)
-        if block:
-            parts.append(block)
-        notes += stage_notes
-
-    if plan_name:
-        plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
-
-    return render.envelope(summary, "\n".join(parts), [*plan_notes, *notes])
 
 
 @mcp.tool(structured_output=False)
@@ -1005,28 +643,6 @@ def bom(
     return render_bom(result, limit=render.clamp(limit, default=20))
 
 
-def _live_feeders(g, st, floor_mw: float = 1.0) -> list[tuple[str, float]]:
-    """Built extractors whose output currently reaches a running generator.
-
-    The cutover question a startup order cannot answer on its own: which of the machines
-    already on the ground are load-bearing right now. On the reference save exactly ONE of
-    sixteen Oil Extractors carries all 5,000 MW of running fuel generation, and the other
-    fifteen carry nothing -- so "repipe the extractors" is fifteen safe moves and one that
-    browns out the base.
-    """
-    from ..graph.trace import power_at_risk
-
-    out: list[tuple[str, float]] = []
-    for record in st.projection.get("extractors", ()):
-        instance = record["instance"].rsplit(".", 1)[-1]
-        mw, _, running = power_at_risk(st, g, [instance])
-        if running and mw >= floor_mw:
-            building = g.buildings.get(record.get("cls", ""))
-            out.append((f"{building.name if building else record.get('cls')} {instance[-10:]}", mw))
-    out.sort(key=lambda pair: -pair[1])
-    return out
-
-
 @mcp.tool(structured_output=False)
 def commission_plan(
     objective: str = "max_mw",
@@ -1096,142 +712,17 @@ def commission_plan(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    prepared = prepare(g, st, plan_kwargs, objective_label=objective, diagnose=False)
-    if prepared.failure:
-        return render.envelope(
-            f"# {prepared.failure.headline} -- nothing to commission",
-            "",
-            [*prepared.failure.notes, "see plan_factory for why"],
-        )
+    report = build_commission_report(g, st, plan_kwargs, headroom_mw, objective=objective)
 
-    # Headroom is an INPUT and is printed as one. A sequence computed against a save
-    # that has since moved is then visibly stale rather than quietly wrong -- the same
-    # reason phase_requirements labels its rows instead of filtering them.
-    power = st.power_report()
-    if headroom_mw is None:
-        # Nameplate on purpose. Measured headroom is usually much larger -- 6,034 MW
-        # against 711 on the reference save, because most of that factory is idle -- but
-        # energising a block can un-starve the very machines that are idle, and the fuse
-        # blows on demand, not on averages. The safe bound is the default; the measured
-        # one is reported so a player who knows their base is quiet can pass it in.
-        head, source = power["headroom_mw"], "power_report, nameplate"
-    else:
-        head, source = float(headroom_mw), "given by caller"
-
-    plan_run = commission(prepared, g, head, source)
-    rows = []
-    for w in plan_run.waves:
-        # A summary line per wave, because the numbers that decide whether the sequence
-        # is safe -- what it costs and what it hands back -- belong to the wave and not
-        # to any row in it.
-        rows.append(
-            (
-                f"W{w.index}",
-                "",
-                w.machines,
-                "",
-                f"-- switch on {w.machines}, wait >={w.fill_s():.0f}s, then next wave --",
-                f"{render.num(-w.draw_mw)} then +{render.num(w.generation_mw)}",
-                f"{w.available_after:,.0f}",
-            )
-        )
-        for r in w.rows:
-            rows.append(
-                (
-                    "",
-                    f"d{r.depth}",
-                    r.machines,
-                    f"{r.cumulative}/{r.total}",
-                    r.label[:34],
-                    render.num(-r.draw_mw) if r.draw_mw else f"+{render.num(r.generation_mw)}",
-                    "",
-                )
-            )
-    # Truncation is applied to the WHOLE sequence, never per wave. Chopping each wave at
-    # `limit` silently dropped its generator rows -- they sort last by chain depth -- and
-    # those are the only rows that pay for the next wave.
-    body = render.table(
-        ("wave", "chain", "on", "cum", "process", "MW", "free after"),
-        rows[: render.clamp(limit, default=40)],
-        total=len(rows),
+    return render_commission(
+        g,
+        st,
+        report,
+        objective=objective,
         limit=limit,
+        plan_name=plan_name,
+        plan_notes=plan_notes,
     )
-
-    summary = "\n".join(
-        [
-            f"# startup order for {objective}"
-            + (f" ({plan_name})" if plan_name else "")
-            + f", {len(plan_run.waves)} wave(s)",
-            f"# {st.age_note}",
-            (
-                f"headroom_MW={head:,.0f} (source: {source})  "
-                f"plant_draw_MW={plan_run.plant_draw_mw:,.0f}  "
-                f"plant_generation_MW={plan_run.plant_generation_mw:,.0f}"
-            ),
-            (
-                f"minimum_slice_MW={plan_run.minimum_slice_mw:,.0f} "
-                "(one machine of every process -- the floor no order can go under)"
-            ),
-        ]
-    )
-
-    notes = [*plan_notes, *plan_run.warnings]
-    if headroom_mw is None and power["measured_headroom_mw"] > head * 1.2:
-        notes.append(
-            f"your grid is only {power['utilisation']:.0%} utilised, so measured headroom "
-            f"is {power['measured_headroom_mw']:,.0f} MW against the {head:,.0f} MW "
-            "nameplate used here. Nameplate is the safe bound -- energising a block can "
-            "un-starve idle machines and the fuse blows on demand, not on averages -- but "
-            "if you know your base is quiet, pass headroom_mw= to plan against the real "
-            "figure and get far fewer waves"
-        )
-    if plan_run.ok:
-        notes.append(
-            "build EVERYTHING first, unpowered: a machine draws only when it runs, so "
-            "construction is never the constraint. These waves are switch-ons"
-        )
-        # What the sequence is standing on. A wave that repipes an extractor already
-        # feeding live generators takes that power down mid-startup, which is exactly the
-        # moment the plan has least headroom to spare. Read from the save's own
-        # connections rather than assumed, and only PROVEN-running generators are charged.
-        live = _live_feeders(g, st)
-        if live:
-            notes.append(
-                "CUTOVER RISK -- these are already feeding running generators, so "
-                "repiping one mid-startup takes that power out at the worst moment: "
-                + "; ".join(f"{name} ({mw:,.0f} MW)" for name, mw in live[:4])
-                + ". trace_upstream on any of them shows what hangs off it"
-            )
-        notes.append(
-            "wire one Power Switch per block before starting. Energising is then a "
-            "switch flip, and a block that misbehaves can be isolated -- without one, "
-            "an overload blows the fuse on the WHOLE grid and stops the plant feeding it"
-        )
-        waits = [w.index for w in plan_run.waves if w.waits_for_fill]
-        if waits:
-            notes.append(
-                "wave(s) "
-                + ", ".join(f"W{i}" for i in waits[:6])
-                + " energise consumers and the generators they feed: let the pipes fill "
-                "and the generators come up to speed BEFORE starting the next wave. A "
-                "wave's own generation is not counted until it completes, so the free-MW "
-                "column is what you have during the wait, not after it"
-            )
-        slowest = max((w.fill_s() for w in plan_run.waves), default=0.0)
-        notes.append(
-            f"the wait is a LOWER bound (>={slowest:.0f}s on the longest wave): it sums "
-            "one full cycle at each chain depth, which every stage must finish before the "
-            "next sees anything. It does NOT include pipe transit -- a pipe's fluid volume "
-            "is not in the dump (only mRadius, which is collision geometry) and route "
-            "lengths are unknown -- so on a long run the real wait is longer, and the "
-            "deficit is carried for all of it"
-        )
-        notes.append(
-            "waves are power-ordered, not ratio-balanced -- whole machines cannot hit "
-            "the plan's ratios at the bottom of the ramp, so early waves run starved. "
-            "That is safe: a starved machine idles and draws less than modelled"
-        )
-    return render.envelope(summary, body, notes)
 
 
 @mcp.tool(structured_output=False)

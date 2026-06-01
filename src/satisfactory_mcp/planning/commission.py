@@ -96,6 +96,7 @@ __all__ = [
     "Tracking",
     "Wave",
     "commission",
+    "live_feeders",
     "track",
 ]
 
@@ -615,4 +616,26 @@ def track(
             "this save carries no productivity monitor for any matched machine, so "
             "there is NO evidence either way about what is energised -- only what is built"
         )
+    return out
+
+
+def live_feeders(g, st, floor_mw: float = 1.0) -> list[tuple[str, float]]:
+    """Built extractors whose output currently reaches a running generator.
+
+    The cutover question a startup order cannot answer on its own: which of the machines
+    already on the ground are load-bearing right now. On the reference save exactly ONE of
+    sixteen Oil Extractors carries all 5,000 MW of running fuel generation, and the other
+    fifteen carry nothing -- so "repipe the extractors" is fifteen safe moves and one that
+    browns out the base.
+    """
+    from ..graph.trace import power_at_risk
+
+    out: list[tuple[str, float]] = []
+    for record in st.projection.get("extractors", ()):
+        instance = record["instance"].rsplit(".", 1)[-1]
+        mw, _, running = power_at_risk(st, g, [instance])
+        if running and mw >= floor_mw:
+            building = g.buildings.get(record.get("cls", ""))
+            out.append((f"{building.name if building else record.get('cls')} {instance[-10:]}", mw))
+    out.sort(key=lambda pair: -pair[1])
     return out
