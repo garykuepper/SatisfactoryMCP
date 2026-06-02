@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from .. import config, render
 from ..app import Limit, _state, mcp
-from ..save import projection as proj
+from ..core.saveio import projection as proj
 
 
 @mcp.tool(structured_output=False)

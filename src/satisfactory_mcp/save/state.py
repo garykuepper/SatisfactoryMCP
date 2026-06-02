@@ -10,8 +10,8 @@ from typing import ClassVar
 
 from .. import config
 from ..core.gamedata.model import GameData, Recipe, Schematic
+from ..core.saveio import projection as proj
 from ..spatial import geo
-from . import projection as proj
 
 __all__ = ["CollectibleTable", "HardDriveOffer", "WorldState", "load_collectibles"]
 

@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import config
+from ... import config
 
 SCHEMA_VERSION = 11
 _MEM: dict[str, dict] = {}

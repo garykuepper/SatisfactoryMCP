@@ -27,9 +27,10 @@ PKG = SRC / "satisfactory_mcp"
 #:
 #: The old paths count as the layer they are moving *to*, not the layer they sit
 #: in today -- that is what makes the test useful during the migration instead of
-#: only after it. So ``docs`` is already core, ``save.projection`` is already core
-#: (it becomes ``core/saveio``) while the rest of ``save`` is domain, and the
-#: three domain packages that still live at the top level count as domain.
+#: only after it. So ``docs`` is already core, the rest of ``save`` is domain, and
+#: the three domain packages that still live at the top level count as domain.
+#: ``save.projection`` needed a line of its own until it became ``core/saveio``
+#: for real; now the literal prefix covers it and the entry is gone.
 _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.core", "core"),
     ("satisfactory_mcp.domain", "domain"),
@@ -37,7 +38,6 @@ _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.interfaces", "interfaces"),
     # Transitional: pre-refactor homes, mapped to their destination layer.
     ("satisfactory_mcp.docs", "core"),
-    ("satisfactory_mcp.save.projection", "core"),
     ("satisfactory_mcp.save", "domain"),
     ("satisfactory_mcp.graph", "domain"),
     ("satisfactory_mcp.spatial", "domain"),
