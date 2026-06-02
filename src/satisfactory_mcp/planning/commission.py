@@ -80,7 +80,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ..docs.model import GameData
+from ..core.gamedata.model import GameData
 from ..graph.health import assess
 from ..save.state import WorldState
 from .diff import DiffReport, group_key

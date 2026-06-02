@@ -16,9 +16,9 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from . import config
-from .docs.loader import load_docs
-from .docs.model import GameData
-from .docs.normalize import normalize
+from .core.gamedata.loader import load_docs
+from .core.gamedata.model import GameData
+from .core.gamedata.normalize import normalize
 from .graph.resolve import resolve_factory as _resolve_factory
 from .planning.scenario import resolve_item
 from .save.state import WorldState, load_state

@@ -7,7 +7,7 @@ quietly cost hundreds of MW, and none of that is visible in the numbers themselv
 
 from __future__ import annotations
 
-from ...docs.model import GameData
+from ...core.gamedata.model import GameData
 from ...planning.optimize import MW
 from ...planning.report import PlanFactoryReport
 from ...save.state import WorldState

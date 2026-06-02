@@ -7,7 +7,7 @@ description and the age note, so this module never re-derives a fact.
 
 from __future__ import annotations
 
-from ...docs.model import GameData
+from ...core.gamedata.model import GameData
 from ...planning.byproducts import Blocker, Report, analyse
 from ...save.state import WorldState
 from . import primitives as render

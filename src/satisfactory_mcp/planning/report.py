@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..docs.constants import WATER_EXTRACTOR_WARN_AT
-from ..docs.model import GameData
+from ..core.gamedata.constants import WATER_EXTRACTOR_WARN_AT
+from ..core.gamedata.model import GameData
 from ..save.state import WorldState
 from .prepare import PreparedPlan, prepare
 from .scenario import resolve_item

@@ -39,8 +39,8 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from scipy.optimize import linprog
 
-from ..docs.constants import AWESOME_SINK_MW
-from ..docs.model import GameData, Recipe
+from ..core.gamedata.constants import AWESOME_SINK_MW
+from ..core.gamedata.model import GameData, Recipe
 from ..save.state import WorldState
 from .optimize import MW, Process, Scenario, Solution, build_processes, solve
 from .scenario import build_scenario, resolve_item

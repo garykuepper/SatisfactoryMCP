@@ -9,7 +9,7 @@ wrong if the player treats it as a build order.
 
 from __future__ import annotations
 
-from ...docs.model import GameData
+from ...core.gamedata.model import GameData
 from ...planning.commission_service import CommissionReport
 from ...save.state import WorldState
 from . import primitives as render

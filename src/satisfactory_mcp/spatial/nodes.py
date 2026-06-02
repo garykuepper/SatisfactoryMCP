@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from .. import config
-from ..docs.model import GameData
+from ..core.gamedata.model import GameData
 from . import geo
 
 __all__ = [

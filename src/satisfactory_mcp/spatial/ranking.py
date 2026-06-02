@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..docs.constants import PURITY_MULT
+from ..core.gamedata.constants import PURITY_MULT
 from . import geo
 
 __all__ = ["WEIGHTS", "SiteScore", "rank_sites"]

@@ -9,7 +9,7 @@ from functools import cached_property, lru_cache
 from typing import ClassVar
 
 from .. import config
-from ..docs.model import GameData, Recipe, Schematic
+from ..core.gamedata.model import GameData, Recipe, Schematic
 from ..spatial import geo
 from . import projection as proj
 
@@ -320,7 +320,7 @@ class WorldState:
         FGLightweightBuildableSubsystem holds Build_* classes that appear in no actor
         header, so a header-only count understates what exists.
         """
-        from ..docs.constants import BUILDING_CLASS_ALIASES
+        from ..core.gamedata.constants import BUILDING_CLASS_ALIASES
 
         out: dict[str, int] = {}
         for source in (
@@ -679,7 +679,7 @@ class WorldState:
         ``inventories["machine"]`` total as shards on hand overstates the free pool by
         more than 4x on this save.
         """
-        from ..docs.constants import POTENTIAL_SHARD_SLOTS, shards_for_clock
+        from ..core.gamedata.constants import POTENTIAL_SHARD_SLOTS, shards_for_clock
 
         shard_items = self.game.clock_shards()
         per_shard = max(shard_items.values()) if shard_items else 0.0
@@ -783,7 +783,7 @@ class WorldState:
         from here. Falling back keeps an older projection answering correctly instead of
         reporting every capability locked.
         """
-        from ..docs.constants import CAPABILITY_SCHEMATICS
+        from ..core.gamedata.constants import CAPABILITY_SCHEMATICS
 
         flag = self.CAPABILITY_FLAGS.get(name)
         if flag and flag in self._unlock_flags:
@@ -801,7 +801,7 @@ class WorldState:
         ``None`` when the capability is already researched, so a caller can treat a
         truthy result as "here is what is still in the way".
         """
-        from ..docs.constants import CAPABILITY_SCHEMATICS
+        from ..core.gamedata.constants import CAPABILITY_SCHEMATICS
 
         gate = CAPABILITY_SCHEMATICS.get(name)
         schematic = self.game.schematics.get(gate or "")

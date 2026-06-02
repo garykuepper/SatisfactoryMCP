@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..docs.model import GameData
+from ..core.gamedata.model import GameData
 from ..save.state import WorldState
 from . import supply
 from .optimize import Solution, free_lunch_audit, solve

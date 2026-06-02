@@ -38,8 +38,8 @@ import hashlib
 import math
 from dataclasses import dataclass, field
 
+from ..core.gamedata.model import GameData
 from ..core.text import plural
-from ..docs.model import GameData
 from ..save.state import WorldState
 from ..spatial import geo
 from ..spatial import nodes as nodes_mod

@@ -40,8 +40,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from ..core.gamedata.model import GameData
 from ..core.text import num
-from ..docs.model import GameData
 from ..save.state import WorldState
 from .optimize import Solution, solve
 from .scenario import build_scenario, resolve_item

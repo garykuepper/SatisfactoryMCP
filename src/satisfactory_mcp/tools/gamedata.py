@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from .. import render
 from ..app import Limit, _item_id, _state, game, mcp
-from ..docs import search
+from ..core.gamedata import search
 from ..presenters.text.search import render_search
 
 

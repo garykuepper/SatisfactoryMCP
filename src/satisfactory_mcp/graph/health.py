@@ -43,8 +43,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ..docs.constants import STACK_SIZE
-from ..docs.model import GameData
+from ..core.gamedata.constants import STACK_SIZE
+from ..core.gamedata.model import GameData
 
 __all__ = ["OK", "STATES", "MachineHealth", "assess", "summarise"]
 

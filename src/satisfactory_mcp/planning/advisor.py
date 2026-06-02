@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..docs.model import GameData, Recipe
+from ..core.gamedata.model import GameData, Recipe
 from ..save.state import WorldState
 from ..spatial.select import SELECTOR_HELP
 from .optimize import MW, Scenario, Solution, solve

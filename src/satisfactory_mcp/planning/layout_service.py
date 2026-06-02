@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..docs.model import GameData
+from ..core.gamedata.model import GameData
 from ..graph.resolve import resolve_factory
 from ..save.state import WorldState
 from .carrier import TierChoice

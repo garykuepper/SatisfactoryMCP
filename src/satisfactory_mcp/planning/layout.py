@@ -32,8 +32,8 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from ..docs.footprint import FOUNDATION_M, Packed
-from ..docs.model import GameData
+from ..core.gamedata.footprint import FOUNDATION_M, Packed
+from ..core.gamedata.model import GameData
 from .carrier import carrier_for
 from .optimize import MW, Solution
 

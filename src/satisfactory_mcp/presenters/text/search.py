@@ -3,13 +3,13 @@
 The units are not comparable and must not be rendered as if they were: only part
 recipes run in a machine, so only they have a per-minute rate. Building and manual
 rows carry the per-craft amount and are suffixed ``/build`` and ``/craft`` so no row
-can be misread as a throughput. See ``docs.search`` for the census rules.
+can be misread as a throughput. See ``core.gamedata.search`` for the census rules.
 """
 
 from __future__ import annotations
 
-from ...docs.model import GameData, Recipe
-from ...docs.search import KINDS, Census, Hit
+from ...core.gamedata.model import GameData, Recipe
+from ...core.gamedata.search import KINDS, Census, Hit
 from . import primitives as render
 
 __all__ = ["render_search"]

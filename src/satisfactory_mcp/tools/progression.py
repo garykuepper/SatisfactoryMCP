@@ -11,7 +11,7 @@ from pydantic import Field
 
 from .. import render
 from ..app import Limit, _state, mcp
-from ..docs.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
+from ..core.gamedata.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
 from ..presenters.text.collectibles import render_collectibles
 from ..save.collect import collect_view
 

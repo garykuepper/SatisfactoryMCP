@@ -8,7 +8,7 @@ routing, lengths and coordinates are absent on purpose rather than by omission.
 
 from __future__ import annotations
 
-from ...docs.model import GameData
+from ...core.gamedata.model import GameData
 from ...planning.layout_service import LayoutReport
 from ...save.state import WorldState
 from . import primitives as render

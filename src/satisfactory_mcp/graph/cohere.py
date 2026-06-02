@@ -54,7 +54,7 @@ import math
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 
-from ..docs.model import GameData
+from ..core.gamedata.model import GameData
 from ..spatial import geo
 from .model import FactoryGraph
 from .structure import Structures
