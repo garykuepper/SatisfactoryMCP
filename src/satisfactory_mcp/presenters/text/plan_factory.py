@@ -8,9 +8,9 @@ quietly cost hundreds of MW, and none of that is visible in the numbers themselv
 from __future__ import annotations
 
 from ...core.gamedata.model import GameData
+from ...domain.world.state import WorldState
 from ...planning.optimize import MW
 from ...planning.report import PlanFactoryReport
-from ...save.state import WorldState
 from . import primitives as render
 
 __all__ = ["render_plan_factory"]

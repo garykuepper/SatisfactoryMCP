@@ -27,7 +27,7 @@ from ..spatial.select import Selection, select_nodes
 from .optimize import MW, Scenario
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
-    from ..save.state import WorldState
+    from ..domain.world.state import WorldState
 
 __all__ = [
     "EXPORT_HELP",

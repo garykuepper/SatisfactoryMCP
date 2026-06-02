@@ -29,7 +29,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
-from ..save.state import WorldState
+from ..domain.world.state import WorldState
 
 __all__ = ["Carrier", "TierChoice", "carrier_for", "resolve_tiers"]
 

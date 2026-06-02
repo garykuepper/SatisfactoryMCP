@@ -42,7 +42,7 @@ from dataclasses import dataclass, field, replace
 
 from ..core.gamedata.model import GameData
 from ..core.text import num
-from ..save.state import WorldState
+from ..domain.world.state import WorldState
 from .optimize import Solution, solve
 from .scenario import build_scenario, resolve_item
 

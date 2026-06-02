@@ -81,8 +81,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
+from ..domain.world.state import WorldState
 from ..graph.health import assess
-from ..save.state import WorldState
 from .diff import DiffReport, group_key
 
 __all__ = [

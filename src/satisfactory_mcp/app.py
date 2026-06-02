@@ -19,9 +19,9 @@ from . import config
 from .core.gamedata.loader import load_docs
 from .core.gamedata.model import GameData
 from .core.gamedata.normalize import normalize
+from .domain.world.state import WorldState, load_state
 from .graph.resolve import resolve_factory as _resolve_factory
 from .planning.scenario import resolve_item
-from .save.state import WorldState, load_state
 from .spatial.origin import player_xy as _player_xy
 from .spatial.origin import resolve_origin as _origin_for
 

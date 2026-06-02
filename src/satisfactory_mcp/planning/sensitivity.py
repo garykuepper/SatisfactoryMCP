@@ -38,7 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import Recipe
-from ..save.state import WorldState
+from ..domain.world.state import WorldState
 from .advisor import _needed_buildings, _solve_with
 from .optimize import Solution
 

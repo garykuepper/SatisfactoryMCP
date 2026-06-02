@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..domain.collectibles.table import CollectibleTable
+from ..domain.world.state import WorldState
 from ..spatial.origin import resolve_origin
-from .state import CollectibleTable, WorldState
 
 __all__ = ["RETIRED_GROUPS", "CollectiblesView", "collect_view"]
 

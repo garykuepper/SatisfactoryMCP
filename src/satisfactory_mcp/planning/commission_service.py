@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
-from ..save.state import WorldState
+from ..domain.world.state import WorldState
 from .commission import Commissioning, commission, live_feeders
 from .prepare import PreparedPlan, prepare
 

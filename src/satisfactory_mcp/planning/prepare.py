@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
-from ..save.state import WorldState
+from ..domain.world.state import WorldState
 from . import supply
 from .optimize import Solution, free_lunch_audit, solve
 from .scenario import PlanRequest, build_scenario
