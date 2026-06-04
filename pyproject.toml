@@ -13,9 +13,14 @@ dependencies = [
 
 [project.scripts]
 satisfactory-mcp = "satisfactory_mcp.server:main"
+satisfactory-mcp-web = "satisfactory_mcp.interfaces.web.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov", "ruff"]
+# The web interface is optional on purpose: the MCP server is the product, and a
+# stdio server has no business pulling in an ASGI stack. interfaces/web is the only
+# place allowed to import these, which tests/test_architecture.py enforces.
+web = ["fastapi>=0.115", "uvicorn>=0.30"]
 
 [build-system]
 requires = ["hatchling"]

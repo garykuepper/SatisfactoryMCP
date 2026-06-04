@@ -125,6 +125,7 @@ LAYERED_HOMES: tuple[str, ...] = (
     "satisfactory_mcp.domain.planning",
     "satisfactory_mcp.presenters.text",
     "satisfactory_mcp.interfaces.mcp",
+    "satisfactory_mcp.interfaces.web",
 )
 
 #: Everything the package root is allowed to contain: the four layers, the two

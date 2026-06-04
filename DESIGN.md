@@ -189,6 +189,7 @@ SatisfactoryMcp/
         tools/         # one module per concern; importing it registers everything
           gamedata.py  world.py  progression.py  factories.py
           spatial.py   planning.py  harddrives.py  resources.py  prompts.py
+      web/             # optional [web] extra: app.py (create_app) + api.py
     docs/ save/ graph/ spatial/ planning/ tools/ app.py render.py
                        # compatibility shims — see below
   sidecar/
@@ -218,6 +219,15 @@ their new homes, and `app.py` and `render.py` are re-import lists. They keep *id
 existing `monkeypatch.setattr` calls keep biting the module the server actually calls. They exist for
 import lines that predate the move; nothing new imports them, and `test_shims_are_frozen` proves each one
 still holds an alias and nothing else. `git log --follow` reaches through every move.
+
+**The web adapter.** `interfaces/web/` is a *sibling* of `interfaces/mcp/`, not a layer above it: both are
+thin adapters over the same domain, and neither imports the other — the web app duplicates the two-line
+`lru_cache` game loader rather than reach into the MCP app for it. It answers JSON instead of TSV, because
+its reader is a browser and not a model, and it converts every coordinate from the save's centimetres to
+metres on the way out. `create_app(state_loader, game_loader)` takes both loaders as arguments so the whole
+HTTP surface is testable against the committed fixture projection with no game install and no `.sav`.
+FastAPI and uvicorn live in the optional `web` extra and may be imported only from this package, which is
+the same AST-checked rule that confines the MCP SDK to `interfaces/mcp/`.
 
 ### 4.1 The save seam
 
