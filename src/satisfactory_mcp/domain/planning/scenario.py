@@ -21,13 +21,13 @@ from dataclasses import dataclass, field
 from dataclasses import replace as replace_scenario
 from typing import TYPE_CHECKING
 
-from ..core.gamedata.model import GameData
-from ..domain.spatial import nodes as nodes_mod
-from ..domain.spatial.select import Selection, select_nodes
+from ...core.gamedata.model import GameData
+from ..spatial import nodes as nodes_mod
+from ..spatial.select import Selection, select_nodes
 from .optimize import MW, Scenario
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
-    from ..domain.world.state import WorldState
+    from ..world.state import WorldState
 
 __all__ = [
     "EXPORT_HELP",
@@ -54,7 +54,7 @@ _EXTRACTOR_PREFERENCE = (
     "Build_MinerMk1_C",
 )
 
-from ..core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
+from ...core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 
 
 def resolve_item(game: GameData, query: str) -> str | None:

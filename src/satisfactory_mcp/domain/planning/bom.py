@@ -40,9 +40,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..core.gamedata.model import GameData
-from ..core.text import num
-from ..domain.world.state import WorldState
+from ...core.gamedata.model import GameData
+from ...core.text import num
+from ..world.state import WorldState
 from .optimize import Solution, solve
 from .scenario import build_scenario, resolve_item
 

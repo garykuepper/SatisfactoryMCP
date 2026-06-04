@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
-from ..domain.factories.resolve import resolve_factory
-from ..domain.world.state import WorldState
+from ...core.gamedata.model import GameData
+from ..factories.resolve import resolve_factory
+from ..world.state import WorldState
 from .carrier import TierChoice
 from .layout import Layout, build_layout, fluid_head
 from .materials import build_materials

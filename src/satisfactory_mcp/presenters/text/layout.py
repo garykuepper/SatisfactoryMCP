@@ -9,8 +9,8 @@ routing, lengths and coordinates are absent on purpose rather than by omission.
 from __future__ import annotations
 
 from ...core.gamedata.model import GameData
+from ...domain.planning.layout_service import LayoutReport
 from ...domain.world.state import WorldState
-from ...planning.layout_service import LayoutReport
 from . import primitives as render
 
 __all__ = ["render_layout"]

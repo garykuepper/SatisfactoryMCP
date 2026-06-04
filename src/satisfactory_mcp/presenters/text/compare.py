@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...planning.compare import PROBE_RATE, Route, RouteComparison, _short
+from ...domain.planning.compare import PROBE_RATE, Route, RouteComparison, _short
 from . import primitives as render
 
 __all__ = ["render_comparison"]

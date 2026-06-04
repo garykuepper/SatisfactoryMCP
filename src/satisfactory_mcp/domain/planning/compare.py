@@ -71,8 +71,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..core.gamedata.model import GameData
-from ..domain.world.state import WorldState
+from ...core.gamedata.model import GameData
+from ..world.state import WorldState
 from .optimize import Scenario, Solution, solve
 from .scenario import build_scenario, resolve_item
 

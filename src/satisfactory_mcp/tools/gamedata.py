@@ -40,7 +40,7 @@ def recipe_detail(recipe_id: str) -> str:
     that buys nothing -- `match_recipes` already does exactly this resolution for
     `exclude_recipes`.
     """
-    from ..planning.scenario import match_recipes
+    from ..domain.planning.scenario import match_recipes
 
     g = game()
     r = g.recipes.get(recipe_id)

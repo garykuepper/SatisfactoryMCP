@@ -54,7 +54,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
+from ...core.gamedata.model import GameData
 from .carrier import carrier_for
 from .slice import PlanSlice, slice_of
 

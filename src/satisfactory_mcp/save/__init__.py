@@ -9,8 +9,9 @@ monkeypatches ``proj.subprocess`` on the private ``_run_sidecar``, and
 state module to stand in a clone that has no placement table. New code imports the
 real paths directly.
 
-Only ``collect`` still physically lives here, until it moves to
-``domain/collectibles/``.
+Nothing physically lives here any more: ``collect`` became
+``domain.collectibles.service``, and nothing outside this package ever imported it
+by the old name, so it gets no alias.
 """
 
 from __future__ import annotations

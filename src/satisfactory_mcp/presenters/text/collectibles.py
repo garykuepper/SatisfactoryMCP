@@ -1,6 +1,6 @@
 """Map collectibles as text: the per-category census, and the per-placement listings.
 
-Which placements answer the question is ``save.collect``'s decision; this module only
+Which placements answer the question is ``collectibles.service``'s decision; this module only
 says it. The three shapes are different enough to be three functions -- a census is a
 tally with its caveats, a listing is coordinates with their hazards, and the degraded
 save-only answer is a name-prefix guess that has to admit it is one.
@@ -8,8 +8,8 @@ save-only answer is a name-prefix guess that has to admit it is one.
 
 from __future__ import annotations
 
+from ...domain.collectibles.service import CollectiblesView
 from ...domain.spatial import geo
-from ...save.collect import CollectiblesView
 from . import primitives as render
 
 __all__ = ["render_collectibles"]

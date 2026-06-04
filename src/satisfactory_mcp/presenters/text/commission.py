@@ -10,8 +10,8 @@ wrong if the player treats it as a build order.
 from __future__ import annotations
 
 from ...core.gamedata.model import GameData
+from ...domain.planning.commission_service import CommissionReport
 from ...domain.world.state import WorldState
-from ...planning.commission_service import CommissionReport
 from . import primitives as render
 
 __all__ = ["render_commission"]

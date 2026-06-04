@@ -20,10 +20,10 @@ from .core.gamedata.loader import load_docs
 from .core.gamedata.model import GameData
 from .core.gamedata.normalize import normalize
 from .domain.factories.resolve import resolve_factory as _resolve_factory
+from .domain.planning.scenario import resolve_item
 from .domain.spatial.origin import player_xy as _player_xy
 from .domain.spatial.origin import resolve_origin as _origin_for
 from .domain.world.state import WorldState, load_state
-from .planning.scenario import resolve_item
 
 mcp = FastMCP("satisfactory")
 

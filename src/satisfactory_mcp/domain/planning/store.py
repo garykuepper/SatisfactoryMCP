@@ -22,7 +22,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .. import config
+from ... import config
 
 __all__ = ["SCHEMA", "Plan", "PlanStore"]
 

@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import LinearConstraint, milp
 
-from ..core.gamedata.constants import AWESOME_SINK_MW
-from ..core.gamedata.model import GameData
+from ...core.gamedata.constants import AWESOME_SINK_MW
+from ...core.gamedata.model import GameData
 from .carrier import carrier_for
 
 __all__ = [

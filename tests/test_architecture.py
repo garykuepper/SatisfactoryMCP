@@ -5,8 +5,8 @@ knows core, presenters know domain, interfaces know everything. Nothing in that
 list is checkable at runtime -- a lazy ``import`` three frames deep inside a
 method body loads fine and violates the architecture silently. So this test
 parses every module with ``ast`` and looks at *every* import node at *any*
-depth, which is why ``save/state.py``'s deliberate lazy imports of the factories
-and planning packages are visible here instead of hiding.
+depth, which is why ``domain/world/state.py``'s deliberate lazy imports of the
+factories and planning packages are visible here instead of hiding.
 
 It runs with no game install and no save file: stdlib only.
 
@@ -27,10 +27,13 @@ PKG = SRC / "satisfactory_mcp"
 #:
 #: The old paths count as the layer they are moving *to*, not the layer they sit
 #: in today -- that is what makes the test useful during the migration instead of
-#: only after it. So ``docs`` is already core, the rest of ``save`` is domain, and
-#: the three domain packages that still live at the top level count as domain.
-#: ``save.projection`` needed a line of its own until it became ``core/saveio``
-#: for real; now the literal prefix covers it and the entry is gone.
+#: only after it. ``save.projection`` needed a line of its own until it became
+#: ``core/saveio`` for real; now the literal prefix covers it and the entry is gone.
+#:
+#: Of the transitional names below, ``docs``, ``save``, ``graph``, ``spatial`` and
+#: ``planning`` now hold nothing but an alias shim ``__init__``. A line stays until
+#: its old path is deleted outright, because the shim is still a module the walker
+#: sees, and it has to be classified as the layer it forwards to.
 _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.core", "core"),
     ("satisfactory_mcp.domain", "domain"),

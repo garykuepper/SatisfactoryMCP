@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
-from ..domain.world.state import WorldState
+from ...core.gamedata.model import GameData
+from ..world.state import WorldState
 from . import supply
 from .optimize import Solution, free_lunch_audit, solve
 from .scenario import PlanRequest, build_scenario
@@ -75,7 +75,7 @@ def prepare(
     the infeasible path, which is why it is on by default: a bare INFEASIBLE was the
     single most-reported problem with this surface.
     """
-    from ..domain.spatial.select import SELECTOR_HELP
+    from ..spatial.select import SELECTOR_HELP
     from .scenario import EXPORT_HELP
 
     request = build_scenario(game, state, **plan_kwargs)

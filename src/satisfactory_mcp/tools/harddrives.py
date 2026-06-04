@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from .. import render
 from ..app import _state, mcp
-from ..planning import advisor
+from ..domain.planning import advisor
 
 #: Said on every hard-drive response, because it is the fact that decides how hard to
 #: think about the choice, and it is not visible anywhere in the game's own UI.

@@ -80,9 +80,9 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
-from ..domain.factories.health import assess
-from ..domain.world.state import WorldState
+from ...core.gamedata.model import GameData
+from ..factories.health import assess
+from ..world.state import WorldState
 from .diff import DiffReport, group_key
 
 __all__ = [
@@ -628,7 +628,7 @@ def live_feeders(g, st, floor_mw: float = 1.0) -> list[tuple[str, float]]:
     fifteen carry nothing -- so "repipe the extractors" is fifteen safe moves and one that
     browns out the base.
     """
-    from ..domain.factories.trace import power_at_risk
+    from ..factories.trace import power_at_risk
 
     out: list[tuple[str, float]] = []
     for record in st.projection.get("extractors", ()):
