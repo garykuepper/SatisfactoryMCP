@@ -158,29 +158,39 @@ SatisfactoryMcp/
     region_names.json             # GENERATED layer 2: label raster + confidence + overrides
     resource_nodes.json           # GENERATED: 607 nodes, type/purity/position, with provenance
   src/satisfactory_mcp/
-    server.py          # FastMCP instance + tool registration ONLY
+    server.py          # thin: imports the tool modules, re-exports, main()
     config.py          # env: SATISFACTORY_DOCS, SATISFACTORY_SAVES, cache dir
-    docs/
-      loader.py        # UTF-16 read, NativeClass grouping
-      uestruct.py      # UE struct-string parser
-      normalize.py     # -> items / recipes / buildings / schematics
-      model.py         # dataclasses
-      search.py        # recipe search + the consumes/produces reverse index
-    save/
-      projection.py    # invokes sidecar, validates, caches
-      cache.py
-      model.py
-    graph/    model.py  build.py  structure.py  identity.py  cohere.py
-              labels.py  select.py  query.py  health.py
-    spatial/  geo.py  nodes.py  regions.py  select.py  maplink.py
-    planning/ optimize.py  scenario.py  prepare.py  slice.py  diff.py  layout.py
-              supply.py  bom.py  fit.py  store.py  byproducts.py  compare.py
-    render.py          # ALL formatting: TSV, envelopes, truncation
-    app.py             # the mcp object + resolvers more than one tool group needs
-    server.py          # thin: imports tools/, re-exports, main()
-    tools/             # one module per concern; importing it registers everything
-      gamedata.py  world.py  progression.py  factories.py
-      spatial.py   planning.py  harddrives.py  resources.py  prompts.py
+    core/              # knows nothing about anything above it
+      gamedata/        # loader.py (UTF-16 read, NativeClass grouping)
+                       # uestruct.py (UE struct-string parser)
+                       # normalize.py (-> items / recipes / buildings / schematics)
+                       # model.py  search.py  footprint.py  constants.py
+      saveio/          # projection.py: invokes sidecar, validates, caches
+      text.py          # num + plural ONLY — the two helpers domain may reach
+    domain/            # returns dataclasses and dicts, NEVER formatted text
+      world/           # state.py: WorldState, a thin aggregate over the facets
+                       # identity  inventory  census  carriers  water  sites
+      progression/     # unlocks  phases  research  harddrives  shards
+      power/           # report.py: PowerLedger
+      factories/       # model  build  structure  identity  cohere  labels
+                       # select  query  health  trace  resolve
+      spatial/         # geo  nodes  regions  select  maplink  origin
+                       # ranking  elevation
+      collectibles/    # table  removed  service
+      planning/        # optimize  scenario  prepare  slice  diff  layout
+                       # supply  bom  fit  store  byproducts  compare  carrier
+                       # + one *_service/report module per tool-sized use case
+    presenters/
+      text/            # ALL response formatting: primitives.py (TSV, envelopes,
+                       # truncation) + one module per concept
+    interfaces/
+      mcp/
+        app.py         # the mcp object + what more than one tool group needs
+        tools/         # one module per concern; importing it registers everything
+          gamedata.py  world.py  progression.py  factories.py
+          spatial.py   planning.py  harddrives.py  resources.py  prompts.py
+    docs/ save/ graph/ spatial/ planning/ tools/ app.py render.py
+                       # compatibility shims — see below
   sidecar/
     extract_save.py    # imports savparse, emits JSON projection on stdout
     savparse/          # our parser: reads all 66 saves, six saveVersions
@@ -188,12 +198,30 @@ SatisfactoryMcp/
     fixtures/          # tiny Docs slice + ~9 kB save projection (committed)
 ```
 
-**Layout rules.** All formatting lives in `render.py` — context efficiency is cross-cutting and silently
-regresses if each tool formats its own output. `server.py` contains no logic.
+**Layout rules.** Imports run one way: `core` knows nothing, `domain` knows `core`, `presenters` know
+`domain`, `interfaces` know everything. Only the interface layer may import the MCP SDK. All formatting
+lives in `presenters/text/` — context efficiency is cross-cutting and silently regresses if each tool
+formats its own output, so a domain function returns a dataclass and a `render_*` function turns it into
+the TSV a model reads. The two exceptions are `core/text.py`'s `num` and `plural`, which domain code may
+use for note strings it embeds in its own results. `server.py` contains no logic; it stays at the package
+root because the console script names `satisfactory_mcp.server:main`.
+
+None of that is checkable at runtime — a lazy `import` three frames deep inside a method body loads fine
+and violates the architecture silently. So `tests/test_architecture.py` parses every module with `ast` and
+looks at *every* import node at *any* depth. It runs stdlib-only in under a second, and its whitelist of
+tolerated violations is empty.
+
+**The shims.** `docs/`, `save/`, `graph/`, `spatial/`, `planning/` and `tools/` are compatibility aliases:
+each is a single `__init__.py` that re-registers the old submodule names against the module objects at
+their new homes, and `app.py` and `render.py` are re-import lists. They keep *identity*, not just names —
+`satisfactory_mcp.graph.model` **is** `satisfactory_mcp.domain.factories.model` — which is what lets the
+existing `monkeypatch.setattr` calls keep biting the module the server actually calls. They exist for
+import lines that predate the move; nothing new imports them, and `test_shims_are_frozen` proves each one
+still holds an alias and nothing else. `git log --follow` reaches through every move.
 
 ### 4.1 The save seam
 
-`save/projection.py` is the **only** module that knows a save parser exists. It shells out to
+`core/saveio/projection.py` is the **only** module that knows a save parser exists. It shells out to
 `sidecar/extract_save.py`, which imports `sav_parse` and prints a JSON projection to stdout.
 
 Reasons (licensing is *not* one of them, since this isn't distributed):
