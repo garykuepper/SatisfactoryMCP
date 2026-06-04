@@ -1,48 +1,23 @@
-"""The MCP app object, and the state accessors every tool group needs.
+"""Compatibility shim: the MCP app object now lives behind the interface seam.
 
-Split out so tool modules can register against one ``mcp`` without importing each other.
-``server`` imports the tool packages purely for their decorator side effects.
-
-The shared resolvers now live with their domains -- ``graph.resolve`` and
-``spatial.origin`` -- and are re-bound here only so the old private names keep resolving.
+The real module is ``interfaces.mcp.app``. Nothing new should import this path.
+Kept because ten test files spell ``from satisfactory_mcp.app import _state``, and
+because a star import would not carry the private names they actually reach for --
+``__all__`` never listed them. Hence an explicit re-import list, the same shape as
+``render.py``.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Annotated
+from .interfaces.mcp.app import (
+    Limit,
+    _item_id,  # noqa: F401  -- the five privates are the whole point of the shim:
+    _origin_for,  # noqa: F401  -- tests and scripts import them by name, and none of
+    _player_xy,  # noqa: F401  -- them was ever public enough to reach via __all__
+    _resolve_factory,  # noqa: F401
+    _state,  # noqa: F401
+    game,
+    mcp,
+)
 
-from mcp.server.fastmcp import FastMCP
-from pydantic import Field
-
-from . import config
-from .core.gamedata.loader import load_docs
-from .core.gamedata.model import GameData
-from .core.gamedata.normalize import normalize
-from .domain.factories.resolve import resolve_factory as _resolve_factory
-from .domain.planning.scenario import resolve_item
-from .domain.spatial.origin import player_xy as _player_xy
-from .domain.spatial.origin import resolve_origin as _origin_for
-from .domain.world.state import WorldState, load_state
-
-mcp = FastMCP("satisfactory")
-
-Limit = Annotated[int, Field(default=10, ge=1, le=25, description="max rows (hard cap 25)")]
-
-
-@lru_cache(maxsize=1)
-def game() -> GameData:
-    """Normalized game data. ~90 ms cold, so built once in-process, no disk cache."""
-    return normalize(load_docs(config.docs_path()))
-
-
-def _state(save: str | None = None, world: str | None = None) -> WorldState:
-    return load_state(game(), path=save, world=world)
-
-
-def _item_id(query: str) -> str | None:
-    return resolve_item(game(), query)
-
-
-#: The domain resolvers under their old private names, for ``server`` and for tests.
-_ = (_resolve_factory, _player_xy, _origin_for)
+__all__ = ["Limit", "game", "mcp"]

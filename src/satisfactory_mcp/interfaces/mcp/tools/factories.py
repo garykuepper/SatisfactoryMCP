@@ -9,15 +9,15 @@ from typing import Annotated
 
 from pydantic import Field
 
-from .. import render
+from ....domain.factories.query import ASPECTS as QUERY_ASPECTS
+from ....domain.factories.resolve import resolve_factory
+from ....domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
+from ....domain.factories.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
+from ....domain.factories.select import SelectorError
+from ....domain.factories.trace import power_at_risk, trace
+from ....domain.spatial import nodes as nodes_mod
+from ....presenters.text import primitives as render
 from ..app import Limit, _state, game, mcp
-from ..domain.factories.query import ASPECTS as QUERY_ASPECTS
-from ..domain.factories.resolve import resolve_factory
-from ..domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
-from ..domain.factories.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
-from ..domain.factories.select import SelectorError
-from ..domain.factories.trace import power_at_risk, trace
-from ..domain.spatial import nodes as nodes_mod
 
 
 def _cand_row(c, store, labelled: set[str]) -> tuple:
@@ -56,7 +56,7 @@ def factory_map(
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    from ..domain.factories import identity
+    from ....domain.factories import identity
 
     gr = st.graph
     store = st.labels
@@ -208,7 +208,7 @@ def factory_query(
     Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
     starved factory still reports its full rate.
     """
-    from ..domain.factories.query import build_view
+    from ....domain.factories.query import build_view
 
     try:
         st = _state(save, world)
@@ -407,8 +407,8 @@ def factory_health(
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
     """
-    from ..domain.factories.health import STATES, assess, summarise
-    from ..domain.factories.select import SelectorError
+    from ....domain.factories.health import STATES, assess, summarise
+    from ....domain.factories.select import SelectorError
 
     try:
         st = _state(save, world)
@@ -564,7 +564,7 @@ def propose_factories(
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    from ..domain.factories import cohere, identity
+    from ....domain.factories import cohere, identity
 
     store = st.labels
     proposals = (
@@ -640,8 +640,8 @@ def select_machines(
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    from ..domain.factories import identity
-    from ..domain.factories import select as gsel
+    from ....domain.factories import identity
+    from ....domain.factories import select as gsel
 
     try:
         picked = gsel.select_machines(
@@ -711,8 +711,8 @@ def name_factory(
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    from ..domain.factories import identity
-    from ..domain.factories import select as gsel
+    from ....domain.factories import identity
+    from ....domain.factories import select as gsel
 
     try:
         picked = gsel.select_machines(
@@ -772,7 +772,7 @@ def list_factories(save: str | None = None, world: str | None = None) -> str:
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
-    from ..domain.factories import identity
+    from ....domain.factories import identity
 
     store = st.labels
     if not store.labels:
@@ -797,7 +797,7 @@ def list_factories(save: str | None = None, world: str | None = None) -> str:
             )
         )
     loose = len(identity.unassigned(st.graph, store.assigned()))
-    from ..domain.factories.labels import LabelStore
+    from ....domain.factories.labels import LabelStore
 
     # Say where the file is. Labels are the one thing here a player authored by hand,
     # so another tool will want them, and reverse-engineering platformdirs to find them

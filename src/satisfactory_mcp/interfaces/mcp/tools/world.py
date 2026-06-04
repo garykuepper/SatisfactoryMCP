@@ -4,9 +4,10 @@ Everything here answers 'what does this save contain', with no planning."""
 
 from __future__ import annotations
 
-from .. import config, render
+from .... import config
+from ....core.saveio import projection as proj
+from ....presenters.text import primitives as render
 from ..app import Limit, _state, mcp
-from ..core.saveio import projection as proj
 
 
 @mcp.tool(structured_output=False)

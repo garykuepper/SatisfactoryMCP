@@ -16,9 +16,9 @@ old framing ("irreversible") argued for exactly the opposite behaviour.
 
 from __future__ import annotations
 
-from .. import render
+from ....domain.planning import advisor
+from ....presenters.text import primitives as render
 from ..app import _state, mcp
-from ..domain.planning import advisor
 
 #: Said on every hard-drive response, because it is the fact that decides how hard to
 #: think about the choice, and it is not visible anywhere in the game's own UI.

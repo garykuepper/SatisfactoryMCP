@@ -280,7 +280,10 @@ def test_no_tool_module_imports_another():
     import pathlib
     import re
 
-    root = pathlib.Path(srv.__file__).parent / "tools"
+    # Asked of the package `server` actually imported, not of a spelled-out path: the
+    # tool modules have moved once already, and a stale literal here would not fail --
+    # it would glob an empty directory and pass without checking anything.
+    root = pathlib.Path(srv._tools.__file__).parent
     for path in root.glob("*.py"):
         if path.name == "__init__.py":
             continue

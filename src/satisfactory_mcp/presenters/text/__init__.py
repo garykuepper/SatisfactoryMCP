@@ -3,9 +3,12 @@
 Context budget is the binding constraint on every response here -- see
 ``primitives`` for the rules that follow from it.
 
-Deliberately empty of imports. ``render.py`` still resolves through
-``presenters.text.primitives``, and importing a submodule runs this file first, so
-re-exporting the formatters here would drag the whole planning package in behind
-every ``render.num`` call -- and back through the ``from .. import render`` shim
-that domain modules still use, which is a cycle.
+Deliberately empty of imports, and it has to stay that way. Importing a submodule
+runs this file first, so re-exporting the formatters here would drag the whole
+planning package in behind every ``primitives.num`` call -- and the tool modules
+reach for ``primitives`` on every response.
+
+The ``from .. import render`` spelling this note used to warn about is gone from
+``src`` entirely: the interface layer imports ``presenters.text.primitives`` by name,
+and ``render.py`` survives only for the test files that still say ``render.table``.
 """

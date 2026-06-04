@@ -30,10 +30,11 @@ PKG = SRC / "satisfactory_mcp"
 #: only after it. ``save.projection`` needed a line of its own until it became
 #: ``core/saveio`` for real; now the literal prefix covers it and the entry is gone.
 #:
-#: Of the transitional names below, ``docs``, ``save``, ``graph``, ``spatial`` and
-#: ``planning`` now hold nothing but an alias shim ``__init__``. A line stays until
-#: its old path is deleted outright, because the shim is still a module the walker
-#: sees, and it has to be classified as the layer it forwards to.
+#: Of the transitional names below, ``docs``, ``save``, ``graph``, ``spatial``,
+#: ``planning`` and ``tools`` now hold nothing but an alias shim ``__init__``, and
+#: ``app`` and ``render`` nothing but a re-import list. A line stays until its old
+#: path is deleted outright, because the shim is still a module the walker sees, and
+#: it has to be classified as the layer it forwards to.
 _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.core", "core"),
     ("satisfactory_mcp.domain", "domain"),

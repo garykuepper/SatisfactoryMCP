@@ -4,10 +4,10 @@ Read-only over the normalized dump. Nothing here touches a save."""
 
 from __future__ import annotations
 
-from .. import render
+from ....core.gamedata import search
+from ....presenters.text import primitives as render
+from ....presenters.text.search import render_search
 from ..app import Limit, _item_id, _state, game, mcp
-from ..core.gamedata import search
-from ..presenters.text.search import render_search
 
 
 @mcp.tool(structured_output=False)
@@ -40,7 +40,7 @@ def recipe_detail(recipe_id: str) -> str:
     that buys nothing -- `match_recipes` already does exactly this resolution for
     `exclude_recipes`.
     """
-    from ..domain.planning.scenario import match_recipes
+    from ....domain.planning.scenario import match_recipes
 
     g = game()
     r = g.recipes.get(recipe_id)

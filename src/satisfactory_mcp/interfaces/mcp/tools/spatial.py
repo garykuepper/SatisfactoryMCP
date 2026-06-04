@@ -6,7 +6,13 @@ from typing import Annotated
 
 from pydantic import Field
 
-from .. import render
+from ....domain.spatial import elevation, geo
+from ....domain.spatial import nodes as nodes_mod
+from ....domain.spatial import ranking as ranking_mod
+from ....domain.spatial import regions as regions_mod
+from ....domain.spatial.origin import player_xy, resolve_origin
+from ....domain.spatial.select import SELECTOR_HELP, select_nodes
+from ....presenters.text import primitives as render
 from ..app import (
     Limit,
     _item_id,
@@ -14,12 +20,6 @@ from ..app import (
     game,
     mcp,
 )
-from ..domain.spatial import elevation, geo
-from ..domain.spatial import nodes as nodes_mod
-from ..domain.spatial import ranking as ranking_mod
-from ..domain.spatial import regions as regions_mod
-from ..domain.spatial.origin import player_xy, resolve_origin
-from ..domain.spatial.select import SELECTOR_HELP, select_nodes
 
 
 @mcp.tool(structured_output=False)
@@ -401,7 +401,7 @@ def show_on_map(
     are flagged. A wrong token still opens the map in the right place, just without that
     overlay.
     """
-    from ..domain.spatial import maplink
+    from ....domain.spatial import maplink
 
     g = game()
     try:

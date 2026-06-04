@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from .. import render
+from ....domain.spatial import regions as regions_mod
+from ....presenters.text import primitives as render
 from ..app import _state, game, mcp
-from ..domain.spatial import regions as regions_mod
 
 # Resources are CLIENT-PULLED, so they cost zero context until something asks for
 # them. That makes them right for stable orientation data and wrong for anything
@@ -72,7 +72,7 @@ def factory_labels() -> str:
     """
     import json
 
-    from ..domain.factories.labels import SCHEMA, LabelStore
+    from ....domain.factories.labels import SCHEMA, LabelStore
 
     try:
         st = _state()

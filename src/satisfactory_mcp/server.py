@@ -1,8 +1,12 @@
 """FastMCP entry point.
 
-Nothing is defined here. The app object and the shared resolvers live in ``app``, and
-every tool, resource and prompt lives in ``tools/``, one module per concern. Importing
-``tools`` is what registers them -- the decorators run on import.
+Nothing is defined here. The app object and the shared resolvers live in
+``interfaces.mcp.app``, and every tool, resource and prompt lives in
+``interfaces/mcp/tools/``, one module per concern. Importing ``tools`` is what
+registers them -- the decorators run on import.
+
+The file stays at this path whatever moves beneath it: the console script is
+``satisfactory_mcp.server:main``.
 
 This file was 3,467 lines with 36 tools in it before the split. The names below are
 re-exported because tests and ad-hoc scripts reach for ``server.plan_factory`` and
@@ -15,8 +19,10 @@ measured ~1.96x wire-size tax for no benefit.
 
 from __future__ import annotations
 
-from . import tools as _tools
-from .app import (
+from .domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
+from .domain.factories.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
+from .interfaces.mcp import tools as _tools
+from .interfaces.mcp.app import (
     Limit,
     _item_id,
     _origin_for,
@@ -26,9 +32,7 @@ from .app import (
     game,
     mcp,
 )
-from .domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
-from .domain.factories.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
-from .tools.factories import (
+from .interfaces.mcp.tools.factories import (
     _cand_row,
     factory_health,
     factory_map,
@@ -40,15 +44,15 @@ from .tools.factories import (
     select_machines,
     trace_upstream,
 )
-from .tools.gamedata import (
+from .interfaces.mcp.tools.gamedata import (
     alternates_for_item,
     list_buildings,
     recipe_detail,
     search_items,
     search_recipes,
 )
-from .tools.harddrives import advise_hard_drive_pick, list_pending_hard_drive_choices
-from .tools.planning import (
+from .interfaces.mcp.tools.harddrives import advise_hard_drive_pick, list_pending_hard_drive_choices
+from .interfaces.mcp.tools.planning import (
     PLAN_DEFAULTS,
     _plan_kwargs,
     bom,
@@ -62,16 +66,16 @@ from .tools.planning import (
     plan_layout,
     rank_unlocks,
 )
-from .tools.progression import (
+from .interfaces.mcp.tools.progression import (
     collected_from_world,
     mam_research,
     phase_requirements,
     power_shards,
     somersloops,
 )
-from .tools.prompts import design_factory, pick_hard_drive, plan_power_plant
-from .tools.resources import current_save, docs_summary, factory_labels, map_regions
-from .tools.spatial import (
+from .interfaces.mcp.tools.prompts import design_factory, pick_hard_drive, plan_power_plant
+from .interfaces.mcp.tools.resources import current_save, docs_summary, factory_labels, map_regions
+from .interfaces.mcp.tools.spatial import (
     describe_location,
     list_regions,
     rank_build_sites,
@@ -79,7 +83,7 @@ from .tools.spatial import (
     show_on_map,
     whereami,
 )
-from .tools.world import (
+from .interfaces.mcp.tools.world import (
     factory_sites,
     list_worlds,
     power_report,

@@ -8,28 +8,28 @@ from typing import Annotated
 
 from pydantic import Field
 
-from .. import render
+from ....domain.factories.select import SelectorError
+from ....domain.planning import bom as bom_mod
+from ....domain.planning import compare
+from ....domain.planning.carrier import resolve_tiers
+from ....domain.planning.commission_service import build_commission_report
+from ....domain.planning.diff_service import build_diff_report
+from ....domain.planning.layout_service import LayoutReport, build_layout_report
+from ....domain.planning.prepare import prepare
+from ....domain.planning.recall import PLAN_DEFAULTS
+from ....domain.planning.recall import recall_plan as _plan_kwargs
+from ....domain.planning.report import build_plan_report
+from ....domain.planning.scenario import build_scenario
+from ....domain.planning.sensitivity import sweep_unlocks
+from ....presenters.text import byproducts as byproducts_text
+from ....presenters.text import primitives as render
+from ....presenters.text.bom import render_bom
+from ....presenters.text.commission import render_commission
+from ....presenters.text.compare import render_comparison
+from ....presenters.text.diff import ENERGISED_CAVEAT, RANGE_CAVEAT, render_diff
+from ....presenters.text.layout import render_layout
+from ....presenters.text.plan_factory import render_plan_factory
 from ..app import Limit, _item_id, _state, game, mcp
-from ..domain.factories.select import SelectorError
-from ..domain.planning import bom as bom_mod
-from ..domain.planning import compare
-from ..domain.planning.carrier import resolve_tiers
-from ..domain.planning.commission_service import build_commission_report
-from ..domain.planning.diff_service import build_diff_report
-from ..domain.planning.layout_service import LayoutReport, build_layout_report
-from ..domain.planning.prepare import prepare
-from ..domain.planning.recall import PLAN_DEFAULTS
-from ..domain.planning.recall import recall_plan as _plan_kwargs
-from ..domain.planning.report import build_plan_report
-from ..domain.planning.scenario import build_scenario
-from ..domain.planning.sensitivity import sweep_unlocks
-from ..presenters.text import byproducts as byproducts_text
-from ..presenters.text.bom import render_bom
-from ..presenters.text.commission import render_commission
-from ..presenters.text.compare import render_comparison
-from ..presenters.text.diff import ENERGISED_CAVEAT, RANGE_CAVEAT, render_diff
-from ..presenters.text.layout import render_layout
-from ..presenters.text.plan_factory import render_plan_factory
 
 #: The stored-argument defaults, re-exported under their old home for ``server``. The
 #: two stage caveats keep their old home too: they were read from here before they had
