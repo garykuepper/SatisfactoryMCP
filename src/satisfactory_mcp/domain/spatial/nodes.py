@@ -8,8 +8,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from functools import lru_cache
 
-from .. import config
-from ..core.gamedata.model import GameData
+from ... import config
+from ...core.gamedata.model import GameData
 from . import geo
 
 __all__ = [

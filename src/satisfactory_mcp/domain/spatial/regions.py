@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .. import config
+from ... import config
 from . import geo
 
 __all__ = ["Label", "RegionMap", "load_regions"]

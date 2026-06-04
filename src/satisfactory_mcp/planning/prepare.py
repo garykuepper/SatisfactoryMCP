@@ -75,7 +75,7 @@ def prepare(
     the infeasible path, which is why it is on by default: a bare INFEASIBLE was the
     single most-reported problem with this surface.
     """
-    from ..spatial.select import SELECTOR_HELP
+    from ..domain.spatial.select import SELECTOR_HELP
     from .scenario import EXPORT_HELP
 
     request = build_scenario(game, state, **plan_kwargs)

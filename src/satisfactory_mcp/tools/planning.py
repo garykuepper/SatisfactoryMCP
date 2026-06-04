@@ -10,7 +10,7 @@ from pydantic import Field
 
 from .. import render
 from ..app import Limit, _item_id, _state, game, mcp
-from ..graph.select import SelectorError
+from ..domain.factories.select import SelectorError
 from ..planning import bom as bom_mod
 from ..planning import compare
 from ..planning.carrier import resolve_tiers

@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
+from ...core.gamedata.model import GameData
 from ..spatial import geo
 from ..spatial import nodes as nodes_mod
 from .model import FactoryGraph

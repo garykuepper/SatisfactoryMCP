@@ -37,7 +37,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
-from ..spatial import geo
+from ..domain.spatial import geo
 
 __all__ = ["Trunk", "TrunkPlan", "plan_trunks"]
 

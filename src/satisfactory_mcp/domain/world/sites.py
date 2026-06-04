@@ -6,7 +6,7 @@ three carries state, and the record list is the census's to hand over.
 
 from __future__ import annotations
 
-from ...spatial import geo
+from ..spatial import geo
 
 __all__ = ["consumer_z", "infra_points", "sites"]
 

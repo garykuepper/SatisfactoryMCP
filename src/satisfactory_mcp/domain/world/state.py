@@ -130,21 +130,21 @@ class WorldState:
     def graph(self):
         """The factory graph. Built once per state, since identity, health and layout
         all want it."""
-        from ...graph.build import build_graph
+        from ..factories.build import build_graph
 
         return build_graph(self.projection)
 
     @cached_property
     def structures(self):
         """Foundation slabs -- what was physically built as one platform."""
-        from ...graph.structure import build_structures
+        from ..factories.structure import build_structures
 
         return build_structures(self.projection)
 
     @cached_property
     def proposals(self):
         """Coherence-scored factory proposals. ~0.3 s, so built once per state."""
-        from ...graph.cohere import propose
+        from ..factories.cohere import propose
 
         return propose(self.graph, self.game, self.projection, self.structures)
 
@@ -158,7 +158,7 @@ class WorldState:
     @cached_property
     def labels(self):
         """Persisted factory names for this world."""
-        from ...graph.labels import LabelStore
+        from ..factories.labels import LabelStore
 
         return LabelStore.load(self.world_id, self.header.get("session_name") or "")
 

@@ -32,7 +32,7 @@ four products, over there"::
 
 from __future__ import annotations
 
-from ..core.gamedata.model import GameData
+from ...core.gamedata.model import GameData
 from ..spatial import geo
 from .identity import bases, cluster_machines
 from .labels import LabelStore

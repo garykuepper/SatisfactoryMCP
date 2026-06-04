@@ -26,8 +26,8 @@ from .app import (
     game,
     mcp,
 )
-from .graph.select import INDEX_WARNING as GRAPH_INDEX_WARNING
-from .graph.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
+from .domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
+from .domain.factories.select import SELECTOR_HELP as GRAPH_SELECTOR_HELP
 from .tools.factories import (
     _cand_row,
     factory_health,

@@ -8,8 +8,8 @@ save-only answer is a name-prefix guess that has to admit it is one.
 
 from __future__ import annotations
 
+from ...domain.spatial import geo
 from ...save.collect import CollectiblesView
-from ...spatial import geo
 from . import primitives as render
 
 __all__ = ["render_collectibles"]

@@ -17,9 +17,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
+from ..domain.factories.resolve import resolve_factory
+from ..domain.factories.select import SelectorError
 from ..domain.world.state import WorldState
-from ..graph.resolve import resolve_factory
-from ..graph.select import SelectorError
 from .commission import Tracking, commission, track
 from .diff import DiffReport, build_diff
 from .prepare import PreparedPlan, prepare

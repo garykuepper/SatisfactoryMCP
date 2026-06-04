@@ -36,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from ..core.gamedata.model import GameData
-from ..spatial import nodes as nodes_mod
+from ..domain.spatial import nodes as nodes_mod
 from .optimize import MW, build_processes, solve
 from .scenario import PlanRequest
 

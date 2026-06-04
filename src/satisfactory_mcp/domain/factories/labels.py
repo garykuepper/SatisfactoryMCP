@@ -31,7 +31,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import config
+from ... import config
 
 __all__ = ["MATCH_THRESHOLD", "REANCHOR_THRESHOLD", "Label", "LabelStore"]
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import ClassVar
 
-from ...spatial import geo
+from ..spatial import geo
 from .table import CollectibleTable, _class_of_removed, _leaf, _name_stem
 
 __all__ = ["RemovedActors"]

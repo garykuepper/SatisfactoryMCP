@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ..core.gamedata.model import GameData
+from ...core.gamedata.model import GameData
 from ..spatial import geo
 from .model import FactoryGraph
 

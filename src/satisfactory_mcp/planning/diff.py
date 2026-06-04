@@ -40,9 +40,9 @@ from dataclasses import dataclass, field
 
 from ..core.gamedata.model import GameData
 from ..core.text import plural
+from ..domain.spatial import geo
+from ..domain.spatial import nodes as nodes_mod
 from ..domain.world.state import WorldState
-from ..spatial import geo
-from ..spatial import nodes as nodes_mod
 from .layout import chain_depth
 from .optimize import MW, Solution
 from .scenario import PlanRequest

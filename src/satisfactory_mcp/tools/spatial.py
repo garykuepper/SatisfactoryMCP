@@ -14,12 +14,12 @@ from ..app import (
     game,
     mcp,
 )
-from ..spatial import elevation, geo
-from ..spatial import nodes as nodes_mod
-from ..spatial import ranking as ranking_mod
-from ..spatial import regions as regions_mod
-from ..spatial.origin import player_xy, resolve_origin
-from ..spatial.select import SELECTOR_HELP, select_nodes
+from ..domain.spatial import elevation, geo
+from ..domain.spatial import nodes as nodes_mod
+from ..domain.spatial import ranking as ranking_mod
+from ..domain.spatial import regions as regions_mod
+from ..domain.spatial.origin import player_xy, resolve_origin
+from ..domain.spatial.select import SELECTOR_HELP, select_nodes
 
 
 @mcp.tool(structured_output=False)
@@ -401,7 +401,7 @@ def show_on_map(
     are flagged. A wrong token still opens the map in the right place, just without that
     overlay.
     """
-    from ..spatial import maplink
+    from ..domain.spatial import maplink
 
     g = game()
     try:
