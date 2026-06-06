@@ -16,8 +16,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from ... import config
 from ...core.gamedata.loader import load_docs
@@ -27,7 +29,9 @@ from ...domain.world.state import WorldState, load_state
 from . import api
 from .watch import SaveWatcher
 
-__all__ = ["app", "create_app"]
+__all__ = ["STATIC_DIR", "app", "create_app"]
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @lru_cache(maxsize=1)
@@ -67,6 +71,11 @@ def create_app(
     instance.state.game = load_game
     instance.state.watcher = SaveWatcher()
     instance.include_router(api.router)
+
+    # Mounted at the root and therefore LAST: a mount at "/" swallows every path that
+    # did not already match, so the API router has to be registered above it.
+    if STATIC_DIR.is_dir():
+        instance.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     return instance
 
 

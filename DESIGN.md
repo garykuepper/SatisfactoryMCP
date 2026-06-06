@@ -190,6 +190,7 @@ SatisfactoryMcp/
           gamedata.py  world.py  progression.py  factories.py
           spatial.py   planning.py  harddrives.py  resources.py  prompts.py
       web/             # optional [web] extra: app.py (create_app) + api.py
+        static/        # index.html, app.js, vendored Leaflet — no game assets
     docs/ save/ graph/ spatial/ planning/ tools/ app.py render.py
                        # compatibility shims — see below
   sidecar/
@@ -227,7 +228,9 @@ its reader is a browser and not a model, and it converts every coordinate from t
 metres on the way out. `create_app(state_loader, game_loader)` takes both loaders as arguments so the whole
 HTTP surface is testable against the committed fixture projection with no game install and no `.sav`.
 FastAPI and uvicorn live in the optional `web` extra and may be imported only from this package, which is
-the same AST-checked rule that confines the MCP SDK to `interfaces/mcp/`.
+the same AST-checked rule that confines the MCP SDK to `interfaces/mcp/`. The map ships no game textures
+and no map tiles: Leaflet is vendored under `static/vendor/` with its BSD-2-Clause licence so the page
+works offline, and everything drawn on it is data the save and the docs dump already contain.
 
 ### 4.1 The save seam
 

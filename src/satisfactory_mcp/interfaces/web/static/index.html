@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Satisfactory &mdash; world map</title>
+    <!--
+      Vendored, not CDN'd: this tool reads a local save directory and has no business
+      needing the internet to draw. vendor/LEAFLET-LICENSE is the BSD-2-Clause text that
+      redistribution requires. No game textures and no map tiles are shipped or fetched --
+      everything drawn here is data the save and the docs dump already contain.
+    -->
+    <link rel="stylesheet" href="vendor/leaflet.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <strong>Satisfactory</strong>
+      <select id="world" title="which world to read"></select>
+      <span id="summary" class="muted">loading&hellip;</span>
+      <span id="live" class="dot" title="save watcher"></span>
+    </header>
+    <div id="map"></div>
+    <div id="err" hidden></div>
+    <script src="vendor/leaflet.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

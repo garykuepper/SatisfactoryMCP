@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from satisfactory_mcp import config
 from satisfactory_mcp.core.saveio.projection import World
 from satisfactory_mcp.interfaces.web import api as web_api
-from satisfactory_mcp.interfaces.web.app import create_app
+from satisfactory_mcp.interfaces.web.app import STATIC_DIR, create_app
 
 
 @pytest.fixture
@@ -252,3 +252,19 @@ def test_a_written_save_becomes_a_save_event(game, tmp_path, monkeypatch):
         "filename": "Han Solo_autosave_0.sav",
         "mtime": event.mtime,
     }
+
+
+def test_the_static_bundle_ships_the_page_and_the_vendor_licence():
+    """Redistributing Leaflet means shipping its BSD-2-Clause text next to it."""
+    assert (STATIC_DIR / "index.html").is_file()
+    assert (STATIC_DIR / "app.js").is_file()
+    assert (STATIC_DIR / "style.css").is_file()
+    assert (STATIC_DIR / "vendor" / "leaflet.js").is_file()
+    licence = (STATIC_DIR / "vendor" / "LEAFLET-LICENSE").read_text(encoding="utf-8")
+    assert "BSD 2-Clause License" in licence
+
+
+def test_the_page_is_served_from_the_root(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "leaflet.js" in r.text
