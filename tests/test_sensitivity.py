@@ -13,8 +13,8 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.scenario import build_scenario
-from satisfactory_mcp.planning.sensitivity import sweep_unlocks
+from satisfactory_mcp.domain.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.sensitivity import sweep_unlocks
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +28,7 @@ SPIRE = dict(
 
 @pytest.fixture
 def live(game):
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 
@@ -65,7 +65,7 @@ def test_most_candidates_change_nothing_and_that_is_reported(sweep):
 def test_the_baseline_matches_the_plan_it_is_measured_against(sweep, game, live):
     """A delta against a different baseline is not a delta. This is the mistake advisor.py
     documents: feeding raw_caps instead of real extractors inflated a baseline by 86%."""
-    from satisfactory_mcp.planning.prepare import prepare
+    from satisfactory_mcp.domain.planning.prepare import prepare
 
     plan = prepare(game, live, dict(SPIRE))
     assert sweep.baseline == pytest.approx(plan.solution.objective_value)
@@ -75,7 +75,7 @@ def test_gain_is_positive_for_better_whichever_way_the_objective_points(game, li
     """`objective_value` is sign-normalised for max/min, so a min_* objective needs
     flipping -- otherwise a recipe that halves raw usage reports a large NEGATIVE gain and
     sorts last, which is exactly backwards."""
-    from satisfactory_mcp.planning.sensitivity import _better
+    from satisfactory_mcp.domain.planning.sensitivity import _better
 
     assert _better("max_mw", 100.0) == 100.0
     assert _better("min_raw", 100.0) == -100.0

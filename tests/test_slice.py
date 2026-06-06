@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning.prepare import prepare
-from satisfactory_mcp.planning.slice import slice_of
+from satisfactory_mcp.domain.planning.prepare import prepare
+from satisfactory_mcp.domain.planning.slice import slice_of
 
 pytestmark = pytest.mark.integration
 

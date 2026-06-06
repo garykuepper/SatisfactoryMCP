@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.spatial import geo
-from satisfactory_mcp.spatial import nodes as nodes_mod
-from satisfactory_mcp.spatial.select import select_nodes
+from satisfactory_mcp.domain.spatial import geo
+from satisfactory_mcp.domain.spatial import nodes as nodes_mod
+from satisfactory_mcp.domain.spatial.select import select_nodes
 
 pytestmark = pytest.mark.integration
 

@@ -192,8 +192,6 @@ SatisfactoryMcp/
           spatial.py   planning.py  harddrives.py  resources.py  prompts.py
       web/             # optional [web] extra: app.py (create_app) + api.py
         static/        # index.html, app.js, vendored Leaflet — no game assets
-    docs/ save/ graph/ spatial/ planning/ tools/ app.py render.py
-                       # compatibility shims — see below
   src/pioneersav/      # our parser: reads all 66 saves, six saveVersions. A standalone
                        # library — it imports nothing from satisfactory_mcp, and only
                        # core/saveio/extract.py imports it, inside the child process
@@ -214,13 +212,13 @@ and violates the architecture silently. So `tests/test_architecture.py` parses e
 looks at *every* import node at *any* depth. It runs stdlib-only in under a second, and its whitelist of
 tolerated violations is empty.
 
-**The shims.** `docs/`, `save/`, `graph/`, `spatial/`, `planning/` and `tools/` are compatibility aliases:
-each is a single `__init__.py` that re-registers the old submodule names against the module objects at
-their new homes, and `app.py` and `render.py` are re-import lists. They keep *identity*, not just names —
-`satisfactory_mcp.graph.model` **is** `satisfactory_mcp.domain.factories.model` — which is what lets the
-existing `monkeypatch.setattr` calls keep biting the module the server actually calls. They exist for
-import lines that predate the move; nothing new imports them, and `test_shims_are_frozen` proves each one
-still holds an alias and nothing else. `git log --follow` reaches through every move.
+**The shims are gone.** `docs/`, `save/`, `graph/`, `spatial/`, `planning/`, `tools/`, `app.py` and
+`render.py` survived the moves for exactly one commit, as alias packages that re-registered each old
+submodule name against the module object at its new home. That bought the test suite a gradual move
+without a 2,000-line import diff landing on top of the moves themselves. Every caller now spells the
+layered home, the old names are deleted, and `test_the_old_paths_stay_deleted` inverts the ratchet: a
+path whose only job is to forward an import is a second name for one module, and the forwarding one
+always goes stale. `git log --follow` reaches through every move.
 
 **The web adapter.** `interfaces/web/` is a *sibling* of `interfaces/mcp/`, not a layer above it: both are
 thin adapters over the same domain, and neither imports the other — the web app duplicates the two-line

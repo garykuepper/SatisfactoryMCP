@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.graph.build import build_graph
-from satisfactory_mcp.graph.query import ASPECTS, build_view
+from satisfactory_mcp.domain.factories.build import build_graph
+from satisfactory_mcp.domain.factories.query import ASPECTS, build_view
 
 pytestmark = pytest.mark.integration
 

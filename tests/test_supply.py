@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning import supply
-from satisfactory_mcp.planning.optimize import solve
-from satisfactory_mcp.planning.scenario import build_scenario
-from satisfactory_mcp.spatial import nodes as nodes_mod
+from satisfactory_mcp.domain.planning import supply
+from satisfactory_mcp.domain.planning.optimize import solve
+from satisfactory_mcp.domain.planning.scenario import build_scenario
+from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
 pytestmark = pytest.mark.integration
 
@@ -166,8 +166,8 @@ def test_an_export_nothing_produces_is_pinned_to_zero(game, state):
     fail without it; this one pins the intended behaviour so a later change cannot quietly
     start reporting a non-zero export here.
     """
-    from satisfactory_mcp.planning.optimize import solve
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning.optimize import solve
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     item = _nitrogen(game)
     req = build_scenario(game, state, objective="min_power", exports=["Nitrogen Gas", "MW"])
@@ -182,8 +182,8 @@ def test_a_floor_on_an_unmakeable_export_is_infeasible_not_conjured(game, state)
     100/min floor SUCCEEDED and reported exports: Nitrogen Gas=100 on a world with no
     recipe and no reachable node for it. A confidently wrong plan beats a bare
     INFEASIBLE for damage."""
-    from satisfactory_mcp.planning.optimize import solve
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning.optimize import solve
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     req = build_scenario(
         game,
@@ -199,8 +199,8 @@ def test_a_floor_on_an_unmakeable_export_is_infeasible_not_conjured(game, state)
 def test_max_item_on_an_unmakeable_target_is_bounded(game, state):
     """Unbounded, not infeasible: the objective pushed the free column up forever and
     HiGHS returned UNBOUNDED, which surfaced to the user as a bare INFEASIBLE."""
-    from satisfactory_mcp.planning.optimize import solve
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning.optimize import solve
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     req = build_scenario(
         game, state, objective="max_item", target_item="Nitrogen Gas", exports=["Nitrogen Gas"]
@@ -213,8 +213,8 @@ def test_max_item_on_an_unmakeable_target_is_bounded(game, state):
 def test_the_reason_is_stated_even_when_the_plan_succeeds(game, state):
     """Zero output is a quiet answer. The same naming the infeasible path does must
     run here, or a pinned-to-zero export looks like an ordinary empty result."""
-    from satisfactory_mcp.planning import supply
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning import supply
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     req = build_scenario(game, state, objective="min_power", exports=["Nitrogen Gas", "MW"])
     lines = supply.unmakeable(req, game)
@@ -225,8 +225,8 @@ def test_the_reason_is_stated_even_when_the_plan_succeeds(game, state):
 def test_power_keeps_its_own_balance_and_is_not_double_rowed(game, state):
     """MW is excluded from the new rows on purpose: it balances on the power row. A
     second row would force generation to zero and every power plan to 0 MW."""
-    from satisfactory_mcp.planning.optimize import solve
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning.optimize import solve
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     req = build_scenario(
         game, state, objective="max_mw", sources=["region:Spire Coast"], exports=["MW"]

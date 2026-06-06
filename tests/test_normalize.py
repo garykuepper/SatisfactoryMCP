@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.docs.constants import PURITY_MULT
+from satisfactory_mcp.core.gamedata.constants import PURITY_MULT
 
 pytestmark = pytest.mark.integration
 

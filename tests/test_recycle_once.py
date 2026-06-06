@@ -17,8 +17,8 @@ from dataclasses import replace
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.optimize import build_processes, solve
-from satisfactory_mcp.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.optimize import build_processes, solve
+from satisfactory_mcp.domain.planning.scenario import build_scenario
 
 pytestmark = pytest.mark.integration
 

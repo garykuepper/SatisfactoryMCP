@@ -19,8 +19,8 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.prepare import prepare
-from satisfactory_mcp.planning.sites import partition
+from satisfactory_mcp.domain.planning.prepare import prepare
+from satisfactory_mcp.domain.planning.sites import partition
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +32,7 @@ THREE = {"A-rig": RIG, "B-hall": HALL, "C-resin": RESIN}
 
 @pytest.fixture
 def live(game):
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 

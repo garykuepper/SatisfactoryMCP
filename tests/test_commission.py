@@ -22,10 +22,10 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.commission import commission, track
-from satisfactory_mcp.planning.diff import DiffReport, DiffRow, build_diff, group_key
-from satisfactory_mcp.planning.prepare import prepare
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.domain.planning.commission import commission, track
+from satisfactory_mcp.domain.planning.diff import DiffReport, DiffRow, build_diff, group_key
+from satisfactory_mcp.domain.planning.prepare import prepare
+from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -207,7 +207,7 @@ def test_power_is_kept_out_of_the_dependency_graph(game, state):
     """MW is modelled as an item so the power balance is just another row. Left in the
     dependency graph it would make every consumer depend on every generator and every
     generator on its fuel -- one component, and no order at all."""
-    from satisfactory_mcp.planning.commission import _depths
+    from satisfactory_mcp.domain.planning.commission import _depths
 
     prepared = prepare(game, state, dict(SPIRE))
     depths = _depths(prepared.solution.processes)
@@ -226,7 +226,7 @@ def test_a_cycle_puts_its_members_on_the_SAME_stage(game, state):
     exactly this shape: the cycle split across stages and the consumer landed level with
     its own producer. layout.chain_depth condenses the cycle instead and returns 1, 1, 2.
     """
-    from satisfactory_mcp.planning.commission import _depths
+    from satisfactory_mcp.domain.planning.commission import _depths
 
     procs = [
         {"pid": "ore", "rates": {"ore": 1.0}},
@@ -243,8 +243,8 @@ def test_commission_and_diff_order_a_plant_the_same_way(game, state):
     """`track` joins a commission wave against a diff row, so the two must agree on chain
     depth. They now agree by construction -- one function -- and this pins that they are
     not allowed to drift back apart."""
-    from satisfactory_mcp.planning.commission import _depths
-    from satisfactory_mcp.planning.layout import chain_depth
+    from satisfactory_mcp.domain.planning.commission import _depths
+    from satisfactory_mcp.domain.planning.layout import chain_depth
 
     prepared = prepare(game, state, dict(SPIRE))
     procs = prepared.solution.processes
@@ -528,7 +528,7 @@ def test_recalling_a_stored_plan_answers_which_stage_you_are_in(game, tmp_path, 
     """The headline case: `diff_vs_save(plan=...)` with no stage argument at all. A
     stored plan is what makes a stage number worth writing down, so recalling one turns
     the grouping on without being asked, and the caveat about loose numbering drops."""
-    from satisfactory_mcp.planning import store as store_mod
+    from satisfactory_mcp.domain.planning import store as store_mod
 
     monkeypatch.setattr(store_mod.config, "plans_dir", lambda: tmp_path)
     saved = srv.plan_factory(save_as="stage-test", **SPIRE)
@@ -578,7 +578,7 @@ def test_a_generator_contributes_no_cycle(run):
 def test_overclocking_shortens_a_cycle(game):
     """A machine at 250% finishes in 40% of the base time, which is why an overclocked
     extractor is not what holds up a startup."""
-    from satisfactory_mcp.planning.commission import _cycle_s
+    from satisfactory_mcp.domain.planning.commission import _cycle_s
 
     base = {"recipe": A_RECIPE, "clock": 1.0, "building_id": "Build_OilRefinery_C"}
     fast = {**base, "clock": 2.5}
@@ -587,7 +587,7 @@ def test_overclocking_shortens_a_cycle(game):
 
 def test_an_extractor_uses_its_extract_cycle(game):
     """It has no recipe at all, so a recipe-only lookup would silently call it instant."""
-    from satisfactory_mcp.planning.commission import _cycle_s
+    from satisfactory_mcp.domain.planning.commission import _cycle_s
 
     row = {"recipe": None, "clock": 1.0, "building_id": "Build_OilPump_C"}
     assert _cycle_s(row, game) == pytest.approx(game.buildings["Build_OilPump_C"].extract_cycle_s)

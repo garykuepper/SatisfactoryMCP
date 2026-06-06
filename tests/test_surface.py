@@ -211,7 +211,7 @@ def test_every_tool_module_is_imported_by_the_package():
     fine and simply not offer them."""
     import pkgutil
 
-    from satisfactory_mcp import tools
+    from satisfactory_mcp.interfaces.mcp import tools
 
     on_disk = {m.name for m in pkgutil.iter_modules(tools.__path__)}
     assert on_disk, "no tool modules found"

@@ -14,8 +14,8 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.materials import FOUNDATION_ID, build_materials, cost_of
-from satisfactory_mcp.planning.prepare import prepare
+from satisfactory_mcp.domain.planning.materials import FOUNDATION_ID, build_materials, cost_of
+from satisfactory_mcp.domain.planning.prepare import prepare
 
 pytestmark = pytest.mark.integration
 

@@ -16,17 +16,17 @@ from copy import deepcopy
 
 import pytest
 
-from satisfactory_mcp import render
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.diff import (
+from satisfactory_mcp.domain.planning.diff import (
     NEIGHBOUR_RADIUS_M,
     RECLOCK_TOLERANCE,
     _reclock_note,
     build_diff,
 )
-from satisfactory_mcp.planning.optimize import solve
-from satisfactory_mcp.planning.scenario import build_scenario
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.domain.planning.optimize import solve
+from satisfactory_mcp.domain.planning.scenario import build_scenario
+from satisfactory_mcp.domain.world.state import WorldState
+from satisfactory_mcp.presenters.text import primitives as render
 
 pytestmark = pytest.mark.integration
 

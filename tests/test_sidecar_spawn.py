@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from satisfactory_mcp import config
-from satisfactory_mcp.save import projection as proj
+from satisfactory_mcp.core.saveio import projection as proj
 
 
 def test_sidecar_never_inherits_the_servers_stdin(monkeypatch):

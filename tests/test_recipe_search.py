@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.docs import search
+from satisfactory_mcp.core.gamedata import search
 
 pytestmark = pytest.mark.integration
 

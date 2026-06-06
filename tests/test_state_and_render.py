@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp import render
-from satisfactory_mcp.spatial import geo
+from satisfactory_mcp.domain.spatial import geo
+from satisfactory_mcp.presenters.text import primitives as render
 
 # ------------------------------------------------------------------ geometry
 
@@ -231,7 +231,7 @@ def test_a_building_the_save_names_differently_is_not_reported_unbuilt(game):
     Build_GeneratorBiomass_Automated_C; the save stores the standing burners as
     Build_GeneratorBiomass_C. A never-built warning that fires on a building you can see
     erodes trust in every other warning."""
-    from satisfactory_mcp.save.state import WorldState
+    from satisfactory_mcp.domain.world.state import WorldState
 
     projection = {
         "building_counts": {"Build_GeneratorBiomass_C": 8},
@@ -249,7 +249,7 @@ def test_a_building_the_save_names_differently_is_not_reported_unbuilt(game):
 def test_the_hub_integrated_burner_is_not_folded_in(game):
     """It has no build recipe and cannot be placed, so counting it would credit the
     player with generators they never built."""
-    from satisfactory_mcp.docs.constants import BUILDING_CLASS_ALIASES
+    from satisfactory_mcp.core.gamedata.constants import BUILDING_CLASS_ALIASES
 
     assert "Build_GeneratorIntegratedBiomass_C" not in BUILDING_CLASS_ALIASES
 
@@ -257,7 +257,7 @@ def test_the_hub_integrated_burner_is_not_folded_in(game):
 def test_aliases_only_map_onto_classes_the_docs_actually_have(game):
     """An alias pointing at a class Docs.json does not define would move the count
     somewhere nothing can read it."""
-    from satisfactory_mcp.docs.constants import BUILDING_CLASS_ALIASES
+    from satisfactory_mcp.core.gamedata.constants import BUILDING_CLASS_ALIASES
 
     for save_cls, docs_cls in BUILDING_CLASS_ALIASES.items():
         assert docs_cls in game.buildings, docs_cls

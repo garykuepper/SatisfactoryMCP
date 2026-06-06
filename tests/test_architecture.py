@@ -16,11 +16,13 @@ fix lands and the entry is left behind. Entries only ever got deleted, and the
 last one is gone: the refactor finished with an empty whitelist, which
 ``test_whitelist_is_empty`` now states outright.
 
-The second ratchet is ``SHIM_MODULES``. Every pre-refactor import path still
-resolves, because 28 test files and a decade of muscle memory spell the old
-names -- but a shim is an alias and nothing else, and the danger is that an old
-path quietly becomes a place code lives again. ``test_shims_are_frozen`` pins
-each one to its known file set and proves it declares no function and no class.
+The second ratchet is ``FORBIDDEN_PATHS``, and it has inverted. For one commit the
+eight pre-refactor import paths survived as alias shims so the test suite could be
+moved over gradually; they are gone, every caller spells the layered home, and the
+rule is now that those names must never come back. A folder whose only job is to
+forward an import is a second place to look for the same code, and it re-attracts
+logic the moment someone is in a hurry -- so ``test_the_old_paths_stay_deleted``
+asserts absence rather than shape.
 
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
@@ -46,32 +48,18 @@ PARSER_IMPORTER = "satisfactory_mcp.core.saveio.extract"
 
 #: Longest-prefix-first layer map, applied to importer *and* target alike.
 #:
-#: The old paths count as the layer they are moving *to*, not the layer they sit
-#: in today -- that is what makes the test useful during the migration instead of
-#: only after it. ``save.projection`` needed a line of its own until it became
-#: ``core/saveio`` for real; now the literal prefix covers it and the entry is gone.
-#:
-#: The migration is over, so the transitional names below are now exactly the
-#: ``SHIM_MODULES`` set: each is an alias for its new home and is classified as the
-#: layer it forwards to, which is what makes a shim's own imports legal. A line
-#: stays until its old path is deleted outright, because the shim is still a
-#: module the walker sees.
+#: Through the migration this also carried the pre-refactor paths, each classified
+#: as the layer it was moving *to*, so the rules bit while things were still in
+#: motion. Those entries are gone with the paths they described: an entry for a
+#: name that no longer exists can never match an edge, so it says nothing and
+#: quietly invites the next reader to believe the old layout is still around.
 _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.core", "core"),
     ("satisfactory_mcp.domain", "domain"),
     ("satisfactory_mcp.presenters", "presenters"),
     ("satisfactory_mcp.interfaces", "interfaces"),
-    # Transitional: pre-refactor homes, mapped to their destination layer.
-    ("satisfactory_mcp.docs", "core"),
-    ("satisfactory_mcp.save", "domain"),
-    ("satisfactory_mcp.graph", "domain"),
-    ("satisfactory_mcp.spatial", "domain"),
-    ("satisfactory_mcp.planning", "domain"),
     ("satisfactory_mcp.config", "core"),
-    ("satisfactory_mcp.render", "presenters"),
-    ("satisfactory_mcp.app", "interfaces"),
     ("satisfactory_mcp.server", "interfaces"),
-    ("satisfactory_mcp.tools", "interfaces"),
 )
 
 #: Third-party packages that belong to the outside world. They form a pseudo-layer
@@ -94,29 +82,23 @@ ALLOWED: dict[str, frozenset[str]] = {
 #: violation now has to be argued for by adding a line here, which is the point.
 WHITELIST: frozenset[tuple[str, str]] = frozenset()
 
-#: The pre-refactor import paths, frozen as compatibility shims.
+#: The pre-refactor import paths, deleted, with where each one went.
 #:
-#: Six are packages holding nothing but an alias ``__init__`` that re-registers
-#: each old submodule name against the module object at its new home; ``app`` and
-#: ``render`` are single files holding an explicit re-import list. All eight are
-#: aliases, so module *identity* survives and the monkeypatching in the test suite
-#: still bites the module the server actually calls.
-#:
-#: They exist for callers that already spell the old name. Nothing new imports
-#: them, and nothing may ever live *in* them again -- which is the whole point of
-#: pinning the file set rather than trusting the docstrings that say so.
-SHIM_MODULES: frozenset[str] = frozenset(
-    {
-        "satisfactory_mcp.docs",  # -> core.gamedata
-        "satisfactory_mcp.save",  # -> core.saveio + domain.world.state
-        "satisfactory_mcp.graph",  # -> domain.factories
-        "satisfactory_mcp.spatial",  # -> domain.spatial
-        "satisfactory_mcp.planning",  # -> domain.planning
-        "satisfactory_mcp.tools",  # -> interfaces.mcp.tools
-        "satisfactory_mcp.app",  # -> interfaces.mcp.app
-        "satisfactory_mcp.render",  # -> presenters.text.primitives
-    }
-)
+#: They lived one commit longer than the code did, as alias shims, so that ~28 test
+#: files could be moved over without a 2,000-line diff landing in the same change as
+#: the moves. That job is done. Re-creating any of them -- as a package, as a module,
+#: or as a directory with anything at all in it -- means the tree has two names for
+#: one thing again, and the second name is always the one that goes stale.
+FORBIDDEN_PATHS: dict[str, str] = {
+    "docs": "core.gamedata",
+    "save": "core.saveio + domain.world.state",
+    "graph": "domain.factories",
+    "spatial": "domain.spatial",
+    "planning": "domain.planning",
+    "tools": "interfaces.mcp.tools",
+    "app": "interfaces.mcp.app",
+    "render": "presenters.text.primitives",
+}
 
 #: The homes the refactor moved things to, asserted to exist by literal name.
 #:
@@ -144,8 +126,8 @@ LAYERED_HOMES: tuple[str, ...] = (
 #: Everything the package root is allowed to contain: the four layers, the two
 #: real modules that stay at the top by decision (``server.py`` because the
 #: console script names it, ``config.py`` because it is read from every layer),
-#: the package marker, and the eight shims. A new name here means someone started
-#: a ninth top-level home instead of picking a layer.
+#: and the package marker. Seven names, and a new one means someone started a
+#: fifth top-level home instead of picking a layer.
 ROOT_ENTRIES: frozenset[str] = frozenset(
     {
         "__init__.py",
@@ -155,19 +137,11 @@ ROOT_ENTRIES: frozenset[str] = frozenset(
         "domain",
         "presenters",
         "interfaces",
-        "app.py",
-        "render.py",
-        "docs",
-        "save",
-        "graph",
-        "spatial",
-        "planning",
-        "tools",
     }
 )
 
 #: The presenter layer, by literal name rather than by layer lookup.
-_PRESENTER_ROOTS = ("satisfactory_mcp.presenters", "satisfactory_mcp.render")
+_PRESENTER_ROOTS = ("satisfactory_mcp.presenters",)
 
 
 def _layer(module: str) -> str | None:
@@ -209,22 +183,6 @@ def _is_module(dotted: str) -> bool:
     """
     base = SRC.joinpath(*dotted.split("."))
     return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
-
-
-def _path_of(dotted: str) -> Path:
-    """Where a dotted name sits on disk, package directory or single file."""
-    base = SRC.joinpath(*dotted.split("."))
-    return base if (base / "__init__.py").is_file() else base.with_suffix(".py")
-
-
-def _defined_names(path: Path) -> list[str]:
-    """Every function and class a file declares, at any nesting depth."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return [
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    ]
 
 
 def _targets(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
@@ -309,11 +267,10 @@ def test_whitelist_is_not_stale():
 def test_whitelist_is_empty():
     """The refactor ended with nothing exempted, and that is the resting state.
 
-    Moving the shims into place needed no new entry -- a shim's only edges point
-    at the package it forwards to, which ``_LAYERS`` classifies as the same layer
-    the shim is mapped to, so every one of them is a legal same-layer import.
-    Adding a line back here is allowed, but it now has to be argued for in a diff
-    that touches this file, which is exactly the friction it is meant to have.
+    Neither adding the shims nor deleting them needed an entry: a shim's only edges
+    pointed at the package it forwarded to, and removing it removed both ends at
+    once. Adding a line back here is allowed, but it now has to be argued for in a
+    diff that touches this file, which is exactly the friction it is meant to have.
     """
     assert WHITELIST == frozenset(), (
         "the whitelist is meant to stay empty -- a new exemption needs a reason "
@@ -325,8 +282,8 @@ def test_domain_and_core_never_import_a_presenter():
     """The seam phase 1 built, named outright instead of implied by the table.
 
     ``test_no_new_violations`` already covers this, but only through ``_LAYERS``:
-    re-pointing ``render`` at the domain layer in that table would silence it
-    while the leak came straight back. This test spells the presenter modules
+    re-pointing ``presenters`` at the domain layer in that table would silence it
+    while the leak came straight back. This test spells the presenter package
     literally, so the one rule the refactor existed for cannot be dissolved by
     editing a mapping.
     """
@@ -351,8 +308,8 @@ def test_the_layered_homes_exist():
     )
 
 
-def test_the_package_root_holds_only_the_layers_and_the_shims():
-    """No ninth top-level home. Pick a layer, or say why in ``ROOT_ENTRIES``."""
+def test_the_package_root_holds_only_the_layers():
+    """No fifth top-level home. Pick a layer, or say why in ``ROOT_ENTRIES``."""
     found = {p.name for p in PKG.iterdir() if p.name != "__pycache__"}
     assert found == ROOT_ENTRIES, (
         "the package root drifted -- everything belongs in core, domain, "
@@ -401,40 +358,20 @@ def test_only_the_extractor_imports_the_parser():
     )
 
 
-def test_shims_are_frozen():
-    """An old path is an alias and nothing more -- no file, no def, no class.
+def test_the_old_paths_stay_deleted():
+    """The inverted ratchet: a forwarding path is a defect, not a courtesy.
 
-    A package shim is one ``__init__.py`` holding an alias loop; ``app`` and
-    ``render`` are one file each holding a re-import list. Both shapes are pure
-    name-binding, so a function or a class appearing in one means logic came back
-    to a path the architecture says is dead. The file-set check catches the other
-    half of the same mistake: a new module dropped into the old directory, where
-    the layer rules would classify it by its forwarding destination and wave it
-    through.
+    While the shims stood, this test pinned their *shape* -- one alias ``__init__``,
+    no def, no class -- because the failure to catch was logic creeping back into a
+    path the architecture called dead. The paths are gone now, so the check gets to
+    be the blunt one: neither ``docs/`` nor ``docs.py`` may exist at the package root
+    under any of the eight old names. Re-adding one to spare a caller an import edit
+    puts the tree back to having two names for one module, and the forwarding one is
+    the one that stops being updated.
     """
-    for dotted in sorted(SHIM_MODULES):
-        path = _path_of(dotted)
-        assert path.exists(), (
-            f"{dotted}: the shim is gone -- delete its _LAYERS line and its "
-            "SHIM_MODULES entry in the same commit that removes the old path"
-        )
-        if path.is_dir():
-            found = sorted(
-                p.relative_to(path).as_posix()
-                for p in path.rglob("*.py")
-                if "__pycache__" not in p.parts
-            )
-            assert found == ["__init__.py"], (
-                f"{dotted}: new code at an old path -- a shim package is an alias "
-                f"__init__ and nothing else, found {found}"
-            )
-            files = [path / "__init__.py"]
-        else:
-            files = [path]
-
-        for file in files:
-            declared = _defined_names(file)
-            assert not declared, (
-                f"{dotted}: a shim contains zero logic, but this one declares "
-                f"{declared} -- move it to the real module and re-bind the name"
+    for name, moved_to in sorted(FORBIDDEN_PATHS.items()):
+        for candidate in (PKG / name, PKG / f"{name}.py"):
+            assert not candidate.exists(), (
+                f"satisfactory_mcp.{name} is back -- it moved to {moved_to} and the old "
+                "path is not a place code may live again; fix the caller's import instead"
             )

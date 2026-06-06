@@ -11,14 +11,14 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.graph.trace import orient, power_at_risk, trace
+from satisfactory_mcp.domain.factories.trace import orient, power_at_risk, trace
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def live(game):
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 

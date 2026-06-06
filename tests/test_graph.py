@@ -17,10 +17,10 @@ from itertools import pairwise
 
 import pytest
 
-from satisfactory_mcp.graph import identity
-from satisfactory_mcp.graph.build import build_graph, class_of
-from satisfactory_mcp.graph.labels import Label, LabelStore
-from satisfactory_mcp.graph.select import SelectorError, select_machines
+from satisfactory_mcp.domain.factories import identity
+from satisfactory_mcp.domain.factories.build import build_graph, class_of
+from satisfactory_mcp.domain.factories.labels import Label, LabelStore
+from satisfactory_mcp.domain.factories.select import SelectorError, select_machines
 
 pytestmark = pytest.mark.integration
 
@@ -255,7 +255,7 @@ def test_put_re_anchors_an_existing_label_rather_than_duplicating_it():
 
 def test_labels_round_trip_through_disk(tmp_path, monkeypatch):
     from satisfactory_mcp import config
-    from satisfactory_mcp.graph import labels as labels_mod
+    from satisfactory_mcp.domain.factories import labels as labels_mod
 
     monkeypatch.setattr(labels_mod.config, "labels_dir", lambda: tmp_path)
     assert config is not None
@@ -348,7 +348,7 @@ def _slab_projection():
 def test_stacked_floors_are_one_structure():
     """A multi-storey factory is one build. Without this the tor factory reads as three
     platforms that merely share a footprint."""
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     sx = build_structures(_slab_projection())
     assert len(sx.slabs) == 2, [s.tiles for s in sx.slabs]
@@ -359,7 +359,7 @@ def test_stacked_floors_are_one_structure():
 
 
 def test_a_detached_platform_stays_detached():
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     sx = build_structures(_slab_projection())
     assert sx.slab_of["Build_SmelterMk1_C_3"] != sx.slab_of["Build_FoundryMk1_C_1"]
@@ -368,7 +368,7 @@ def test_a_detached_platform_stays_detached():
 def test_ground_built_machines_belong_to_no_slab():
     """Two of the player's twelve factories are built straight on the ground, which is
     why slabs are a candidate signal and never the arbiter."""
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     sx = build_structures(_slab_projection())
     assert "Build_SmelterMk1_C_4" not in sx.slab_of
@@ -377,7 +377,7 @@ def test_ground_built_machines_belong_to_no_slab():
 
 def test_no_structures_block_degrades_to_empty_rather_than_raising():
     """Projections from schema 6 and earlier have no structures at all."""
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     sx = build_structures({"machines": []})
     assert sx.slabs == [] and sx.slab_of == {}
@@ -388,7 +388,7 @@ def test_walls_bridge_slabs_only_when_chained():
     """Two platforms joined by a run of walls. Asking whether any SINGLE wall touches
     both finds nothing -- the real shape is slab -> wall -> wall -> slab. On the
     reference save that distinction is 0 joins against 4."""
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     left = [[0, 0, 0, 0], [0, 800, 0, 0]]
     right = [[0, 3200, 0, 0], [0, 4000, 0, 0]]
@@ -416,7 +416,7 @@ def test_slab_selector_uses_the_index_factory_map_prints():
     """Slabs are numbered by tile count; groups() is ordered by machine count. Indexing
     into the wrong one silently returns a different platform -- it once re-anchored the
     speedwire factory onto the aluminium site."""
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     projection = {
         "structures": {
@@ -459,8 +459,8 @@ def test_complete_linkage_refuses_to_chain(graph, game, projection):
     sites are belt-connected and 800 m apart; single linkage welds them through the
     concrete machines sitting between, complete linkage does not. Measured on the real
     save the same score scores F1 0.521 chained against 0.987 unchained."""
-    from satisfactory_mcp.graph import cohere
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     props = cohere.propose(graph, game, projection, build_structures(projection))
     for p in props:
@@ -471,8 +471,8 @@ def test_the_span_cap_bounds_a_proposal(graph, game, projection):
     """The one load-bearing constant: removing it drops precision 1.000 -> 0.776."""
     import math
 
-    from satisfactory_mcp.graph import cohere
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     pos = {
         r["instance"].rsplit(".", 1)[-1]: r["pos"] for r in projection["machines"] if r.get("pos")
@@ -485,8 +485,8 @@ def test_the_span_cap_bounds_a_proposal(graph, game, projection):
 
 
 def test_every_machine_lands_in_exactly_one_proposal(graph, game, projection):
-    from satisfactory_mcp.graph import cohere
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     props = cohere.propose(graph, game, projection, build_structures(projection))
     seen = [m for p in props for m in p.machines]
@@ -500,8 +500,8 @@ def test_weakening_the_weights_only_ever_refines(graph, game, projection):
     That is the direction that matters: precision stayed 1.000 under both. A partition
     that got COARSER as evidence got weaker would mean the score is not doing what it
     claims."""
-    from satisfactory_mcp.graph import cohere
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     sx = build_structures(projection)
     base = [set(p.machines) for p in cohere.propose(graph, game, projection, sx)]
@@ -513,8 +513,8 @@ def test_weakening_the_weights_only_ever_refines(graph, game, projection):
 
 
 def test_proposals_carry_the_evidence_that_made_them(graph, game, projection):
-    from satisfactory_mcp.graph import cohere
-    from satisfactory_mcp.graph.structure import build_structures
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
 
     props = cohere.propose(graph, game, projection, build_structures(projection))
     multi = [p for p in props if p.size > 1]
@@ -529,8 +529,8 @@ def test_exclusive_dependents_are_absorbed_across_a_pipe_boundary():
     pipe networks, so every pump against a generator in the other network scores
     negative and complete linkage takes the MINIMUM. One blind pair vetoes the merge.
     Exclusivity is a property of a cluster, not of a pair, so it needs a second pass."""
-    from satisfactory_mcp.graph.cohere import attach_dependents
-    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+    from satisfactory_mcp.domain.factories.cohere import attach_dependents
+    from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 
     gens_a = [f"Build_GeneratorCoal_C_{i}" for i in range(3)]
     gens_b = [f"Build_GeneratorCoal_C_{10 + i}" for i in range(3)]
@@ -553,8 +553,8 @@ def test_exclusive_dependents_are_absorbed_across_a_pipe_boundary():
 def test_a_peer_is_not_absorbed_however_exclusive():
     """The size guard. Without it precision falls 1.000 -> 0.709, because two large
     factories that mostly feed each other get welded into one."""
-    from satisfactory_mcp.graph.cohere import attach_dependents
-    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+    from satisfactory_mcp.domain.factories.cohere import attach_dependents
+    from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 
     left = [f"Build_SmelterMk1_C_{i}" for i in range(4)]
     right = [f"Build_ConstructorMk1_C_{10 + i}" for i in range(4)]
@@ -573,7 +573,7 @@ def test_name_hint_does_not_let_one_recipe_outvote_a_power_plant():
     the coal plant to 'Concrete'."""
     from collections import Counter
 
-    from satisfactory_mcp.graph.identity import Candidate
+    from satisfactory_mcp.domain.factories.identity import Candidate
 
     cand = Candidate(
         machines=[f"m{i}" for i in range(33)],
@@ -592,8 +592,8 @@ def test_a_dependent_that_manufactures_is_a_factory_not_an_outlier():
     exclusivity and the size guard -- but 3 of those 15 make Automated Wiring and
     Computer, and the other 12 are the biomass burners powering them. Infrastructure
     runs no recipe; something that manufactures is its own factory."""
-    from satisfactory_mcp.graph.cohere import attach_dependents
-    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+    from satisfactory_mcp.domain.factories.cohere import attach_dependents
+    from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 
     host = [f"Build_ConstructorMk1_C_{i}" for i in range(20)]
     wiring = [f"Build_AssemblerMk1_C_{20 + i}" for i in range(3)]
@@ -625,8 +625,8 @@ def test_proposal_selector_names_exactly_what_was_proposed():
     it by hand from a centroid and a radius does not work: on the real save,
     near:-442,-1406@120 around a 15-machine proposal picked up 137 machines, 82 of them
     belonging to the factory next door."""
-    from satisfactory_mcp.graph.cohere import Proposal
-    from satisfactory_mcp.graph.select import select_machines
+    from satisfactory_mcp.domain.factories.cohere import Proposal
+    from satisfactory_mcp.domain.factories.select import select_machines
 
     proposals = [
         Proposal(machines=sorted(STEEL)),
@@ -640,8 +640,8 @@ def test_proposal_selector_names_exactly_what_was_proposed():
 
 
 def test_proposal_selector_reports_a_bad_index():
-    from satisfactory_mcp.graph.cohere import Proposal
-    from satisfactory_mcp.graph.select import SelectorError, select_machines
+    from satisfactory_mcp.domain.factories.cohere import Proposal
+    from satisfactory_mcp.domain.factories.select import SelectorError, select_machines
 
     graph = build_graph(_slab_projection())
     with pytest.raises(SelectorError, match="out of range"):
@@ -655,7 +655,7 @@ def test_index_selectors_are_documented_as_volatile():
     A stale index once re-anchored the speedwire factory onto the aluminium site, so the
     tools that print indices must say so."""
     from satisfactory_mcp import server
-    from satisfactory_mcp.graph.select import INDEX_WARNING
+    from satisfactory_mcp.domain.factories.select import INDEX_WARNING
 
     for token in ("base:", "line:", "slab:", "proposal:"):
         assert token in INDEX_WARNING
@@ -667,8 +667,8 @@ def test_a_remote_mine_is_attributed_to_the_factory_its_belt_reaches_first():
     factory reach it in 26-43 hops and the tor factory in 88-123 -- but steel and tor are
     belt-connected to EACH OTHER downstream, so counting every reachable machine dilutes
     exclusivity to 0.55 and the mine is left orphaned. First arrival is unambiguous."""
-    from satisfactory_mcp.graph.cohere import attach_dependents
-    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+    from satisfactory_mcp.domain.factories.cohere import attach_dependents
+    from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 
     near_plant = [f"Build_FoundryMk1_C_{i}" for i in range(4)]
     far_plant = [f"Build_AssemblerMk1_C_{10 + i}" for i in range(4)]
@@ -703,8 +703,8 @@ def test_a_remote_mine_is_attributed_to_the_factory_its_belt_reaches_first():
 def test_a_mine_between_two_equally_close_factories_is_left_alone():
     """The margin guard. When first arrival is a near tie there is no honest answer, and
     an unattributed miner in the coverage report beats a wrong attribution."""
-    from satisfactory_mcp.graph.cohere import attach_dependents
-    from satisfactory_mcp.graph.model import Edge, FactoryGraph
+    from satisfactory_mcp.domain.factories.cohere import attach_dependents
+    from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 
     left = [f"Build_FoundryMk1_C_{i}" for i in range(4)]
     right = [f"Build_AssemblerMk1_C_{10 + i}" for i in range(4)]
@@ -724,7 +724,7 @@ def test_the_label_file_is_a_stable_documented_shape():
     """Labels are the one thing here a player authored by hand, so the file is an
     interface, not a private cache. A consumer joins `anchors` against its own read of
     the same save; nothing else from this server is needed."""
-    from satisfactory_mcp.graph.labels import SCHEMA, Label, LabelStore
+    from satisfactory_mcp.domain.factories.labels import SCHEMA, Label, LabelStore
 
     store = LabelStore(world_id="TESTWORLD", session_name="Test")
     store.put("steel factory", ["Build_FoundryMk1_C_1"], notes="ingots")

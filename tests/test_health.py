@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.graph.health import OK, STATES, assess
+from satisfactory_mcp.domain.factories.health import OK, STATES, assess
 
 pytestmark = pytest.mark.integration
 
@@ -259,7 +259,7 @@ def test_the_synthetic_shard_recipe_is_not_treated_as_a_slug(game):
 
 
 def _budget(game, projection):
-    from satisfactory_mcp.save.state import WorldState
+    from satisfactory_mcp.domain.world.state import WorldState
 
     return WorldState(projection=projection, game=game).shard_budget()
 

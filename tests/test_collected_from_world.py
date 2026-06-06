@@ -36,11 +36,11 @@ import copy
 
 import pytest
 
-from satisfactory_mcp.save import state as state_mod
-from satisfactory_mcp.save.state import WorldState, _name_stem, load_collectibles
-from satisfactory_mcp.spatial import geo
-from satisfactory_mcp.tools import progression
-from satisfactory_mcp.tools.progression import collected_from_world
+from satisfactory_mcp.domain.spatial import geo
+from satisfactory_mcp.domain.world import state as state_mod
+from satisfactory_mcp.domain.world.state import WorldState, _name_stem, load_collectibles
+from satisfactory_mcp.interfaces.mcp.tools import progression
+from satisfactory_mcp.interfaces.mcp.tools.progression import collected_from_world
 
 pytestmark = pytest.mark.integration
 

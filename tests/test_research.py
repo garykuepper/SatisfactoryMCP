@@ -24,8 +24,8 @@ from copy import deepcopy
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.docs.constants import CAPABILITY_SCHEMATICS
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.core.gamedata.constants import CAPABILITY_SCHEMATICS
+from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -35,7 +35,7 @@ def live(game):
     """The save on this machine. The `state` fixture is a committed schema-5 projection
     from BEFORE Production Amplifier was researched, so judging a tool's output -- which
     reads the live save -- against it compares two different worlds."""
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 

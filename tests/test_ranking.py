@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.spatial import geo
-from satisfactory_mcp.spatial.ranking import WEIGHTS, rank_sites
+from satisfactory_mcp.domain.spatial import geo
+from satisfactory_mcp.domain.spatial.ranking import WEIGHTS, rank_sites
 
 
 def _node(x, y, z=0, rate=120.0, purity="normal", tapped=False, reachable=True):
@@ -139,7 +139,7 @@ def test_a_miner_is_never_offered_for_a_liquid_node(game):
     mAllowedResourceForms is the field that actually encodes it: RF_SOLID on miners,
     RF_LIQUID on the pumps. It was already parsed and simply not consulted.
     """
-    from satisfactory_mcp.spatial import nodes as nodes_mod
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
     table = nodes_mod.load_nodes()
     oil = [n for n in table.nodes if n["resource"] == "Desc_LiquidOil_C" and n["kind"] == "node"]
@@ -151,7 +151,7 @@ def test_a_miner_is_never_offered_for_a_liquid_node(game):
 def test_node_rates_agree_with_the_extractor_that_can_tap_them(game):
     """The general invariant. Every node's rate must be achievable by some extractor
     whose allowed FORM matches the resource."""
-    from satisfactory_mcp.spatial import nodes as nodes_mod
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
     table = nodes_mod.load_nodes()
     for node in table.nodes:
@@ -176,7 +176,7 @@ def test_the_base_rates_match_the_dumps_own_cycle_fields(game):
     litres converted to m3 for fluids. Confirms the extractor model was right all along
     and only node_rate was wrong."""
     from satisfactory_mcp import config
-    from satisfactory_mcp.docs.loader import load_docs
+    from satisfactory_mcp.core.gamedata.loader import load_docs
 
     raw = load_docs(config.docs_path())
     idx = raw.index(
@@ -202,7 +202,7 @@ def test_oil_rates_match_the_published_table(game):
     The 250% column is pinned as well as the 100% one because that is the figure a plan
     is actually built against: a pure node overclocked is 600 m3/min, not 1,200.
     """
-    from satisfactory_mcp.spatial import nodes as nodes_mod
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
     published = {"impure": (60.0, 150.0), "normal": (120.0, 300.0), "pure": (240.0, 600.0)}
     pump = game.buildings["Build_OilPump_C"]

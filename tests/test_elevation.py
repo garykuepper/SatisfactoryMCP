@@ -13,9 +13,9 @@ from copy import deepcopy
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.save.state import WorldState
-from satisfactory_mcp.spatial import elevation
-from satisfactory_mcp.spatial import nodes as nodes_mod
+from satisfactory_mcp.domain.spatial import elevation
+from satisfactory_mcp.domain.spatial import nodes as nodes_mod
+from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -68,7 +68,7 @@ def test_foundations_are_the_dense_source_on_a_current_save(game):
     """8,347 of them against 566 buildings on the live save. They are what gives a
     developed site any evidence about itself at all -- one building per machine is sparse,
     one sample per foundation piece is not."""
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     try:
         live = _state(None, None)

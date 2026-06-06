@@ -68,7 +68,7 @@ from pioneersav.objects import ActorHeader
 from pioneersav.properties import read_object
 from pioneersav.versions import FIRST_MODERN_BODY
 from satisfactory_mcp.core.saveio.extract import _lightweight, _placed, _structures
-from satisfactory_mcp.graph.structure import build_structures
+from satisfactory_mcp.domain.factories.structure import build_structures
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

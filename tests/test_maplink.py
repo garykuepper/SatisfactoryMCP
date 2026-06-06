@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.spatial import maplink
+from satisfactory_mcp.domain.spatial import maplink
 
 pytestmark = pytest.mark.integration
 
@@ -127,7 +127,7 @@ def test_well_variants_are_offered_only_where_wells_exist(game):
     """Coal is node-only. Emitting coalWellPure invents a token for something that does
     not exist -- harmless, since an unknown layer is ignored, but it is a guess with no
     need to be made: the node table already knows which resources have wells."""
-    from satisfactory_mcp.spatial import nodes as nodes_mod
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
     table = nodes_mod.load_nodes()
 

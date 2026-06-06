@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning.optimize import (
+from satisfactory_mcp.domain.planning.optimize import (
     Scenario,
     extractor_processes,
     normalise_objective,
     solve,
 )
-from satisfactory_mcp.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.scenario import build_scenario
 
 pytestmark = pytest.mark.integration
 
@@ -122,6 +122,6 @@ def test_scenario_normalises_on_construction(game):
 @pytest.mark.parametrize("word", ["MW", "mw", "power", "Power"])
 def test_power_is_accepted_as_an_export_in_any_spelling(game, state, word):
     req = build_scenario(game, state, sources=["region:Spire Coast"], exports=[word])
-    from satisfactory_mcp.planning.optimize import MW
+    from satisfactory_mcp.domain.planning.optimize import MW
 
     assert MW in req.scenario.exports

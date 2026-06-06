@@ -142,16 +142,22 @@ line: `design_factory`, `plan_power_plant`, `pick_hard_drive`.
 
 ```
 src/satisfactory_mcp/
-  docs/       Docs.json -> normalized items / recipes / buildings / schematics
-  save/       sidecar invocation, caching, derived world state
-  spatial/    exact geometry, nodes, region names, selectors, site ranking
-  planning/   LP optimizer, hard-drive advisor
-  render.py   ALL response formatting (context budget is the binding constraint)
-  server.py   FastMCP tool registration only
-src/pioneersav/  our save parser, a standalone package: the extractor subprocess is the
-                 only thing that imports it
+  core/       knows nothing above it: Docs.json loading, the save seam, num/plural
+  domain/     returns dataclasses and dicts, never text: world state, progression,
+              power, factories, spatial, collectibles, the LP planner
+  presenters/ ALL response formatting (context budget is the binding constraint)
+  interfaces/ mcp/ (the FastMCP surface) and web/ (an optional FastAPI + Leaflet map)
+  server.py   the console entry point; no logic
+  config.py   paths and environment
+src/pioneersav/
+              our save parser, a standalone package: only the extractor subprocess
+              imports it
 tools/        one-off data generators
 ```
+
+Imports run one way — `core` knows nothing, `domain` knows `core`, `presenters` know `domain`,
+`interfaces` know everything — and `tests/test_architecture.py` reads the AST of every module to
+prove it, rather than trusting review.
 
 Save parsing lives behind one subprocess boundary. The parser refuses an unrecognised
 `saveHeaderType` rather than guessing, so a game patch breaks exactly one module; a torn autosave or

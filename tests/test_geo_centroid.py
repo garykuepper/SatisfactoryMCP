@@ -15,7 +15,7 @@ import math
 
 import pytest
 
-from satisfactory_mcp.spatial import geo
+from satisfactory_mcp.domain.spatial import geo
 
 # ------------------------------------------------------------- centroid
 
@@ -79,7 +79,7 @@ def test_a_cluster_reuses_the_same_function(game):
 
 def test_a_factory_view_still_reports_a_centroid_and_spread(game, state):
     """The two graph modules were the biggest copies. Their output must be unchanged."""
-    from satisfactory_mcp.graph.query import build_view
+    from satisfactory_mcp.domain.factories.query import build_view
 
     machines = sorted(state.graph.machines())[:40]
     if len(machines) < 2:

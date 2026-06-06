@@ -14,8 +14,8 @@ import math
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.graph.labels import LabelStore
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.domain.factories.labels import LabelStore
+from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
 
@@ -157,7 +157,7 @@ def test_node_rows_carry_elevation(game):
     """z was in the node table and in every machine position all along, read by nothing
     but geo.cluster's centroid. The planner concluded the tool "has no z-data" and
     guessed pump counts by hand."""
-    from satisfactory_mcp.spatial import nodes as nodes_mod
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
     table = nodes_mod.load_nodes()
     assert all("z" in n for n in table.nodes)

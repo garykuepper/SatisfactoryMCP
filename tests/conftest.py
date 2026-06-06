@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from satisfactory_mcp import config
-from satisfactory_mcp.docs.loader import load_docs
-from satisfactory_mcp.docs.normalize import normalize
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.core.gamedata.loader import load_docs
+from satisfactory_mcp.core.gamedata.normalize import normalize
+from satisfactory_mcp.domain.world.state import WorldState
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

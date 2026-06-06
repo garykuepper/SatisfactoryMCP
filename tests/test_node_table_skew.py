@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from satisfactory_mcp.spatial import nodes as nodes_mod
+from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 
 pytestmark = pytest.mark.integration
 
@@ -337,7 +337,7 @@ def table_and_header(projection):
 @pytest.fixture
 def tool(state, monkeypatch):
     """``tools.spatial`` reading the committed projection instead of this machine's saves."""
-    from satisfactory_mcp.tools import spatial as mod
+    from satisfactory_mcp.interfaces.mcp.tools import spatial as mod
 
     monkeypatch.setattr(mod, "_state", lambda *a, **k: state)
     return mod

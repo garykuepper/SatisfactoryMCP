@@ -17,10 +17,10 @@ from dataclasses import replace
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.optimize import build_processes, solve
-from satisfactory_mcp.planning.prepare import prepare
-from satisfactory_mcp.planning.scenario import build_scenario
-from satisfactory_mcp.planning.slice import slice_of
+from satisfactory_mcp.domain.planning.optimize import build_processes, solve
+from satisfactory_mcp.domain.planning.prepare import prepare
+from satisfactory_mcp.domain.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.slice import slice_of
 
 pytestmark = pytest.mark.integration
 
@@ -232,7 +232,7 @@ def test_a_sloop_budget_warns_when_the_research_is_missing(game):
     for it -- it is derived from the purchased schematics. Planning ahead of the research
     is legitimate, so this warns rather than refusing, but staying silent would print a
     plan that cannot be built as shown."""
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     st = _state(None, None)
     out = srv.plan_factory(sloops=16, limit=3, **SPIRE)
@@ -269,7 +269,7 @@ def test_the_budget_changes_the_plan_id(game, state):
 def test_plan_layout_takes_the_same_budget(game):
     """plan_layout dropping a solve-shaping argument is exactly how it once schematised
     a different plant than the one it was asked to draw."""
-    from satisfactory_mcp.planning.store import PLAN_ARGS
+    from satisfactory_mcp.domain.planning.store import PLAN_ARGS
 
     assert "sloops" in PLAN_ARGS
     out = srv.plan_layout(sloops=16, limit=3, **SPIRE)

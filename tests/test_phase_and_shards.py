@@ -16,12 +16,12 @@ import copy
 
 import pytest
 
-from satisfactory_mcp.docs.constants import (
+from satisfactory_mcp.core.gamedata.constants import (
     POTENTIAL_SHARD_SLOTS,
     max_clock,
     shards_for_clock,
 )
-from satisfactory_mcp.save.state import WorldState
+from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
 

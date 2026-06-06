@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.docs.uestruct import (
+from satisfactory_mcp.core.gamedata.uestruct import (
     UeStructError,
     amount,
     as_list,

@@ -14,8 +14,8 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.planning.prepare import prepare
-from satisfactory_mcp.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.prepare import prepare
+from satisfactory_mcp.domain.planning.scenario import build_scenario
 
 pytestmark = pytest.mark.integration
 
@@ -27,7 +27,7 @@ NORECYC = ["Alternate: Recycled Plastic", "Alternate: Recycled Rubber"]
 
 @pytest.fixture
 def live(game):
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 

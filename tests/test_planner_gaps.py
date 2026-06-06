@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from satisfactory_mcp.planning.optimize import build_processes, solve
-from satisfactory_mcp.planning.scenario import build_scenario
+from satisfactory_mcp.domain.planning.optimize import build_processes, solve
+from satisfactory_mcp.domain.planning.scenario import build_scenario
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +111,7 @@ def test_water_extractors_can_be_capped_to_what_a_site_holds(game, state):
 def test_the_default_water_cap_is_an_assumption_not_a_measurement(game):
     """It is the only number in the constants register with no data behind it, and it
     is high enough not to bind -- which makes reading it as capacity dangerous."""
-    from satisfactory_mcp.docs.constants import WATER_EXTRACTOR_CAP_ASSUMED
+    from satisfactory_mcp.core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 
     assert WATER_EXTRACTOR_CAP_ASSUMED >= 100
 
@@ -119,7 +119,7 @@ def test_the_default_water_cap_is_an_assumption_not_a_measurement(game):
 def test_a_water_pump_reports_its_resource_rather_than_a_question_mark(game, state):
     """A Water Extractor sits on an FGWaterVolume, which is not a node and has no
     purity, so both columns read "?" and a working pump looked broken."""
-    from satisfactory_mcp.graph.query import build_view
+    from satisfactory_mcp.domain.factories.query import build_view
 
     pumps = [
         r["instance"].rsplit(".", 1)[-1]
@@ -215,7 +215,7 @@ def test_a_negligible_process_is_unlisted_but_still_counted(game, state):
     0.0017/min -- one item every ten hours. Unlike a clock-mode split there is nothing to
     fold it into. Dropping the ROW is right; dropping the MACHINE is not, and doing both
     silently turned a measured "9 buildings" into 8 in compare_recipe_options."""
-    from satisfactory_mcp.planning import optimize as opt
+    from satisfactory_mcp.domain.planning import optimize as opt
 
     req = build_scenario(
         game,
@@ -371,7 +371,7 @@ def test_packing_is_never_worse_than_the_arithmetic_it_replaced(game):
 def test_the_default_block_is_a_shape_someone_would_build(game):
     """Unconstrained, the cheapest pack for 77 Water Extractors is a 40x702 m ribbon. It
     is correct arithmetic and not a build, so the default is capped at MAX_BLOCK_ASPECT."""
-    from satisfactory_mcp.docs.footprint import MAX_BLOCK_ASPECT
+    from satisfactory_mcp.core.gamedata.footprint import MAX_BLOCK_ASPECT
 
     fp = game.buildings["Build_WaterPump_C"].footprint
     block = fp.pack(77)
@@ -388,7 +388,7 @@ def test_a_recycled_fluid_balances_without_being_asked_for(game, state):
     """Aluminium is the canonical loop: Alumina Solution drinks water and Aluminum Scrap
     gives some back. Nothing recycles it explicitly -- water is ONE balance row and the
     equality does the work, which is why a byproduct cannot pile up here."""
-    from satisfactory_mcp.planning.prepare import prepare
+    from satisfactory_mcp.domain.planning.prepare import prepare
 
     plan = prepare(
         game,
@@ -419,7 +419,7 @@ def test_zero_water_extractors_means_zero(game, state):
     """`int(x) if x else DEFAULT` turned an explicit 0 into the 200-pump assumption, so a
     plan told it had no water came back making 480 Aluminium Ingots on 480 m3/min of it.
     Zero is a meaningful answer -- it is what you ask of an inland site."""
-    from satisfactory_mcp.planning.scenario import build_scenario
+    from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     key = ("Build_WaterPump_C", "Desc_Water_C", "normal")
     kw = dict(objective="max_item", target_item="Aluminum Ingot", exports=["Aluminum Ingot"])
@@ -442,7 +442,7 @@ def test_an_empty_plan_says_why_it_is_empty(game, state):
     """An all-zero solve is OPTIMAL and reads as success: "buildings=0, exports:" with no
     complaint. Every recipe is present and unlocked, so `unmakeable` finds nothing to
     report -- the supply probe has to run for the same reason it runs on INFEASIBLE."""
-    from satisfactory_mcp.planning.prepare import prepare
+    from satisfactory_mcp.domain.planning.prepare import prepare
 
     plan = prepare(
         game,

@@ -5,7 +5,7 @@ Split out so tool modules can register against one ``mcp`` without importing eac
 
 The shared resolvers now live with their domains -- ``domain.factories.resolve`` and
 ``domain.spatial.origin`` -- and are re-bound here only so the old private names keep
-resolving. ``satisfactory_mcp.app`` re-imports the lot for the same reason.
+resolving for the tool modules that spell them.
 """
 
 from __future__ import annotations

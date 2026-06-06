@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def live(game):
-    from satisfactory_mcp.app import _state
+    from satisfactory_mcp.interfaces.mcp.app import _state
 
     return _state(None, None)
 
@@ -42,7 +42,7 @@ def test_measured_draw_never_exceeds_nameplate(live):
 def test_an_unmonitored_machine_is_charged_in_full(game):
     """Unknown utilisation must not read as idle, or a factory the save cannot see would
     look free. Charging it fully keeps the measured figure conservative."""
-    from satisfactory_mcp.save.state import WorldState
+    from satisfactory_mcp.domain.world.state import WorldState
 
     machines = [
         {"instance": "L:P.a", "cls": "Build_ConstructorMk1_C", "recipe": None},

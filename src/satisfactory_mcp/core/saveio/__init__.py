@@ -3,7 +3,7 @@
 Everything above this package consumes the plain-dict projection and never learns
 that a save parser, a subprocess or a pickle cache exists. That is what lets the
 whole test suite run from a committed JSON fixture with no game install. It was
-``satisfactory_mcp.save.projection``; that name survives as an alias shim.
+``satisfactory_mcp.save.projection``; that name is gone rather than aliased.
 """
 
 from __future__ import annotations
