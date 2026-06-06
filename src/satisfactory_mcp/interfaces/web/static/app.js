@@ -146,6 +146,13 @@ map.attributionControl.setPrefix("").addAttribution("map data from your save &mi
 map.createPane("regions");
 map.getPane("regions").style.zIndex = 350;
 
+/* The player's own concrete, in its own pane between the biome raster (350) and the
+ * overlay pane (400): a floor plan has to cover the terrain it was poured on and sit
+ * under every machine, node and label that stands on it. Leaflet builds one canvas per
+ * pane, so this is also what keeps 8,000 rectangles off the same canvas as the terrain. */
+map.createPane("foundations");
+map.getPane("foundations").style.zIndex = 360;
+
 var control = L.control.layers(null, {}, { collapsed: false }).addTo(map);
 state.control = control;
 L.control.scale({ imperial: false }).addTo(map);
@@ -219,6 +226,49 @@ function drawRegions(data) {
   });
 }
 
+/* The player's floor plan: one 8 m tile per placed foundation, ramp, wall or catwalk.
+ *
+ * Everything about the shape of these is decided by what the projection does NOT carry.
+ *
+ *   * No rotation. The instance quaternion is dropped at extraction, so every tile is
+ *     drawn AXIS-ALIGNED. A slab the player laid at an angle -- and this world has
+ *     several -- comes out as a staircase of squares rather than a tilted rectangle.
+ *     That is the honest drawing; guessing a yaw from the neighbours would invent one.
+ *   * No per-class size. None of these eighteen classes has clearance data, so there is
+ *     no footprint to ask for. They all snap to the same grid, whose edge the server
+ *     reports as `tile_m`, so a wall paints the tile it stands on rather than its own
+ *     thin volume -- it straddles two tiles and fringes a walled platform by half a tile,
+ *     which at any zoom where the platform is legible is not visible.
+ *
+ * Stroked in its own fill colour, the trick the biome cells already use: no stroke at all
+ * leaves hairline seams between neighbouring tiles at low zoom, and a stroke in any other
+ * colour draws an 8 m grid. Same colour, weight 1, and a slab reads as one platform.
+ */
+var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built against the biomes.
+
+function drawStructures(data) {
+  var group = layer("foundations", true);
+  var half = (data.tile_m || 8) / 2;
+  data.structures.forEach(function (s) {
+    if (s.x_m === null || s.y_m === null) return;
+    L.rectangle(
+      [
+        [-s.y_m - half, s.x_m - half],
+        [-s.y_m + half, s.x_m + half],
+      ],
+      {
+        color: STRUCTURE_COLOUR,
+        weight: 1,
+        opacity: 0.9,
+        fillColor: STRUCTURE_COLOUR,
+        fillOpacity: 0.9,
+        interactive: false,
+        pane: "foundations",
+      }
+    ).addTo(group);
+  });
+}
+
 function drawNodes(data) {
   var byResource = {};
   data.nodes.forEach(function (n) {
@@ -250,15 +300,26 @@ function drawNodes(data) {
     });
 }
 
+/* Machines at their real size: `w_m`/`l_m` are the building's own footprint, so a
+ * Manufacturer (18x20 m) reads as the eight-times-larger thing it is next to a
+ * Constructor (8x10 m). Null for the classes the docs dump gives no clearance data --
+ * both biomass burners here -- and those fall back to the 6 m square every machine used
+ * to get. Axis-aligned, and for the same reason the foundations are: the projection
+ * carries no yaw, so a machine the player rotated 90 degrees draws at its unrotated
+ * extent rather than at a guessed one. */
+var MACHINE_FALLBACK_M = 6;
+
 function drawMachines(data) {
   ["machines", "extractors", "generators"].forEach(function (kind) {
     var group = layer(kind, kind !== "machines");
     data[kind].forEach(function (m) {
       if (m.x_m === null) return;
+      var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
+      var l = (m.l_m || MACHINE_FALLBACK_M) / 2;
       L.rectangle(
         [
-          [-m.y_m - 3, m.x_m - 3],
-          [-m.y_m + 3, m.x_m + 3],
+          [-m.y_m - l, m.x_m - w],
+          [-m.y_m + l, m.x_m + w],
         ],
         {
           color: KIND_COLOUR[kind],
@@ -273,6 +334,7 @@ function drawMachines(data) {
             ["recipe", m.recipe],
             ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
             ["paused", m.paused ? "yes" : null],
+            ["footprint", m.w_m && m.l_m ? m.w_m + " x " + m.l_m + " m" : null],
             ["at", m.x_m + ", " + m.y_m + " m"],
             ["instance", "<code>" + m.instance_leaf + "</code>"],
           ])
@@ -391,6 +453,9 @@ function loadStatic() {
   // on a world switch rather than on every save write.
   get("/api/nodes").then(drawNodes).catch(function (e) {
     fail("nodes: " + e.message);
+  });
+  get("/api/structures").then(drawStructures).catch(function (e) {
+    fail("structures: " + e.message);
   });
   get("/api/factories").then(drawFactories).catch(function (e) {
     fail("factories: " + e.message);

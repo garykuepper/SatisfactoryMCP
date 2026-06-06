@@ -22,9 +22,16 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 
 from satisfactory_mcp import config
+from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M
 from satisfactory_mcp.core.saveio.projection import World
+from satisfactory_mcp.domain.world.state import WorldState
 from satisfactory_mcp.interfaces.web import api as web_api
 from satisfactory_mcp.interfaces.web.app import STATIC_DIR, create_app
+
+
+def _explode(save=None, world=None):
+    """A loader that fails the way the real one fails when the sidecar produces nothing."""
+    raise RuntimeError("sidecar produced no output")
 
 
 @pytest.fixture
@@ -192,9 +199,44 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
         "recipe",
         "clock",
         "paused",
+        "w_m",
+        "l_m",
     }
     assert row["name"] != row["cls"], "the class id was not joined to a building name"
     assert "." not in row["instance_leaf"]
+
+
+def test_machines_carry_their_own_footprint_so_the_map_can_draw_true_size(client, state):
+    """A Manufacturer is not a Constructor, and the map may not draw them the same.
+
+    The numbers are the docs dump's own clearance union, so they are asserted as the
+    ordering that makes the drawing worth doing rather than as literals that move with a
+    game patch. The null case is asserted too: a building with no clearance data must
+    come back as null, because a 6x6 guess sent from here would be indistinguishable
+    from a measurement once it reached the page.
+    """
+    body = client.get("/api/machines").json()
+    sizes = {
+        row["cls"]: (row["w_m"], row["l_m"])
+        for kind in body
+        for row in body[kind]
+        if row["w_m"] is not None
+    }
+    assert sizes["Build_ManufacturerMk1_C"] > sizes["Build_ConstructorMk1_C"]
+    for w, l in sizes.values():
+        assert 1 <= w <= 40 and 1 <= l <= 40, "a footprint in centimetres, or none at all"
+    unmeasured = {
+        row["cls"]
+        for kind in body
+        for row in body[kind]
+        if row["w_m"] is None or row["l_m"] is None
+    }
+    assert unmeasured, "the fixture world has buildings the docs dump gives no clearance for"
+    for cls in unmeasured:
+        building = state.game.buildings.get(cls)
+        assert building is None or building.footprint is None, (
+            f"{cls} has a footprint and was dropped on the way out"
+        )
 
 
 def test_positions_are_metres_not_centimetres(client, state):
@@ -210,6 +252,88 @@ def test_positions_are_metres_not_centimetres(client, state):
     assert row["x_m"] == pytest.approx(round(raw["pos"][0] / 100.0, 1))
     assert row["y_m"] == pytest.approx(round(raw["pos"][1] / 100.0, 1))
     assert row["z_m"] == pytest.approx(round(raw["pos"][2] / 100.0, 1))
+
+
+def test_structures_are_the_floor_plan_the_player_actually_built(client, state):
+    """Every lightweight buildable, un-interned, in metres, with the grid it snaps to."""
+    body = client.get("/api/structures").json()
+    raw = state.projection["structures"]
+    assert body["count"] == len(raw["instances"]) == len(body["structures"])
+    assert body["count"] > 8000, "the reference world is a 320-hour base, not a starter camp"
+    # The page draws one tile per piece and must not hardcode its edge.
+    assert body["tile_m"] == FOUNDATION_M == 8.0
+
+    row = body["structures"][0]
+    assert set(row) == {"cls", "x_m", "y_m", "z_m"}
+    # The class index is resolved here, or the page would have to carry the legend.
+    assert row["cls"] == raw["classes"][raw["instances"][0][0]]
+    assert row["cls"].startswith("Build_")
+    assert {r["cls"] for r in body["structures"]} <= set(raw["classes"])
+    # Metres, like every other coordinate on this surface. A regression is silent.
+    assert row["x_m"] == pytest.approx(round(raw["instances"][0][1] / 100.0, 1))
+    assert row["y_m"] == pytest.approx(round(raw["instances"][0][2] / 100.0, 1))
+    assert row["z_m"] == pytest.approx(round(raw["instances"][0][3] / 100.0, 1))
+    assert max(abs(r["x_m"]) for r in body["structures"]) < 5000
+
+
+def test_a_world_with_nothing_built_answers_with_an_empty_floor_plan(game):
+    """A young save has no lightweight subsystem at all, and that is not an error.
+
+    Asserted through three shapes, because the projection has carried all three: the key
+    absent, the key present but empty, and a row too short to be a transform. Anything
+    but a 200 with an empty list here draws a red banner on a save whose only fault is
+    that the player has not poured concrete yet.
+    """
+    for projection in ({}, {"structures": {}}, {"structures": {"classes": [], "instances": []}}):
+        app = create_app(
+            state_loader=lambda save=None, world=None, p=projection: WorldState(
+                projection=p, game=game
+            ),
+            game_loader=lambda: game,
+        )
+        with TestClient(app) as c:
+            body = c.get("/api/structures").json()
+        assert body == {"structures": [], "count": 0, "tile_m": FOUNDATION_M}
+
+
+def test_a_malformed_structure_row_costs_one_piece_not_the_endpoint(game):
+    """Raw projection data, read guarded field by field -- the same rule elevation uses."""
+    projection = {
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [
+                [0, 100, 200, 300],
+                [0, 100, 200],  # short: no z
+                [0, "x", 200, 300],  # unparseable
+                [7, 400, 500, 600],  # class index off the end of the legend
+                "not a row",
+            ],
+        }
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        body = c.get("/api/structures").json()
+    assert body["count"] == 2
+    assert body["structures"][0] == {
+        "cls": "Build_Foundation_8x1_01_C",
+        "x_m": 1.0,
+        "y_m": 2.0,
+        "z_m": 3.0,
+    }
+    # An index with no class is still a real piece at a real place: it keeps its position
+    # and loses only its name, which is the honest half-answer.
+    assert body["structures"][1] == {"cls": None, "x_m": 4.0, "y_m": 5.0, "z_m": 6.0}
+
+
+def test_a_save_that_cannot_be_read_has_no_floor_plan_either(game):
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/structures")
+    assert r.status_code == 404
+    assert "sidecar produced no output" in r.json()["error"]
 
 
 def test_factories_report_named_labels_and_proposals(client, state):
@@ -262,10 +386,7 @@ def test_remaining_is_refused_when_the_map_table_is_absent(state, game, monkeypa
 
 
 def test_a_save_that_cannot_be_read_is_a_404_with_a_reason(game):
-    def explode(save=None, world=None):
-        raise RuntimeError("sidecar produced no output")
-
-    app = create_app(state_loader=explode, game_loader=lambda: game)
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
     with TestClient(app) as c:
         r = c.get("/api/summary")
     assert r.status_code == 404

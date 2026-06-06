@@ -29,6 +29,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ... import config
+from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.saveio import projection as proj
 from ...domain.collectibles.service import collect_view
 from ...domain.factories import identity as fidentity
@@ -71,26 +72,34 @@ def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     return request.app.state.load_state(save, world)
 
 
-def _building_name(st: WorldState, cls: str) -> str:
-    building = st.game.buildings.get(cls)
-    return building.name if building else cls
-
-
 def _record_row(st: WorldState, row: dict) -> dict:
     """One machine/extractor/generator, flattened for the map.
 
     ``clock`` and ``paused`` are read with ``get``: the projection only carries them
     for the records that have them, and an extractor at 250% and a constructor with no
     overclock property must both come out of here without a KeyError.
+
+    ``w_m``/``l_m`` are the building's own footprint -- the X and Y extent of the union
+    of its clearance boxes, which is what makes a Manufacturer draw bigger than a
+    Constructor instead of both being the same nominal square. Only 69 of 539 buildings
+    carry clearance data, so these are **null** for the rest (the two biomass burners on
+    the reference save among them) rather than a guessed number: the client picks the
+    fallback, because a fallback drawn here would be indistinguishable from a measurement.
     """
+    cls = row.get("cls") or ""
+    building = st.game.buildings.get(cls)
+    footprint = getattr(building, "footprint", None) if building else None
     return {
         "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
         "cls": row.get("cls"),
-        "name": _building_name(st, row.get("cls") or ""),
+        "name": building.name if building else cls,
         **_xyz(row.get("pos")),
         "recipe": row.get("recipe"),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),
+        # Footprint is already metres; the projection's coordinates are not.
+        "w_m": round(footprint.width_m, 1) if footprint else None,
+        "l_m": round(footprint.depth_m, 1) if footprint else None,
     }
 
 
@@ -314,6 +323,66 @@ def machines(request: Request, save: str | None = None, world: str | None = None
         kind: [_record_row(st, row) for row in p.get(kind, ())]
         for kind in ("machines", "extractors", "generators")
     }
+
+
+# ----------------------------------------------------------------- structures
+
+
+@router.get("/structures")
+def structures(request: Request, save: str | None = None, world: str | None = None) -> Any:
+    """Every lightweight buildable the player placed: foundations, ramps, walls, catwalks.
+
+    These are the only record of what was physically BUILT -- they appear in no actor
+    header, which is why the projection interns them separately as
+    ``{"classes": [...], "instances": [[class_index, x, y, z], ...]}`` in centimetres.
+    Read guarded field by field, exactly as ``domain.spatial.elevation`` reads them: this
+    is raw projection data and a malformed row should cost one piece, not the endpoint.
+
+    Two things the projection does **not** carry, and neither is invented here:
+
+    * **Rotation.** The instance transform's quaternion is dropped at extraction. A
+      client can only draw these axis-aligned.
+    * **Per-class size.** None of these classes has clearance data, so ``footprint`` is
+      ``None`` for all eighteen of them. They are all built on the same grid instead,
+      whose edge ``tile_m`` reports from ``FOUNDATION_M`` so the page does not hardcode 8.
+
+    Positions are piece centres: on the reference save consecutive foundations of one
+    slab sit exactly ``tile_m`` apart.
+
+    A world with nothing built answers ``{"structures": [], "count": 0}`` -- an empty
+    list is a real answer here, unlike a save that could not be read at all.
+
+    Sent one row per piece, ungrouped. Measured on the reference world -- 8,347 pieces,
+    610 KB, 0.52 s over loopback -- which is the same order as ``/api/collectibles``
+    already ships (3,455 rows, 547 KB, 0.52 s). Grouping into grid cells would halve a
+    payload that is not the bottleneck and would cost the per-piece class the popup and
+    the point inspector read.
+    """
+    try:
+        st = _state(request, save, world)
+    except Exception as exc:
+        return _fail(f"could not read save: {exc}", 404)
+
+    raw = st.projection.get("structures") or {}
+    classes = list(raw.get("classes") or ())
+    rows = []
+    for inst in raw.get("instances") or ():
+        if not isinstance(inst, (list, tuple)) or len(inst) < 4:
+            continue
+        try:
+            index = int(inst[0])
+            x, y, z = float(inst[1]), float(inst[2]), float(inst[3])
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            {
+                "cls": classes[index] if 0 <= index < len(classes) else None,
+                "x_m": _m(x),
+                "y_m": _m(y),
+                "z_m": _m(z),
+            }
+        )
+    return {"structures": rows, "count": len(rows), "tile_m": FOUNDATION_M}
 
 
 # ------------------------------------------------------------------ factories
