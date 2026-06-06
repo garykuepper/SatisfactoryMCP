@@ -81,6 +81,39 @@ var PURITY_RADIUS = { impure: 3, normal: 4.5, pure: 6 };
 
 var KIND_COLOUR = { machines: "#4aa3df", extractors: "#e0a33f", generators: "#d9534f" };
 
+// One muted colour per biome letter, keyed exactly like /api/regions' legend. Hand-picked
+// to read as terrain at a glance -- sand for the deserts, greens for the forests, teal
+// along the coast, murk for the swamp -- and, like the ore palette above, they are 21 hex
+// strings rather than a single pixel of anyone's artwork.
+//
+// Dark on purpose, and painted at full opacity: a translucent cell has to blend against
+// the sea colour at its edges too, and 768 of them sharing borders turns that blend into
+// a visible 256 m grid. These are the blended values, baked in, so the cells of one
+// region merge into one shape.
+var REGION_COLOUR = {
+  A: "#3e3e3c", // Abyss Cliffs
+  B: "#284e5a", // Blue Crater
+  C: "#2e5348", // Crater Lakes
+  D: "#654e37", // Desert Canyons
+  E: "#726443", // Dune Desert
+  F: "#4e5c3d", // Eastern Dune Forest
+  G: "#3b5a3b", // Grass Fields
+  H: "#294834", // Jungle Spires
+  I: "#32544d", // Lake Forest
+  J: "#594a37", // Maze Canyons
+  K: "#2e4637", // Northern Forest
+  L: "#65423b", // Red Bamboo Fields
+  M: "#4e3937", // Red Jungle
+  N: "#5c5b4e", // Rocky Desert
+  O: "#415037", // Snaketree Forest
+  P: "#335041", // Southern Forest
+  Q: "#295258", // Spire Coast
+  R: "#374232", // Swamp
+  S: "#294233", // Titan Forest
+  T: "#736d56", // Western Beaches
+  U: "#585d40", // Western Dune Forest
+};
+
 var state = { world: "", layers: {}, control: null, map: null };
 
 /* --------------------------------------------------------------------- map */
@@ -101,13 +134,17 @@ state.map = map;
 map.setView([0, 0], -3);
 map.attributionControl.setPrefix("").addAttribution("map data from your save &middot; Leaflet");
 
-L.rectangle(
-  [
-    [-BOUND, -BOUND],
-    [BOUND, BOUND],
-  ],
-  { color: "#2b3a44", weight: 1, fill: true, fillColor: "#1b2a22", fillOpacity: 1, interactive: false }
-).addTo(map);
+/* One flat 10 km square of "land" used to be drawn here, in the overlay pane. It was a
+ * stand-in for terrain and it is gone: the biome raster is the real thing, and an opaque
+ * square in the overlay pane would sit on top of it. What was inside that square is now
+ * painted per biome, and what is outside is the page's sea colour -- which is the whole
+ * trick behind the coastline. */
+
+/* The ground everything else stands on gets its own pane, below overlayPane (400), so
+ * terrain can never end up in front of a node the player is trying to click. The
+ * stacking is decided here, once, instead of by the order things happen to be drawn. */
+map.createPane("regions");
+map.getPane("regions").style.zIndex = 350;
 
 var control = L.control.layers(null, {}, { collapsed: false }).addTo(map);
 state.control = control;
@@ -127,6 +164,60 @@ function layer(name, on) {
 }
 
 /* ------------------------------------------------------------------ drawing */
+
+var REGION_FILL = 1; // see REGION_COLOUR: opaque cells, or the shared borders become a grid.
+
+/* The base map: one flat rectangle per 256 m raster cell, plus a name at each centroid.
+ *
+ * Orientation is the whole trap here and the API's docstring spells it out: grid row 0 is
+ * the NORTH edge because y0_m is the smallest y and game +Y is south. Cell (i, j) spans
+ * y in [y, y+cell], which is latitude [-(y+cell), -y] once the page's [-y, x] convention
+ * is applied -- so the y bounds swap, and only here. Void cells are left unpainted: the
+ * sea colour showing through them is the coastline.
+ */
+function drawRegions(data) {
+  var terrain = layer("terrain", true);
+  var names = layer("region names", true);
+  var cell = data.cell_m;
+  data.grid.forEach(function (row, j) {
+    for (var i = 0; i < row.length; i++) {
+      var letter = row.charAt(i);
+      if (letter === ".") continue;
+      var colour = REGION_COLOUR[letter] || "#3f4640";
+      var x = data.x0_m + i * cell;
+      var y = data.y0_m + j * cell;
+      L.rectangle(
+        [
+          [-(y + cell), x],
+          [-y, x + cell],
+        ],
+        {
+          // Stroked in its own fill colour so neighbouring cells of one biome merge into
+          // a shape instead of showing a grid; interactive:false so the terrain never
+          // eats a click meant for a node sitting on top of it.
+          color: colour,
+          weight: 1,
+          opacity: REGION_FILL,
+          fillColor: colour,
+          fillOpacity: REGION_FILL,
+          interactive: false,
+          pane: "regions",
+        }
+      ).addTo(terrain);
+    }
+  });
+
+  Object.keys(data.regions).forEach(function (name) {
+    // A standalone tooltip, not a zero-opacity marker: a marker would drag Leaflet's
+    // default icon (and its two image requests) into the page for a label that is meant
+    // to be text and nothing else.
+    var centre = data.regions[name].centroid_m;
+    L.tooltip({ permanent: true, direction: "center", className: "region-label" })
+      .setLatLng([-centre[1], centre[0]])
+      .setContent(name)
+      .addTo(names);
+  });
+}
 
 function drawNodes(data) {
   var byResource = {};
@@ -254,6 +345,47 @@ function drawCollectibles(data) {
 
 /* ------------------------------------------------------------------ loading */
 
+function loadRegions() {
+  // Geography, not save state: no world parameter, fetched once, never refetched.
+  return fetch("/api/regions")
+    .then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok || body.error) throw new Error(body.error || r.status + " /api/regions");
+        return body;
+      });
+    })
+    .then(drawRegions)
+    .catch(function (e) {
+      fail("regions: " + e.message);
+    });
+}
+
+/* The optional half of the base map: a render the user dropped at data/local/map.png.
+ * Nothing is shipped, so 404 is the ordinary answer and is not an error worth showing --
+ * the endpoint's own message says where the file goes. */
+function loadMapImage() {
+  return fetch("/api/mapimage", { method: "HEAD" })
+    .then(function (r) {
+      if (!r.ok) return;
+      var raw = (r.headers.get("X-Map-Bounds-M") || "").split(",").map(Number);
+      var b = raw.length === 4 && raw.every(isFinite) ? raw : [-3247, -3750, 4253, 3750];
+      L.imageOverlay(
+        "/api/mapimage",
+        [
+          [-b[3], b[0]],
+          [-b[1], b[2]],
+        ],
+        { pane: "regions", interactive: false }
+      ).addTo(layer("map image", true));
+      // A real render beats the cell fill it covers, so the fill steps aside -- by
+      // unticking its box, so one click brings it back.
+      if (state.layers.terrain) map.removeLayer(state.layers.terrain);
+    })
+    .catch(function () {
+      /* the probe failing means no picture, which is the default state anyway */
+    });
+}
+
 function loadStatic() {
   // Nodes and factory shapes change only when the player builds, so they are refetched
   // on a world switch rather than on every save write.
@@ -341,6 +473,8 @@ function listen() {
     loadLive();
   });
 }
+
+loadRegions().then(loadMapImage);
 
 loadWorlds().then(function () {
   loadStatic();

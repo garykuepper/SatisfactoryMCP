@@ -7,3 +7,8 @@ uv.lock
 
 # Agent worktrees: git repos of their own, never part of this one.
 .claude/worktrees/
+
+# The user's own files: a map render for the web map's base layer lives at
+# data/local/map.png (corners optionally in data/local/map.json). The app loads it if
+# it is there; the repository ships no map imagery and never will.
+data/local/

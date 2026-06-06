@@ -1,5 +1,8 @@
-/* Flat colour, no imagery. The background is a colour rather than a tile layer because
-   there is no licensable map of this world to draw -- only the data underneath it. */
+/* Flat colour, no imagery. There is no licensable map of this world to draw, so the
+   ground is painted from the project's own 256 m biome raster -- one muted colour per
+   region, in app.js -- and the sea is simply the background showing through the cells
+   the raster calls void. The only picture that can ever appear here is one the user put
+   in data/local/map.png themselves. */
 
 :root {
   --ink: #e8e6e1;
@@ -7,7 +10,6 @@
   --panel: #1f2228;
   --line: #333842;
   --sea: #10202c;
-  --land: #1b2a22;
   --warn: #d9534f;
   --ok: #5cb85c;
 }
@@ -138,6 +140,27 @@ select {
   font-weight: 400;
   color: #9aa0a8;
   border-style: dashed;
+}
+
+/* Biome names: printed on the ground the way an atlas prints a region, which means they
+   have to stay out of the way -- no box, no pointer events, and quiet enough that the
+   factory labels and the ore dots still win the eye. */
+.region-label {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: rgba(232, 230, 225, 0.42);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.region-label::before {
+  display: none;
 }
 
 .popup-key {

@@ -22,18 +22,21 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from ... import config
 from ...core.saveio import projection as proj
 from ...domain.collectibles.service import collect_view
 from ...domain.factories import identity as fidentity
 from ...domain.spatial import nodes as spatial_nodes
+from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
 
-__all__ = ["PING_SECONDS", "router"]
+__all__ = ["DEFAULT_MAP_BOUNDS_M", "PING_SECONDS", "router"]
 
 #: How long a quiet SSE stream waits before sending a comment. Proxies and browsers
 #: both drop a connection that has said nothing for a while, and a comment line is the
@@ -176,6 +179,125 @@ def nodes(
             }
         )
     return {"nodes": out, "resource": resource, "occupied": sum(1 for r in out if r["occupied"])}
+
+
+# -------------------------------------------------------------------- regions
+
+
+#: Where a user-supplied map render goes. Nothing here is ever committed: the endpoint
+#: below is a loader and only a loader, because a rendered map of this world is someone
+#: else's artwork and the licence posture of this repository is that we ship none of it.
+#: Drop your own render at ``data/local/map.png`` and, if its corners are not the standard
+#: in-game map square, ``data/local/map.json`` next to it.
+LOCAL_DIR_NAME = "local"
+MAP_IMAGE_NAME = "map.png"
+MAP_BOUNDS_NAME = "map.json"
+
+#: The corners of the in-game map square, metres, game axes. The playable content is
+#: strictly inside it: ``frame.content_bbox`` in ``data/satisfactory_regions.json`` --
+#: the min/max over 2,688 static world objects -- is x [-2988.4, 4065.6], y [-3141.0,
+#: 3042.0], so an image pinned here cannot clip anything the map draws.
+DEFAULT_MAP_BOUNDS_M = {
+    "x_min_m": -3247.0,
+    "x_max_m": 4253.0,
+    "y_min_m": -3750.0,
+    "y_max_m": 3750.0,
+}
+
+
+def _local_dir() -> Path:
+    """The user's own files, read at call time so a test can point it somewhere else."""
+    return config.data_dir() / LOCAL_DIR_NAME
+
+
+def _map_bounds() -> dict[str, float]:
+    """Where to pin the map image, defaults overridden by ``local/map.json`` if present.
+
+    A malformed override is ignored rather than fatal: the picture is decoration, and a
+    typo in an optional sidecar must not take the endpoint that serves it down with it.
+    """
+    bounds = dict(DEFAULT_MAP_BOUNDS_M)
+    path = _local_dir() / MAP_BOUNDS_NAME
+    try:
+        override = json.loads(path.read_text(encoding="utf-8"))
+        bounds.update({k: float(override[k]) for k in DEFAULT_MAP_BOUNDS_M if k in override})
+    except (OSError, ValueError, TypeError):
+        return bounds
+    return bounds
+
+
+@router.get("/regions")
+def regions() -> Any:
+    """The biome raster: a 30x30 character grid, its legend, and each region's extent.
+
+    No ``?save``/``?world``: this is the world's own geography, identical for every save,
+    which is why it is cacheable and fetched once per page load.
+
+    The raster comes through ``domain.spatial.regions``, which reads
+    ``data/region_names.json``. Two committed files carry a 30x30 grid and they differ:
+    this one is the file whose per-region bounding boxes are derived from its own grid, so
+    every cell provably lies inside the box of the region it names -- which is exactly
+    what the drawing client is checked against. ``satisfactory_regions.json``'s boxes come
+    from a coarser 1.024 km grid and do not agree with its raster cell for cell, so
+    painting from it would leave nothing to verify orientation with.
+
+    The one thing a drawing client gets wrong is orientation, so it is stated here rather
+    than left to be inferred. Game +X is east and game **+Y is south**; ``y0_m`` is the
+    smallest y, so **grid row 0 is the northern edge** and column 0 the western one. Cell
+    ``(i, j)`` spans x ``[x0_m + i*cell_m, x0_m + (i+1)*cell_m]`` and y ``[y0_m + j*cell_m,
+    ...]``, and a page that plots ``[-y, x]`` has to flip those y bounds to draw it. The
+    ``.`` cells are ocean or off-map and carry no name: left unpainted they are the
+    coastline.
+    """
+    try:
+        rmap = spatial_regions.load_regions()
+    except FileNotFoundError as exc:
+        return _fail(str(exc), 404)
+    payload = {
+        "grid": list(rmap.grid),
+        "legend": dict(rmap.legend),
+        "cell_m": _m(rmap.cell),
+        "x0_m": _m(rmap.x0),
+        "y0_m": _m(rmap.y0),
+        "regions": {
+            name: {
+                "centroid_m": [_m(entry["centroid"][0]), _m(entry["centroid"][1])],
+                "bbox_m": [_m(v) for v in entry["bbox"]],
+            }
+            for name, entry in rmap.regions.items()
+        },
+    }
+    return JSONResponse(payload, headers={"Cache-Control": "max-age=3600"})
+
+
+@router.api_route("/mapimage", methods=["GET", "HEAD"])
+def mapimage() -> Any:
+    """A map render the *user* dropped in, if they dropped one in. Never shipped.
+
+    HEAD is routed alongside GET on purpose: the page probes with HEAD before it builds
+    an ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a
+    GET route by itself, so a probe would come back 405 and read as "no image".
+
+    The corners travel with the file in ``X-Map-Bounds-M`` (``x_min,y_min,x_max,y_max``,
+    metres, game axes) so the one probe the page already makes answers both questions.
+    """
+    path = _local_dir() / MAP_IMAGE_NAME
+    if not path.is_file():
+        return _fail(
+            f"no map image: put a map render at {path}; it is only ever read locally, "
+            "never uploaded and never committed. Optionally pin its corners with "
+            f"{path.with_name(MAP_BOUNDS_NAME)} "
+            '{"x_min_m":…,"x_max_m":…,"y_min_m":…,"y_max_m":…}',
+            404,
+        )
+    b = _map_bounds()
+    return FileResponse(
+        path,
+        headers={
+            "X-Map-Bounds-M": "{x_min_m},{y_min_m},{x_max_m},{y_max_m}".format(**b),
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 # ------------------------------------------------------------------- machines

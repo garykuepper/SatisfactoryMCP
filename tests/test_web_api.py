@@ -11,6 +11,7 @@ which needs a directory precisely so it can be pointed at an empty one.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import pytest
@@ -84,6 +85,95 @@ def test_nodes_can_be_filtered_by_resource(client):
     assert body["resource"] == "Desc_OreIron_C"
     assert body["nodes"]
     assert {r["resource"] for r in body["nodes"]} == {"Desc_OreIron_C"}
+
+
+def test_regions_serve_the_biome_raster_in_metres(client):
+    """The base map's only source: 30 rows of 30 cells, a legend, and the frame."""
+    r = client.get("/api/regions")
+    assert r.status_code == 200
+    assert "max-age" in r.headers["cache-control"], "geography does not change per save"
+    body = r.json()
+    assert len(body["grid"]) == 30
+    assert {len(row) for row in body["grid"]} == {30}
+    assert body["cell_m"] == 256.0
+    assert (body["x0_m"], body["y0_m"]) == (-3360.0, -3800.0)
+    assert body["legend"]["E"] == "Dune Desert"
+    # Every letter drawn has a name, or the page paints an unlabelled colour.
+    drawn = {ch for row in body["grid"] for ch in row} - {"."}
+    assert drawn <= set(body["legend"])
+    entry = body["regions"]["Dune Desert"]
+    assert len(entry["centroid_m"]) == 2
+    assert len(entry["bbox_m"]) == 4
+    # Metres, one decimal, like every other coordinate on this surface.
+    assert abs(entry["centroid_m"][0]) < 5000
+
+
+def test_every_region_cell_lands_inside_that_regions_own_bbox(client):
+    """The orientation guard, and the reason this endpoint reports x0/y0 at all.
+
+    Row 0 is the NORTHERN edge because ``y0_m`` is the smallest y and game +Y is south.
+    Get that backwards and the map still draws -- mirrored -- so it is checked against
+    the per-region bounding boxes in the same file rather than by eye: reconstruct each
+    cell's extent from the frame and assert it is inside the region it claims to be.
+    """
+    body = client.get("/api/regions").json()
+    cell = body["cell_m"]
+    counted = 0
+    for j, row in enumerate(body["grid"]):
+        for i, letter in enumerate(row):
+            if letter == ".":
+                continue
+            box = body["regions"][body["legend"][letter]]["bbox_m"]
+            x, y = body["x0_m"] + i * cell, body["y0_m"] + j * cell
+            assert box[0] <= x and x + cell <= box[2], (i, j, letter)
+            assert box[1] <= y and y + cell <= box[3], (i, j, letter)
+            counted += 1
+    assert counted > 400, "a base map of a few dozen cells is not a base map"
+    # And the north-east corner is desert, which is the one fact a mirrored map fails.
+    north_east = {body["grid"][j][i] for j in range(4) for i in range(26, 30)}
+    assert north_east == {"E"}
+
+
+def test_the_map_image_is_a_loader_and_says_where_the_file_goes(client, tmp_path, monkeypatch):
+    """No image is shipped, so the 404 has to be useful: it names the exact path.
+
+    ``config.data_dir`` is redirected at the tmp tree, which is also what keeps this test
+    honest about the repository never carrying one -- it writes the png itself.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+
+    r = client.get("/api/mapimage")
+    assert r.status_code == 404
+    message = r.json()["error"]
+    assert str(tmp_path / "local" / "map.png") in message
+    assert "only ever read locally" in message
+    assert client.head("/api/mapimage").status_code == 404
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ=="
+    )
+    (tmp_path / "local").mkdir()
+    (tmp_path / "local" / "map.png").write_bytes(png)
+
+    r = client.get("/api/mapimage")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content == png
+    # The corners ride along on the probe the page already makes.
+    assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+
+
+def test_a_local_sidecar_can_repin_the_map_images_corners(client, tmp_path, monkeypatch):
+    """Someone else's render will not share our corners, and a bad one is ignored."""
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    (tmp_path / "local").mkdir()
+    (tmp_path / "local" / "map.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    (tmp_path / "local" / "map.json").write_text(json.dumps({"x_min_m": -4000, "y_max_m": 4000}))
+    assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-4000.0,-3750.0,4253.0,4000.0"
+
+    (tmp_path / "local" / "map.json").write_text("{not json")
+    assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
 
 
 def test_machines_split_by_kind_and_name_their_buildings(client, state):
