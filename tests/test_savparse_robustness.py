@@ -3,7 +3,7 @@
 Autosaves land every few minutes and rewrite the save in place, so this project reads torn
 files as a matter of routine rather than as an accident. The contract each test here pins is
 the same one: **a ParseError carrying a byte offset, never a partial answer and never an
-exception the sidecar can only report as a class name.** ``extract_save.main`` catches
+exception the sidecar can only report as a class name.** ``extract.main`` catches
 exactly ``ParseError`` at the save boundary; anything else falls through to its bare
 ``except Exception``, which prints a traceback to stderr and emits ``{"error":
 "RecursionError"}`` -- true, useless, and with no offset to look at.
@@ -35,7 +35,8 @@ import zlib
 from pathlib import Path
 
 import pytest
-from savparse import CHUNK_TAG, ObjectSlice, ParseError, read_info_bytes, read_object
+
+from pioneersav import CHUNK_TAG, ObjectSlice, ParseError, read_info_bytes, read_object
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HEADER_FIXTURE = FIXTURES / "save_header.bin"
@@ -218,7 +219,7 @@ def test_a_chunk_preamble_that_contradicts_its_own_maximum_is_refused():
     """
     if not HEADER_FIXTURE.is_file():
         pytest.skip("header fixture not committed")
-    from savparse import decompress_body
+    from pioneersav import decompress_body
 
     plain = b"body bytes that do not matter, only their length does" * 4
     blob = zlib.compress(plain)
@@ -242,7 +243,7 @@ def test_a_body_region_with_no_chunks_at_all_says_so():
     first, so this is defence for any other caller that reaches here -- and it is the message
     that names the actual problem.
     """
-    from savparse import decompress_body
+    from pioneersav import decompress_body
 
     with pytest.raises(ParseError) as exc:
         decompress_body(b"", 0)

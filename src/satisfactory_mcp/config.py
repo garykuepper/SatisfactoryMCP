@@ -43,8 +43,22 @@ def saves_root() -> Path:
     return Path(local) / "FactoryGame" / "Saved" / "SaveGames"
 
 
-def sidecar_path() -> Path:
-    return REPO_ROOT / "sidecar" / "extract_save.py"
+#: The extractor, named as a module rather than a file. Spawning it with ``-m`` means the
+#: child resolves it through the same import machinery this process used, so it can never
+#: run a stale copy sitting next to a path someone built by hand.
+EXTRACTOR_MODULE = "satisfactory_mcp.core.saveio.extract"
+
+
+def source_root() -> Path | None:
+    """The ``src/`` tree, when this package is running from a checkout.
+
+    The child needs both ``satisfactory_mcp`` and ``pioneersav``, and putting this on its
+    PYTHONPATH is what guarantees it imports the source *this* process came from rather than
+    whatever an inherited environment resolves first. Installed from a wheel there is no
+    ``src/`` and no ambiguity, so the answer is None and the child uses its own site-packages.
+    """
+    src = PKG_ROOT.parent
+    return src if (src / "pioneersav" / "__init__.py").is_file() else None
 
 
 def data_dir() -> Path:

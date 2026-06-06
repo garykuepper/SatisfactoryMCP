@@ -8,7 +8,7 @@ stepped over by a declared length any more** — the byte budget is 100% rather 
 What is *unexplained* rather than unread is listed at the end of the verdict.
 
 **Every number in this document was re-measured against the tree as it now stands.** They
-were first taken while several agents were still editing `savparse/`, which makes them
+were first taken while several agents were still editing `pioneersav/`, which makes them
 statements about code that no longer exists; the whole-folder parity run, the property-by-
 property comparison and all timings were taken again at the end, on one unchanging tree, and
 the figures below are those. Where a re-run disagreed with an earlier note, the earlier note
@@ -18,15 +18,15 @@ was corrected rather than kept alongside.
 
 | layer | module | state |
 |---|---|---|
-| primitives | `savparse/reader.py` (95 lines) | done |
-| one exception type | `savparse/errors.py` (27) | done |
-| header | `savparse/header.py` (183) | done |
-| chunk decompression | `savparse/chunks.py` (123) | done |
-| body, levels, object headers, destroyed actors | `savparse/objects.py` (747) | done |
-| tagged property serialiser | `savparse/properties.py` (1,160) | done |
-| composition + the sidecar switch | `savparse/save.py` (212) | done |
-| the lightweight buildables' trailing bytes | `savparse/lightweight.py` (172) | done |
-| the other seven classes' trailing bytes | `savparse/trailers.py` (192) | done |
+| primitives | `pioneersav/reader.py` (95 lines) | done |
+| one exception type | `pioneersav/errors.py` (27) | done |
+| header | `pioneersav/header.py` (183) | done |
+| chunk decompression | `pioneersav/chunks.py` (123) | done |
+| body, levels, object headers, destroyed actors | `pioneersav/objects.py` (747) | done |
+| tagged property serialiser | `pioneersav/properties.py` (1,160) | done |
+| composition + the sidecar switch | `pioneersav/save.py` (212) | done |
+| the lightweight buildables' trailing bytes | `pioneersav/lightweight.py` (172) | done |
+| the other seven classes' trailing bytes | `pioneersav/trailers.py` (192) | done |
 
 Line counts are `wc -l` on the tree as it stands; 2,969 with `__init__.py`'s 58.
 
@@ -56,13 +56,13 @@ read its implementation for structure or naming.
 
 ## What we actually depend on
 
-Runtime, in `sidecar/extract_save.py`, is **three entry points**:
+Runtime, in `src/satisfactory_mcp/core/saveio/extract.py`, is **three entry points**:
 
 | entry point | used for | status |
 |---|---|---|
-| `readSaveFileInfo(path)` | 9 header fields → projection `header` | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` + the destroyed-actor lists | ✅ `savparse.read_full_save` — all 20 projection fields exact on all 31 readable saves |
-| `ParseError` | one `except` at the save boundary | ✅ `savparse.ParseError` |
+| `readSaveFileInfo(path)` | 9 header fields → projection `header` | ✅ `pioneersav.read_info` |
+| `readFullSaveFile(path)` | `.levels[].actorAndComponentObjectHeaders[]` + `.objects[]` + the destroyed-actor lists | ✅ `pioneersav.read_full_save` — all 20 projection fields exact on all 31 readable saves |
+| `ParseError` | one `except` at the save boundary | ✅ `pioneersav.ParseError` |
 
 **All three are wired in**, behind `SATISFACTORY_SAVPARSE=own|vendor`, **defaulting to
 `vendor`**. Nothing technical blocks the flip any more — it is a decision for the user, and it
@@ -70,7 +70,7 @@ belongs to the deletion rather than preceding it, since the licence exposure is 
 presence and not which branch runs. Until then the switch's job is to make the parity diff a
 measurement.
 
-The adapter surface `extract_save.py` needs from a parsed save:
+The adapter surface `extract.py` needs from a parsed save:
 
 - `save.levels` → each with `actorAndComponentObjectHeaders` and `objects` (parallel lists)
 - header: `.typePath` (absent on components — use `getattr` default), `.instanceName`, `.position`
@@ -95,7 +95,7 @@ collectibles the destroyed-actor list records as gone. See *Opportunities* below
 [ uncompressed header ][ chunk ][ chunk ]...   each chunk = 49-byte preamble + zlib blob
 ```
 
-### Primitives (`savparse/reader.py`)
+### Primitives (`pioneersav/reader.py`)
 
 Little-endian. The one non-guessable rule: **a string is an int32 length then bytes, and the
 SIGN of the length is the encoding** — positive is one byte per char (latin-1), negative is
@@ -105,7 +105,7 @@ Zero length means empty with no bytes at all.
 Reads past the end raise rather than truncating; a silently short read produces a header
 that parses into plausible nonsense.
 
-### Header (`savparse/header.py`) — DONE
+### Header (`pioneersav/header.py`) — DONE
 
 Linear, no offsets to seek by, in this order:
 
@@ -140,7 +140,7 @@ parser can read; failure on exactly the same **36**. Those 36 are `saveVersion` 
 (2021–2023) which the old parser also refuses. Same answers, same limits — nothing in this
 project has ever read them.
 
-### Chunks (`savparse/chunks.py`) — DONE
+### Chunks (`pioneersav/chunks.py`) — DONE
 
 49-byte preamble per chunk:
 
@@ -164,7 +164,7 @@ save 2.94 MB → 44.4 MB in 0.047 s. All 9,125 chunks carry `max chunk size` 131
 sizes inside it, which is checked as a self-contradiction rather than as the constant — see
 the fuzzing section for why that distinction was made after the fact.
 
-### Body layout and object headers (`savparse/objects.py`) — DONE
+### Body layout and object headers (`pioneersav/objects.py`) — DONE
 
 `read_body(body)` walks the inflated stream and returns levels, object headers, each object's
 property block as a `(offset, length)` slice, and the three destroyed-actor lists. It does not
@@ -383,7 +383,7 @@ limit on what can be said about them.
 #### The class-naming limit, stated honestly
 
 An object header carries a class path; a destroyed-actor ref carries only the instance name. So
-`extract_save._removed_class` recovers an **approximate** class by stripping from the right —
+`extract._removed_class` recovers an **approximate** class by stripping from the right —
 the trailing index, then a `_UAID_<hex>` if present, then a trailing `_C` — and that is as far
 as the bytes allow. The limit is not the stripping; it is that the game builds these names two
 different ways and **only 32% of them spell their class out with `_C`**. The rest are
@@ -460,10 +460,10 @@ groups["artifact_unsplit"] = 65                                             65 e
 so the two paths cannot diverge again. `counts` stays in the projection as a raw class census for
 diagnostics, and nothing derives a group from it.
 
-### Properties (`savparse/properties.py`) — DONE
+### Properties (`pioneersav/properties.py`) — DONE
 
 `read_object(body, slice, actor=…)` turns one property block into `[[name, value], …]`,
-which is what `extract_save.props()` reads. `actor` comes from the header: nothing inside a
+which is what `extract.props()` reads. `actor` comes from the header: nothing inside a
 payload says which kind of object it is.
 
 **Payload frame.** An actor opens with its parent `ObjectReference` and a counted list of
@@ -472,7 +472,7 @@ byte before the property list (an object-reference migration flag, 0 everywhere)
 list's `"None"` terminator come trailing bytes: 4 or 8 on an ordinary object, and much more
 on **3,209** actors — 1,889 conveyor chains, 1,297 power lines, and the lightweight
 buildable subsystem with 3.1 MB. All are handed on as `(extra_offset, extra_length)`; the
-subsystem's are decoded by `savparse/lightweight.py`, the rest are skipped by that length.
+subsystem's are decoded by `pioneersav/lightweight.py`, the rest are skipped by that length.
 
 **Two tag layouts**, keyed by the *object's* version, not the save's:
 
@@ -498,7 +498,7 @@ against a value the game shows:
 
 | bit | meaning | how it was pinned |
 |---|---|---|
-| `0x10` | the BoolProperty's value | size is 0 and there is nowhere else for it — this is the "16 means True" `extract_save.truthy` documents |
+| `0x10` | the BoolProperty's value | size is 0 and there is nowhere else for it — this is the "16 means True" `extract.truthy` documents |
 | `0x08` | the type serialises itself (raw bytes, not a nested property list) | set on `Box`, `Vector`, `Guid`, `InventoryItem`; clear on `InventoryStack`, `FeetOffset`, `FactoryCustomizationData` |
 | `0x01` | a nonzero array index follows | absent tag field on v60, always present on v36/52 |
 
@@ -567,7 +567,7 @@ save, named `mSaveData`, `mDestroyedPickups` and `mLootedDropPods` on
 `FoliageRemovalSubsystem` and `ScannableSubsystem`. Nothing is skipped quietly.
 
 **Two shape differences have to be normalised before values can be compared at all**, and
-both are the ones `extract_save.struct_fields` already documents: a struct value is
+both are the ones `extract.struct_fields` already documents: a struct value is
 `[values, propertyTypes]` here and sometimes bare `values` in the vendored parser (which
 carries no types for a map-element struct), and a `propertyTypes` entry is
 `[name, typeName, …]` whose tail past `typeName` is a rendering choice —
@@ -583,7 +583,7 @@ properties as mismatching, and the second, which compared only the top-level val
 2,904 real `Item` differences as "unexplained" — the mismatch lives three lists deep, at
 `.0.0.1.1`.
 
-**The end-to-end check that matters:** `extract_save`'s whole projection run through this
+**The end-to-end check that matters:** `extract`'s whole projection run through this
 instead of the vendored parser is identical in every field except `lightweight_counts` and
 `structures`, the two that come from the undecoded trailing bytes.
 
@@ -685,7 +685,7 @@ but false. Separately, a save truncated to exactly its header inflates to an **e
 legitimately, there are no chunks — and `read_body` opened with an int64 read that reported
 `read of 8 at 0 runs past end (0)`; it now says the body is 0 bytes and why that happens.
 
-### One exception type (`savparse/errors.py`) — DONE
+### One exception type (`pioneersav/errors.py`) — DONE
 
 `ParseError` used to live in `objects.py`, so `header` and `chunks` — written earlier —
 raised bare `ValueError`, and so did `Reader._take`, which is where the *commonest* failure
@@ -707,9 +707,9 @@ and 10) and fail on a bounds check deep in the reader, where the useful thing to
 `KNOWN_HEADER_TYPE = 14` is deliberately **not a gate** — the `PACKAGE_FILE_TAG` check is
 still the verdict, because a patch may well bump the type without moving a field.
 
-### Composition and the sidecar switch (`savparse/save.py`) — DONE
+### Composition and the sidecar switch (`pioneersav/save.py`) — DONE
 
-`read_full_save(path)` is the one call `extract_save.py` makes. It returns a `ParsedSave`
+`read_full_save(path)` is the one call `extract.py` makes. It returns a `ParsedSave`
 whose `levels[i].actorAndComponentObjectHeaders` and `levels[i].objects` are the parallel
 lists `iter_objects` walks, each object carrying `properties` as `[name, value]` pairs.
 
@@ -731,18 +731,18 @@ Two things in it are decisions rather than glue:
 An unreadable *path* is left as `OSError`, not converted. A missing or locked file is not a
 save that cannot be parsed, and the sidecar reports the two differently.
 
-**The switch.** `extract_save.py` resolves `SATISFACTORY_SAVPARSE` **at import**, to `own`
+**The switch.** `extract.py` resolves `SATISFACTORY_SAVPARSE` **at import**, to `own`
 or `vendor`, defaulting to `vendor`. A typo raises `RuntimeError` rather than falling back,
 because a silent fallback would make a parity run report perfect agreement between the
 vendored parser and itself — the one wrong answer this exercise cannot afford. The
 environment is inherited by `projection._run_sidecar`, so setting the variable for the MCP
 server switches the parser for every save it reads.
 
-`savparse`'s `warnings` are printed to **stderr** and never added to the projection. They are
+`pioneersav`'s `warnings` are printed to **stderr** and never added to the projection. They are
 worth seeing, but a projection field carrying them would make the two parsers differ for a
 reason that is not a disagreement.
 
-### The lightweight buildables (`savparse/lightweight.py`) — DONE
+### The lightweight buildables (`pioneersav/lightweight.py`) — DONE
 
 Foundations, walls, ramps, catwalks and pillars are not actors. One
 `FGLightweightBuildableSubsystem` actor carries every one of them in the class-specific bytes
@@ -912,7 +912,7 @@ shows 29 chains apparently moving one way and 16 the other.
      **vendor 75.7 s, own 59.2 s** — 1.28×.
 
    Both parsers reachable from one process boundary is what makes this a measurement. See
-   `savparse/save.py` and `extract_save.ENGINE`.
+   `pioneersav/save.py` and `extract.ENGINE`.
 
 4. **Attack the awkward files, and synthesize the ones the disk does not have.** Everything
    in step 3 is the *normal* case. The saves that would break a parser are the ones nobody
@@ -1097,7 +1097,7 @@ shows 29 chains apparently moving one way and 16 the other.
   field or the high half of an int64 size cannot be settled from data. It is read as a
   trailing int32 and required to be 0, which fails loudly the day that changes.
 * The **trailing bytes after a property list** are decoded for all eight classes that carry
-  them — `savparse/lightweight.py` for the foundations, `savparse/trailers.py` for the rest —
+  them — `pioneersav/lightweight.py` for the foundations, `pioneersav/trailers.py` for the rest —
   and every one of the 88,097 records consumes its declared length exactly.
 * **An actor's trailing bytes are now length-checked**, which closed the last silent
   truncation. The component half was always exact — 562,556 components leave exactly 8 bytes
@@ -1190,7 +1190,7 @@ subsystem alone 3.10 MB, 1,889 conveyor chains 2.75 MB, their 20 rep-size varian
 1,297 power lines 0.28 MB, and 131 bytes between the circuit subsystem and the player state.
 Everything else — 44,634 objects less those 3,209 — leaves exactly 4 or 8 bytes.
 
-`savparse/lightweight.py` reads the subsystem; `savparse/trailers.py` reads the other seven.
+`pioneersav/lightweight.py` reads the subsystem; `pioneersav/trailers.py` reads the other seven.
 Across all 31 saves that is **224,530 foundations, 688,282 items riding on belts, 225,686 spline
 points, 36,773 power lines** and one circuit list and account id per save — **88,097 records, every
 one consuming its declared bytes exactly**, at both save versions.
@@ -1252,7 +1252,7 @@ variable, and should happen as part of that deletion rather than before it.
    the moment the rest of it is being removed. That tension is the user's to resolve, not a
    detail — see *Opportunities*.
 5. Every reference to the library outside `sidecar/vendor/` is removed or reworded:
-   `sidecar/extract_save.py`'s two-engine switch, `tests/test_savparse_save.py`'s default pin,
+   `src/satisfactory_mcp/core/saveio/extract.py`'s two-engine switch, `tests/test_savparse_save.py`'s default pin,
    and prose in `README.md`, `DESIGN.md` and this file.
 6. The deletion is the user's call. Nothing here should make it for them.
 

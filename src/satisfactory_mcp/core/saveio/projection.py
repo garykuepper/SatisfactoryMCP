@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pickle
 import subprocess
 import sys
@@ -57,12 +58,32 @@ def ticks_to_epoch_seconds(ticks: int | None) -> float | None:
     return (ticks - _TICKS_AT_EPOCH) / _TICKS_PER_SECOND
 
 
+def _child_env() -> dict[str, str]:
+    """This process's environment, with the source tree put in front on PYTHONPATH.
+
+    Merged over ``os.environ`` rather than replacing it, because the extractor is a normal
+    Python program: it wants the same PATH, the same TEMP and the same console encoding. The
+    one thing made explicit is where it imports from -- ``satisfactory_mcp`` for the extractor
+    module itself and ``pioneersav`` for the parser -- so that a checkout always runs its own
+    source no matter what an inherited PYTHONPATH says.
+    """
+    env = dict(os.environ)
+    root = config.source_root()
+    if root is not None:
+        inherited = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = f"{root}{os.pathsep}{inherited}" if inherited else str(root)
+    return env
+
+
 def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
-    cmd = [sys.executable, str(config.sidecar_path()), *args]
+    # ``-m``, not a file path: the child then imports the extractor exactly the way this
+    # process was imported, so there is no second copy of the code to drift out of date.
+    cmd = [sys.executable, "-m", config.EXTRACTOR_MODULE, *args]
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
+            env=_child_env(),
             # DEVNULL, not inherit. capture_output only redirects stdout/stderr, so
             # without this the sidecar inherits the MCP server's stdin -- which is the
             # client's JSON-RPC pipe. Anything that touches it blocks for ever and can

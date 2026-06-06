@@ -5,7 +5,7 @@ objects, 2,269,824 properties, and **not one object whose property names or orde
 On the reference save, 82,660 properties compare identical on 79,752; the 2,908 that differ
 are three explained classes (2,906 in the unread second element of an inventory ``Item``, one
 ``Guid`` spelling, one empty soft-object sub-path), none of which the projection reads.
-Running ``extract_save``'s whole projection through this instead of the vendored parser gives
+Running ``extract``'s whole projection through this instead of the vendored parser gives
 an identical result in every field except ``lightweight_counts`` and ``structures``, which
 come from the trailing class-specific bytes this stage deliberately does not decode.
 
@@ -47,8 +47,9 @@ import struct
 from pathlib import Path
 
 import pytest
-from savparse import ObjectSlice, ParseError, Reader
-from savparse.properties import (
+
+from pioneersav import ObjectSlice, ParseError, Reader
+from pioneersav.properties import (
     TAG_BOOL_TRUE,
     TAG_NATIVE_SERIALIZE,
     ObjectReference,
@@ -82,7 +83,7 @@ def parse(blocks, name):
 
 
 def props(parsed) -> dict:
-    """The same flattening ``extract_save.props`` does, so the tests read the same shape."""
+    """The same flattening ``extract.props`` does, so the tests read the same shape."""
     return {p[0]: p[1] for p in parsed.properties}
 
 
@@ -221,7 +222,7 @@ def test_int64_and_arrays_of_scalars(blocks):
 
 
 def test_object_references_expose_the_name_the_projection_reads(blocks):
-    """``extract_save.ref_path`` reads ``.pathName`` and nothing else.
+    """``extract.ref_path`` reads ``.pathName`` and nothing else.
 
     It also documents that ``repr()`` on a reference finds nothing, so ``__str__`` returning
     the path is part of the contract rather than a convenience.
@@ -322,13 +323,13 @@ def test_set_of_native_structs_reports_its_element_type(blocks):
 
 
 def test_a_struct_can_be_a_nested_property_list(blocks):
-    """``[values, types]``, which is the shape ``extract_save.struct_fields`` unwraps.
+    """``[values, types]``, which is the shape ``extract.struct_fields`` unwraps.
 
     ``FactoryCustomizationData`` is a struct with one property in it, and it arrives as a
     property list rather than raw numbers -- the flags byte on it is 0 where ``Box`` reads
     8. Getting that branch backwards makes every painted building's swatch unreadable.
     """
-    from extract_save import struct_fields
+    from satisfactory_mcp.core.saveio.extract import struct_fields
 
     p = props(parse(blocks, "Build_ConveyorPole_C_2147055418"))
     assert p["mHeight"] == 300.0
@@ -344,7 +345,7 @@ def test_transform_is_a_property_list_of_native_structs(blocks):
     ``Rotation``, when present, is a native ``Quat`` of four doubles. Both framings in one
     property is what makes it worth pinning.
     """
-    from extract_save import struct_fields
+    from satisfactory_mcp.core.saveio.extract import struct_fields
 
     p = props(parse(blocks, "Build_ConveyorLiftMk2_C_2146699202"))
     assert struct_fields(p["mTopTransform"])["Translation"] == [0.0, 0.0, 2400.0]
@@ -357,7 +358,7 @@ def test_feet_offsets_are_a_struct_array_the_projection_reads(blocks):
     next to a ``FloatProperty`` inside a struct. The leg indices 1 and 2 and the -0.0005
     offsets are a workbench standing on flat ground.
     """
-    from extract_save import struct_fields
+    from satisfactory_mcp.core.saveio.extract import struct_fields
 
     p = props(parse(blocks, "Build_WorkBench_C_2146928207.FGFactoryLegs"))
     legs = [struct_fields(e) for e in p["mCachedFeetOffset"]]
@@ -376,7 +377,7 @@ def test_an_inventory_stack_reads_as_the_projection_expects(blocks):
     must be a **string**. 100 iron ingots in a constructor's input is the whole chain --
     array, struct element, native ``InventoryItem``, path -- working end to end.
     """
-    from extract_save import _accumulate_inventory
+    from satisfactory_mcp.core.saveio.extract import _accumulate_inventory
 
     p = props(parse(blocks, "Build_ConstructorMk1_C_2147441119.InputInventory"))
     totals: dict = {}
@@ -393,7 +394,7 @@ def test_an_item_can_carry_its_own_state(blocks):
     one. It is the branch behind the int32 that is 0 on 15,000 ordinary stacks and 1 here;
     reading it as always-absent leaves the state's bytes in place and breaks the array.
     """
-    from extract_save import struct_fields
+    from satisfactory_mcp.core.saveio.extract import struct_fields
 
     p = props(parse(blocks, "Char_Player_C_2147219546.HeadSlot"))
     stack = struct_fields(p["mInventoryStacks"][0])
@@ -421,7 +422,7 @@ def test_version_36_items_carry_one_int32_more_than_version_52(blocks, name, exp
     if the versions were folded together, one of the two would over- or under-read by
     exactly four bytes.
     """
-    from extract_save import struct_fields
+    from satisfactory_mcp.core.saveio.extract import struct_fields
 
     p = props(parse(blocks, name))
     fields = struct_fields(p["mPickupItems"])
@@ -459,7 +460,7 @@ def test_the_version_36_body_fixture_parses_end_to_end():
     """
     if not BODY_FIXTURE.is_file():
         pytest.skip("body fixture not committed")
-    from savparse import ActorHeader, read_body
+    from pioneersav import ActorHeader, read_body
 
     raw = BODY_FIXTURE.read_bytes()
     save = read_body(raw)
@@ -486,7 +487,7 @@ def test_an_actor_payload_opens_with_its_reference_lists():
     """
     if not BODY_FIXTURE.is_file():
         pytest.skip("body fixture not committed")
-    from savparse import ActorHeader, read_body
+    from pioneersav import ActorHeader, read_body
 
     raw = BODY_FIXTURE.read_bytes()
     save = read_body(raw)
@@ -725,7 +726,7 @@ def test_an_empty_container_is_empty_and_not_absent():
 def test_the_bool_bit_and_the_native_bit_are_the_documented_ones():
     """The two flag bits every value in this module leans on, pinned as numbers.
 
-    16 is what ``extract_save.truthy`` documents receiving for a true BoolProperty, and 8
+    16 is what ``extract.truthy`` documents receiving for a true BoolProperty, and 8
     is what separates a struct that serialises itself from one written as a property list.
     Changing either constant would silently invert building states across the projection.
     """

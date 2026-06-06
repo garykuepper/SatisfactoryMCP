@@ -31,9 +31,9 @@ from pathlib import Path
 
 import pytest
 
+REPO = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / "fixtures" / "vendor_parity.json"
-SIDECAR = Path(__file__).resolve().parents[1] / "sidecar" / "extract_save.py"
-REPO = SIDECAR.parents[1]
+SIDECAR = REPO / "src" / "satisfactory_mcp" / "core" / "saveio" / "extract.py"
 
 #: Header keys that describe the FILE rather than the world, so they are excluded from the
 #: digest: a save copied to another path or re-read after a touch is the same world.

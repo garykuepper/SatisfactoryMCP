@@ -14,8 +14,9 @@ from __future__ import annotations
 import zlib
 
 import pytest
-from savparse import CHUNK_TAG, decompress_body
-from savparse.chunks import ZLIB
+
+from pioneersav import CHUNK_TAG, decompress_body
+from pioneersav.chunks import ZLIB
 
 
 def _chunk(payload: bytes, *, tag: int = CHUNK_TAG, algo: int = ZLIB, lie: bool = False) -> bytes:

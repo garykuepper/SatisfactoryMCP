@@ -29,8 +29,9 @@ import struct
 from pathlib import Path
 
 import pytest
-from savparse import ParseError, read_lightweight
-from savparse.lightweight import RECORD_BYTES, VERSION
+
+from pioneersav import ParseError, read_lightweight
+from pioneersav.lightweight import RECORD_BYTES, VERSION
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FIXTURE = FIXTURES / "save_lightweight.bin"
@@ -88,7 +89,7 @@ def test_the_instance_counts_are_the_census(blob):
 
 
 def test_the_shape_is_the_one_the_projection_reads(blob):
-    """``extract_save`` walks ``[version, [classPath, [instance, ...]], ...]`` and takes the
+    """``extract`` walks ``[version, [classPath, [instance, ...]], ...]`` and takes the
     position from ``inst[1]``. Both are load-bearing, so both are pinned here rather than
     left to the projection tests to discover."""
     assert isinstance(blob[0], int)

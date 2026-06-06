@@ -1,7 +1,7 @@
 """The projection's ``removed`` key: 889 collected actors from either parser, byte for byte.
 
-``extract_save._removed`` is the one projection field that has to read two completely
-different parser outputs and produce the SAME bytes. ``savparse`` merges the format's three
+``extract._removed`` is the one projection field that has to read two completely
+different parser outputs and produce the SAME bytes. ``pioneersav`` merges the format's three
 destroyed-actor lists into ``destroyed_actors``; the vendored parser exposes them separately,
 as each level's ``collectables1``/``collectables2`` plus two save-level lists. Both are
 walked here through the public function, with hand-built stand-ins for each parser's shape,
@@ -27,7 +27,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from extract_save import _removed, _removed_class
+
+from satisfactory_mcp.core.saveio.extract import _removed, _removed_class
 
 #: Four real instance names from the reference save, one per shape the game writes.
 #: ``BP_Crystal2_228`` is the shape that makes the recovery approximate: an instance number
@@ -60,7 +61,7 @@ class FakeRef:
 
 
 class OwnParser:
-    """What ``savparse`` hands over: the three lists already merged and deduplicated."""
+    """What ``pioneersav`` hands over: the three lists already merged and deduplicated."""
 
     def __init__(self, refs) -> None:
         self.destroyed_actors = list(refs)

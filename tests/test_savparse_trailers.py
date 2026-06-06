@@ -29,8 +29,9 @@ import struct
 from pathlib import Path
 
 import pytest
-from savparse import ParsedObject, ParseError, Reader, read_trailer
-from savparse.trailers import (
+
+from pioneersav import ParsedObject, ParseError, Reader, read_trailer
+from pioneersav.trailers import (
     CIRCUIT_SUBSYSTEM,
     CONVEYOR_CHAIN,
     PLAYER_STATE,

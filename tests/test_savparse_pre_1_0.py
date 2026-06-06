@@ -43,7 +43,8 @@ import zlib
 from pathlib import Path
 
 import pytest
-from savparse import (
+
+from pioneersav import (
     CHUNK_TAG,
     FIRST_LEVEL_LIST,
     FIRST_MODERN_BODY,
@@ -59,9 +60,9 @@ from savparse import (
     read_info_bytes,
     read_object,
 )
-from savparse.chunks import OLD_PREAMBLE_BYTES, PREAMBLE_BYTES
-from savparse.header import PACKAGE_FILE_TAG
-from savparse.save import UNDECODED_TRAILER_CLASSES
+from pioneersav.chunks import OLD_PREAMBLE_BYTES, PREAMBLE_BYTES
+from pioneersav.header import PACKAGE_FILE_TAG
+from pioneersav.save import UNDECODED_TRAILER_CLASSES
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -745,7 +746,7 @@ def test_a_whole_pre_1_0_save_reads_into_the_shape_the_projection_consumes(versi
 
     This is the seam test. Each layer is version-gated on one number read once, in
     ``read_full_save_bytes``, and a layer that stopped honouring it would fail here rather than
-    on a machine that happens to have a 2021 save. ``extract_save.iter_objects`` zips
+    on a machine that happens to have a 2021 save. ``extract.iter_objects`` zips
     ``level.actorAndComponentObjectHeaders`` with ``level.objects`` and reads ``obj.properties``
     as ``[name, value]`` pairs, so all three names are asserted.
     """
@@ -824,8 +825,8 @@ def test_an_unknown_class_leaving_bytes_on_an_old_save_is_warned_about():
     player never unlocked, or a real desynchronisation -- must say so. Nothing on this disk does,
     so the header has to be doctored to make it happen at all.
     """
-    from savparse.properties import ParsedObject
-    from savparse.save import PLAIN_TRAILER, _attach_trailer
+    from pioneersav.properties import ParsedObject
+    from pioneersav.save import PLAIN_TRAILER, _attach_trailer
 
     header = ActorHeader(
         type_path="/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk5/Build_ConveyorBeltMk5.Build_ConveyorBeltMk5_C",

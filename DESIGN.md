@@ -165,7 +165,8 @@ SatisfactoryMcp/
                        # uestruct.py (UE struct-string parser)
                        # normalize.py (-> items / recipes / buildings / schematics)
                        # model.py  search.py  footprint.py  constants.py
-      saveio/          # projection.py: invokes sidecar, validates, caches
+      saveio/          # projection.py: spawns the extractor, validates, caches
+                       # extract.py: runs IN the child, builds the schema-11 projection
       text.py          # num + plural ONLY — the two helpers domain may reach
     domain/            # returns dataclasses and dicts, NEVER formatted text
       world/           # state.py: WorldState, a thin aggregate over the facets
@@ -193,9 +194,9 @@ SatisfactoryMcp/
         static/        # index.html, app.js, vendored Leaflet — no game assets
     docs/ save/ graph/ spatial/ planning/ tools/ app.py render.py
                        # compatibility shims — see below
-  sidecar/
-    extract_save.py    # imports savparse, emits JSON projection on stdout
-    savparse/          # our parser: reads all 66 saves, six saveVersions
+  src/pioneersav/      # our parser: reads all 66 saves, six saveVersions. A standalone
+                       # library — it imports nothing from satisfactory_mcp, and only
+                       # core/saveio/extract.py imports it, inside the child process
   tests/
     fixtures/          # tiny Docs slice + ~9 kB save projection (committed)
 ```
@@ -234,16 +235,27 @@ works offline, and everything drawn on it is data the save and the docs dump alr
 
 ### 4.1 The save seam
 
-`core/saveio/projection.py` is the **only** module that knows a save parser exists. It shells out to
-`sidecar/extract_save.py`, which imports `sav_parse` and prints a JSON projection to stdout.
+`core/saveio/projection.py` is the **only** module that knows a save parser exists. It spawns
+`python -m satisfactory_mcp.core.saveio.extract`, which imports `pioneersav` and prints a JSON
+projection to stdout. `-m` rather than a constructed file path, with `src/` put in front of the child's
+`PYTHONPATH`: the child then resolves the extractor and the parser through the same import machinery
+this process used, so it cannot run a copy that has drifted.
 
-Reasons (licensing is *not* one of them, since this isn't distributed):
+Reasons (licensing is *not* one of them — it never was, and the parser is ours now):
 
-- **Version fragility.** `sav_parse` hard-fails on unrecognised `saveVersion`. Every game patch can break
-  it until upstream updates. One seam = one module to touch.
+- **Version fragility.** The parser refuses an unrecognised `saveVersion` rather than guessing. Every
+  game patch can break it until the format is re-derived. One seam = one module to touch.
 - **Crash isolation.** A parser crash or a torn autosave can't take down the server.
+- **Memory.** A 2.9 MB save inflates to far more while it is walked, and a child process hands every
+  byte of it back to the OS on exit. A long-lived stdio server does not otherwise get that.
 - **Test seam.** The projection is ~9 kB of JSON. Commit that instead of a 2.9 MB `.sav`; the entire test
   suite then runs with no game install and no parser.
+
+The parser itself is `src/pioneersav`, a standalone package beside the application rather than inside
+it: it implements a file format and knows nothing about factories, plans or MCP. `tests/test_architecture.py`
+pins both halves — `pioneersav` imports nothing from `satisfactory_mcp`, and `core/saveio/extract.py` is
+the only module in the application allowed to import `pioneersav`, because everything else reaches it
+through the subprocess.
 
 Subprocess overhead measured at **~60 ms**, and only on cache miss.
 
@@ -3236,7 +3248,7 @@ reads it and adds the projection's twentieth key, `removed`:
 }
 ```
 
-Both engines produce it — `savparse` merges the three lists into `destroyed_actors`, the vendored
+Both engines produce it — `pioneersav` merges the three lists into `destroyed_actors`, the vendored
 parser exposes them separately — and the projection **sorts before emitting**, so the two are
 byte-identical rather than merely equivalent. The order in the file is an artefact of which list
 a parser walks first and means nothing.
@@ -3286,15 +3298,15 @@ Details in `docs/savparse-notes.md`.
 ## 13a. Replacing the vendored parser
 
 The save parser WAS vendored GPL-3.0, which reached the whole project. It is now deleted and
-`sidecar/savparse` is the only parser; this section records how that was done and what the
+`src/pioneersav` is the only parser; this section records how that was done and what the
 agreement between the two measured, because the diff cannot be re-run. Replacing it started
 with knowing what was actually used, and the answer was small: **three entry points**.
 
 | what | used by | replaces |
 |---|---|---|
-| `readSaveFileInfo(path)` | `header_info` — 9 fields | ✅ `savparse.read_info` |
-| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties, destroyed actors | ✅ `savparse.read_full_save` — all 20 projection fields exact on all 31 readable saves |
-| `ParseError` | one `except` | ✅ `savparse.ParseError` |
+| `readSaveFileInfo(path)` | `header_info` — 9 fields | ✅ `pioneersav.read_info` |
+| `readFullSaveFile(path)` | `iter_objects` — levels, headers, objects, properties, destroyed actors | ✅ `pioneersav.read_full_save` — all 20 projection fields exact on all 31 readable saves |
+| `ParseError` | one `except` | ✅ `pioneersav.ParseError` |
 
 All three are **wired in and selectable**: `SATISFACTORY_SAVPARSE=own|vendor`, resolved at
 import, **defaulting to `vendor`**. Nothing changes for users yet. What the switch buys is
@@ -3369,7 +3381,7 @@ length check balancing 2,269,824 times.
 
 ### Both ways, diffed
 
-The composition is one module, `savparse/save.py`, and it holds two decisions rather than
+The composition is one module, `pioneersav/save.py`, and it holds two decisions rather than
 glue. **The inflated body is retained** — every object slice and every `extra_offset` is an
 absolute index into it, nothing is copied, and that is what keeps a 44 MB body at a fifth of
 a second. And **there is deliberately no `actorSpecificInfo` attribute**, because
@@ -3477,7 +3489,7 @@ Four defects, now fixed with tests in `tests/test_savparse_robustness.py`:
 
 Foundations, walls, ramps and catwalks are not actors. One `FGLightweightBuildableSubsystem`
 carries all of them in the class-specific bytes trailing its empty property list, and
-`savparse/lightweight.py` (185 lines) decodes it: **224,530 instances in 488 classes** across
+`pioneersav/lightweight.py` (185 lines) decodes it: **224,530 instances in 488 classes** across
 the 31 readable saves, 8,347 on the reference save alone. This is the whole of `structures` and
 `lightweight_counts`, and it was the last projection field needing the vendored parser.
 
@@ -3501,8 +3513,8 @@ the argument for refusing an unknown version everywhere in this parser.
 ### What is left, and the verdict
 
 **Nothing is left, and that is now a claim about bytes and not only about classes.** All eight
-classes that write trailing bytes are decoded — `savparse/lightweight.py` for the foundations,
-`savparse/trailers.py` (192 lines) for the conveyor chains and their three `RepSize` variants,
+classes that write trailing bytes are decoded — `pioneersav/lightweight.py` for the foundations,
+`pioneersav/trailers.py` (192 lines) for the conveyor chains and their three `RepSize` variants,
 power lines, and the circuit and player-state subsystems. Across the 31 saves that is **88,097
 records, every one consuming its declared bytes exactly**: 224,530 foundations, 688,282 items
 riding on belts, 225,686 belt spline points, 36,773 power lines, and one circuit list and account
@@ -3567,7 +3579,7 @@ an instance name like `BP_WAT112` belongs to.
 
 ## 13b. The object walk and the property serialiser
 
-The two layers `savparse` spends its lines on: `objects.py` (747 lines) walks the inflated
+The two layers `pioneersav` spends its lines on: `objects.py` (747 lines) walks the inflated
 body into levels, object headers, one property-block slice per object and the three
 destroyed-actor lists, and `properties.py` (1,160) turns a slice into the `[name, value]` pairs
 the projection reads. Together they are 64% of the package and all of the format that could not

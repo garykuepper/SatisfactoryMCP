@@ -148,20 +148,21 @@ src/satisfactory_mcp/
   planning/   LP optimizer, hard-drive advisor
   render.py   ALL response formatting (context budget is the binding constraint)
   server.py   FastMCP tool registration only
-sidecar/      separate process: savparse (ours), emits a JSON projection
+src/pioneersav/  our save parser, a standalone package: the extractor subprocess is the
+                 only thing that imports it
 tools/        one-off data generators
 ```
 
 Save parsing lives behind one subprocess boundary. The parser refuses an unrecognised
 `saveHeaderType` rather than guessing, so a game patch breaks exactly one module; a torn autosave or
 parser crash cannot take down the server; and the ~130 kB JSON projection is the committed test
-fixture, so the suite runs with no game install. `sidecar/savparse` is ours, derived from the bytes,
+fixture, so the suite runs with no game install. `src/pioneersav` is ours, derived from the bytes,
 and reads all 66 saves on the author's disk back to 2021 — six `saveVersion`s, 100% of every body.
 
 ## Licence
 
 None — this is a private project, all rights reserved by default. **No copyleft licence reaches this
-repository.** A GPL-3.0 save parser was vendored here until it was replaced by `sidecar/savparse` and
+repository.** A GPL-3.0 save parser was vendored here until it was replaced by `pioneersav` and
 deleted; the agreement between the two, measured leaf for leaf across every projection key of all 31
 saves it could read, is banked as digests in `tests/fixtures/vendor_parity.json` and replayed by
 `tests/test_savparse_parity.py`, because deleting the library destroyed the ability to re-run the diff.

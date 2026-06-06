@@ -37,7 +37,8 @@ import struct
 from pathlib import Path
 
 import pytest
-from savparse import (
+
+from pioneersav import (
     ActorHeader,
     ComponentHeader,
     ObjectSlice,

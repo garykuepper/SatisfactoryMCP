@@ -34,8 +34,8 @@ so a streaming version of this would pay for itself -- recorded rather than done
 would change the shape the trailing-bytes stage builds on.
 
 **The trailing class-specific bytes are decoded lazily**, and this module is where the class
-is matched to a reader -- ``savparse.lightweight`` for the subsystem holding every foundation,
-``savparse.trailers`` for the other seven classes. Nothing is decoded during the parse: the
+is matched to a reader -- ``pioneersav.lightweight`` for the subsystem holding every foundation,
+``pioneersav.trailers`` for the other seven classes. Nothing is decoded during the parse: the
 conveyor chains alone would add 22% to it (0.46 s on the reference save) for data no
 projection field reads, so ``ParsedObject.actorSpecificInfo`` decodes on first access instead.
 A class with no reader leaves it ``None`` rather than an empty list, so "nobody taught this

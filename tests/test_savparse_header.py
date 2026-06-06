@@ -15,7 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from savparse import PACKAGE_FILE_TAG, Reader, body_hash, check_body_hash, read_info_bytes
+
+from pioneersav import PACKAGE_FILE_TAG, Reader, body_hash, check_body_hash, read_info_bytes
 
 FIXTURE = Path(__file__).parent / "fixtures" / "save_header.bin"
 

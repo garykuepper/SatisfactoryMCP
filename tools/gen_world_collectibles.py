@@ -159,10 +159,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "sidecar"))
-
-from savparse import (
+from pioneersav import (
     FIRST_MODERN_BODY,
     ActorHeader,
     ParseError,
@@ -171,6 +168,8 @@ from savparse import (
     read_info_bytes,
     read_object,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 #: Where Steam puts the game. Overridable; the container is the only thing read from it.
 DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")

@@ -28,12 +28,14 @@ import zlib
 from pathlib import Path
 
 import pytest
-from savparse import CHUNK_TAG, ParseError, read_full_save_bytes, read_info_bytes
+
+from pioneersav import CHUNK_TAG, ParseError, read_full_save_bytes, read_info_bytes
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HEADER_FIXTURE = FIXTURES / "save_header.bin"
 BODY_FIXTURE = FIXTURES / "save_body.bin"
-SIDECAR = Path(__file__).resolve().parents[1] / "sidecar" / "extract_save.py"
+REPO = Path(__file__).resolve().parents[1]
+SIDECAR = REPO / "src" / "satisfactory_mcp" / "core" / "saveio" / "extract.py"
 
 #: The chunk size the game writes on every save seen. Reproduced rather than shortened so
 #: the assembled file is a real chunk stream and not a special case of one.
@@ -93,7 +95,7 @@ def save(sav):
 
 
 def _load_sidecar(name: str):
-    """Import ``extract_save`` under a private module name.
+    """Import ``extract`` under a private module name.
 
     ``importlib.reload`` would mutate the copy in ``sys.modules`` and leak the engine
     choice into every later test, and the engine is resolved at import time on purpose.
@@ -110,7 +112,7 @@ def _load_sidecar(name: str):
 def test_a_whole_save_parses_into_the_shape_the_projection_reads(save):
     """The adapter surface, asserted as a shape rather than trusted.
 
-    ``extract_save.iter_objects`` zips ``level.actorAndComponentObjectHeaders`` with
+    ``extract.iter_objects`` zips ``level.actorAndComponentObjectHeaders`` with
     ``level.objects`` and reads ``obj.properties`` as ``[name, value]`` pairs. Every one of
     those three names is an alias over a differently-spelled field, so a rename anywhere
     below would leave the sidecar walking zero objects and reporting an empty factory with
@@ -191,9 +193,9 @@ def test_an_actor_with_bytes_nothing_accounts_for_is_reported(save):
     88,066 are one of the eight classes, and **nothing** is left over. So this fires on no save
     on this disk, which is why the fixture has to be doctored to test that it fires at all.
     """
-    from savparse.objects import ActorHeader
-    from savparse.properties import ParsedObject
-    from savparse.save import PLAIN_TRAILER, _attach_trailer
+    from pioneersav.objects import ActorHeader
+    from pioneersav.properties import ParsedObject
+    from pioneersav.save import PLAIN_TRAILER, _attach_trailer
 
     assert not [w for w in save.warnings if "trailing bytes" in w[1]], (
         "no real save on this disk has an unaccounted-for actor trailer"
@@ -341,7 +343,7 @@ def test_the_sidecar_has_exactly_one_parser_and_it_is_ours():
     user hit it.
     """
     sidecar = _load_sidecar("_extract_save_single")
-    assert sidecar.read_full_save.__module__.startswith("savparse")
+    assert sidecar.read_full_save.__module__.startswith("pioneersav")
     assert ParseError in sidecar.PARSE_ERROR
     assert not hasattr(sidecar, "ENGINE"), "the engine switch should be gone, not defaulted"
     # Imports and path manipulation, not mentions: the module comment names the deleted library
@@ -356,5 +358,9 @@ def test_the_sidecar_has_exactly_one_parser_and_it_is_ours():
 
 def test_the_deleted_library_is_really_gone():
     """The licence exposure was the library being in the repository, so its absence is the
-    thing worth asserting -- not that some branch prefers ours."""
-    assert not (SIDECAR.parent / "vendor" / "sat_sav_parse").exists()
+    thing worth asserting -- not that some branch prefers ours.
+
+    It lived at ``sidecar/vendor/sat_sav_parse``, and the whole ``sidecar/`` directory went
+    when the parser became ``src/pioneersav``, so the directory's absence is what says it.
+    """
+    assert not (REPO / "sidecar").exists()

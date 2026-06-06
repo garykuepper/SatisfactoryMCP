@@ -21,6 +21,14 @@ resolves, because 28 test files and a decade of muscle memory spell the old
 names -- but a shim is an alias and nothing else, and the danger is that an old
 path quietly becomes a place code lives again. ``test_shims_are_frozen`` pins
 each one to its known file set and proves it declares no function and no class.
+
+The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
+happens to live in this repository, and the subprocess boundary in front of it is
+load-bearing for reasons that have nothing to do with layering -- crash isolation,
+memory return, and a projection small enough to commit as the suite's fixture. Two
+tests keep that true by import graph rather than by intention: the parser may not
+know the application exists, and inside the application exactly one module may name
+the parser, because everything else reaches it through the subprocess.
 """
 
 from __future__ import annotations
@@ -30,6 +38,11 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 PKG = SRC / "satisfactory_mcp"
+
+#: The parser package, and the one module in the application allowed to import it.
+PARSER = "pioneersav"
+PARSER_PKG = SRC / PARSER
+PARSER_IMPORTER = "satisfactory_mcp.core.saveio.extract"
 
 #: Longest-prefix-first layer map, applied to importer *and* target alike.
 #:
@@ -240,10 +253,10 @@ def _targets(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
     return found
 
 
-def _edges() -> set[tuple[str, str]]:
+def _edges(root: Path = PKG) -> set[tuple[str, str]]:
     """Every (importer, target) module pair in the package, lazy imports included."""
     edges: set[tuple[str, str]] = set()
-    for path in sorted(PKG.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         importer = _module_name(path)
@@ -346,6 +359,45 @@ def test_the_package_root_holds_only_the_layers_and_the_shims():
         "presenters or interfaces:\n"
         f"  unexpected: {sorted(found - ROOT_ENTRIES)}\n"
         f"  missing:    {sorted(ROOT_ENTRIES - found)}"
+    )
+
+
+def test_the_parser_knows_nothing_about_the_application():
+    """``pioneersav`` is a library, not a layer of this project.
+
+    It reads a file format. Anything it learned about factories, plans or the MCP surface
+    would be an import that has to be untangled again before it can be published or reused,
+    so the rule is the strongest one available: zero edges pointing back this way.
+    """
+    leaks = {
+        (importer, target)
+        for importer, target in _edges(PARSER_PKG)
+        if target == "satisfactory_mcp" or target.startswith("satisfactory_mcp.")
+    }
+    assert not leaks, (
+        f"{PARSER} is a standalone library and must not import this application -- move "
+        "whatever it needs into the caller:\n" + _describe(leaks)
+    )
+
+
+def test_only_the_extractor_imports_the_parser():
+    """The subprocess boundary, stated as an import rule.
+
+    The seam exists for crash isolation, for getting a 2.9 MB parse's memory back from the
+    OS, and for a projection small enough to commit as the test fixture. None of that
+    survives a convenience import: the first ``from pioneersav import ...`` anywhere else
+    loads the parser into the server process and quietly deletes all three properties, with
+    no test failing to say so. Exactly one module names it, and it is the one that runs in
+    the child.
+    """
+    wrong = {
+        (importer, target)
+        for importer, target in _edges()
+        if (target == PARSER or target.startswith(PARSER + ".")) and importer != PARSER_IMPORTER
+    }
+    assert not wrong, (
+        f"the parser lives behind a subprocess -- only {PARSER_IMPORTER} may import "
+        f"{PARSER}, everything else goes through core.saveio.projection:\n" + _describe(wrong)
     )
 
 

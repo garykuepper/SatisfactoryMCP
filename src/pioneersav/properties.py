@@ -106,8 +106,8 @@ actors and 113 components, **8** on 20,700 components and 3,230 actors, and more
 **3,209** actors -- 1,889 conveyor chains, 1,297 power lines, and the lightweight-buildable
 subsystem, whose 3.1 MB of foundations and walls live there and appear in no header at all.
 Those bytes are handed on as an offset and a length; ``props()`` never sees them. Decoding
-them is ``savparse.lightweight`` and ``savparse.trailers``, reached lazily through
-``actorSpecificInfo`` -- see ``savparse.save`` for why not here.
+them is ``pioneersav.lightweight`` and ``pioneersav.trailers``, reached lazily through
+``actorSpecificInfo`` -- see ``pioneersav.save`` for why not here.
 """
 
 from __future__ import annotations
@@ -243,7 +243,7 @@ class ParsedObject:
     property_types: list[list] = field(default_factory=list)
     #: Absolute offset and length of everything after the property list's terminator:
     #: a 4- or 8-byte trailer, plus class-specific binary data on 3,209 of the reference
-    #: save's actors. Not decoded here; ``savparse.save`` decodes the classes it knows.
+    #: save's actors. Not decoded here; ``pioneersav.save`` decodes the classes it knows.
     extra_offset: int = 0
     extra_length: int = 0
     #: The trailing class-specific bytes, decoded -- ``None`` when nothing knows the class.

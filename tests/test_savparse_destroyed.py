@@ -42,8 +42,9 @@ import struct
 from pathlib import Path
 
 import pytest
-from savparse import Level, ParseError, Reader, SaveBody, read_body
-from savparse.objects import _read_destroyed_block, _read_destroyed_refs
+
+from pioneersav import Level, ParseError, Reader, SaveBody, read_body
+from pioneersav.objects import _read_destroyed_block, _read_destroyed_refs
 
 FIXTURE = Path(__file__).parent / "fixtures" / "save_body_destroyed.bin"
 

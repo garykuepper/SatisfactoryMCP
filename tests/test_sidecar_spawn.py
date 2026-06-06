@@ -9,10 +9,13 @@ whose stdin is a terminal.
 
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
+from satisfactory_mcp import config
 from satisfactory_mcp.save import projection as proj
 
 
@@ -56,7 +59,36 @@ def test_sidecar_runs_a_python_interpreter_not_the_console_script(monkeypatch):
     interpreter = seen["cmd"][0].lower()
     assert "python" in interpreter, interpreter
     assert "satisfactory-mcp" not in interpreter
-    assert seen["cmd"][1].endswith("extract_save.py")
+    # ``-m``, not a constructed file path: the child resolves the extractor through the
+    # same import machinery this process used, so it cannot run a stale copy.
+    assert seen["cmd"][1:3] == ["-m", "satisfactory_mcp.core.saveio.extract"]
+    assert seen["cmd"][3:] == ["--header-only"]
+
+
+def test_the_child_is_pointed_at_this_checkouts_source(monkeypatch):
+    """The child needs two packages -- the extractor and ``pioneersav`` -- and ``-m``
+    only helps if it resolves them from the tree this process is running from.
+
+    An inherited PYTHONPATH naming an older checkout would otherwise decide it, silently,
+    and the symptom would be a projection built by code nobody is looking at.
+    """
+    seen: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"{}", stderr=b"")
+
+    monkeypatch.setenv("PYTHONPATH", "C:/somewhere/else")
+    monkeypatch.setattr(proj.subprocess, "run", fake_run)
+    proj._run_sidecar(["--header-only"])
+
+    env = seen["env"]
+    src = Path(config.__file__).resolve().parent.parent
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(src)
+    # Merged over the real environment, not a replacement for it: the extractor is an
+    # ordinary Python program and wants the same PATH and TEMP as everyone else.
+    assert "C:/somewhere/else" in env["PYTHONPATH"]
+    assert set(os.environ) <= set(env)
 
 
 def test_a_timeout_is_reported_as_a_save_error_not_a_hang(monkeypatch):

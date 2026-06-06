@@ -1,6 +1,6 @@
 """Save-file extractor. Runs as a SEPARATE PROCESS from the MCP server.
 
-    python sidecar/extract_save.py <path-to-sav> [--header-only]
+    python -m satisfactory_mcp.core.saveio.extract <path-to-sav> [--header-only]
 
 Emits a JSON projection on stdout. Diagnostics go to stderr so stdout stays clean.
 
@@ -11,6 +11,13 @@ Why a subprocess rather than an import:
     parser crash cannot take down the server.
   * The projection is small and serialisable, which makes it the test fixture -- the
     whole suite then runs with no game install and no 2.9 MB .sav in git.
+  * Every byte the parser allocated is returned to the OS when the child exits, which a
+    long-lived server reading 2.9 MB saves does not otherwise get.
+
+Why this module lives in the application package and not in ``pioneersav``: the parser
+answers "what does this file say", and this answers "what does the MCP server need" --
+the schema-11 projection is this project's shape, versioned with this project's cache,
+and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
   * ComponentHeader has no typePath attribute at all.
@@ -20,7 +27,7 @@ Property-access hazards handled here, all of which fail SILENTLY otherwise:
     finds nothing.
   * mItemsPickedUp is a MapProperty keyed by player state containing an inner map.
 
-There is one parser: sidecar/savparse. The vendored GPL-3.0 one it replaced is deleted, and
+There is one parser: ``pioneersav``. The vendored GPL-3.0 one it replaced is deleted, and
 the switch that chose between them went with it -- see the comment above the import.
 """
 
@@ -32,9 +39,6 @@ import sys
 import traceback
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
-
 # There was a second parser here until the vendored GPL-3.0 `sat_sav_parse` was deleted, and a
 # `SATISFACTORY_SAVPARSE` switch to pick between them. The switch existed for one purpose --
 # running the same save through both and diffing the projection, so that "they agree" was a
@@ -44,14 +48,18 @@ sys.path.insert(0, str(_HERE))
 # projection key, leaf for leaf, on all 31 saves the vendored parser could read**. That diff can
 # never be run again, so it is banked in `tests/fixtures/vendor_parity.json` as a per-save,
 # per-key digest of what the vendored parser produced, and `test_savparse_parity.py` holds this
-# parser to it. `savparse` additionally reads the 35 pre-1.0 saves the old one refused.
-import savparse
+# parser to it. `pioneersav` additionally reads the 35 pre-1.0 saves the old one refused.
+#
+# Absolute, and the only import in this file: the parser is a top-level package beside
+# `satisfactory_mcp`, so this module runs the same whether it is started with `-m` or as a
+# plain file path.
+import pioneersav
 
-read_save_info = savparse.read_info
-read_full_save = savparse.read_full_save
+read_save_info = pioneersav.read_info
+read_full_save = pioneersav.read_full_save
 #: What "this save cannot be read" looks like. Resolved here rather than at the raise site so
 #: that main()'s except clause names one thing.
-PARSE_ERROR: tuple[type[BaseException], ...] = (savparse.ParseError,)
+PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
 SCHEMA_VERSION = 11
 
@@ -214,11 +222,11 @@ def _map_items(value) -> dict:
 def extract(path: str) -> dict:
     save = read_full_save(path)
     # Diagnostics, and only to stderr: stdout is the projection and has to stay parseable.
-    # savparse reports what it skipped rather than silently approximating it, and those
+    # pioneersav reports what it skipped rather than silently approximating it, and those
     # notes are worth seeing without becoming a projection field -- adding them to `out`
     # would make the two parsers' output differ for a reason that is not a disagreement.
     for offset, what in getattr(save, "warnings", None) or []:
-        print(f"savparse: at body offset {offset}: {what}", file=sys.stderr)
+        print(f"pioneersav: at body offset {offset}: {what}", file=sys.stderr)
 
     out: dict = {
         "schema_version": SCHEMA_VERSION,
@@ -531,7 +539,7 @@ def _removed(save) -> dict:
     What it says is which ones do *not* any more, and that negative record is the only way to
     answer "how many slugs have I picked up" or "which crash sites have I looted".
 
-    Both parsers can produce this. `savparse` merges the three lists the format keeps into
+    Both parsers can produce this. `pioneersav` merges the three lists the format keeps into
     `destroyed_actors`; the vendored parser exposes the same three separately, as each level's
     `collectables1`/`collectables2` plus two save-level lists. Verified equal set for set on
     the reference save -- 889 actors either way -- which is why this is a projection field and

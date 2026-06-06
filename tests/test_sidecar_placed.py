@@ -1,4 +1,4 @@
-"""``extract_save._placed``: the lightweight records that are floor, and the ones that are not.
+"""``extract._placed``: the lightweight records that are floor, and the ones that are not.
 
 The subsystem blob holds one record per foundation, wall, ramp and catwalk in the world -- and
 **173 of the 224,530 records across the 31 modern saves on this disk name no asset at all.**
@@ -54,20 +54,20 @@ import os
 from pathlib import Path
 
 import pytest
-from extract_save import _lightweight, _placed, _structures
-from savparse import (
+
+from pioneersav import (
     ObjectReference,
     ParseError,
     read_body,
     read_info_bytes,
     read_lightweight,
 )
-from savparse.chunks import decompress_body
-from savparse.lightweight import LIGHTWEIGHT_SUBSYSTEM
-from savparse.objects import ActorHeader
-from savparse.properties import read_object
-from savparse.versions import FIRST_MODERN_BODY
-
+from pioneersav.chunks import decompress_body
+from pioneersav.lightweight import LIGHTWEIGHT_SUBSYSTEM
+from pioneersav.objects import ActorHeader
+from pioneersav.properties import read_object
+from pioneersav.versions import FIRST_MODERN_BODY
+from satisfactory_mcp.core.saveio.extract import _lightweight, _placed, _structures
 from satisfactory_mcp.graph.structure import build_structures
 
 FIXTURES = Path(__file__).parent / "fixtures"
