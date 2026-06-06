@@ -344,24 +344,112 @@ function drawMachines(data) {
   });
 }
 
+/* Factory labels, and the two things they used to get wrong.
+ *
+ * A permanent tooltip has to hang off SOMETHING, and that something used to be
+ * `L.marker(pos, {opacity: 0})`. An invisible marker is still a marker: Leaflet builds it
+ * from the default Icon, which requests `vendor/images/marker-icon.png` and
+ * `marker-shadow.png` -- two files nobody ever vendored, so every page load logged two
+ * 404s -- and it appends those <img> elements to the marker pane, at zIndex 600, above
+ * the canvas everything clickable is drawn on. At opacity 0 they are invisible and still
+ * 25x41 px of pointer target, so each of the 15 labels punched a hole in the map: a click
+ * on a node under one hit the transparent image instead. A divIcon fetches no image and
+ * is sized 0x0 here, which closes both holes with one change.
+ *
+ * The tooltip is then made `interactive`, which is what turns a label from decoration
+ * into the map's index: click it and the map flies to the factory's own extent -- the
+ * server's `bbox_m`, because the client is sent a machine COUNT and never the machines --
+ * and opens the card. Zooming to a bounding box rather than to a fixed zoom at the
+ * centroid is what makes one click work for both a 40 m outpost and a 600 m base.
+ */
+
+// Breathing room around a factory's extent, metres. A one-machine factory has a
+// zero-size box, and flying to a zero-size box means flying to maxZoom on top of it.
+var FACTORY_PAD_M = 40;
+
+// Never closer than this when flying to a factory: a small cluster filling the screen
+// loses the surroundings that say where it is.
+var FACTORY_MAX_ZOOM = 1;
+
+// Below this, proposal labels are hidden. They are the noisy half -- one per unnamed
+// cluster, all reading "#7 Concrete (5)" -- and zoomed out they overlap each other and
+// the named labels into an unreadable pile. The named ones stay: they are the player's
+// own words and the reason to look at the map zoomed out at all.
+var PROPOSAL_LABEL_ZOOM = -2;
+
+function anchorMarker(centroid_m) {
+  // divIcon, not the default icon: no image request, and iconSize [0,0] means the anchor
+  // occupies no pointer area at all. The tooltip is the whole visible and clickable body.
+  return L.marker([-centroid_m[1], centroid_m[0]], {
+    icon: L.divIcon({ className: "factory-anchor", iconSize: [0, 0] }),
+  });
+}
+
+/* A server bbox_m ([x_min, y_min, x_max, y_max], game axes) as Leaflet bounds. The y ends
+ * swap, exactly as they do for the biome cells, because latitude is -y. */
+function factoryBounds(bbox_m) {
+  if (!bbox_m) return null;
+  return L.latLngBounds(
+    [-(bbox_m[3] + FACTORY_PAD_M), bbox_m[0] - FACTORY_PAD_M],
+    [-(bbox_m[1] - FACTORY_PAD_M), bbox_m[2] + FACTORY_PAD_M]
+  );
+}
+
+function factoryAnchor(row, text, className, rows) {
+  var marker = anchorMarker(row.centroid_m);
+  marker.bindTooltip(text, {
+    permanent: true,
+    direction: "center",
+    interactive: true, // the point of the whole function: a label you can click
+    className: className,
+  });
+  // autoPan off: the card would otherwise shove the map sideways mid-flight, and the
+  // flight already puts the factory in view.
+  marker.bindPopup(popup(rows), { autoPan: false });
+  var bounds = factoryBounds(row.bbox_m);
+  if (bounds) {
+    marker.on("click", function () {
+      map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
+    });
+  }
+  return marker;
+}
+
 function drawFactories(data) {
   var named = layer("factory labels", true);
   data.labels.forEach(function (f) {
-    L.marker([-f.centroid_m[1], f.centroid_m[0]], { opacity: 0 })
-      .bindTooltip(f.name, { permanent: true, direction: "center", className: "factory-label" })
-      .addTo(named);
+    factoryAnchor(f, f.name, "factory-label", [
+      ["factory", f.name],
+      ["machines", f.machines],
+      ["notes", f.notes],
+      ["at", f.centroid_m[0] + ", " + f.centroid_m[1] + " m"],
+      ["selector", "<code>label:" + f.name + "</code>"],
+    ]).addTo(named);
   });
   var proposed = layer("proposals", false);
   data.proposals.forEach(function (p) {
-    L.marker([-p.centroid_m[1], p.centroid_m[0]], { opacity: 0 })
-      .bindTooltip("#" + p.index + " " + p.label + " (" + p.machines + ")", {
-        permanent: true,
-        direction: "center",
-        className: "factory-label proposal",
-      })
-      .addTo(proposed);
+    var title = "#" + p.index + " " + p.label;
+    factoryAnchor(p, title + " (" + p.machines + ")", "factory-label proposal", [
+      ["proposal", title],
+      ["machines", p.machines],
+      ["cohesion", p.score],
+      ["spread", p.spread_m + " m"],
+      ["selector", "<code>proposal:" + p.index + "</code>"],
+    ]).addTo(proposed);
   });
 }
+
+/* One class on the map container drives the declutter, so hiding 14 proposal labels is a
+ * single CSS rule rather than 29 layer add/removes that would also fight the checkbox. */
+function decluttered() {
+  var container = map.getContainer();
+  var hide = map.getZoom() < PROPOSAL_LABEL_ZOOM;
+  if (hide) L.DomUtil.addClass(container, "hide-proposal-labels");
+  else L.DomUtil.removeClass(container, "hide-proposal-labels");
+}
+
+map.on("zoomend", decluttered);
+decluttered();
 
 function drawCollectibles(data) {
   var byCategory = {};

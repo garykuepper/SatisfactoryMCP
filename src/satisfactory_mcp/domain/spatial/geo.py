@@ -21,6 +21,7 @@ __all__ = [
     "DIRECTIONS",
     "GRID_CELL",
     "Cluster",
+    "bbox",
     "bearing_deg",
     "centroid",
     "cluster",
@@ -163,6 +164,24 @@ def centroid(points: Sequence[tuple[float, float]]) -> tuple[float, float] | Non
         return None
     n = len(points)
     return (sum(p[0] for p in points) / n, sum(p[1] for p in points) / n)
+
+
+def bbox(points: Sequence[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    """Axis-aligned extent as ``(x_min, y_min, x_max, y_max)``, in the units given.
+
+    ``None`` when empty, for the reason ``centroid`` gives: a zero-size box at (0, 0) is
+    a real and rather important place on this map, so an empty set answering with one
+    would frame the world centre rather than say there was nothing to frame.
+
+    A single point yields a degenerate box, which is the truth about a one-machine
+    factory. Padding it into something a viewport can use is the caller's decision --
+    how much padding is "enough" depends on what the caller is drawing.
+    """
+    if not points:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
 
 
 def diameter_m(points: Sequence[tuple[float, float]]) -> float:

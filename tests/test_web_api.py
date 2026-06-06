@@ -348,6 +348,48 @@ def test_factories_report_named_labels_and_proposals(client, state):
     assert abs(first["centroid_m"][0]) < 5000
 
 
+def test_a_factory_carries_the_box_its_machines_occupy(client, state):
+    """``bbox_m`` is what turns a label into a button: the map flies to a factory's own
+    extent, and a centroid alone cannot decide a zoom. Every anchor still standing has to
+    lie inside the box, in metres, or the viewport it produces cuts machines off.
+    """
+    from satisfactory_mcp.domain.factories import identity as fidentity
+
+    body = client.get("/api/factories").json()
+    placed = fidentity.positions(state.projection)
+    by_name = {label.name: label for label in state.labels.labels}
+
+    for row in body["labels"]:
+        anchors = [a for a in by_name[row["name"]].anchors if a in placed]
+        if not anchors:
+            assert row["bbox_m"] is None
+            continue
+        x_min, y_min, x_max, y_max = row["bbox_m"]
+        assert abs(x_min) < 5000 and abs(y_max) < 5000, "metres, not the save's centimetres"
+        cx, cy = row["centroid_m"]
+        assert x_min <= cx <= x_max and y_min <= cy <= y_max
+        for name in anchors:
+            x, y = placed[name][0] / 100.0, placed[name][1] / 100.0
+            assert x_min - 0.1 <= x <= x_max + 0.1
+            assert y_min - 0.1 <= y <= y_max + 0.1
+
+    proposal = body["proposals"][0]
+    x_min, y_min, x_max, y_max = proposal["bbox_m"]
+    # A box no wider than the diameter the same row already reports: the two are computed
+    # from the same machines, so a disagreement means one of them is stale.
+    assert max(x_max - x_min, y_max - y_min) <= proposal["spread_m"] + 0.2
+
+
+def test_a_factory_whose_machines_are_all_gone_has_no_box_to_fly_to(client, monkeypatch):
+    """A label outlives its machines -- that is the point of anchoring to instance ids --
+    so the honest answer is a name with nowhere to go, not a zero box at the world centre
+    that would fly the map to (0, 0) and read as a bug in the projection."""
+    monkeypatch.setattr(web_api.fidentity, "positions", lambda projection: {})
+    body = client.get("/api/factories").json()
+    assert body["labels"], "the labels survive; only their positions are gone"
+    assert all(row["bbox_m"] is None for row in body["labels"])
+
+
 def test_collectibles_list_remaining_placements(client):
     body = client.get("/api/collectibles", params={"mode": "remaining"}).json()
     assert body["mode"] == "remaining"

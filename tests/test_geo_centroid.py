@@ -39,6 +39,25 @@ def test_units_pass_through_untouched():
     assert geo.centroid([(100_000.0, -200_000.0)]) == (100_000.0, -200_000.0)
 
 
+# ------------------------------------------------------------- extent
+
+
+def test_the_bounding_box_is_the_extent_and_not_the_first_and_last_point():
+    """Order must not matter, and both axes are independent -- a box read off the first
+    and last point of a list is the classic wrong version of this."""
+    points = [(10.0, -5.0), (-3.0, 20.0), (7.0, 2.0)]
+    assert geo.bbox(points) == (-3.0, -5.0, 10.0, 20.0)
+    assert geo.bbox(list(reversed(points))) == (-3.0, -5.0, 10.0, 20.0)
+
+
+def test_one_point_gives_a_degenerate_box_and_no_points_give_None():
+    """A one-machine factory really does have zero extent; the caller pads it. Empty is
+    None for centroid's reason -- a zero box at the origin would frame the world centre
+    rather than say there was nothing to frame."""
+    assert geo.bbox([(4.0, 9.0)]) == (4.0, 9.0, 4.0, 9.0)
+    assert geo.bbox([]) is None
+
+
 # ------------------------------------------------------------- spread
 
 

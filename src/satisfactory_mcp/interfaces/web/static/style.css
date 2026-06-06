@@ -142,6 +142,26 @@ select {
   border-style: dashed;
 }
 
+/* Clickable, and it has to look it: the label is the map's index, not a caption. */
+.factory-label.leaflet-interactive:hover {
+  border-color: #6ea8d8;
+  color: #fff;
+}
+
+/* The zero-size body a factory label hangs from. It exists so the tooltip has an anchor
+   in the marker pane; it draws nothing and, at 0x0 with no image, catches nothing. Its
+   predecessor was an opacity-0 default marker, whose two missing PNGs were the page's
+   only 404s and whose 25x41 px of invisible <img> ate every click near a factory. */
+.factory-anchor {
+  width: 0;
+  height: 0;
+}
+
+/* Zoomed out, proposals are noise -- see PROPOSAL_LABEL_ZOOM in app.js. */
+.hide-proposal-labels .factory-label.proposal {
+  display: none;
+}
+
 /* Biome names: printed on the ground the way an atlas prints a region, which means they
    have to stay out of the way -- no box, no pointer events, and quiet enough that the
    factory labels and the ore dots still win the eye. */

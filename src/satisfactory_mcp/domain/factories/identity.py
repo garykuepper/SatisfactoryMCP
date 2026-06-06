@@ -29,7 +29,7 @@ from ...core.gamedata.model import GameData
 from ..spatial import geo
 from .model import FactoryGraph
 
-__all__ = ["Candidate", "bases", "describe", "lines_within", "product_clusters"]
+__all__ = ["Candidate", "bases", "describe", "lines_within", "positions", "product_clusters"]
 
 #: Machines further apart than this were not built as one thing. 150 m comfortably
 #: contains the measured steel site (95 m) and tier 1&2 (197 m spans two sub-rows).
@@ -75,7 +75,16 @@ class Candidate:
         return "unnamed"
 
 
-def _positions(projection: dict) -> dict[str, tuple[float, float, float]]:
+def positions(projection: dict) -> dict[str, tuple[float, float, float]]:
+    """Every placed machine, extractor and generator, by instance leaf, in centimetres.
+
+    Public because a machine SET is the unit this package deals in and its position is
+    the one thing every consumer of a set eventually wants: ``describe`` needs it for a
+    centroid, the clusterer for its link distance, and the map endpoint for the box to
+    fly a label's factory to. Records with no ``pos`` are absent rather than zeroed, so
+    a caller reading ``pos[m]`` for a missing machine fails loudly instead of placing it
+    at the world centre.
+    """
     out: dict[str, tuple[float, float, float]] = {}
     for key in ("machines", "extractors", "generators"):
         for record in projection.get(key, ()):
@@ -101,7 +110,7 @@ def describe(
     source: str,
 ) -> Candidate:
     """Attach products, buildings and geometry to a set of machines."""
-    pos = _positions(projection)
+    pos = positions(projection)
     rec = _recipes(projection)
     products: Counter = Counter()
     recipes: Counter = Counter()
@@ -188,7 +197,7 @@ def product_clusters(
     site making it for construction and only one is the player's "concrete setup".
     Position is what separates them.
     """
-    pos = _positions(projection)
+    pos = positions(projection)
     rec = _recipes(projection)
     wanted = {p.casefold() for p in products}
     scope = set(within) if within is not None else None
@@ -231,4 +240,4 @@ def unassigned(graph: FactoryGraph, assigned: set[str]) -> list[str]:
 
 def cluster_machines(machines: list[str], projection: dict, link_m: float = CLUSTER_LINK_M):
     """Public spatial grouping, for carving an arbitrary machine set."""
-    return _cluster(machines, _positions(projection), link_m)
+    return _cluster(machines, positions(projection), link_m)
