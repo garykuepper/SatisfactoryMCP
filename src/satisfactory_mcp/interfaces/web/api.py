@@ -33,12 +33,13 @@ from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.saveio import projection as proj
 from ...domain.collectibles.service import collect_view
 from ...domain.factories import identity as fidentity
+from ...domain.spatial import elevation as spatial_elevation
 from ...domain.spatial import geo
 from ...domain.spatial import nodes as spatial_nodes
 from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
 
-__all__ = ["DEFAULT_MAP_BOUNDS_M", "PING_SECONDS", "router"]
+__all__ = ["DEFAULT_MAP_BOUNDS_M", "INSPECT_NEAREST", "INSPECT_RADIUS_M", "PING_SECONDS", "router"]
 
 #: How long a quiet SSE stream waits before sending a comment. Proxies and browsers
 #: both drop a connection that has said nothing for a while, and a comment line is the
@@ -71,6 +72,29 @@ def _fail(message: str, status: int = 400) -> JSONResponse:
 def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     """The world a request is asking about. Raises whatever the loader raises."""
     return request.app.state.load_state(save, world)
+
+
+def _label_json(label: spatial_regions.Label) -> dict | None:
+    """A region lookup as JSON, or ``None`` for ocean and off-map.
+
+    ``None`` rather than a nearest-land guess, which is the refusal ``label_for`` already
+    makes and which this layer must not undo -- a page that printed the closest biome for
+    a click in the sea would read exactly like a measurement.
+
+    The confidence word travels with the name because the name alone cannot be trusted:
+    the raster is 256 m per cell, so "Northern Forest, boundary" and "Northern Forest,
+    interior" are different claims. ``certain`` is the domain's own reading of that word,
+    computed here once so the page does not have to know the four codes.
+    """
+    if label.name is None:
+        return None
+    return {
+        "name": label.name,
+        "confidence": label.confidence,
+        "accuracy_m": label.accuracy_m,
+        "certain": label.certain,
+        "text": label.describe(),
+    }
 
 
 def _record_row(st: WorldState, row: dict) -> dict:
@@ -161,6 +185,14 @@ def nodes(
     extractors whose target is a node key, so ``occupied`` false means "no extractor
     known here", never "free". The map draws it as unknown-or-free and the popup
     carries the node id, which doubles as a ``node:`` selector for the MCP tools.
+
+    The region name is joined here rather than in the browser because the raster lives on
+    this side: sending 608 rows and then a 30x30 grid for the page to index into would put
+    the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node`` rather
+    than ``label_for`` -- it prefers the hand-verified override table, so the nodes someone
+    actually checked come back as ``verified`` instead of as a 256 m cell's best guess.
+    ``null`` for a node the raster calls void, which is the honest answer for the handful
+    that sit on islands off the grid.
     """
     try:
         st = _state(request, save, world)
@@ -168,6 +200,7 @@ def nodes(
         return _fail(f"could not read save: {exc}", 404)
     try:
         table = spatial_nodes.load_nodes()
+        rmap = spatial_regions.load_regions()
     except FileNotFoundError as exc:
         return _fail(str(exc), 404)
 
@@ -186,9 +219,143 @@ def nodes(
                 **_xyz((n["x"], n["y"], n["z"])),
                 "occupied": held is not None,
                 "occupant_cls": held["extractor"] if held else None,
+                "region": _label_json(rmap.label_for_node(n)),
             }
         )
     return {"nodes": out, "resource": resource, "occupied": sum(1 for r in out if r["occupied"])}
+
+
+# ----------------------------------------------------------- point inspector
+
+
+#: How far a click looks for known elevations, metres. The same default
+#: ``describe_location`` uses, so the map and the MCP tool answer one question one way.
+INSPECT_RADIUS_M = 200.0
+
+#: How many nodes a click reports. Enough to see what a site is next to; more would make
+#: the popup a second copy of the node table.
+INSPECT_NEAREST = 5
+
+
+def _elevation_json(near: spatial_elevation.Elevation) -> dict:
+    """A probe as JSON, with the reason for every number it declines to give.
+
+    Ground and built stay separate populations all the way out to the page, because that
+    is the whole point of the module they come from: a node rests on terrain, a foundation
+    is wherever the player put it, and averaging them near a platform produces the
+    platform's height wearing the word "ground".
+
+    ``fill_m`` is ``null`` more often than not, and a null with no reason next to it reads
+    as a bug. It has exactly two causes -- fewer than ``MIN_GROUND_SAMPLES`` nodes nearby,
+    or nothing built nearby -- and ``fill_note`` names whichever one applied. Neither is
+    ever rendered as 0: zero fill is a real, different measurement.
+    """
+    ground, built = near.ground, near.built
+    # Derived from the samples actually present rather than from a hardcoded list, so a
+    # new non-ground source in the domain module arrives here without an edit.
+    built_sources = tuple(s for s in near.counts if s not in spatial_elevation.GROUND_SOURCES)
+
+    fill = near.fill_m
+    note = None
+    if fill is None:
+        if len(ground) < spatial_elevation.MIN_GROUND_SAMPLES:
+            note = (
+                f"not enough ground samples ({len(ground)} of "
+                f"{spatial_elevation.MIN_GROUND_SAMPLES} within {near.radius_m:g} m)"
+            )
+        elif not built:
+            note = f"nothing built within {near.radius_m:g} m"
+
+    def _round(value: float | None) -> float | None:
+        return None if value is None else round(value, 1)
+
+    return {
+        "radius_m": near.radius_m,
+        "ground_m": _round(near.median(*spatial_elevation.GROUND_SOURCES)),
+        "ground_spread_m": _round(near.spread(*spatial_elevation.GROUND_SOURCES)),
+        "ground_count": len(ground),
+        "built_m": _round(near.median(*built_sources)) if built_sources else None,
+        "built_count": len(built),
+        "fill_m": _round(fill),
+        "fill_note": note,
+        "counts": dict(near.counts),
+    }
+
+
+def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[dict]:
+    """The closest ``limit`` nodes to a point, centimetres in, metres out."""
+    ranked = sorted(
+        ((geo.distance_m((x, y), (n["x"], n["y"])), n) for n in table.nodes),
+        key=lambda pair: pair[0],
+    )
+    out = []
+    for distance_m, n in ranked[:limit]:
+        held = taken.get(n["instance"])
+        out.append(
+            {
+                "id": n["instance"],
+                "name": str(n["instance"]).rsplit(".", 1)[-1],
+                "resource": n["resource"],
+                "kind": n["kind"],
+                "purity": n["purity"],
+                **_xyz((n["x"], n["y"], n["z"])),
+                "occupied": held is not None,
+                "occupant_cls": held["extractor"] if held else None,
+                "distance_m": round(distance_m, 1),
+            }
+        )
+    return out
+
+
+@router.get("/inspect")
+def inspect(
+    request: Request,
+    x_m: float,
+    y_m: float,
+    save: str | None = None,
+    world: str | None = None,
+) -> Any:
+    """What is at a coordinate: the region, the measured ground, and the nearest nodes.
+
+    The three answers a site starts with, and none of them was on the map before. Every
+    one comes straight out of ``domain.spatial`` -- this endpoint converts metres to the
+    save's centimetres, calls three functions, and rounds.
+
+    **A failed save is not a failed answer.** The node table is static, covers the whole
+    map and needs no ``.sav`` at all, so a world whose save will not load still gets its
+    region, its ground elevation and its nearest nodes; what it loses is the built
+    population and the occupancy join, and ``save_error`` says so out loud rather than
+    letting "no extractor here" quietly mean "no save here".
+
+    Not cached, deliberately and by measurement: ``sample_points`` over the 320-hour
+    reference world builds 9,525 samples in 2.0 ms and ``probe`` scans them in 0.8 ms, so
+    a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click.
+    """
+    try:
+        table = spatial_nodes.load_nodes()
+        rmap = spatial_regions.load_regions()
+    except FileNotFoundError as exc:
+        return _fail(str(exc), 404)
+
+    st: WorldState | None = None
+    save_error: str | None = None
+    try:
+        st = _state(request, save, world)
+    except Exception as exc:
+        save_error = f"could not read save: {exc}"
+
+    x, y = x_m * 100.0, y_m * 100.0
+    near = spatial_elevation.probe(
+        x, y, spatial_elevation.sample_points(table, st), INSPECT_RADIUS_M
+    )
+    taken = spatial_nodes.occupancy(st.projection) if st is not None else {}
+    return {
+        "at": {"x_m": round(x_m, 1), "y_m": round(y_m, 1)},
+        "region": _label_json(rmap.label_for(x, y)),
+        "elevation": _elevation_json(near),
+        "nearest": _nearest_nodes(table, taken, x, y, INSPECT_NEAREST),
+        "save_error": save_error,
+    }
 
 
 # -------------------------------------------------------------------- regions

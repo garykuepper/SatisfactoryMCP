@@ -57,6 +57,24 @@ function popup(pairs) {
   );
 }
 
+/* A resource class as the short name the whole page uses: Desc_OreIron_C -> OreIron. */
+function shortResource(resource) {
+  return String(resource || "")
+    .replace(/^Desc_/, "")
+    .replace(/_C$/, "");
+}
+
+/* A region lookup as one line: "Northern Forest, interior".
+ *
+ * The confidence word is never dropped, not even for an interior hit. The raster is 256 m
+ * per cell, so the name and how far it can be trusted are one claim -- and a name printed
+ * bare next to a MEASURED elevation would borrow that measurement's authority. `null` is
+ * the ocean-or-off-map answer, and it is said plainly rather than softened into the
+ * nearest bit of land. */
+function regionLine(region) {
+  return region ? region.name + ", " + region.confidence : "off the map";
+}
+
 /* ------------------------------------------------------------------ palette */
 
 // Ore colours follow the in-game item tints closely enough to be recognisable without
@@ -132,7 +150,11 @@ var map = L.map("map", {
 });
 state.map = map;
 map.setView([0, 0], -3);
-map.attributionControl.setPrefix("").addAttribution("map data from your save &middot; Leaflet");
+// The prefix is the one piece of always-visible chrome, so it carries the one gesture the
+// map has that nothing on screen hints at.
+map.attributionControl
+  .setPrefix("right-click: inspect a point")
+  .addAttribution("map data from your save &middot; Leaflet");
 
 /* One flat 10 km square of "land" used to be drawn here, in the overlay pane. It was a
  * stand-in for terrain and it is gone: the biome raster is the real thing, and an opaque
@@ -277,7 +299,7 @@ function drawNodes(data) {
   Object.keys(byResource)
     .sort()
     .forEach(function (resource) {
-      var short = resource.replace(/^Desc_/, "").replace(/_C$/, "");
+      var short = shortResource(resource);
       var group = layer("node: " + short, true);
       byResource[resource].forEach(function (n) {
         L.circleMarker(xy(n), {
@@ -290,6 +312,8 @@ function drawNodes(data) {
           .bindPopup(
             popup([
               ["node", short + " (" + n.purity + ")"],
+              // Joined server-side: the raster and its orientation trap stay on one side.
+              ["region", regionLine(n.region)],
               ["selector", "<code>node:" + n.name + "</code>"],
               ["at", n.x_m + ", " + n.y_m + " m"],
               ["occupied by", n.occupant_cls],
@@ -492,6 +516,93 @@ function drawCollectibles(data) {
       });
     });
 }
+
+/* --------------------------------------------------------- point inspector */
+
+/* Right-click anywhere: "what is here?" answered where the question is asked.
+ *
+ * The map is drawn from a save and a node table, and until now it could show WHERE things
+ * are and nothing about the ground they stand on. /api/inspect answers the three things a
+ * site starts with -- the named region, the measured elevation, the nearest nodes -- and
+ * all three come from the domain layer, so the only work below is turning a latlng back
+ * into game coordinates and laying the answer out.
+ *
+ * The inverse of the page's one coordinate rule: a point plotted at [-y, x] reads back as
+ * x = lng, y = -lat. Rounded to a decimetre because the popup prints the same numbers it
+ * asked with, and a coordinate you cannot retype is not a copyable coordinate.
+ */
+
+function elevationRows(e) {
+  // Unsurveyed ground gets one line, not three saying the same nothing. There is no
+  // heightmap anywhere in this project's inputs, so "no samples" is a real answer.
+  if (!e.ground_count && !e.built_count) {
+    return [["elevation", "nothing known within " + e.radius_m + " m"]];
+  }
+  // Ground and built stay apart, exactly as the server sends them: a node rests on
+  // terrain and a foundation is wherever the player put it, so one median labelled
+  // "elevation" would be the platform's height on any developed site.
+  var rows = [
+    [
+      "ground",
+      e.ground_count
+        ? e.ground_m + " m (median of " + e.ground_count + ", spread " + e.ground_spread_m + " m)"
+        : "no ground samples within " + e.radius_m + " m",
+    ],
+  ];
+  if (e.built_count) {
+    rows.push(["built", e.built_m + " m (median of " + e.built_count + ")"]);
+  }
+  // A missing fill is printed as the REASON it is missing, never as 0: zero fill is a
+  // real and different measurement, and a blank row reads as a bug in the map.
+  rows.push(["fill", e.fill_m === null ? e.fill_note : e.fill_m + " m"]);
+  return rows;
+}
+
+function inspectHtml(d) {
+  var rows = [["region", regionLine(d.region)]].concat(elevationRows(d.elevation));
+  d.nearest.forEach(function (n, i) {
+    rows.push([
+      i ? "" : "nearest",
+      shortResource(n.resource) +
+        " " +
+        n.purity +
+        " &middot; " +
+        n.distance_m +
+        " m" +
+        (n.occupied ? " (occupied)" : ""),
+    ]);
+  });
+  // Said out loud rather than left to be inferred: with no save there is no built
+  // population and no occupancy, so every node above reads as free whether it is or not.
+  if (d.save_error) rows.push(["save", d.save_error + " — nodes only, occupancy unknown"]);
+  rows.push(["at", "<code>" + d.at.x_m + ", " + d.at.y_m + "</code>"]);
+  return popup(rows);
+}
+
+map.on("contextmenu", function (e) {
+  // One right-click can reach this twice -- Leaflet fires at the layer under the cursor
+  // and the event propagates to the map -- so the DOM event carries a mark. Two fetches
+  // and two popups for one click is the bug this one line removes.
+  if (e.originalEvent) {
+    if (e.originalEvent._inspected) return;
+    e.originalEvent._inspected = true;
+  }
+  var x = Math.round(e.latlng.lng * 10) / 10;
+  var y = Math.round(-e.latlng.lat * 10) / 10;
+  // Opened before the fetch, so the click has a visible effect on a slow answer and the
+  // popup lands exactly where the pointer was rather than where the map has drifted to.
+  var card = L.popup({ maxWidth: 340 })
+    .setLatLng(e.latlng)
+    .setContent("inspecting " + x + ", " + y + " m&hellip;")
+    .openOn(map);
+  get("/api/inspect?x_m=" + x + "&y_m=" + y)
+    .then(function (d) {
+      if (map.hasLayer(card)) card.setContent(inspectHtml(d));
+    })
+    .catch(function (err) {
+      if (map.hasLayer(card)) card.setContent(popup([["inspect failed", err.message]]));
+    });
+});
 
 /* ------------------------------------------------------------------ loading */
 

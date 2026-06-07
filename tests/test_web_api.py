@@ -94,6 +94,172 @@ def test_nodes_can_be_filtered_by_resource(client):
     assert {r["resource"] for r in body["nodes"]} == {"Desc_OreIron_C"}
 
 
+def test_nodes_carry_the_region_they_sit_in(client):
+    """Joined server-side, so the raster -- and its orientation trap -- lives in one place.
+
+    ``label_for_node``, not ``label_for``: the hand-verified override table is the reason
+    ``verified`` shows up at all, and a plain cell lookup would silently downgrade every
+    node someone actually checked to a 256 m guess.
+    """
+    rows = client.get("/api/nodes").json()["nodes"]
+    named = [r for r in rows if r["region"]]
+    assert len(named) > 500, "the raster covers the nodes; a handful of nulls is the limit"
+    known = set(client.get("/api/regions").json()["regions"])
+    assert {r["region"]["name"] for r in named} <= known
+    # The confidence word travels with the name, or a boundary guess reads as a fact.
+    assert {r["region"]["confidence"] for r in named} <= {
+        "sparse",
+        "boundary",
+        "interior",
+        "verified",
+    }
+    assert any(r["region"]["confidence"] == "verified" for r in named), (
+        "the override table is what verified means, and it was not consulted"
+    )
+
+
+# ---------------------------------------------------------------- inspector
+
+#: The same three coordinates ``test_elevation`` probes, and for the same reasons: a
+#: developed platform where the built population swamps the ground one, open field with
+#: nodes and nothing built, and water far enough out that nothing is in range.
+ON_PLATFORM = (-1216.0, -1127.0)
+IN_THE_FIELD = (2000.0, -2400.0)
+OPEN_OCEAN = (-3500.0, 3500.0)
+
+
+def test_inspect_answers_the_three_questions_a_site_starts_with(client):
+    """Region, measured ground, nearest nodes -- none of which was on the map before."""
+    x_m, y_m = IN_THE_FIELD
+    body = client.get("/api/inspect", params={"x_m": x_m, "y_m": y_m}).json()
+    assert set(body) >= {"region", "elevation", "nearest"}
+    assert body["at"] == {"x_m": x_m, "y_m": y_m}
+
+    # Advisory, and never separable from how far it can be trusted.
+    assert body["region"]["name"] == "Spire Coast"
+    assert body["region"]["confidence"] == "interior"
+    assert body["region"]["accuracy_m"] == 256
+
+    e = body["elevation"]
+    assert e["radius_m"] == web_api.INSPECT_RADIUS_M == 200.0
+    assert e["ground_m"] is not None and e["ground_spread_m"] is not None
+    assert e["counts"] == {"node": e["ground_count"]}, "open field: nothing built out here"
+    assert e["built_m"] is None and e["built_count"] == 0
+
+    near = body["nearest"]
+    assert len(near) == web_api.INSPECT_NEAREST == 5
+    assert [n["distance_m"] for n in near] == sorted(n["distance_m"] for n in near)
+    row = near[0]
+    assert set(row) >= {"resource", "purity", "occupied", "distance_m", "id", "x_m", "y_m"}
+    assert row["resource"].startswith("Desc_")
+    # Metres, like every other coordinate here, and the distance agrees with the position.
+    assert row["distance_m"] == pytest.approx(
+        ((row["x_m"] - x_m) ** 2 + (row["y_m"] - y_m) ** 2) ** 0.5, abs=0.15
+    )
+
+
+def test_inspect_measures_a_platform_and_still_refuses_the_fill_depth(client):
+    """The trap this whole feature could have walked into, pinned at the coordinate where
+    it is worst: 805 built samples against one node. The built median is real and is
+    reported; the fill depth is a difference from a single ground point, so it is refused
+    -- and the refusal carries its reason, because a bare null reads as a broken endpoint.
+    """
+    x_m, y_m = ON_PLATFORM
+    e = client.get("/api/inspect", params={"x_m": x_m, "y_m": y_m}).json()["elevation"]
+    assert e["built_count"] > 500 and e["built_m"] is not None
+    assert e["counts"]["structure"] > e["counts"]["node"] * 100
+    assert e["ground_count"] < 3
+    assert e["fill_m"] is None, "a fill from one ground sample is an invented number"
+    assert e["fill_note"] == "not enough ground samples (1 of 3 within 200 m)"
+
+
+def test_inspect_quotes_a_fill_depth_once_both_populations_are_real(game):
+    """And when it can be measured, it is: the difference of the two medians, in metres.
+
+    Driven off a synthetic floor plan, for two reasons. The reference world has no spot
+    where three nodes and a platform share a 200 m circle, so the refusal above is the
+    only thing it can exercise; and a world with nothing else built makes the built median
+    a number this test chose, which is what turns "some fill" into an exact 25.0.
+    """
+    from satisfactory_mcp.domain.spatial import geo
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
+
+    table = nodes_mod.load_nodes()
+    radius = web_api.INSPECT_RADIUS_M
+    found = None
+    for n in table.nodes:
+        # The same circle the probe will use, or the ground median under test is not the
+        # ground median the endpoint computes.
+        near = [
+            m
+            for m in table.nodes
+            if geo.distance_m((n["x"], n["y"]), (m["x"], m["y"])) <= radius and m.get("z")
+        ]
+        if len(near) % 2 == 1 and len(near) >= 3:
+            found = (n, sorted(float(m["z"]) for m in near))
+            break
+    assert found, "the node table has no odd cluster of three within the probe radius"
+    centre, heights = found
+    ground_cm = heights[len(heights) // 2]
+
+    projection = {
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [[0, centre["x"], centre["y"], ground_cm + 2500.0]],
+        }
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        e = c.get(
+            "/api/inspect", params={"x_m": centre["x"] / 100.0, "y_m": centre["y"] / 100.0}
+        ).json()["elevation"]
+    assert e["ground_count"] == len(heights)
+    assert e["built_count"] == 1
+    assert e["fill_m"] == pytest.approx(25.0, abs=0.1)
+    assert e["fill_note"] is None
+
+
+def test_inspect_says_off_the_map_rather_than_naming_the_nearest_land(client):
+    """Ocean and off-map are the same answer, and it is a refusal, not a nearby biome."""
+    for x_m, y_m in (OPEN_OCEAN, (99999.0, 99999.0)):
+        body = client.get("/api/inspect", params={"x_m": x_m, "y_m": y_m}).json()
+        assert body["region"] is None
+        e = body["elevation"]
+        assert e["ground_count"] == 0 and e["ground_m"] is None
+        assert e["counts"] == {}
+        assert e["fill_m"] is None and "not enough ground samples" in e["fill_note"]
+        # The node table is map-wide, so "nearest" is always answerable -- and the
+        # distances say plainly how far away the answer is.
+        assert len(body["nearest"]) == 5
+        assert all(n["distance_m"] > 1000 for n in body["nearest"])
+
+
+def test_inspect_still_answers_when_the_save_cannot_be_read(game):
+    """The node table needs no ``.sav``, so a broken world keeps its geography.
+
+    What it loses is the built population and the occupancy join, and ``save_error`` has
+    to say so: without it every node would read as free because nothing was there to say
+    otherwise, which is the exact failure mode this project keeps refusing.
+    """
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/inspect", params={"x_m": IN_THE_FIELD[0], "y_m": IN_THE_FIELD[1]})
+    assert r.status_code == 200
+    body = r.json()
+    assert "sidecar produced no output" in body["save_error"]
+    assert body["region"]["name"] == "Spire Coast"
+    assert body["elevation"]["ground_count"] > 0, "the node table is the ground truth"
+    assert body["elevation"]["built_count"] == 0
+    assert body["nearest"] and all(n["occupied"] is False for n in body["nearest"])
+
+
+def test_inspect_needs_a_coordinate(client):
+    assert client.get("/api/inspect").status_code == 422
+
+
 def test_regions_serve_the_biome_raster_in_metres(client):
     """The base map's only source: 30 rows of 30 cells, a legend, and the frame."""
     r = client.get("/api/regions")
