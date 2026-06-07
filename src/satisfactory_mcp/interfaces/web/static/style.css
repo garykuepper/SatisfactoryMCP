@@ -104,13 +104,25 @@ select {
 }
 
 .err-row {
-  background: var(--warn);
-  color: #fff;
   padding: 0.4rem 0.8rem;
   border-radius: 4px;
   max-width: 80vw;
   pointer-events: auto;
   cursor: pointer;
+}
+
+.err-row.fail {
+  background: var(--warn);
+  color: #fff;
+}
+
+/* The same strip, saying something that is not a failure -- "I turned a layer on". Panel
+   colours, not warning red: a note the eye reads as an error teaches the reader to
+   distrust the red rows that are. */
+.err-row.note {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
 }
 
 /* The static half of the legend: the encodings no layer-control swatch can carry. */
@@ -164,6 +176,70 @@ select {
   overflow-y: auto;
 }
 
+/* The control's two folds -- see decorateControl() in app.js. Leaflet's own collapsed mode
+   is never used, so `.leaflet-control-layers-expanded` is always set and its toggle anchor
+   (whose icon is an image this project does not vendor) stays display:none where Leaflet's
+   own stylesheet put it. These rules match that stylesheet's specificity and win on order,
+   which is the only reason no !important is needed. */
+.leaflet-control-layers .layer-folded {
+  display: none;
+}
+
+.layers-head,
+.layer-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.layers-head {
+  padding-bottom: 4px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Folded, the head is the whole control: no rule under it to separate it from nothing. */
+.layers-head.shut {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.layer-section {
+  margin: 5px 0 1px;
+  color: #9aa0a8;
+  font-size: 11px;
+}
+
+.layers-head:hover,
+.layer-section:hover {
+  color: #fff;
+}
+
+.layer-caret {
+  display: inline-block;
+  width: 8px;
+  color: #9aa0a8;
+}
+
+/* How many of a folded family are drawn. The count is the whole reason a fold is honest:
+   "resource nodes, 14 of 14" answers "are the ore dots on?" without unfolding anything. */
+.layer-count {
+  margin-left: auto;
+  padding-left: 10px;
+  color: #7b828c;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .leaflet-control-attribution {
   background: var(--panel) !important;
   color: #9aa0a8;
@@ -208,6 +284,31 @@ select {
    target either, or it steals the click of the label drawn over it. */
 .factory-label.label-hidden {
   display: none;
+}
+
+/* "+n": the names this label is sitting on top of. Absolutely positioned so it hangs off
+   the corner without widening the rectangle the declutter pass measures -- see
+   badgeHidden() in app.js -- and clickable, because on this map a visible label is a
+   clickable one and a badge that only reported would be the one exception. */
+.factory-label .label-more {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #6ea8d8;
+  color: #12161b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.factory-label .label-more:hover {
+  background: #9ecbf0;
 }
 
 /* Biome names: printed on the ground the way an atlas prints a region, which means they

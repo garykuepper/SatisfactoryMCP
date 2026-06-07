@@ -35,7 +35,14 @@ function el(id) {
  * never an undismissable patch of dead map. */
 var FAIL_MS = 12000;
 
-function fail(message) {
+/* The same strip carries the page's one non-failure message: "I turned a layer on for
+ * you". One mechanism, so a note cannot end up somewhere a reader has not learned to
+ * look -- and a different colour, because a note the eye reads as an error is worse than
+ * no note. Shorter-lived too: a failure has to survive being read twice, a note describes
+ * something the reader can already see on the map. */
+var NOTE_MS = 6000;
+
+function toast(message, kind, ms) {
   var box = el("err");
   var rows = Array.prototype.slice.call(box.children);
   rows.forEach(function (row) {
@@ -43,7 +50,7 @@ function fail(message) {
     if (row.textContent === message) row.remove();
   });
   var row = document.createElement("div");
-  row.className = "err-row";
+  row.className = "err-row " + kind;
   row.textContent = message;
   row.title = "click to dismiss";
   row.onclick = function () {
@@ -52,7 +59,15 @@ function fail(message) {
   box.appendChild(row);
   setTimeout(function () {
     row.remove();
-  }, FAIL_MS);
+  }, ms);
+}
+
+function fail(message) {
+  toast(message, "fail", FAIL_MS);
+}
+
+function note(message) {
+  toast(message, "note", NOTE_MS);
 }
 
 /* Browser-internal error phrases, translated to what they mean HERE. "Failed to fetch"
@@ -230,6 +245,7 @@ var state = {
   save: "", // a pinned save's path; "" means "the newest, refetched on save events"
   worlds: [],
   layers: {},
+  layerName: {}, // Leaflet's layer stamp -> the name its control row carries
   control: null,
   map: null,
   epoch: 0, // bumped on every world/save switch; a reply from an older epoch is dropped
@@ -381,6 +397,176 @@ var control = L.control.layers(
 state.control = control;
 L.control.scale({ imperial: false }).addTo(map);
 
+/* Thirty-three rows on the reference world -- 291x690 px, 12.5% of a 1600x1000 viewport
+ * and a great deal more of a laptop -- permanently, because the control was built with
+ * `collapsed: false` and nothing else could fold it.
+ *
+ * `collapsed: true` is not the fix. This control is the map's legend (every swatch) and
+ * its only filter, so hiding it behind Leaflet's own hover toggle would make the page's
+ * one index invisible until the pointer happened to cross a 36 px square -- a square drawn
+ * from `vendor/images/layers.png`, which this project does not vendor and which would
+ * therefore be the page's only 404. Both folds below are the page's own.
+ *
+ *   * The head row folds the whole list to one labelled strip that still says how many
+ *     layers exist and how many are drawn, so "there ARE layers here" survives folding.
+ *   * A section head folds one data-driven family -- the `node:` rows, the `pickup:` rows
+ *     -- and those two start folded, because they are the families that grow with the
+ *     world and that turned a nine-row legend into thirty-three. Their heads carry the
+ *     same "n of m" count, which is what lets a folded section still answer "are the ore
+ *     dots on?" without unfolding it.
+ *
+ * The choices persist across a world switch the same way the checkboxes do, and for the
+ * same reason: both live in objects built once at module scope, and a switch replaces
+ * layer CONTENTS without rebuilding the control, the layer groups or these flags.
+ */
+var SECTIONS = [
+  { key: "nodes", prefix: "node: ", title: "resource nodes" },
+  { key: "pickups", prefix: "pickup: ", title: "pickups" },
+];
+
+state.panel = { open: true, sections: { nodes: false, pickups: false } };
+
+function sectionFor(name) {
+  var found = null;
+  SECTIONS.forEach(function (section) {
+    if (name.indexOf(section.prefix) === 0) found = section;
+  });
+  return found;
+}
+
+/* A control row back to the layer it toggles. Leaflet stamps the layer's id onto the
+ * checkbox it builds, and layer() files the name under that same stamp, so the mapping
+ * survives every re-render of the list without parsing the row's text back. */
+function rowName(row) {
+  var input = row.querySelector("input");
+  return (input && state.layerName[input.layerId]) || "";
+}
+
+function rowOn(row) {
+  var input = row.querySelector("input");
+  return !!(input && input.checked);
+}
+
+function fold(element, folded) {
+  if (!element) return;
+  if (folded) L.DomUtil.addClass(element, "layer-folded");
+  else L.DomUtil.removeClass(element, "layer-folded");
+}
+
+function foldHead(element, open, title, count, total) {
+  element.setAttribute("role", "button");
+  element.setAttribute("tabindex", "0");
+  element.setAttribute("aria-expanded", open ? "true" : "false");
+  element.innerHTML =
+    '<span class="layer-caret">' +
+    (open ? "&#9662;" : "&#9656;") +
+    "</span>" +
+    esc(title) +
+    '<span class="layer-count">' +
+    count +
+    " of " +
+    total +
+    "</span>";
+  element.title =
+    (open ? "hide " : "show ") + title + " — " + count + " of " + total + " drawn right now";
+}
+
+/* Both heads say `role="button"`, so both have to answer a keyboard the way a button
+ * does. Every checkbox in this control is already reachable by Tab; a fold that could only
+ * be opened with a pointer would put those checkboxes behind a mouse. */
+function onActivate(element, action) {
+  L.DomEvent.on(element, "click", function (event) {
+    L.DomEvent.stop(event);
+    action();
+  });
+  L.DomEvent.on(element, "keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    L.DomEvent.stop(event);
+    action();
+  });
+}
+
+function sectionHead(section, rows) {
+  var head = L.DomUtil.create("div", "layer-section");
+  head._section = section.key;
+  var open = state.panel.sections[section.key];
+  foldHead(head, open, section.title, rows.filter(rowOn).length, rows.length);
+  onActivate(head, function () {
+    state.panel.sections[section.key] = !state.panel.sections[section.key];
+    decorateControl();
+  });
+  return head;
+}
+
+function panelHead(rows) {
+  var container = control.getContainer();
+  var head = container.querySelector(".layers-head");
+  if (!head) {
+    head = L.DomUtil.create("div", "layers-head");
+    onActivate(head, function () {
+      state.panel.open = !state.panel.open;
+      decorateControl();
+    });
+    // First child, ahead of Leaflet's own (permanently hidden) toggle anchor: the head is
+    // what stays on screen when the list folds, so it has to be the top of the box.
+    container.insertBefore(head, container.firstChild);
+  }
+  foldHead(head, state.panel.open, "layers", rows.filter(rowOn).length, rows.length);
+  fold(head, false);
+  if (state.panel.open) L.DomUtil.removeClass(head, "shut");
+  else L.DomUtil.addClass(head, "shut");
+  return head;
+}
+
+/* Re-applied after every render of the list, and idempotent: Leaflet empties the overlay
+ * list on each `_update`, so the section heads are rebuilt rather than moved. */
+function decorateControl() {
+  var container = control.getContainer();
+  if (!container) return;
+  var list = container.querySelector(".leaflet-control-layers-overlays");
+  if (!list) return;
+  // A section head is replaced, not updated, so keyboard focus would land on a removed
+  // node and the NEXT Enter would go to the document. Remembered here, restored below.
+  var active = document.activeElement;
+  var focused = active && active._section ? active._section : null;
+  Array.prototype.slice.call(list.querySelectorAll(".layer-section")).forEach(function (head) {
+    head.parentNode.removeChild(head);
+  });
+  var rows = Array.prototype.slice.call(list.querySelectorAll("label"));
+  var grouped = {};
+  rows.forEach(function (row) {
+    fold(row, false);
+    var section = sectionFor(rowName(row));
+    if (section) (grouped[section.key] = grouped[section.key] || []).push(row);
+  });
+  SECTIONS.forEach(function (section) {
+    var members = grouped[section.key];
+    if (!members || !members.length) return;
+    var open = state.panel.sections[section.key];
+    members.forEach(function (row) {
+      fold(row, !open);
+    });
+    var head = sectionHead(section, members);
+    list.insertBefore(head, members[0]);
+    if (focused === section.key) head.focus();
+  });
+  panelHead(rows);
+  fold(container.querySelector(".leaflet-control-layers-list"), !state.panel.open);
+}
+
+(function () {
+  var update = control._update;
+  control._update = function () {
+    var result = update.apply(this, arguments);
+    decorateControl();
+    return result;
+  };
+  // A checkbox click does not re-render the list, so the "n of m" counts would go stale
+  // the moment anyone used the thing they are counting.
+  map.on("overlayadd overlayremove", decorateControl);
+  decorateControl();
+})();
+
 /* Flying to a factory label is one click; getting back out was zoom-out spam. One
  * house-shaped button under the zoom control reframes the whole world. */
 (function () {
@@ -410,6 +596,9 @@ function layer(name, on, colour) {
     var group = L.layerGroup();
     group._rank = layerRank(name);
     state.layers[name] = group;
+    // Keyed by the same stamp Leaflet writes onto the row's checkbox, so decorateControl
+    // can read a row's name back without parsing the swatch markup out of its text.
+    state.layerName[L.Util.stamp(group)] = name;
     var title = colour
       ? '<i class="swatch" style="background:' + colour + '"></i>' + esc(name)
       : esc(name);
@@ -648,6 +837,23 @@ function drawMachines(data) {
   raiseNodeDots();
 }
 
+/* `machines` is off at the whole-world zoom on purpose: 438 rectangles across 7 km is a
+ * smear, and unticking it is the right default. What was wrong is what happened next --
+ * clicking a factory label flew the map to that factory's own extent and landed on bare
+ * concrete, with the reason eight unfolded rows down a control the player had not opened.
+ *
+ * So the click that changes the SCALE turns the layer on, once, and says so. Not zoom:
+ * a layer that ticked and unticked itself as the map moved would be the only control on
+ * this page the player does not own, and the checkbox would be lying about who decided.
+ * This is the same grammar as everything else here -- a ticked box, unticked by whoever
+ * wants it unticked -- reached by the one gesture that means "show me this factory". */
+function revealMachines() {
+  var group = state.layers.machines;
+  if (!group || map.hasLayer(group)) return;
+  group.addTo(map);
+  note("machines turned on — untick the machines layer to hide them again");
+}
+
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
 function drawPlayer(p) {
@@ -729,6 +935,8 @@ function factoryAnchor(row, text, className, rows) {
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
     marker.on("click", function () {
+      // A factory at factory scale IS its machines; see revealMachines.
+      revealMachines();
       map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
     });
   }
@@ -769,7 +977,15 @@ function drawFactories(data) {
  * proposals, bigger factories outrank smaller, and the test is the labels' actual screen
  * rectangles, re-run whenever zoom or the ticked layers change. A hidden label reappears
  * the moment there is room, and every label that IS visible is clickable -- no
- * dead-looking clickables, no invisible click thieves. */
+ * dead-looking clickables, no invisible click thieves.
+ *
+ * The rule is right; it used to be applied in silence. At the home view 8 of 15 labels
+ * are display:none, and a player who NAMED a factory could not tell hidden from lost --
+ * the map said nothing about the eight, and the player has no way to know the pass exists.
+ * So every label that covered something wears a "+n" badge: the count of names folded
+ * under it, drawn only when this pass actually hid that many at this view, and gone the
+ * moment a zoom-in makes room. Clicking it steps the map toward the group it names, which
+ * keeps the page's one rule about labels -- visible means clickable. */
 function declutter() {
   var entries = [];
   ["factory labels", "proposals"].forEach(function (name, groupRank) {
@@ -778,11 +994,20 @@ function declutter() {
     group.eachLayer(function (marker) {
       var tip = marker.getTooltip && marker.getTooltip();
       var node = tip && tip.getElement && tip.getElement();
-      if (node) entries.push({ node: node, rank: groupRank, weight: marker._labelWeight || 0 });
+      if (node) {
+        entries.push({
+          node: node,
+          marker: marker,
+          rank: groupRank,
+          weight: marker._labelWeight || 0,
+        });
+      }
     });
   });
   entries.forEach(function (entry) {
     L.DomUtil.removeClass(entry.node, "label-hidden");
+    var old = entry.node.querySelector(".label-more");
+    if (old) old.parentNode.removeChild(old);
   });
   entries.sort(function (a, b) {
     return a.rank - b.rank || b.weight - a.weight;
@@ -790,11 +1015,54 @@ function declutter() {
   var kept = [];
   entries.forEach(function (entry) {
     var r = entry.node.getBoundingClientRect();
-    var covered = kept.some(function (k) {
-      return r.left < k.right && k.left < r.right && r.top < k.bottom && k.top < r.bottom;
+    var covered = null;
+    kept.forEach(function (k) {
+      if (covered) return; // the highest-ranked cover owns the badge
+      var b = k.rect;
+      if (r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom) covered = k;
     });
-    if (covered) L.DomUtil.addClass(entry.node, "label-hidden");
-    else kept.push(r);
+    if (covered) {
+      L.DomUtil.addClass(entry.node, "label-hidden");
+      covered.hidden.push(entry);
+    } else {
+      kept.push({ rect: r, entry: entry, hidden: [] });
+    }
+  });
+  kept.forEach(function (k) {
+    if (k.hidden.length) badgeHidden(k.entry, k.hidden);
+  });
+}
+
+/* One click on a badge is a STEP toward the group, not a teleport. Two labels 40 m apart
+ * do not separate until zoom 3, and flying six levels in one go from the whole-world view
+ * loses every landmark on the way; three levels always moves the map and stays legible.
+ * If the group is still covered when the flight ends the badge is still there -- the
+ * declutter pass reruns on zoomend -- so the step simply repeats. */
+var LABEL_STEP_ZOOM = 3;
+
+function badgeHidden(entry, hidden) {
+  // Absolutely positioned, so it hangs off the label's corner without changing the
+  // rectangle this same pass just measured -- a badge that grew the box would make the
+  // next run hide a label because of the badge on the one before it.
+  var badge = L.DomUtil.create("span", "label-more", entry.node);
+  badge.textContent = "+" + hidden.length;
+  badge.title =
+    hidden.length === 1
+      ? "1 more factory label is hidden under this one — click to zoom in"
+      : hidden.length + " more factory labels are hidden here — click to zoom in";
+  var points = [entry.marker.getLatLng()];
+  hidden.forEach(function (other) {
+    points.push(other.marker.getLatLng());
+  });
+  L.DomEvent.on(badge, "click", function (event) {
+    // Without this the label's own click wins and flies to the covering factory's extent,
+    // which is the one place the hidden names are guaranteed still to be hidden.
+    L.DomEvent.stop(event);
+    var bounds = L.latLngBounds(points);
+    var fit = map.getBoundsZoom(bounds, false, L.point(80, 80));
+    var zoom = Math.min(fit, map.getZoom() + LABEL_STEP_ZOOM);
+    zoom = Math.min(Math.max(zoom, map.getZoom() + 1), map.getMaxZoom());
+    map.flyTo(bounds.getCenter(), zoom);
   });
 }
 
