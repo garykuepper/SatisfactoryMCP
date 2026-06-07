@@ -8,11 +8,18 @@
  *      So a point is plotted at [-y, x], and that negation is the only place the two
  *      conventions meet. Doing it anywhere else produces a map that is correct until
  *      someone compares it with an in-game coordinate.
+ *
+ * And one content fact: every string that reaches a popup or a label is DATA -- factory
+ * names and notes from the player's label file, class ids from the save, region names
+ * from a JSON file. popup() escapes everything by default; the few rows that need markup
+ * say so explicitly with html(). A factory named "<b>x</b>" prints as its own text.
  */
 
 "use strict";
 
 var BOUND = 5000; // metres; the playable world is ~7 km across, so this frames it loosely.
+
+var HOME_VIEW = { centre: [0, 0], zoom: -3 }; // the whole-world framing every load starts from.
 
 function xy(row) {
   return [-row.y_m, row.x_m];
@@ -22,24 +29,80 @@ function el(id) {
   return document.getElementById(id);
 }
 
+/* Errors stack instead of overwriting each other: six endpoints failing together used to
+ * collapse into whichever message landed last, gone six seconds later. Each failure gets
+ * its own row, stays up long enough to read, and a click dismisses it -- so the toast is
+ * never an undismissable patch of dead map. */
+var FAIL_MS = 12000;
+
 function fail(message) {
   var box = el("err");
-  box.textContent = message;
-  box.hidden = false;
-  clearTimeout(fail.t);
-  fail.t = setTimeout(function () {
-    box.hidden = true;
-  }, 6000);
+  var rows = Array.prototype.slice.call(box.children);
+  rows.forEach(function (row) {
+    // The same message twice is one problem, not two rows.
+    if (row.textContent === message) row.remove();
+  });
+  var row = document.createElement("div");
+  row.className = "err-row";
+  row.textContent = message;
+  row.title = "click to dismiss";
+  row.onclick = function () {
+    row.remove();
+  };
+  box.appendChild(row);
+  setTimeout(function () {
+    row.remove();
+  }, FAIL_MS);
+}
+
+/* Browser-internal error phrases, translated to what they mean HERE. "Failed to fetch"
+ * is Chrome for "the server you started is gone", and that is the actionable sentence. */
+function friendly(error) {
+  var text = error && error.message ? error.message : String(error);
+  if (/Failed to fetch|NetworkError|Load failed/i.test(text)) {
+    return "the server is not answering — is it still running?";
+  }
+  if (/Unexpected token|not valid JSON/i.test(text)) {
+    return "the server answered with something that is not JSON";
+  }
+  return text;
 }
 
 function get(path) {
-  var q = state.world ? (path.indexOf("?") < 0 ? "?" : "&") + "world=" + encodeURIComponent(state.world) : "";
+  var q = "";
+  var sep = path.indexOf("?") < 0 ? "?" : "&";
+  if (state.world) {
+    q += sep + "world=" + encodeURIComponent(state.world);
+    sep = "&";
+  }
+  if (state.save) {
+    q += sep + "save=" + encodeURIComponent(state.save);
+  }
   return fetch(path + q).then(function (r) {
     return r.json().then(function (body) {
       if (!r.ok || body.error) throw new Error(body.error || r.status + " " + path);
       return body;
     });
   });
+}
+
+function esc(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/* A pre-built fragment for the rows that genuinely need markup. Everything interpolated
+ * into it still goes through esc() at the call site -- html() only marks the result as
+ * finished, it does not bless its inputs. */
+function html(markup) {
+  return { html: markup };
+}
+
+function code(text) {
+  return html("<code>" + esc(text) + "</code>");
 }
 
 function popup(pairs) {
@@ -50,7 +113,8 @@ function popup(pairs) {
         return p[1] !== null && p[1] !== undefined && p[1] !== "";
       })
       .map(function (p) {
-        return '<tr><td class="popup-key">' + p[0] + "</td><td>" + p[1] + "</td></tr>";
+        var value = p[1] && p[1].html !== undefined ? p[1].html : esc(p[1]);
+        return '<tr><td class="popup-key">' + esc(p[0]) + "</td><td>" + value + "</td></tr>";
       })
       .join("") +
     "</table>"
@@ -75,10 +139,20 @@ function regionLine(region) {
   return region ? region.name + ", " + region.confidence : "off the map";
 }
 
+/* The engine's phase asset name as words: GP_Project_Assembly_Phase_3 ->
+ * "Project Assembly phase 3". Null for the pre-1.0 saves that carry no phase at all,
+ * so the header can omit the segment instead of printing "phase " and a hole. */
+function phaseText(raw) {
+  if (!raw) return null;
+  var match = /^GP_(.+)_Phase_(\d+)$/.exec(raw);
+  if (match) return match[1].replace(/_/g, " ") + " phase " + match[2];
+  return raw;
+}
+
 /* ------------------------------------------------------------------ palette */
 
 // Ore colours follow the in-game item tints closely enough to be recognisable without
-// shipping a single game asset: they are six hex strings, not textures.
+// shipping a single game asset: they are hex strings, not textures.
 var RESOURCE_COLOUR = {
   Desc_OreIron_C: "#c8b6a6",
   Desc_OreCopper_C: "#e08a4b",
@@ -93,11 +167,30 @@ var RESOURCE_COLOUR = {
   Desc_NitrogenGas_C: "#6ec5e0",
   Desc_Water_C: "#3f8fd0",
   Desc_SAM_C: "#b04bd0",
+  Desc_Geyser_C: "#d97b4f", // synthetic label; a geyser is a placement target, not an item
 };
 
 var PURITY_RADIUS = { impure: 3, normal: 4.5, pure: 6 };
 
 var KIND_COLOUR = { machines: "#4aa3df", extractors: "#e0a33f", generators: "#d9534f" };
+
+// One colour per pickup category, so ten separate checkboxes stop drawing one
+// indistinguishable teal dot. Unlisted categories share the old teal as the fallback.
+var PICKUP_COLOUR = {
+  somersloop: "#e05c5c",
+  mercer_sphere: "#b06ae0",
+  hard_drive: "#6ea8d8",
+  loot_cache: "#d8b46e",
+  crashed_drop_pod: "#9aa8b8",
+  power_slug_blue: "#5cc8e8",
+  power_slug_yellow: "#e8d55c",
+  power_slug_purple: "#c85ce8",
+  mushroom: "#a8c86e",
+  tape_pickup: "#e09a6e",
+};
+var PICKUP_FALLBACK = "#7fd1b9";
+
+var PLAYER_COLOUR = "#f5f0e8";
 
 // One muted colour per biome letter, keyed exactly like /api/regions' legend. Hand-picked
 // to read as terrain at a glance -- sand for the deserts, greens for the forests, teal
@@ -132,7 +225,63 @@ var REGION_COLOUR = {
   U: "#585d40", // Western Dune Forest
 };
 
-var state = { world: "", layers: {}, control: null, map: null };
+var state = {
+  world: "",
+  save: "", // a pinned save's path; "" means "the newest, refetched on save events"
+  worlds: [],
+  layers: {},
+  control: null,
+  map: null,
+  epoch: 0, // bumped on every world/save switch; a reply from an older epoch is dropped
+  opened: Date.now(),
+};
+
+/* ----------------------------------------------------------------- URL state */
+
+/* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a
+ * bookmark or a pasted link lands on the same world, save and viewport instead of
+ * silently teleporting to the newest world at the whole-world zoom. replaceState, not
+ * assignment: panning must not grow the browser history by one entry per drag. */
+var BOOT = (function () {
+  var out = {};
+  location.hash
+    .replace(/^#/, "")
+    .split("&")
+    .forEach(function (piece) {
+      var eq = piece.indexOf("=");
+      if (eq > 0) out[piece.slice(0, eq)] = decodeURIComponent(piece.slice(eq + 1));
+    });
+  return out;
+})();
+
+function writeHash() {
+  var parts = [];
+  if (state.world) parts.push("world=" + encodeURIComponent(state.world));
+  var pinned = pinnedFilename();
+  if (pinned) parts.push("save=" + encodeURIComponent(pinned));
+  var c = map.getCenter();
+  parts.push("z=" + map.getZoom());
+  parts.push("c=" + Math.round(c.lng * 10) / 10 + "," + Math.round(-c.lat * 10) / 10);
+  history.replaceState(null, "", "#" + parts.join("&"));
+}
+
+function currentWorld() {
+  var found = null;
+  state.worlds.forEach(function (w) {
+    if (w.world_id === state.world) found = w;
+  });
+  return found;
+}
+
+function pinnedFilename() {
+  var name = "";
+  var w = currentWorld();
+  if (!state.save || !w) return name;
+  (w.saves || []).forEach(function (s) {
+    if ((s.path || s.filename) === state.save) name = s.filename;
+  });
+  return name;
+}
 
 /* --------------------------------------------------------------------- map */
 
@@ -149,7 +298,20 @@ var map = L.map("map", {
   maxBoundsViscosity: 0.6,
 });
 state.map = map;
-map.setView([0, 0], -3);
+
+(function () {
+  // The viewport the page opens on: the URL's, if the fragment carries one.
+  var zoom = isFinite(+BOOT.z) ? +BOOT.z : HOME_VIEW.zoom;
+  var centre = HOME_VIEW.centre;
+  if (BOOT.c) {
+    var raw = BOOT.c.split(",");
+    if (raw.length === 2 && isFinite(+raw[0]) && isFinite(+raw[1])) centre = [-+raw[1], +raw[0]];
+  }
+  map.setView(centre, zoom);
+})();
+
+map.on("moveend zoomend", writeHash);
+
 // The prefix is the one piece of always-visible chrome, so it carries the one gesture the
 // map has that nothing on screen hints at.
 map.attributionControl
@@ -175,34 +337,114 @@ map.getPane("regions").style.zIndex = 350;
 map.createPane("foundations");
 map.getPane("foundations").style.zIndex = 360;
 
-var control = L.control.layers(null, {}, { collapsed: false }).addTo(map);
+/* The layer control doubles as the map's legend and only filter, so its order has to
+ * survive a reload: overlays used to be appended in whatever order six parallel fetches
+ * resolved, which shuffled 32 rows between page loads. sortLayers pins the order to the
+ * rank each group is given when it is created -- chrome first, then machine layers, then
+ * nodes alphabetically, then pickups alphabetically. */
+var LAYER_ORDER = [
+  "terrain",
+  "map image",
+  "region names",
+  "player",
+  "factory labels",
+  "proposals",
+  "foundations",
+  "machines",
+  "extractors",
+  "generators",
+];
+
+function layerRank(name) {
+  var fixed = LAYER_ORDER.indexOf(name);
+  if (fixed >= 0) return [0, fixed, name];
+  if (name.indexOf("node: ") === 0) return [1, 0, name];
+  if (name.indexOf("pickup: ") === 0) return [2, 0, name];
+  return [3, 0, name];
+}
+
+var control = L.control.layers(
+  null,
+  {},
+  {
+    collapsed: false,
+    sortLayers: true,
+    sortFunction: function (a, b) {
+      var ra = a._rank || [9, 0, ""];
+      var rb = b._rank || [9, 0, ""];
+      if (ra[0] !== rb[0]) return ra[0] - rb[0];
+      if (ra[1] !== rb[1]) return ra[1] - rb[1];
+      return ra[2] < rb[2] ? -1 : ra[2] > rb[2] ? 1 : 0;
+    },
+  }
+).addTo(map);
 state.control = control;
 L.control.scale({ imperial: false }).addTo(map);
 
+/* Flying to a factory label is one click; getting back out was zoom-out spam. One
+ * house-shaped button under the zoom control reframes the whole world. */
+(function () {
+  var home = L.control({ position: "topleft" });
+  home.onAdd = function () {
+    var bar = L.DomUtil.create("div", "leaflet-bar");
+    var a = L.DomUtil.create("a", "", bar);
+    a.href = "#";
+    a.innerHTML = "&#8962;";
+    a.title = "whole world";
+    a.setAttribute("role", "button");
+    L.DomEvent.on(a, "click", function (event) {
+      L.DomEvent.preventDefault(event);
+      map.setView(HOME_VIEW.centre, HOME_VIEW.zoom);
+    });
+    return bar;
+  };
+  home.addTo(map);
+})();
+
 /* A named layer that can be replaced wholesale on refetch without the checkbox
  * forgetting whether it was ticked -- that is why the LayerGroup identity is kept and
- * only its contents are cleared. */
-function layer(name, on) {
+ * only its contents are cleared. `colour` puts a swatch in the control row, which is
+ * what makes the control readable as a legend: "node: Coal" next to its actual grey. */
+function layer(name, on, colour) {
   if (!state.layers[name]) {
     var group = L.layerGroup();
+    group._rank = layerRank(name);
     state.layers[name] = group;
-    control.addOverlay(group, name);
+    var title = colour
+      ? '<i class="swatch" style="background:' + colour + '"></i>' + esc(name)
+      : esc(name);
+    control.addOverlay(group, title);
     if (on) group.addTo(map);
   }
   return state.layers[name].clearLayers();
+}
+
+/* Layers whose names are data-driven (one per resource, one per pickup category) can go
+ * stale on a world switch: a category the new world does not return would otherwise keep
+ * the previous world's markers under a still-ticked checkbox. */
+function clearPrefixed(prefixes) {
+  Object.keys(state.layers).forEach(function (name) {
+    prefixes.forEach(function (prefix) {
+      if (name.indexOf(prefix) === 0) state.layers[name].clearLayers();
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ drawing */
 
 var REGION_FILL = 1; // see REGION_COLOUR: opaque cells, or the shared borders become a grid.
 
-/* The base map: one flat rectangle per 256 m raster cell, plus a name at each centroid.
+/* The base map: one flat rectangle per 256 m raster cell, plus a name per region.
  *
  * Orientation is the whole trap here and the API's docstring spells it out: grid row 0 is
  * the NORTH edge because y0_m is the smallest y and game +Y is south. Cell (i, j) spans
  * y in [y, y+cell], which is latitude [-(y+cell), -y] once the page's [-y, x] convention
  * is applied -- so the y bounds swap, and only here. Void cells are left unpainted: the
  * sea colour showing through them is the coastline.
+ *
+ * Names print at `label_m`, not the centroid: a concave region's centroid can sit on a
+ * neighbour's ground, and a name printed there contradicts the same page's right-click
+ * inspector. The server moves those anchors onto the region's own cells.
  */
 function drawRegions(data) {
   var terrain = layer("terrain", true);
@@ -240,10 +482,10 @@ function drawRegions(data) {
     // A standalone tooltip, not a zero-opacity marker: a marker would drag Leaflet's
     // default icon (and its two image requests) into the page for a label that is meant
     // to be text and nothing else.
-    var centre = data.regions[name].centroid_m;
+    var at = data.regions[name].label_m || data.regions[name].centroid_m;
     L.tooltip({ permanent: true, direction: "center", className: "region-label" })
-      .setLatLng([-centre[1], centre[0]])
-      .setContent(name)
+      .setLatLng([-at[1], at[0]])
+      .setContent(esc(name))
       .addTo(names);
   });
 }
@@ -269,7 +511,7 @@ function drawRegions(data) {
 var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built against the biomes.
 
 function drawStructures(data) {
-  var group = layer("foundations", true);
+  var group = layer("foundations", true, STRUCTURE_COLOUR);
   var half = (data.tile_m || 8) / 2;
   data.structures.forEach(function (s) {
     if (s.x_m === null || s.y_m === null) return;
@@ -291,20 +533,43 @@ function drawStructures(data) {
   });
 }
 
+/* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
+ * An extractor is drawn exactly on the node it drains, and whichever of /api/nodes and
+ * /api/machines resolved last used to decide -- usually making all 44 occupied nodes
+ * unclickable. The node dots are raised explicitly after either draw, so the dot (the
+ * card with purity, region and the node: selector) always takes the click; the extractor
+ * keeps the rest of its rectangle. */
+function raiseNodeDots() {
+  Object.keys(state.layers).forEach(function (name) {
+    if (name.indexOf("node: ") !== 0) return;
+    state.layers[name].eachLayer(function (dot) {
+      if (dot.bringToFront && dot._map) dot.bringToFront();
+    });
+  });
+}
+
 function drawNodes(data) {
   var byResource = {};
   data.nodes.forEach(function (n) {
     (byResource[n.resource] = byResource[n.resource] || []).push(n);
   });
+  Object.keys(state.layers).forEach(function (name) {
+    if (name.indexOf("node: ") !== 0) return;
+    var still = Object.keys(byResource).some(function (resource) {
+      return "node: " + shortResource(resource) === name;
+    });
+    if (!still) state.layers[name].clearLayers();
+  });
   Object.keys(byResource)
     .sort()
     .forEach(function (resource) {
       var short = shortResource(resource);
-      var group = layer("node: " + short, true);
+      var colour = RESOURCE_COLOUR[resource] || "#888";
+      var group = layer("node: " + short, true, colour);
       byResource[resource].forEach(function (n) {
         L.circleMarker(xy(n), {
           radius: PURITY_RADIUS[n.purity] || 4,
-          color: RESOURCE_COLOUR[resource] || "#888",
+          color: colour,
           weight: n.occupied ? 2 : 1,
           opacity: 1,
           fillOpacity: n.occupied ? 0.15 : 0.75,
@@ -314,14 +579,28 @@ function drawNodes(data) {
               ["node", short + " (" + n.purity + ")"],
               // Joined server-side: the raster and its orientation trap stay on one side.
               ["region", regionLine(n.region)],
-              ["selector", "<code>node:" + n.name + "</code>"],
+              // Always present, because the absence of a row cannot be told apart from a
+              // broken join -- and "no extractor known" is the join's own honest limit:
+              // it resolves extractors targeting a node key, never proves a node free.
+              [
+                "occupancy",
+                n.occupied
+                  ? "occupied by " + (n.occupant_name || n.occupant_cls)
+                  : data.save_error
+                    ? "unknown — save could not be read"
+                    : "no extractor known here",
+              ],
+              ["selector", code("node:" + n.name)],
               ["at", n.x_m + ", " + n.y_m + " m"],
-              ["occupied by", n.occupant_cls],
             ])
           )
           .addTo(group);
       });
     });
+  raiseNodeDots();
+  if (data.save_error) {
+    fail("nodes: " + data.save_error + " — nodes drawn, occupancy unknown");
+  }
 }
 
 /* Machines at their real size: `w_m`/`l_m` are the building's own footprint, so a
@@ -335,7 +614,7 @@ var MACHINE_FALLBACK_M = 6;
 
 function drawMachines(data) {
   ["machines", "extractors", "generators"].forEach(function (kind) {
-    var group = layer(kind, kind !== "machines");
+    var group = layer(kind, kind !== "machines", KIND_COLOUR[kind]);
     data[kind].forEach(function (m) {
       if (m.x_m === null) return;
       var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
@@ -355,17 +634,39 @@ function drawMachines(data) {
         .bindPopup(
           popup([
             ["building", m.name],
-            ["recipe", m.recipe],
+            ["recipe", m.recipe_name || m.recipe],
             ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
             ["paused", m.paused ? "yes" : null],
             ["footprint", m.w_m && m.l_m ? m.w_m + " x " + m.l_m + " m" : null],
             ["at", m.x_m + ", " + m.y_m + " m"],
-            ["instance", "<code>" + m.instance_leaf + "</code>"],
+            ["instance", code(m.instance_leaf)],
           ])
         )
         .addTo(group);
     });
   });
+  raiseNodeDots();
+}
+
+/* The player's last known position: the map's only you-are-here, and the reference every
+ * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
+function drawPlayer(p) {
+  var group = layer("player", true, PLAYER_COLOUR);
+  if (!p || p.x_m === null || p.y_m === null) return;
+  L.circleMarker(xy(p), {
+    radius: 7,
+    color: PLAYER_COLOUR,
+    weight: 2,
+    fillColor: "#4aa3df",
+    fillOpacity: 0.9,
+  })
+    .bindPopup(
+      popup([
+        ["player", "where you last stood (as of this save)"],
+        ["at", p.x_m + ", " + p.y_m + " m"],
+      ])
+    )
+    .addTo(group);
 }
 
 /* Factory labels, and the two things they used to get wrong.
@@ -395,12 +696,6 @@ var FACTORY_PAD_M = 40;
 // loses the surroundings that say where it is.
 var FACTORY_MAX_ZOOM = 1;
 
-// Below this, proposal labels are hidden. They are the noisy half -- one per unnamed
-// cluster, all reading "#7 Concrete (5)" -- and zoomed out they overlap each other and
-// the named labels into an unreadable pile. The named ones stay: they are the player's
-// own words and the reason to look at the map zoomed out at all.
-var PROPOSAL_LABEL_ZOOM = -2;
-
 function anchorMarker(centroid_m) {
   // divIcon, not the default icon: no image request, and iconSize [0,0] means the anchor
   // occupies no pointer area at all. The tooltip is the whole visible and clickable body.
@@ -421,7 +716,8 @@ function factoryBounds(bbox_m) {
 
 function factoryAnchor(row, text, className, rows) {
   var marker = anchorMarker(row.centroid_m);
-  marker.bindTooltip(text, {
+  marker._labelWeight = row.machines || 0; // declutter priority: big factories win
+  marker.bindTooltip(esc(text), {
     permanent: true,
     direction: "center",
     interactive: true, // the point of the whole function: a label you can click
@@ -447,45 +743,82 @@ function drawFactories(data) {
       ["machines", f.machines],
       ["notes", f.notes],
       ["at", f.centroid_m[0] + ", " + f.centroid_m[1] + " m"],
-      ["selector", "<code>label:" + f.name + "</code>"],
+      ["selector", code("label:" + f.name)],
     ]).addTo(named);
   });
   var proposed = layer("proposals", false);
   data.proposals.forEach(function (p) {
     var title = "#" + p.index + " " + p.label;
+    // No cohesion row: the clusterer does not compute the score yet (every proposal
+    // reports 0.0), and a constant 0 reads as "this cluster scored zero".
     factoryAnchor(p, title + " (" + p.machines + ")", "factory-label proposal", [
       ["proposal", title],
       ["machines", p.machines],
-      ["cohesion", p.score],
       ["spread", p.spread_m + " m"],
-      ["selector", "<code>proposal:" + p.index + "</code>"],
+      ["selector", code("proposal:" + p.index)],
     ]).addTo(proposed);
+  });
+  declutter();
+}
+
+/* Labels are the map's index, so a pile of them is a broken index: at the whole-world
+ * zoom the base's labels overlap in dozens of pairs and whichever tooltip was added last
+ * takes every click -- the player's largest factory used to open a 2-machine outpost.
+ *
+ * The rule: show every label that fits, hide what it covers. Named labels outrank
+ * proposals, bigger factories outrank smaller, and the test is the labels' actual screen
+ * rectangles, re-run whenever zoom or the ticked layers change. A hidden label reappears
+ * the moment there is room, and every label that IS visible is clickable -- no
+ * dead-looking clickables, no invisible click thieves. */
+function declutter() {
+  var entries = [];
+  ["factory labels", "proposals"].forEach(function (name, groupRank) {
+    var group = state.layers[name];
+    if (!group || !map.hasLayer(group)) return;
+    group.eachLayer(function (marker) {
+      var tip = marker.getTooltip && marker.getTooltip();
+      var node = tip && tip.getElement && tip.getElement();
+      if (node) entries.push({ node: node, rank: groupRank, weight: marker._labelWeight || 0 });
+    });
+  });
+  entries.forEach(function (entry) {
+    L.DomUtil.removeClass(entry.node, "label-hidden");
+  });
+  entries.sort(function (a, b) {
+    return a.rank - b.rank || b.weight - a.weight;
+  });
+  var kept = [];
+  entries.forEach(function (entry) {
+    var r = entry.node.getBoundingClientRect();
+    var covered = kept.some(function (k) {
+      return r.left < k.right && k.left < r.right && r.top < k.bottom && k.top < r.bottom;
+    });
+    if (covered) L.DomUtil.addClass(entry.node, "label-hidden");
+    else kept.push(r);
   });
 }
 
-/* One class on the map container drives the declutter, so hiding 14 proposal labels is a
- * single CSS rule rather than 29 layer add/removes that would also fight the checkbox. */
-function decluttered() {
-  var container = map.getContainer();
-  var hide = map.getZoom() < PROPOSAL_LABEL_ZOOM;
-  if (hide) L.DomUtil.addClass(container, "hide-proposal-labels");
-  else L.DomUtil.removeClass(container, "hide-proposal-labels");
-}
-
-map.on("zoomend", decluttered);
-decluttered();
+map.on("zoomend overlayadd overlayremove", declutter);
 
 function drawCollectibles(data) {
   var byCategory = {};
   data.rows.forEach(function (r) {
     (byCategory[r.category] = byCategory[r.category] || []).push(r);
   });
+  Object.keys(state.layers).forEach(function (name) {
+    // A category this world has none of (all collected, or never present) must not keep
+    // showing another world's markers under a still-ticked box.
+    if (name.indexOf("pickup: ") === 0 && !byCategory[name.slice("pickup: ".length)]) {
+      state.layers[name].clearLayers();
+    }
+  });
   Object.keys(byCategory)
     .sort()
     .forEach(function (category) {
       // One toggleable group per category, because "show me every hard drive" and "show
       // me everything" are different questions and the second one is unreadable.
-      var group = layer("pickup: " + category, false);
+      var colour = PICKUP_COLOUR[category] || PICKUP_FALLBACK;
+      var group = layer("pickup: " + category, false, colour);
       byCategory[category].forEach(function (r) {
         var here = xy(r);
         var mark = r.collected
@@ -502,12 +835,12 @@ function drawCollectibles(data) {
               ],
               { color: "#6b7078", weight: 1 }
             )
-          : L.circleMarker(here, { radius: 4, color: "#7fd1b9", weight: 1, fillOpacity: 0.7 });
+          : L.circleMarker(here, { radius: 4, color: colour, weight: 1, fillOpacity: 0.7 });
         mark
           .bindPopup(
             popup([
               ["pickup", category],
-              ["name", "<code>" + r.name + "</code>"],
+              ["name", code(r.name)],
               ["state", r.collected ? "collected" : r.observed || "unknown"],
               ["at", r.x_m + ", " + r.y_m + " m"],
             ])
@@ -563,19 +896,20 @@ function inspectHtml(d) {
   d.nearest.forEach(function (n, i) {
     rows.push([
       i ? "" : "nearest",
-      shortResource(n.resource) +
-        " " +
-        n.purity +
-        " &middot; " +
-        n.distance_m +
-        " m" +
-        (n.occupied ? " (occupied)" : ""),
+      html(
+        esc(shortResource(n.resource) + " " + n.purity) +
+          " &middot; " +
+          esc(n.distance_m + " m") +
+          (n.occupied ? " (occupied)" : "")
+      ),
     ]);
   });
   // Said out loud rather than left to be inferred: with no save there is no built
   // population and no occupancy, so every node above reads as free whether it is or not.
   if (d.save_error) rows.push(["save", d.save_error + " — nodes only, occupancy unknown"]);
-  rows.push(["at", "<code>" + d.at.x_m + ", " + d.at.y_m + "</code>"]);
+  // The one row built to be copied into an MCP tool call, so the unit -- the same " m"
+  // every other coordinate row on the map ends with -- must ride along.
+  rows.push(["at", html("<code>" + esc(d.at.x_m + ", " + d.at.y_m) + "</code> m")]);
   return popup(rows);
 }
 
@@ -600,7 +934,7 @@ map.on("contextmenu", function (e) {
       if (map.hasLayer(card)) card.setContent(inspectHtml(d));
     })
     .catch(function (err) {
-      if (map.hasLayer(card)) card.setContent(popup([["inspect failed", err.message]]));
+      if (map.hasLayer(card)) card.setContent(popup([["inspect failed", friendly(err)]]));
     });
 });
 
@@ -617,27 +951,38 @@ function loadRegions() {
     })
     .then(drawRegions)
     .catch(function (e) {
-      fail("regions: " + e.message);
+      fail("regions: " + friendly(e));
     });
 }
 
 /* The optional half of the base map: a render the user dropped at data/local/map.png.
- * Nothing is shipped, so 404 is the ordinary answer and is not an error worth showing --
- * the endpoint's own message says where the file goes. */
+ * Nothing is shipped, so the probe's 204 is the ordinary answer and not an error.
+ *
+ * A file that EXISTS but does not decode -- a truncated download, an error page saved as
+ * .png -- must not cost the biome base map: the overlay's error event puts the terrain
+ * back and says what happened, instead of leaving a silent sea-coloured page. */
 function loadMapImage() {
   return fetch("/api/mapimage", { method: "HEAD" })
     .then(function (r) {
-      if (!r.ok) return;
+      if (r.status !== 200) return; // 204: no local render, which is the default state
       var raw = (r.headers.get("X-Map-Bounds-M") || "").split(",").map(Number);
       var b = raw.length === 4 && raw.every(isFinite) ? raw : [-3247, -3750, 4253, 3750];
-      L.imageOverlay(
+      var group = layer("map image", true);
+      var image = L.imageOverlay(
         "/api/mapimage",
         [
           [-b[3], b[0]],
           [-b[1], b[2]],
         ],
         { pane: "regions", interactive: false }
-      ).addTo(layer("map image", true));
+      );
+      image.on("error", function () {
+        group.clearLayers();
+        map.removeLayer(group);
+        if (state.layers.terrain) state.layers.terrain.addTo(map);
+        fail("map image: data/local/map.png exists but could not be decoded — showing the biome map instead");
+      });
+      image.addTo(group);
       // A real render beats the cell fill it covers, so the fill steps aside -- by
       // unticking its box, so one click brings it back.
       if (state.layers.terrain) map.removeLayer(state.layers.terrain);
@@ -647,47 +992,200 @@ function loadMapImage() {
     });
 }
 
+/* Every loader below is epoch-guarded: a switch bumps `state.epoch`, and a reply that
+ * comes back for an earlier epoch is dropped instead of drawn. Without this, whichever
+ * world answered LAST owned the map -- switch away from a slow world and its late reply
+ * silently repainted everything under the new world's name.
+ *
+ * The catch paths clear their layers before tosting: a failed switch must leave those
+ * layers empty, not showing the previous world under the new world's header. */
+
 function loadStatic() {
   // Nodes and factory shapes change only when the player builds, so they are refetched
   // on a world switch rather than on every save write.
-  get("/api/nodes").then(drawNodes).catch(function (e) {
-    fail("nodes: " + e.message);
-  });
-  get("/api/structures").then(drawStructures).catch(function (e) {
-    fail("structures: " + e.message);
-  });
-  get("/api/factories").then(drawFactories).catch(function (e) {
-    fail("factories: " + e.message);
-  });
+  var epoch = state.epoch;
+  var live = function () {
+    return epoch === state.epoch;
+  };
+  get("/api/nodes")
+    .then(function (d) {
+      if (live()) drawNodes(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["node: "]);
+      fail("nodes: " + friendly(e));
+    });
+  get("/api/structures")
+    .then(function (d) {
+      if (live()) drawStructures(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["foundations"]);
+      fail("structures: " + friendly(e));
+    });
+  get("/api/factories")
+    .then(function (d) {
+      if (live()) drawFactories(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["factory labels", "proposals"]);
+      fail("factories: " + friendly(e));
+    });
 }
 
 function loadLive() {
-  get("/api/machines").then(drawMachines).catch(function (e) {
-    fail("machines: " + e.message);
-  });
-  get("/api/collectibles?mode=remaining")
-    .then(drawCollectibles)
+  var epoch = state.epoch;
+  var live = function () {
+    return epoch === state.epoch;
+  };
+  get("/api/machines")
+    .then(function (d) {
+      if (live()) drawMachines(d);
+    })
     .catch(function (e) {
-      fail("collectibles: " + e.message);
+      if (!live()) return;
+      clearPrefixed(["machines", "extractors", "generators"]);
+      fail("machines: " + friendly(e));
+    });
+  get("/api/collectibles?mode=remaining")
+    .then(function (d) {
+      if (live()) drawCollectibles(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["pickup: "]);
+      fail("collectibles: " + friendly(e));
     });
   get("/api/summary")
     .then(function (s) {
+      if (!live()) return;
+      busy(false);
+      drawPlayer(s.player);
       var power = s.power;
-      el("summary").textContent =
-        s.header.session_name +
-        " — phase " +
-        s.progression.game_phase +
-        " — " +
+      var measured =
+        power.measured_draw_mw === null || power.measured_draw_mw === undefined
+          ? power.draw_mw
+          : power.measured_draw_mw;
+      var parts = [s.header.session_name];
+      var phase = phaseText(s.progression.game_phase);
+      if (phase) parts.push(phase);
+      // The measured figure, labelled: the nameplate total alone reads as "one factory
+      // from a brown-out" on a base that is mostly idle. Both live in the tooltip.
+      parts.push(Math.round(measured) + " MW drawn / " + Math.round(power.generation_mw) + " MW capacity");
+      parts.push(s.age_note);
+      var span = el("summary");
+      span.textContent = parts.join(" — ");
+      span.title =
+        "power: " +
+        Math.round(measured) +
+        " MW measured draw; " +
         Math.round(power.draw_mw) +
-        "/" +
+        " MW nameplate if every machine ran at once; " +
         Math.round(power.generation_mw) +
-        " MW — " +
-        s.age_note;
+        " MW generation capacity";
     })
     .catch(function (e) {
-      el("summary").textContent = "";
-      fail("summary: " + e.message);
+      if (!live()) return;
+      busy(false);
+      clearPrefixed(["player"]);
+      // The header is the page's identity line; a failure leaves a statement, not a
+      // blank that reads as "everything is fine, there is just nothing here".
+      el("summary").textContent = "this world's save could not be read";
+      fail("summary: " + friendly(e));
     });
+}
+
+/* A switch in progress is marked on screen -- header says so, map dims -- because the
+ * old world's layers stay visible until the new responses land, and an unmarked blend of
+ * two worlds reads as data. Cleared when this epoch's summary settles either way. */
+function busy(on) {
+  var container = el("map");
+  if (on) L.DomUtil.addClass(container, "busy");
+  else L.DomUtil.removeClass(container, "busy");
+}
+
+function reload(note) {
+  state.epoch += 1;
+  map.closePopup(); // an open card is a claim about the previous world/save
+  el("summary").textContent = note || "loading…";
+  busy(true);
+  writeHash();
+  loadStatic();
+  loadLive();
+}
+
+/* ------------------------------------------------------------ world picker */
+
+function worldOption(w, dupes) {
+  var option = document.createElement("option");
+  option.value = w.world_id;
+  var hours = Math.round((w.play_duration_s || 0) / 3600);
+  var label = w.session_name + " (" + w.saves.length + " saves, " + hours + " h)";
+  // Two worlds can share a session name -- one id-keyed, one a legacy grouping of saves
+  // too old to carry a world id. A save count alone cannot tell them apart.
+  if (dupes[w.session_name] > 1 && w.world_id.indexOf("session:") === 0) {
+    label += " — old saves without a world id";
+  }
+  option.textContent = label;
+  option.title = "world id: " + w.world_id;
+  return option;
+}
+
+function fillWorldPicker(preserve) {
+  var picker = el("world");
+  var dupes = {};
+  state.worlds.forEach(function (w) {
+    dupes[w.session_name] = (dupes[w.session_name] || 0) + 1;
+  });
+  picker.innerHTML = "";
+  state.worlds.forEach(function (w) {
+    picker.appendChild(worldOption(w, dupes));
+  });
+  if (preserve && currentWorld()) picker.value = state.world;
+  picker.disabled = !state.worlds.length;
+}
+
+function fillSavePicker() {
+  var picker = el("save");
+  var w = currentWorld();
+  picker.innerHTML = "";
+  var newest = document.createElement("option");
+  newest.value = "";
+  newest.textContent = "newest save";
+  newest.title = "follow the newest save, refetching as the game writes new ones";
+  picker.appendChild(newest);
+  var saves = ((w && w.saves) || []).slice().sort(function (a, b) {
+    return (b.mtime_ns || 0) - (a.mtime_ns || 0);
+  });
+  saves.forEach(function (s) {
+    var option = document.createElement("option");
+    option.value = s.path || s.filename;
+    option.textContent = s.filename;
+    picker.appendChild(option);
+  });
+  if (state.save) {
+    picker.value = state.save;
+    if (picker.value !== state.save) {
+      // The pinned save is no longer in the listing (deleted, or the world changed
+      // under it). Keep the pin visible rather than silently unpinning.
+      var pinned = document.createElement("option");
+      pinned.value = state.save;
+      pinned.textContent = "(pinned save no longer listed)";
+      picker.appendChild(pinned);
+      picker.value = state.save;
+    }
+  } else {
+    picker.value = "";
+  }
+  picker.disabled = !saves.length;
+  picker.onchange = function () {
+    state.save = picker.value;
+    var chosen = picker.selectedOptions[0];
+    reload(state.save ? "opening " + (chosen ? chosen.textContent : "save") + "…" : "back to the newest save…");
+  };
 }
 
 function loadWorlds() {
@@ -697,51 +1195,142 @@ function loadWorlds() {
     })
     .then(function (body) {
       if (body.error) throw new Error(body.error);
+      state.worlds = body.worlds || [];
       var picker = el("world");
-      picker.innerHTML = "";
-      body.worlds.forEach(function (w) {
-        var option = document.createElement("option");
-        option.value = w.world_id;
-        option.textContent = w.session_name + " (" + w.saves.length + " saves)";
-        picker.appendChild(option);
-      });
-      if (body.worlds.length) state.world = body.worlds[0].world_id;
+      fillWorldPicker(false);
       picker.onchange = function () {
         state.world = picker.value;
-        loadStatic();
-        loadLive();
+        state.save = "";
+        fillSavePicker();
+        var chosen = picker.selectedOptions[0];
+        reload("switching to " + (chosen ? chosen.textContent : "world") + "…");
       };
+
+      if (!state.worlds.length) {
+        // The one state that must NOT end as a healthy-looking blank page: no world at
+        // all. The server may still know exactly why each file was rejected, and that
+        // diagnosis belongs on screen, permanently -- not in a toast that self-erases.
+        var reasons = (body.unsupported || [])
+          .map(function (u) {
+            return u.filename + ": " + u.reason;
+          })
+          .join(" · ");
+        var text =
+          "no readable saves found" +
+          (reasons ? " — " + reasons : "") +
+          " (set SATISFACTORY_SAVES if they live elsewhere)";
+        el("summary").textContent = text;
+        el("summary").title = text; // the span ellipsises; the full diagnosis survives hover
+        // Geography needs no save. The node table still draws -- the same table the
+        // right-click inspector reads, so the two surfaces agree even with no world.
+        get("/api/nodes").then(drawNodes).catch(function () {});
+        return;
+      }
+
+      state.world =
+        BOOT.world && state.worlds.some(function (w) { return w.world_id === BOOT.world; })
+          ? BOOT.world
+          : state.worlds[0].world_id;
+      picker.value = state.world;
+      if (BOOT.save) {
+        var w = currentWorld();
+        ((w && w.saves) || []).forEach(function (s) {
+          if (s.filename === BOOT.save) state.save = s.path || s.filename;
+        });
+      }
+      fillSavePicker();
+      writeHash();
     })
     .catch(function (e) {
-      fail("worlds: " + e.message);
+      el("summary").textContent = "the world list could not be loaded";
+      fail("worlds: " + friendly(e));
+    });
+}
+
+/* The picker is not a snapshot: a session started or a save written while the tab is
+ * open updates the counts and can add a world. Selection and pin are preserved; a scan
+ * hiccup (transient error, empty answer) must never wipe a working picker mid-session. */
+function refreshWorlds() {
+  fetch("/api/worlds")
+    .then(function (r) {
+      return r.json();
+    })
+    .then(function (body) {
+      if (body.error || !body.worlds || !body.worlds.length) return;
+      state.worlds = body.worlds;
+      fillWorldPicker(true);
+      if (!state.world) {
+        // The page opened with no world at all and one has appeared: adopt it.
+        state.world = state.worlds[0].world_id;
+        el("world").value = state.world;
+        fillSavePicker();
+        reload("world found — loading…");
+        return;
+      }
+      if (!currentWorld()) return; // the selected world vanished; keep showing it as-is
+      fillSavePicker();
+    })
+    .catch(function () {
+      /* refreshed on the next save event */
     });
 }
 
 /* The live loop. One EventSource for the process; a save write is an edge trigger and
- * the response is a refetch of the two things a save can change. Cheap enough to do on
- * every write: the endpoints are a projection read, and the projection is cached. */
+ * the response is a refetch of the two things a save can change.
+ *
+ * The grey dot used to mean three different things (connecting, retrying, dead) with one
+ * constant title. The title now says which, and losing an ESTABLISHED connection also
+ * says so in a toast -- a page quietly presenting stale data as live is the failure mode
+ * this block exists to prevent. */
 function listen() {
   var source = new EventSource("/api/events");
   var dot = el("live");
+  var wasOpen = false;
+  dot.title = "connecting to the save watcher…";
   source.onopen = function () {
+    wasOpen = true;
     dot.className = "dot on";
+    dot.title = "live: watching for save writes";
   };
   source.onerror = function () {
+    var lost = wasOpen;
+    wasOpen = false;
     dot.className = "dot";
+    dot.title = lost
+      ? "live connection lost — is the server still running? Retrying…"
+      : "connecting to the save watcher…";
+    if (lost) fail("live updates lost — what is on screen may be stale");
   };
-  source.addEventListener("save", function () {
+  source.addEventListener("save", function (event) {
+    // The stream replays the newest save to every new subscriber, so the first event
+    // usually describes a write that happened BEFORE this page opened: not news, and
+    // refetching it would double-load the whole page.
+    var payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (ignored) {
+      /* a malformed event is treated as news, the safe direction */
+    }
+    if (payload && payload.mtime && payload.mtime * 1000 < state.opened - 2000) return;
     dot.className = "dot hit";
     setTimeout(function () {
       dot.className = "dot on";
     }, 800);
-    loadLive();
+    refreshWorlds();
+    // A pinned save is pinned: the point of the picker is to hold a view while the game
+    // autosaves over the newest. The dot still blinks so the write is not invisible.
+    if (!state.save) loadLive();
   });
 }
 
 loadRegions().then(loadMapImage);
 
 loadWorlds().then(function () {
-  loadStatic();
-  loadLive();
+  // With no world there is nothing to fetch: firing the loaders anyway would bury the
+  // persistent "no readable saves" line under six toasts and a fake header.
+  if (state.worlds.length) {
+    loadStatic();
+    loadLive();
+  }
   listen();
 });

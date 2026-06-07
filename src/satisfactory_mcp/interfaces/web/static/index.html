@@ -17,11 +17,18 @@
     <header id="bar">
       <strong>Satisfactory</strong>
       <select id="world" title="which world to read"></select>
+      <select id="save" title="which save of this world to read; 'newest save' follows the game as it writes"></select>
       <span id="summary" class="muted">loading&hellip;</span>
-      <span id="live" class="dot" title="save watcher"></span>
+      <span id="live" class="dot" title="connecting to the save watcher&hellip;"></span>
     </header>
     <div id="map"></div>
-    <div id="err" hidden></div>
+    <!-- The three encodings no checkbox can explain: purity is dot size, occupancy is a
+         hollow dot, a paused machine is dashed. Static, because they never change. -->
+    <div id="legend" title="how the markers encode what they know">
+      dot size = purity (impure &lt; normal &lt; pure) &middot; hollow dot = extractor on it
+      &middot; dashed box = paused
+    </div>
+    <div id="err"></div>
     <script src="vendor/leaflet.js"></script>
     <script src="app.js"></script>
   </body>

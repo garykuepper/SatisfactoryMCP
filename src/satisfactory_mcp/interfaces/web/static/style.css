@@ -79,17 +79,63 @@ select {
   background: var(--sea);
 }
 
+/* A world switch in flight: the old world's layers are still visible underneath, and an
+   unmarked blend of two worlds reads as data. Cleared when the new summary lands. */
+#map.busy {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+/* Errors stack, one row each, newest last. The container itself takes no pointer events
+   so the strip of map behind an empty corner stays clickable; each row does, because a
+   row's one interaction is click-to-dismiss. */
 #err {
   position: fixed;
   left: 50%;
   bottom: 1rem;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 80vw;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.err-row {
   background: var(--warn);
   color: #fff;
   padding: 0.4rem 0.8rem;
   border-radius: 4px;
   max-width: 80vw;
-  z-index: 1000;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* The static half of the legend: the encodings no layer-control swatch can carry. */
+#legend {
+  position: fixed;
+  left: 0.5rem;
+  bottom: 2.2rem;
+  background: rgba(31, 34, 40, 0.85);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: #9aa0a8;
+  padding: 2px 8px;
+  font-size: 11px;
+  z-index: 900;
+  pointer-events: none;
+}
+
+/* The colour swatch in a layer-control row: the legend half of the control. */
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
 }
 
 /* Leaflet's own chrome, restyled to match rather than left white on a dark map. */
@@ -157,8 +203,10 @@ select {
   height: 0;
 }
 
-/* Zoomed out, proposals are noise -- see PROPOSAL_LABEL_ZOOM in app.js. */
-.hide-proposal-labels .factory-label.proposal {
+/* A label the declutter pass found covered by a bigger factory's label -- see
+   declutter() in app.js. Hidden entirely: a label that cannot be read cannot be a click
+   target either, or it steals the click of the label drawn over it. */
+.factory-label.label-hidden {
   display: none;
 }
 
