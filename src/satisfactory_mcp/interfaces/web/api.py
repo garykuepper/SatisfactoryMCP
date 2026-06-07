@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from ... import config
 from ...core.gamedata.footprint import FOUNDATION_M
@@ -67,6 +68,27 @@ def _xyz(pos: Any) -> dict[str, float | None]:
 
 def _fail(message: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _pretty_cls(cls: str | None) -> str | None:
+    """An engine class id as words: ``Build_GeneratorIntegratedBiomass_C`` ->
+    ``Generator Integrated Biomass``.
+
+    The popups resolve every id they can against the docs dump; this is the fallback for
+    the ids the dump has no entry for (the biomass burners, the synthetic recipe strings).
+    A popup that prints a display name in one row and a raw ``Build_…_C`` in the next is
+    teaching the reader two vocabularies for one object, so the fallback at least speaks
+    the same language, even if it cannot know the official name.
+    """
+    if not cls:
+        return None
+    leaf = re.sub(r"^(Build|Desc|Recipe|BP)_", "", str(cls))
+    leaf = re.sub(r"_C$", "", leaf)
+    words = _CAMEL.sub(" ", leaf.replace("_", " ")).strip()
+    return words or str(cls)
 
 
 def _state(request: Request, save: str | None, world: str | None) -> WorldState:
@@ -114,12 +136,19 @@ def _record_row(st: WorldState, row: dict) -> dict:
     cls = row.get("cls") or ""
     building = st.game.buildings.get(cls)
     footprint = getattr(building, "footprint", None) if building else None
+    recipe_id = row.get("recipe")
+    recipe = st.game.recipes.get(recipe_id) if recipe_id else None
     return {
         "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
         "cls": row.get("cls"),
-        "name": building.name if building else cls,
+        # The docs name where the dump has one; readable words either way. The raw class
+        # stays in ``cls`` for anything that needs the exact id.
+        "name": building.name if building else _pretty_cls(cls),
         **_xyz(row.get("pos")),
-        "recipe": row.get("recipe"),
+        "recipe": recipe_id,
+        # Same rule for the recipe: the row a player most wants to read must not be the
+        # one row still speaking engine ids.
+        "recipe_name": recipe.name if recipe else _pretty_cls(recipe_id),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),
         # Footprint is already metres; the projection's coordinates are not.
@@ -166,6 +195,9 @@ def summary(request: Request, save: str | None = None, world: str | None = None)
         "age_note": st.age_note,
         "power": st.power_report(),
         "progression": st.progression(),
+        # Where the player last stood, so the map can draw a you-are-here. Nulls when
+        # the save has no pawn, which _xyz already says honestly.
+        "player": _xyz(st.player_position()),
     }
 
 
@@ -193,22 +225,34 @@ def nodes(
     actually checked come back as ``verified`` instead of as a 256 m cell's best guess.
     ``null`` for a node the raster calls void, which is the honest answer for the handful
     that sit on islands off the grid.
+
+    **A failed save is not a failed answer** -- the same rule ``/api/inspect`` already
+    follows, because the two used to disagree: the node table is static and needs no
+    ``.sav``, so a world whose save will not load still gets its geography. What it loses
+    is the occupancy join, and ``save_error`` says so out loud (with ``occupied`` null at
+    the top, since "0 of them occupied" would be a claim no one measured).
     """
-    try:
-        st = _state(request, save, world)
-    except Exception as exc:
-        return _fail(f"could not read save: {exc}", 404)
     try:
         table = spatial_nodes.load_nodes()
         rmap = spatial_regions.load_regions()
     except FileNotFoundError as exc:
         return _fail(str(exc), 404)
 
-    taken = spatial_nodes.occupancy(st.projection)
+    save_error: str | None = None
+    taken: dict = {}
+    try:
+        st = _state(request, save, world)
+        taken = spatial_nodes.occupancy(st.projection)
+    except Exception as exc:
+        save_error = f"could not read save: {exc}"
+
+    game = request.app.state.game()
     rows = table.by_resource(resource) if resource else table.nodes
     out = []
     for n in rows:
         held = taken.get(n["instance"])
+        occupant = held["extractor"] if held else None
+        building = game.buildings.get(occupant) if occupant else None
         out.append(
             {
                 "id": n["instance"],
@@ -218,11 +262,17 @@ def nodes(
                 "purity": n["purity"],
                 **_xyz((n["x"], n["y"], n["z"])),
                 "occupied": held is not None,
-                "occupant_cls": held["extractor"] if held else None,
+                "occupant_cls": occupant,
+                "occupant_name": building.name if building else _pretty_cls(occupant),
                 "region": _label_json(rmap.label_for_node(n)),
             }
         )
-    return {"nodes": out, "resource": resource, "occupied": sum(1 for r in out if r["occupied"])}
+    return {
+        "nodes": out,
+        "resource": resource,
+        "occupied": None if save_error else sum(1 for r in out if r["occupied"]),
+        "save_error": save_error,
+    }
 
 
 # ----------------------------------------------------------- point inspector
@@ -430,6 +480,36 @@ def regions() -> Any:
         rmap = spatial_regions.load_regions()
     except FileNotFoundError as exc:
         return _fail(str(exc), 404)
+
+    letters = {name: ch for ch, name in rmap.legend.items()}
+
+    def _label_anchor(name: str, centroid: tuple[float, float]) -> list[float | None]:
+        """Where to print a region's name: a cell that provably belongs to it.
+
+        A centroid is a mean, and the mean of a concave region can land on a
+        neighbour's ground -- Titan Forest's sits in the Swamp, so a label printed
+        there flatly contradicts the same page's own right-click inspector. If the
+        centroid's cell already carries the region's letter it is used as-is;
+        otherwise the anchor moves to the centre of the nearest cell that does.
+        """
+        cx, cy = centroid
+        if rmap.label_for(cx, cy).name == name:
+            return [_m(cx), _m(cy)]
+        ch = letters.get(name)
+        best: tuple[float, float, float] | None = None
+        for j, row in enumerate(rmap.grid):
+            for i, cell_ch in enumerate(row):
+                if cell_ch != ch:
+                    continue
+                px = rmap.x0 + (i + 0.5) * rmap.cell
+                py = rmap.y0 + (j + 0.5) * rmap.cell
+                d = (px - cx) ** 2 + (py - cy) ** 2
+                if best is None or d < best[0]:
+                    best = (d, px, py)
+        if best is None:
+            return [_m(cx), _m(cy)]
+        return [_m(best[1]), _m(best[2])]
+
     payload = {
         "grid": list(rmap.grid),
         "legend": dict(rmap.legend),
@@ -440,6 +520,7 @@ def regions() -> Any:
             name: {
                 "centroid_m": [_m(entry["centroid"][0]), _m(entry["centroid"][1])],
                 "bbox_m": [_m(v) for v in entry["bbox"]],
+                "label_m": _label_anchor(name, entry["centroid"]),
             }
             for name, entry in rmap.regions.items()
         },
@@ -448,18 +529,25 @@ def regions() -> Any:
 
 
 @router.api_route("/mapimage", methods=["GET", "HEAD"])
-def mapimage() -> Any:
+def mapimage(request: Request) -> Any:
     """A map render the *user* dropped in, if they dropped one in. Never shipped.
 
     HEAD is routed alongside GET on purpose: the page probes with HEAD before it builds
     an ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a
     GET route by itself, so a probe would come back 405 and read as "no image".
 
+    An absent file is the *expected* state, so the HEAD probe answers **204**, not 404:
+    a 404 is logged red in every devtools console on every clean page load, which trains
+    the reader to ignore console errors on this page. The GET keeps its 404 with the
+    where-to-put-it message -- anything actually fetching the bytes deserves the reason.
+
     The corners travel with the file in ``X-Map-Bounds-M`` (``x_min,y_min,x_max,y_max``,
     metres, game axes) so the one probe the page already makes answers both questions.
     """
     path = _local_dir() / MAP_IMAGE_NAME
     if not path.is_file():
+        if request.method == "HEAD":
+            return Response(status_code=204)
         return _fail(
             f"no map image: put a map render at {path}; it is only ever read locally, "
             "never uploaded and never committed. Optionally pin its corners with "
@@ -571,6 +659,13 @@ def factories(request: Request, save: str | None = None, world: str | None = Non
     a zero box at the world centre, and so does this. A label whose machines were all
     demolished keeps its name and its remembered centroid; what it loses is the ability
     to be flown to, which is the honest report.
+
+    A proposal whose machines the player has already named is not a proposal: the
+    clusterer runs over the whole world, so it re-discovers every named factory, and
+    sending those rows lets a machine-generated recipe string draw itself exactly on
+    top of the player's own label. Any proposal in which named anchors are the majority
+    is dropped here; ``index`` stays the position in the full proposal list, so a
+    ``proposal:N`` selector still resolves to the same cluster in the MCP tools.
     """
     try:
         st = _state(request, save, world)
@@ -594,8 +689,12 @@ def factories(request: Request, save: str | None = None, world: str | None = Non
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors))
     ]
 
+    labelled = {anchor for label in st.labels.labels for anchor in label.anchors}
+
     proposals = []
     for index, pr in enumerate(st.proposals):
+        if pr.machines and 2 * sum(1 for m in pr.machines if m in labelled) > len(pr.machines):
+            continue  # already named by the player; the label speaks for it
         cand = fidentity.describe(pr.machines, st.graph, st.game, st.projection, "proposal")
         proposals.append(
             {

@@ -70,6 +70,13 @@ def test_summary_reports_the_header_power_and_progression(client, state):
     assert body["age_note"] == state.age_note
     assert body["power"]["generation_mw"] == pytest.approx(state.power_report()["generation_mw"])
     assert body["progression"]["game_phase"] == state.progression()["game_phase"]
+    # The you-are-here marker's only source. Metres, like everything else here.
+    pos = state.player_position()
+    if pos is None:
+        assert body["player"] == {"x_m": None, "y_m": None, "z_m": None}
+    else:
+        assert body["player"]["x_m"] == pytest.approx(round(pos[0] / 100.0, 1))
+        assert body["player"]["y_m"] == pytest.approx(round(pos[1] / 100.0, 1))
 
 
 def test_nodes_carry_the_occupancy_join_and_a_reusable_selector(client, state):
@@ -85,6 +92,32 @@ def test_nodes_carry_the_occupancy_join_and_a_reusable_selector(client, state):
     # Occupancy resolution is partial by design, but this save has extractors placed.
     assert body["occupied"] > 0
     assert any(r["occupant_cls"] for r in rows if r["occupied"])
+
+
+def test_nodes_survive_a_save_that_cannot_be_read(game):
+    """The node table is static and needs no ``.sav`` -- the rule /api/inspect already
+    follows. A failed save costs the occupancy join, never the geography, and the loss
+    is said out loud: ``save_error`` set, ``occupied`` null rather than a measured 0."""
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/nodes")
+    assert r.status_code == 200
+    body = r.json()
+    assert "sidecar produced no output" in body["save_error"]
+    assert body["occupied"] is None
+    assert len(body["nodes"]) > 500
+    assert all(row["occupied"] is False for row in body["nodes"])
+
+
+def test_nodes_resolve_their_occupant_to_a_display_name(client):
+    """One popup, one vocabulary: 'occupied by Miner Mk.2', not Build_MinerMk2_C."""
+    rows = client.get("/api/nodes").json()["nodes"]
+    held = [r for r in rows if r["occupied"]]
+    assert held
+    for row in held:
+        assert row["occupant_name"], row
+        assert not row["occupant_name"].startswith("Build_")
+    assert all(r["occupant_name"] is None for r in rows if not r["occupied"])
 
 
 def test_nodes_can_be_filtered_by_resource(client):
@@ -320,7 +353,9 @@ def test_the_map_image_is_a_loader_and_says_where_the_file_goes(client, tmp_path
     message = r.json()["error"]
     assert str(tmp_path / "local" / "map.png") in message
     assert "only ever read locally" in message
-    assert client.head("/api/mapimage").status_code == 404
+    # The HEAD probe runs on every page load and an absent optional file is the normal
+    # answer, so it must not be a status the devtools console logs red.
+    assert client.head("/api/mapimage").status_code == 204
 
     png = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ=="
@@ -363,6 +398,7 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
         "y_m",
         "z_m",
         "recipe",
+        "recipe_name",
         "clock",
         "paused",
         "w_m",
@@ -370,6 +406,22 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
     }
     assert row["name"] != row["cls"], "the class id was not joined to a building name"
     assert "." not in row["instance_leaf"]
+
+
+def test_machine_popup_rows_never_degrade_to_engine_ids(client):
+    """The popup teaches one vocabulary. A recipe resolves to its docs name; a building
+    the docs dump has no entry for (both biomass burners here) still comes back as words
+    rather than as ``Build_GeneratorIntegratedBiomass_C``."""
+    body = client.get("/api/machines").json()
+    rows = [row for kind in body for row in body[kind]]
+    with_recipe = [r for r in rows if r["recipe"]]
+    assert with_recipe
+    for r in with_recipe:
+        assert r["recipe_name"], r
+        assert not r["recipe_name"].startswith("Recipe_"), r
+    for r in rows:
+        assert r["name"], r
+        assert not str(r["name"]).startswith("Build_"), r
 
 
 def test_machines_carry_their_own_footprint_so_the_map_can_draw_true_size(client, state):
@@ -508,7 +560,9 @@ def test_factories_report_named_labels_and_proposals(client, state):
     assert body["proposals"], "the fixture world has proposable factories"
     first = body["proposals"][0]
     assert set(first) >= {"index", "label", "centroid_m", "machines", "score"}
-    assert first["index"] == 0
+    # The index is the row's position in the FULL proposal list -- named clusters are
+    # filtered out ahead of it -- so it must still resolve as a proposal:N selector.
+    assert first["machines"] == state.proposals[first["index"]].size
     assert len(first["centroid_m"]) == 2
     # Centroids are metres too, and the world is roughly 7 km across.
     assert abs(first["centroid_m"][0]) < 5000
@@ -544,6 +598,37 @@ def test_a_factory_carries_the_box_its_machines_occupy(client, state):
     # A box no wider than the diameter the same row already reports: the two are computed
     # from the same machines, so a disagreement means one of them is stale.
     assert max(x_max - x_min, y_max - y_min) <= proposal["spread_m"] + 0.2
+
+
+def test_a_proposal_the_player_already_named_is_not_proposed_again(client, state, monkeypatch):
+    """The clusterer re-discovers every named factory; the endpoint must not re-offer
+    them. A proposal whose machines are majority-covered by a label's anchors would draw
+    a machine-generated recipe string exactly on top of the player's own name -- and take
+    its clicks, since the proposal layer is added later."""
+    labelled = {a for label in state.labels.labels for a in label.anchors}
+    body = client.get("/api/factories").json()
+    for row in body["proposals"]:
+        pr = state.proposals[row["index"]]
+        overlap = sum(1 for m in pr.machines if m in labelled)
+        assert 2 * overlap <= len(pr.machines), (row["index"], overlap, len(pr.machines))
+    # The indices keep their position in the full list, so proposal:N still resolves.
+    shown = [row["index"] for row in body["proposals"]]
+    assert shown == sorted(shown)
+    if len(shown) < len(state.proposals):
+        assert set(shown) < set(range(len(state.proposals)))
+
+
+def test_region_label_anchors_land_on_their_own_regions_ground(client):
+    """A centroid can fall in a neighbour's cell (Titan Forest's lands in the Swamp).
+    The label anchor may not: printed names and the right-click inspector must agree."""
+    body = client.get("/api/regions").json()
+    cell = body["cell_m"]
+    letters = {name: ch for ch, name in body["legend"].items()}
+    for name, entry in body["regions"].items():
+        x, y = entry["label_m"]
+        i = int((x - body["x0_m"]) // cell)
+        j = int((y - body["y0_m"]) // cell)
+        assert body["grid"][j][i] == letters[name], (name, entry["label_m"])
 
 
 def test_a_factory_whose_machines_are_all_gone_has_no_box_to_fly_to(client, monkeypatch):
