@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from pathlib import Path
 
 import pytest
 
@@ -382,6 +383,64 @@ def test_a_local_sidecar_can_repin_the_map_images_corners(client, tmp_path, monk
 
     (tmp_path / "local" / "map.json").write_text("{not json")
     assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+
+
+def _gen_map_image():
+    """``tools/gen_map_image.py``, imported by path -- ``tools/`` is not a package."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "tools" / "gen_map_image.py"
+    spec = importlib.util.spec_from_file_location("gen_map_image", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
+    client, tmp_path, monkeypatch
+):
+    """``tools/gen_map_image.py`` writes the sidecar and this endpoint reads it.
+
+    Nothing else joins those two, and they agree on four key names, two file names and a
+    directory. So the join is asserted against the tool's OWN output rather than a
+    hand-typed sample that could drift away from what it really writes -- and in
+    particular against the ``_meta`` block it puts beside the corners, which the reader
+    has to walk past rather than trip over.
+    """
+    gen = _gen_map_image()
+    pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
+    sidecar = gen.build_sidecar(
+        build_pin=pin,
+        build_raw={"Changelist": 495413, "BranchName": "++FactoryGame+rel-main-1.2.0"},
+        image={"file": gen.IMAGE_NAME, "width_px": gen.SHEET_PX},
+        integrity={"ubulk_bytes_expected": gen.UBULK_BYTES},
+        layout={"layout_holds": True},
+        calibration={"pin_holds": True},
+        versions={"pyooz": "0.0.8", "texture2ddecoder": "1.0.6", "pillow": "12.3.0"},
+    )
+
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    (local / web_api.MAP_IMAGE_NAME).write_bytes(b"\x89PNG\r\n\x1a\n")
+    (local / web_api.MAP_BOUNDS_NAME).write_text(json.dumps(sidecar), encoding="utf-8")
+
+    # The provenance rides along unread: the corners still come through the probe.
+    assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+
+    # The tool writes where this endpoint looks, under the names it looks for.
+    assert gen.LOCAL_DIR.name == web_api.LOCAL_DIR_NAME
+    assert gen.IMAGE_NAME == web_api.MAP_IMAGE_NAME
+    assert gen.SIDECAR_NAME == web_api.MAP_BOUNDS_NAME
+    # And it pins the same square, rather than holding a second opinion about it.
+    assert gen.BOUNDS_M == web_api.DEFAULT_MAP_BOUNDS_M
+
+    # The build survives the round trip through JSON, which is the whole of what lets a
+    # stale picture be announced instead of silently drawn.
+    written = json.loads((local / web_api.MAP_BOUNDS_NAME).read_text(encoding="utf-8"))
+    assert gen.pinned_build(written) == pin
+    assert gen.pinned_build({}) is None
+    assert gen.pinned_build({"_meta": {"sources": {}}}) is None
 
 
 def test_machines_split_by_kind_and_name_their_buildings(client, state):
