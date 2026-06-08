@@ -3903,6 +3903,39 @@ a user data directory, not the repo.
 **Still not derivable, and would be invention:** world placement, belt routing, terrain
 fitting, foundation alignment to the world grid.
 
+## 16b. Parked: floor-wise factory view (Lukas, 2026-07-31 — "only think about that idea")
+
+Show what is *built*, one floor at a time — the save-side twin of §16's plan-per-floor view.
+The two should share a renderer, which argues for doing the groundwork once, for both.
+
+**Why it is feasible.** The save carries everything vertical. Foundations have exact Z, and
+players build floors at discrete, consistent heights, so a Z-histogram over one platform's
+foundations should decompose into floor bands (4 m wall heights make floors cluster at ~4 m
+spacings). Machines assign to the band their base Z sits on. The part that would make it
+genuinely good: the parser already decodes **225,686 belt spline points** — belts filtered to
+a floor's Z band render as real routing polylines, a blueprint rather than a scatter of
+rectangles.
+
+**Obstacles, in order of pain:**
+
+1. **Rotation.** The projection drops the placement quaternion, so everything renders
+   axis-aligned. A top-down world map survives that; a *floor plan* does not — angled rows of
+   machines come out as staircases and defeat the point. Yaw-through-projection (a schema
+   bump) is a hard prerequisite, and independently valuable: it fixes the staircase artefact
+   already visible on the world map.
+2. **Floor membership edge cases.** Ramps and lifts span bands; tall machines poke through a
+   low ceiling but belong to their base floor while occluding the one above; mezzanines and
+   half-height spacing blur the histogram. Needs a tolerant band-assignment rule, not an
+   exact one.
+3. **Scope boundary with §16.** Same renderer, two data sources (a solved plan vs the save's
+   actual placements). Build the renderer against the save first — it has ground truth to
+   check against; a plan view has none.
+
+**Natural staging:** quaternion through the projection first (small, self-contained), then
+Z-band floor detection as a domain service (input: one platform or label bbox; output: floor
+bands with member foundations/machines/belts), then the floor picker in the web UI reusing
+the existing footprint renderer.
+
 ---
 
 ## Appendix A — current save state
