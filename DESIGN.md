@@ -3936,6 +3936,47 @@ Z-band floor detection as a domain service (input: one platform or label bbox; o
 bands with member foundations/machines/belts), then the floor picker in the web UI reusing
 the existing footprint renderer.
 
+### The in-depth pass (2026-07-31)
+
+**Detection.** A floor is not in the save; it is recovered from geometry. Cluster foundation
+*top-surface* Z (piece Z + thickness — 1/2/4 m variants) per platform, single-linkage at
+~0.5 m tolerance, weighted by count. Every band is reported with its cell area and ordered —
+a mezzanine shows as a visibly minor floor rather than being merged or dropped. Ramps and
+conveyor lifts span bands by design: identify by class, assign to both floors as connectors.
+Lifts double as free ground truth — their endpoints say which bands the player actually moves
+between. Factories on bare terrain degrade to one ground floor at sampled terrain Z, never an
+error.
+
+**Assignment.** Machine base Z vs band top within a small epsilon — but first MEASURE whether
+projection `pos` is base or pivot; if pivot, derive the per-class Z offset empirically by
+diffing machine Z against the foundation beneath, across a whole save, and pin it in a test.
+Belts: a spline segment belongs to the band containing both endpoints; band-crossing segments
+render as paired port glyphs, like lifts. Tall machines: solid on the base floor, ghost
+outline on any floor they pierce.
+
+**The hidden ripple.** Yaw-through-projection is schema 12, and adding fields changes the
+digests in `tests/fixtures/vendor_parity.json` — the banked agreement with the deleted
+oracle. Resolution, decided now: the parity test digests a projection FILTERED to the
+schema-11 fields, with a comment saying new fields are legitimately outside the oracle's
+scope. Never re-bank. Yaw alone suffices (top-down plans need no pitch; ramps are identified
+by class), so the projection grows one float per placed thing.
+
+**Interaction.** Not a separate page. The factory card gains a "floors" action: fly to the
+site, dim the base layer, swap the world layers for a floor picker — same Leaflet, same
+popups, ESC returns to world mode. Picker rows in table voice: `Floor 2 · +8 m · 214 cells ·
+31 machines`.
+
+**Validation before pixels** (fixture-runnable, no UI): (1) band cleanliness — fraction of
+foundations within epsilon of a band; below ~95% on real platforms the premise is wrong and
+the feature stops; (2) orphan machines — everything assigns to one band or is explicitly
+on-terrain; (3) lift consistency — endpoints land on two distinct bands.
+
+**Stage 0 is the kill-switch:** run the Z-histogram against the reference world's 8
+platforms from raw projection data in a scratch script, before any schema work. Either clean
+bands emerge or the idea dies for the cost of an afternoon. Open input from Lukas before
+stage 2: are his multi-floor factories uniform-height stacks or mixed heights (4 m logistics
+under 8 m machine floors)? That decides how clever band-height inference must be.
+
 ---
 
 ## Appendix A — current save state
