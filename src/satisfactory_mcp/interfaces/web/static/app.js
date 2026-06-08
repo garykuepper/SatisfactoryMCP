@@ -415,6 +415,11 @@ L.control.scale({ imperial: false }).addTo(map);
  *     same "n of m" count, which is what lets a folded section still answer "are the ore
  *     dots on?" without unfolding it.
  *
+ * A section head also OWNS its family: the checkbox on it ticks or unticks all fourteen
+ * node rows at once, in the three states such a box can honestly be in -- see sectionBox.
+ * That is a second gesture on one row, so the two are kept on separate elements rather
+ * than separated by guesswork about where inside the row the click landed.
+ *
  * The choices persist across a world switch the same way the checkboxes do, and for the
  * same reason: both live in objects built once at module scope, and a switch replaces
  * layer CONTENTS without rebuilding the control, the layer groups or these flags.
@@ -445,6 +450,13 @@ function rowName(row) {
 function rowOn(row) {
   var input = row.querySelector("input");
   return !!(input && input.checked);
+}
+
+/* A control row back to the LayerGroup itself, for the one caller that has to toggle a
+ * layer without a human clicking its box -- see setSection. */
+function rowLayer(row) {
+  var input = row.querySelector("input");
+  return (input && state.layers[state.layerName[input.layerId]]) || null;
 }
 
 function fold(element, folded) {
@@ -486,18 +498,107 @@ function onActivate(element, action) {
   });
 }
 
+/* Ticking a family of fourteen is fourteen layer events, and Leaflet re-renders the whole
+ * list on each one -- measured on the reference world, one click on "resource nodes" cost
+ * 28 full control renders and 14 ms. 14 ms is not a freeze, and this is not really a speed
+ * fix: every intermediate render also DESTROYED the checkbox the pointer was on and re-ran
+ * the focus restore against a half-toggled family, so the tri-state flickered through
+ * thirteen wrong values and the focus this control is careful about was rebuilt thirteen
+ * times for nothing.
+ *
+ * `_handlingClick` is Leaflet's own flag for exactly this -- its `_onLayerChange` skips the
+ * re-render while it is set, which is how its own checkboxes stay sane. The two decorators
+ * this file adds take the same hint, and one render happens at the end. */
+var batching = false;
+
+function batch(action) {
+  batching = true;
+  control._handlingClick = true;
+  try {
+    action();
+  } finally {
+    control._handlingClick = false;
+    batching = false;
+  }
+  control._update(); // one render, which re-runs decorateControl with the settled state
+  declutter();
+}
+
+/* Every layer of one family at once. The layers are toggled directly rather than by
+ * clicking their boxes: Leaflet's own `_onInputClick` would do the adding, but it ends by
+ * calling `_refocusOnMap`, and a keyboard user who just pressed Space on the family box
+ * would find focus on the map. */
+function setSection(rows, on) {
+  batch(function () {
+    rows.forEach(function (row) {
+      var group = rowLayer(row);
+      if (!group) return;
+      if (on) map.addLayer(group);
+      else map.removeLayer(group);
+    });
+  });
+}
+
+/* The family's own checkbox, and its third state.
+ *
+ * `indeterminate` is not decoration: a family with one member ticked would otherwise draw
+ * an empty box, which is the same picture as a family with none -- and the count beside it
+ * ("3 of 14") would then be contradicting its own checkbox. Mixed has to LOOK like mixed.
+ *
+ * What a click means is decided from the MEMBERS, never from the box's own post-click
+ * state: a click on an indeterminate box lands on a different `checked` value in different
+ * engines, and "some are on, so turn them all on" is the rule regardless. The box is not
+ * the state; it is a picture of the rows, redrawn from them on every render.
+ */
+function sectionBox(section, rows) {
+  var on = rows.filter(rowOn).length;
+  var box = L.DomUtil.create("input", "layer-section-box");
+  box.type = "checkbox";
+  box._section = section.key;
+  box._part = "box";
+  box.checked = on === rows.length;
+  box.indeterminate = on > 0 && on < rows.length;
+  box.title =
+    (on === rows.length ? "hide" : "show") + " all " + rows.length + " " + section.title;
+  box.setAttribute("aria-label", section.title + ", all " + rows.length);
+  L.DomEvent.on(box, "click", function (event) {
+    // stopPropagation, not stop(): preventDefault would cancel the native tick, and the
+    // native result already agrees with what setSection is about to do in all three cases.
+    L.DomEvent.stopPropagation(event);
+    setSection(rows, on !== rows.length);
+  });
+  return box;
+}
+
+/* A section head is two controls on one row, and keeping them apart IS the grammar: the
+ * BOX toggles the family, the caret and title fold it. One click can only ever do one of
+ * them -- which is why the fold listener sits on the text span rather than on the row, as
+ * it used to. A fold handler on the row would also fire for a click on the box, so ticking
+ * "pickups" would fold the section shut under the pointer in the same gesture. */
 function sectionHead(section, rows) {
   var head = L.DomUtil.create("div", "layer-section");
-  head._section = section.key;
+  head.appendChild(sectionBox(section, rows));
+  var text = L.DomUtil.create("span", "layer-fold", head);
+  text._section = section.key;
+  text._part = "fold";
   var open = state.panel.sections[section.key];
-  foldHead(head, open, section.title, rows.filter(rowOn).length, rows.length);
-  onActivate(head, function () {
+  foldHead(text, open, section.title, rows.filter(rowOn).length, rows.length);
+  onActivate(text, function () {
     state.panel.sections[section.key] = !state.panel.sections[section.key];
     decorateControl();
   });
   return head;
 }
 
+/* The top head stays fold-only: it gets no master checkbox, on purpose.
+ *
+ * A family box is undoable -- untick "pickups", tick it again, and the ten rows are back
+ * where they were, because they were all on or all off either way. A master box is not:
+ * this control's rows are deliberately NOT uniform (terrain on, machines off, nine of ten
+ * pickup families off), and one click that unticked all 34 would throw that selection away.
+ * Re-ticking would not restore it -- it would turn all 34 ON, which is a different map than
+ * the one the player had. So the one gesture whose undo does not undo is the one gesture
+ * this head does not offer. */
 function panelHead(rows) {
   var container = control.getContainer();
   var head = container.querySelector(".layers-head");
@@ -518,17 +619,35 @@ function panelHead(rows) {
   return head;
 }
 
+/* Which half of which section head holds the keyboard, as a value that can outlive the
+ * element holding it.
+ *
+ * Reading `document.activeElement` inside the decorator is enough when the decorator is
+ * the one doing the removing -- a fold click goes that way. It is NOT enough on the path a
+ * family box takes: Leaflet's `_update` empties the whole overlays list first, the section
+ * heads live inside that list, and so by the time the decorator runs the focused box is
+ * already gone and activeElement is <body>. Every family toggle would drop the keyboard on
+ * the floor. The mark is therefore taken BEFORE the wipe and parked here. */
+function focusMark() {
+  var active = document.activeElement;
+  return active && active._section ? { key: active._section, part: active._part } : null;
+}
+
+var pendingFocus = null;
+
 /* Re-applied after every render of the list, and idempotent: Leaflet empties the overlay
  * list on each `_update`, so the section heads are rebuilt rather than moved. */
 function decorateControl() {
+  if (batching) return; // one render at the end of the batch, not one per member layer
   var container = control.getContainer();
   if (!container) return;
   var list = container.querySelector(".leaflet-control-layers-overlays");
   if (!list) return;
   // A section head is replaced, not updated, so keyboard focus would land on a removed
-  // node and the NEXT Enter would go to the document. Remembered here, restored below.
-  var active = document.activeElement;
-  var focused = active && active._section ? active._section : null;
+  // node and the NEXT Enter would go to the document. Restored below -- and which HALF of
+  // the head held it matters now that a head is a box plus a fold.
+  var focused = focusMark() || pendingFocus;
+  pendingFocus = null;
   Array.prototype.slice.call(list.querySelectorAll(".layer-section")).forEach(function (head) {
     head.parentNode.removeChild(head);
   });
@@ -548,7 +667,10 @@ function decorateControl() {
     });
     var head = sectionHead(section, members);
     list.insertBefore(head, members[0]);
-    if (focused === section.key) head.focus();
+    if (focused && focused.key === section.key) {
+      var again = head.querySelector(focused.part === "box" ? ".layer-section-box" : ".layer-fold");
+      if (again) again.focus();
+    }
   });
   panelHead(rows);
   fold(container.querySelector(".leaflet-control-layers-list"), !state.panel.open);
@@ -557,6 +679,7 @@ function decorateControl() {
 (function () {
   var update = control._update;
   control._update = function () {
+    pendingFocus = focusMark() || pendingFocus; // before the wipe; see focusMark
     var result = update.apply(this, arguments);
     decorateControl();
     return result;
@@ -1066,7 +1189,12 @@ function badgeHidden(entry, hidden) {
   });
 }
 
-map.on("zoomend overlayadd overlayremove", declutter);
+/* Same batch guard as the control decorator, and for a heavier reason: this pass measures
+ * every label's screen rectangle, so running it once per member of a fourteen-layer family
+ * is fourteen forced layouts to reach one answer. batch() runs it once at the end. */
+map.on("zoomend overlayadd overlayremove", function () {
+  if (!batching) declutter();
+});
 
 function drawCollectibles(data) {
   var byCategory = {};

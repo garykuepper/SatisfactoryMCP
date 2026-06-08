@@ -174,6 +174,17 @@ select {
   padding: 0.5rem 0.7rem;
   max-height: 70vh;
   overflow-y: auto;
+  /* A row can never widen the box, only wrap inside it: the width is settled by the
+     folded-row rule below, and overflow-x would otherwise answer a long name with a
+     horizontal scrollbar. */
+  overflow-x: hidden;
+  /* The scrollbar's strip is reserved in EVERY state, scrollbar or not. Past about thirty
+     rows the list hits the 70vh cap and starts scrolling, and a classic scrollbar arriving
+     at that moment takes its 15 px out of the interior -- which is the same horizontal jump
+     this section is here to remove, just one row later. Chromium counts a stable gutter in
+     the shrink-to-fit width (measured: 15 px, and 0 where scrollbars are overlays), so this
+     costs one constant strip and removes the last case where the box moves sideways. */
+  scrollbar-gutter: stable;
 }
 
 /* The control's two folds -- see decorateControl() in app.js. Leaflet's own collapsed mode
@@ -181,17 +192,63 @@ select {
    (whose icon is an image this project does not vendor) stays display:none where Leaflet's
    own stylesheet put it. These rules match that stylesheet's specificity and win on order,
    which is the only reason no !important is needed. */
+/* A folded row is COLLAPSED, not removed -- and that one word is the whole reason the
+   control now keeps one width.
+
+   `display: none` was the obvious rule, and it is what made the box jump. A display:none
+   row contributes no width at all, so the box shrank to its widest VISIBLE row and every
+   unfold re-widened it: 164 px folded, 178 with the nodes open, 291 with the pickups open.
+   The control is a floated, shrink-to-fit box, so each of those was a reflow that slid the
+   map sideways under a pointer that was only trying to open a section.
+
+   A collapsed row still takes part in layout, so its max-content width still counts toward
+   that shrink-to-fit -- which means the browser measures the widest row the control can
+   ever hold, on the real strings in the real font, and holds that width in every fold
+   state. That is deliberately not a px constant derived from today's data: the widest row
+   on the reference world is `pickup: customization_unlock_pickup`, a category app.js's own
+   colour palette does not list at all, so a constant would have been fitted to a vocabulary
+   this file cannot see the end of. The layout engine can, on every world, for free.
+
+   visibility:hidden as well as height:0, because a folded row must also leave the tab order
+   and the accessibility tree -- it is put away, not merely clipped to nothing. */
 .leaflet-control-layers .layer-folded {
-  display: none;
+  visibility: hidden;
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 .layers-head,
-.layer-section {
+.layer-section,
+.layer-fold {
   display: flex;
   align-items: center;
   gap: 5px;
-  cursor: pointer;
   user-select: none;
+}
+
+/* Pointer only on what folds. The family checkbox beside it is a checkbox and says so with
+   the cursor, which is half of how the row's two gestures stay told apart. */
+.layers-head,
+.layer-fold {
+  cursor: pointer;
+}
+
+/* The fold half takes the rest of the row, so its "n of m" still lands at the right edge
+   (margin-left:auto) instead of hugging the title. */
+.layer-fold {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The family's tri-state box. Sized and aligned to Leaflet's own row checkboxes so the
+   heads and the rows they head read as one column rather than two indents. */
+.layer-section-box {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
 }
 
 .layers-head {
@@ -218,7 +275,7 @@ select {
 }
 
 .layers-head:hover,
-.layer-section:hover {
+.layer-fold:hover {
   color: #fff;
 }
 
