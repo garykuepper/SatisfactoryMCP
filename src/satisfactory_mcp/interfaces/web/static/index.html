@@ -22,11 +22,13 @@
       <span id="live" class="dot" title="connecting to the save watcher&hellip;"></span>
     </header>
     <div id="map"></div>
-    <!-- The three encodings no checkbox can explain: purity is dot size, occupancy is a
-         hollow dot, a paused machine is dashed. Static, because they never change. -->
+    <!-- The four encodings no checkbox can explain: purity is dot size, occupancy is a
+         hollow dot, a paused machine is dashed, and a conveyor lift is a ring because a
+         lift is vertical and its top-down route is a single point. Static, because they
+         never change. -->
     <div id="legend" title="how the markers encode what they know">
       dot size = purity (impure &lt; normal &lt; pure) &middot; hollow dot = extractor on it
-      &middot; dashed box = paused
+      &middot; dashed box = paused &middot; belt ring = conveyor lift
     </div>
     <div id="err"></div>
     <script src="vendor/leaflet.js"></script>

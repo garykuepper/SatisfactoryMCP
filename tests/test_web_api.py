@@ -644,6 +644,7 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
         "recipe_name",
         "clock",
         "paused",
+        "yaw",
         "w_m",
         "l_m",
     }
@@ -725,7 +726,7 @@ def test_structures_are_the_floor_plan_the_player_actually_built(client, state):
     assert body["tile_m"] == FOUNDATION_M == 8.0
 
     row = body["structures"][0]
-    assert set(row) == {"cls", "x_m", "y_m", "z_m"}
+    assert set(row) == {"cls", "x_m", "y_m", "z_m", "yaw"}
     # The class index is resolved here, or the page would have to carry the legend.
     assert row["cls"] == raw["classes"][raw["instances"][0][0]]
     assert row["cls"].startswith("Build_")
@@ -763,10 +764,11 @@ def test_a_malformed_structure_row_costs_one_piece_not_the_endpoint(game):
         "structures": {
             "classes": ["Build_Foundation_8x1_01_C"],
             "instances": [
-                [0, 100, 200, 300],
+                [0, 100, 200, 300, 33.5],
                 [0, 100, 200],  # short: no z
                 [0, "x", 200, 300],  # unparseable
-                [7, 400, 500, 600],  # class index off the end of the legend
+                [7, 400, 500, 600, "sideways"],  # bad index, and an unreadable yaw
+                [0, 700, 800, 900],  # a schema-11 row: no yaw column at all
                 "not a row",
             ],
         }
@@ -777,22 +779,193 @@ def test_a_malformed_structure_row_costs_one_piece_not_the_endpoint(game):
     )
     with TestClient(app) as c:
         body = c.get("/api/structures").json()
-    assert body["count"] == 2
+    assert body["count"] == 3
     assert body["structures"][0] == {
         "cls": "Build_Foundation_8x1_01_C",
         "x_m": 1.0,
         "y_m": 2.0,
         "z_m": 3.0,
+        "yaw": 33.5,
     }
     # An index with no class is still a real piece at a real place: it keeps its position
-    # and loses only its name, which is the honest half-answer.
-    assert body["structures"][1] == {"cls": None, "x_m": 4.0, "y_m": 5.0, "z_m": 6.0}
+    # and loses only its name, which is the honest half-answer. Same for a yaw that will
+    # not parse -- the piece survives, unrotated and saying so.
+    assert body["structures"][1] == {"cls": None, "x_m": 4.0, "y_m": 5.0, "z_m": 6.0, "yaw": None}
+    # A four-column row is what every projection cut before schema 12 holds. It is not
+    # short and it is not broken: it is a piece whose facing was never recorded, and null
+    # is the only answer that does not turn that into a claim of "axis-aligned".
+    assert body["structures"][2] == {
+        "cls": "Build_Foundation_8x1_01_C",
+        "x_m": 7.0,
+        "y_m": 8.0,
+        "z_m": 9.0,
+        "yaw": None,
+    }
 
 
 def test_a_save_that_cannot_be_read_has_no_floor_plan_either(game):
     app = create_app(state_loader=_explode, game_loader=lambda: game)
     with TestClient(app) as c:
         r = c.get("/api/structures")
+    assert r.status_code == 404
+    assert "sidecar produced no output" in r.json()["error"]
+
+
+def test_placements_carry_the_yaw_the_map_has_to_draw_them_at(client, state):
+    """Schema 12's rotation, on both surfaces that draw a rectangle.
+
+    The endpoint's docstring used to promise the opposite -- "the quaternion is dropped,
+    a client can only draw these axis-aligned" -- so this is asserted as a fact about the
+    world rather than as a field being present: an angled slab has to survive the trip, or
+    the map goes back to drawing staircases with no test noticing.
+    """
+    structures = client.get("/api/structures").json()["structures"]
+    raw = state.projection["structures"]["instances"]
+    assert structures[0]["yaw"] == pytest.approx(round(raw[0][4], 1))
+    for row in structures:
+        assert row["yaw"] is None or -180.0 <= row["yaw"] <= 180.0, row
+
+    # The whole reason the drawing changes. A world built only on the cardinal grid would
+    # let a broken rotation look perfect.
+    angled = [r for r in structures if r["yaw"] and round(r["yaw"] % 90.0, 3) not in (0.0, 90.0)]
+    assert len(angled) > 1000, "the reference world has several slabs laid at an angle"
+
+    machines = client.get("/api/machines").json()
+    rows = [row for kind in machines for row in machines[kind]]
+    assert rows and all("yaw" in row for row in rows)
+    assert any(row["yaw"] for row in rows), "every machine on this world faces north?"
+    for row in rows:
+        assert row["yaw"] is None or -180.0 <= row["yaw"] <= 180.0, row
+
+
+def test_a_projection_from_before_schema_12_says_unknown_rather_than_zero(game):
+    """``null``, not ``0.0``. The two draw the same and only one of them is a measurement,
+    and an endpoint that filled the gap in with zero would make a world whose facings were
+    never recorded indistinguishable from a world built entirely on the cardinal grid."""
+    projection = {
+        "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [[0, 1, 2, 3]]},
+        "machines": [{"cls": "Build_ConstructorMk1_C", "instance": "x.y", "pos": [1, 2, 3]}],
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        assert c.get("/api/structures").json()["structures"][0]["yaw"] is None
+        assert c.get("/api/machines").json()["machines"][0]["yaw"] is None
+
+
+def test_belts_are_the_network_as_it_was_actually_routed(client, state):
+    """Every conveyor piece, un-interned, in metres, in travel order."""
+    body = client.get("/api/belts").json()
+    raw = state.projection["belts"]
+    assert body["count"] == len(raw["segments"]) == len(body["belts"])
+    assert body["count"] > 3000, "the reference world is a 320-hour base"
+    assert 0 < body["chains"] < body["count"], "pieces group into fewer chains than pieces"
+
+    row = body["belts"][0]
+    assert set(row) == {"chain", "cls", "name", "lift", "items_per_min", "points_m"}
+    # The class legend is resolved here, or the page would have to carry it.
+    assert row["cls"] == raw["classes"][raw["segments"][0][1]]
+    assert {r["cls"] for r in body["belts"]} <= set(raw["classes"])
+    assert row["name"] == state.game.buildings[row["cls"]].name
+    assert not row["name"].startswith("Build_")
+
+    # Metres, like every other coordinate on this surface, and in the projection's order.
+    assert len(row["points_m"]) == len(raw["segments"][0][2])
+    for out, cm in zip(row["points_m"], raw["segments"][0][2], strict=True):
+        assert out == [pytest.approx(round(v / 100.0, 1)) for v in cm]
+    for r in body["belts"]:
+        assert r["points_m"], "a piece with no geometry is not a piece"
+        for x_m, y_m, _z_m in r["points_m"]:
+            assert abs(x_m) < 5000 and abs(y_m) < 5000
+
+
+def test_a_lift_is_told_apart_by_its_native_class_not_by_its_name(client):
+    """The one structural distinction the map draws, and where it comes from.
+
+    A lift's top-down polyline is a single point, so the map has to know which pieces need
+    a glyph instead of a line. That is asserted here twice over: the flag agrees with the
+    docs dump's own native class, and the geometry agrees with the flag.
+    """
+    body = client.get("/api/belts").json()
+    lifts = [r for r in body["belts"] if r["lift"]]
+    belts = [r for r in body["belts"] if r["lift"] is False]
+    assert lifts and belts, "the reference world has both"
+    assert all("Lift" in r["cls"] for r in lifts)
+    assert not any("Lift" in r["cls"] for r in belts)
+
+    # Zero horizontal extent, measured: this is why a lift cannot be drawn as a line.
+    for r in lifts:
+        first, last = r["points_m"][0], r["points_m"][-1]
+        assert (first[0], first[1]) == (last[0], last[1])
+    assert any(r["points_m"][0][2] != r["points_m"][-1][2] for r in lifts), "lifts rise"
+    assert any(r["points_m"][0][:2] != r["points_m"][-1][:2] for r in belts), "belts run"
+
+    # The tier's own rate, rather than a "Mk3" the page would have to parse out of a name.
+    rates = {r["items_per_min"] for r in body["belts"]}
+    assert rates <= {60.0, 120.0, 270.0, 480.0, 780.0}
+
+
+def test_a_world_with_no_belts_answers_with_an_empty_network(game):
+    """Asserted through the three shapes the projection has carried, exactly as the floor
+    plan next door is: a young save has laid no belt, and that is not an error."""
+    for projection in ({}, {"belts": {}}, {"belts": {"classes": [], "segments": []}}):
+        app = create_app(
+            state_loader=lambda save=None, world=None, p=projection: WorldState(
+                projection=p, game=game
+            ),
+            game_loader=lambda: game,
+        )
+        with TestClient(app) as c:
+            assert c.get("/api/belts").json() == {"belts": [], "count": 0, "chains": 0}
+
+
+def test_a_malformed_belt_segment_costs_one_piece_not_the_network(game):
+    """Raw projection data, read guarded field by field -- the structures rule, again."""
+    projection = {
+        "belts": {
+            "classes": ["Build_ConveyorBeltMk1_C"],
+            "segments": [
+                [0, 0, [[100, 200, 300], [400, 500, 600]]],
+                [1, 0],  # short: no points
+                ["chain", 0, [[100, 200, 300]]],  # unparseable chain index
+                [2, 9, [[700, 800, 900], [1, 2, 3]]],  # class index off the end
+                [3, 0, [[100, 200], "not a point", [100, 200, 300]]],  # one usable point
+                [4, 0, []],  # no geometry at all
+                "not a segment",
+            ],
+        }
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        body = c.get("/api/belts").json()
+    assert body["count"] == 3
+    assert body["belts"][0] == {
+        "chain": 0,
+        "cls": "Build_ConveyorBeltMk1_C",
+        "name": "Conveyor Belt Mk.1",
+        "lift": False,
+        "items_per_min": 60.0,
+        "points_m": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+    }
+    # A piece whose class the legend cannot name is still a piece on real ground: it keeps
+    # its route and loses the two things the class would have told us. `lift` is null, not
+    # false -- "not a lift" would be a guess, and the two are drawn differently.
+    unnamed = body["belts"][1]
+    assert (unnamed["cls"], unnamed["lift"], unnamed["items_per_min"]) == (None, None, None)
+    assert unnamed["points_m"] == [[7.0, 8.0, 9.0], [0.0, 0.0, 0.0]]
+    assert body["belts"][2]["points_m"] == [[1.0, 2.0, 3.0]]
+    assert body["chains"] == 3
+
+
+def test_a_save_that_cannot_be_read_has_no_belt_network_either(game):
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/belts")
     assert r.status_code == 404
     assert "sidecar produced no output" in r.json()["error"]
 

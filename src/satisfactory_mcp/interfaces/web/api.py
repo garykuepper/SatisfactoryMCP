@@ -67,6 +67,29 @@ def _xyz(pos: Any) -> dict[str, float | None]:
     return {"x_m": _m(p[0]), "y_m": _m(p[1]), "z_m": _m(p[2])}
 
 
+def _yaw(value: Any) -> float | None:
+    """A placement's rotation about world Z, degrees, one decimal.
+
+    Positive turns +X towards +Y, so it is directly comparable with ``atan2(dy, dx)`` over
+    two ``pos`` values -- which is how the projection's own convention was verified, and
+    the one sentence a client needs to draw a rotated footprint.
+
+    ``None``, never 0.0, when the projection carries no yaw at all: schema 12 added the
+    field, and an absent one means "this projection predates it", which is a different
+    claim from "this thing is axis-aligned". Both end up drawn the same way, and only one
+    of them is a measurement.
+
+    Rounded like every other number that leaves this module. 0.1 degrees swings the corner
+    of an 8 m foundation by 7 mm.
+    """
+    if value is None:
+        return None
+    try:
+        return round(float(value), 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def _fail(message: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
@@ -133,6 +156,10 @@ def _record_row(st: WorldState, row: dict) -> dict:
     carry clearance data, so these are **null** for the rest (the two biomass burners on
     the reference save among them) rather than a guessed number: the client picks the
     fallback, because a fallback drawn here would be indistinguishable from a measurement.
+
+    ``yaw`` is which way the building faces, and it is what turns ``w_m``/``l_m`` from an
+    axis-aligned box into the rectangle the player actually placed -- the two are one
+    answer and are read together or not at all.
     """
     cls = row.get("cls") or ""
     building = st.game.buildings.get(cls)
@@ -152,6 +179,7 @@ def _record_row(st: WorldState, row: dict) -> dict:
         "recipe_name": recipe.name if recipe else _pretty_cls(recipe_id),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),
+        "yaw": _yaw(row.get("yaw")),
         # Footprint is already metres; the projection's coordinates are not.
         "w_m": round(footprint.width_m, 1) if footprint else None,
         "l_m": round(footprint.depth_m, 1) if footprint else None,
@@ -720,14 +748,20 @@ def structures(request: Request, save: str | None = None, world: str | None = No
 
     These are the only record of what was physically BUILT -- they appear in no actor
     header, which is why the projection interns them separately as
-    ``{"classes": [...], "instances": [[class_index, x, y, z], ...]}`` in centimetres.
+    ``{"classes": [...], "instances": [[class_index, x, y, z, yaw], ...]}`` in centimetres.
     Read guarded field by field, exactly as ``domain.spatial.elevation`` reads them: this
     is raw projection data and a malformed row should cost one piece, not the endpoint.
 
-    Two things the projection does **not** carry, and neither is invented here:
+    **Rotation is carried, as of schema 12**, and this docstring used to say the opposite
+    -- the instance transform's quaternion was dropped at extraction and a client could
+    only draw these axis-aligned, which is why an angled slab came out of the map as a
+    staircase of squares. ``yaw`` is now the fifth column of a row and comes out as a
+    ``yaw`` field: degrees about world Z, positive turning +X towards +Y. ``null`` for a
+    projection cut before 12, which a client must keep drawing axis-aligned rather than
+    reading as zero.
 
-    * **Rotation.** The instance transform's quaternion is dropped at extraction. A
-      client can only draw these axis-aligned.
+    One thing the projection still does not carry, and it is not invented here:
+
     * **Per-class size.** None of these classes has clearance data, so ``footprint`` is
       ``None`` for all eighteen of them. They are all built on the same grid instead,
       whose edge ``tile_m`` reports from ``FOUNDATION_M`` so the page does not hardcode 8.
@@ -739,8 +773,8 @@ def structures(request: Request, save: str | None = None, world: str | None = No
     list is a real answer here, unlike a save that could not be read at all.
 
     Sent one row per piece, ungrouped. Measured on the reference world -- 8,347 pieces,
-    610 KB, 0.52 s over loopback -- which is the same order as ``/api/collectibles``
-    already ships (3,455 rows, 547 KB, 0.52 s). Grouping into grid cells would halve a
+    708 KB (610 KB of it before the yaw column) -- which is the same order as
+    ``/api/collectibles`` already ships (3,455 rows, 547 KB). Grouping into grid cells would halve a
     payload that is not the bottleneck and would cost the per-piece class the popup and
     the point inspector read.
     """
@@ -766,9 +800,106 @@ def structures(request: Request, save: str | None = None, world: str | None = No
                 "x_m": _m(x),
                 "y_m": _m(y),
                 "z_m": _m(z),
+                # Optional on purpose: a row from a schema-11 projection is four columns
+                # long and is still a real piece at a real place, it just has no facing.
+                "yaw": _yaw(inst[4]) if len(inst) > 4 else None,
             }
         )
     return {"structures": rows, "count": len(rows), "tile_m": FOUNDATION_M}
+
+
+# ---------------------------------------------------------------------- belts
+
+
+#: The docs dump's own native class for a conveyor LIFT. This is how a lift is told apart
+#: from a belt here, and it is deliberately not the ``Lift`` in ``Build_ConveyorLiftMk2_C``:
+#: the distinction decides how the map draws a piece, and a substring match on an engine id
+#: is not a classification. ``domain.world.carriers`` picks the fastest belt off the same
+#: field for the same reason.
+LIFT_NATIVE = "FGBuildableConveyorLift"
+
+
+def _belt_class(st: WorldState, cls: str | None) -> dict[str, Any]:
+    """What one belt class is, resolved once per class rather than once per piece."""
+    building = st.game.buildings.get(cls) if cls else None
+    return {
+        "cls": cls,
+        "name": building.name if building else _pretty_cls(cls),
+        # From the dump's native class, not from the class id -- see LIFT_NATIVE. ``None``
+        # for a class the dump has no entry for: "not a lift" would be a guess, and the
+        # map draws a lift and a belt as different things.
+        "lift": None if building is None else building.native == LIFT_NATIVE,
+        # The tier's own throughput, 60 to 780, instead of a "Mk3" the page would have to
+        # parse back out of a display name. ``null`` where the dump is silent, exactly like
+        # the machine footprints next door.
+        "items_per_min": (building.items_per_min or None) if building else None,
+    }
+
+
+@router.get("/belts")
+def belts(request: Request, save: str | None = None, world: str | None = None) -> Any:
+    """Every conveyor belt and lift, as the polyline it was actually built along.
+
+    New in schema 12, and the reason the map drew no belts at all until now: the splines
+    were decoded by the parser and thrown away at the projection. They arrive interned the
+    way the structures next door are -- ``{"classes": [...], "segments": [[chain_index,
+    class_index, [[x, y, z], ...]], ...]}``, world centimetres -- and, like that endpoint,
+    the legend is resolved here so the page does not have to carry it, and every field is
+    read guarded so that a malformed segment costs that segment rather than the network.
+
+    **Points are in travel order, input to output.** The save stores them output-first and
+    the projection reverses them, so a client can draw direction along a run without
+    knowing that. ``chain`` is the belt chain a piece belongs to -- 1,909 chains over 3,085
+    pieces on the reference world -- so "the whole run" is a group-by rather than a
+    geometry problem.
+
+    **A lift is a belt whose top-down polyline is a single point.** All 302 lifts on the
+    reference save have exactly zero horizontal extent (measured: median *and* maximum
+    horizontal span 0.0 cm, median rise 4 m), so a map that draws them as lines draws
+    nothing at all where they are. ``lift`` says which ones, and the client owes them a
+    glyph instead.
+
+    Sent one row per piece, ungrouped, the same posture ``/api/structures`` takes and for
+    the same reason: the per-piece class is what a popup reads. Measured on the reference
+    world -- 3,085 pieces, 8,292 points, 562 KB -- which is the same order as the floor
+    plan beside it (8,347 pieces, 708 KB). The geometry is already only the bends: 2,237 of
+    the 3,085 pieces are two-point straight lines, 2.7 points per piece overall.
+    """
+    try:
+        st = _state(request, save, world)
+    except Exception as exc:
+        return _fail(f"could not read save: {exc}", 404)
+
+    raw = st.projection.get("belts") or {}
+    classes = list(raw.get("classes") or ())
+    resolved: dict[int, dict[str, Any]] = {}
+    rows = []
+    for seg in raw.get("segments") or ():
+        if not isinstance(seg, (list, tuple)) or len(seg) < 3:
+            continue
+        try:
+            chain = int(seg[0])
+            index = int(seg[1])
+        except (TypeError, ValueError):
+            continue
+        points = []
+        for p in seg[2] or ():
+            if not isinstance(p, (list, tuple)) or len(p) < 3:
+                continue
+            try:
+                points.append([_m(float(p[0])), _m(float(p[1])), _m(float(p[2]))])
+            except (TypeError, ValueError):
+                continue
+        if not points:
+            continue  # nothing to place; a piece with no geometry is not a piece
+        if index not in resolved:
+            resolved[index] = _belt_class(st, classes[index] if 0 <= index < len(classes) else None)
+        rows.append({"chain": chain, **resolved[index], "points_m": points})
+    return {
+        "belts": rows,
+        "count": len(rows),
+        "chains": len({r["chain"] for r in rows}),
+    }
 
 
 # ------------------------------------------------------------------ factories

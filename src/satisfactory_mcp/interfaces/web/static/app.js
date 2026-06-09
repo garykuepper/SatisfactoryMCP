@@ -400,6 +400,7 @@ var LAYER_ORDER = [
   "factory labels",
   "proposals",
   "foundations",
+  "belts",
   "machines",
   "extractors",
   "generators",
@@ -836,14 +837,46 @@ function drawRegions(data) {
   });
 }
 
+/* The four corners of a footprint placed at (x, y) and turned by `yaw`, as latlngs.
+ *
+ * `w` and `l` are HALF-extents along the building's own X and Y, so a rotated Manufacturer
+ * stays 18 x 20 m instead of growing into the bounding box of its turned self -- which is
+ * exactly what an L.rectangle around a rotated thing would have drawn.
+ *
+ * The API sends yaw in degrees about world Z, positive turning +X towards +Y, so a local
+ * offset (dx, dy) lands at (x + dx*cos - dy*sin, y + dx*sin + dy*cos). The page's one
+ * coordinate rule then turns each corner into [-y, x], in the same single place it always
+ * was: nothing here knows about latitude except the last line.
+ *
+ * A null yaw is not a zero yaw. Null means the projection predates schema 12 and this
+ * placement's facing was never recorded; zero means it was recorded and points east. Both
+ * come out of here as the same axis-aligned box -- cos 0 = 1, sin 0 = 0 reproduces exactly
+ * the four corners the L.rectangle here used to build -- so a world with no yaw at all
+ * draws precisely as it did before, and the difference between the two claims stays in the
+ * popup where it can be read rather than in the drawing where it cannot.
+ */
+function footprintCorners(x, y, w, l, yaw) {
+  var a = ((yaw || 0) * Math.PI) / 180;
+  var cos = Math.cos(a);
+  var sin = Math.sin(a);
+  return [
+    [-w, -l],
+    [w, -l],
+    [w, l],
+    [-w, l],
+  ].map(function (d) {
+    return [-(y + d[0] * sin + d[1] * cos), x + d[0] * cos - d[1] * sin];
+  });
+}
+
 /* The player's floor plan: one 8 m tile per placed foundation, ramp, wall or catwalk.
  *
- * Everything about the shape of these is decided by what the projection does NOT carry.
- *
- *   * No rotation. The instance quaternion is dropped at extraction, so every tile is
- *     drawn AXIS-ALIGNED. A slab the player laid at an angle -- and this world has
- *     several -- comes out as a staircase of squares rather than a tilted rectangle.
- *     That is the honest drawing; guessing a yaw from the neighbours would invent one.
+ *   * Drawn at its real yaw, as of schema 12. Until then the instance quaternion was
+ *     dropped at extraction and every tile was axis-aligned, so a slab the player laid at
+ *     an angle -- this world has several, over 1,800 pieces of them -- came out as a
+ *     staircase of squares. Polygons rather than rectangles is the whole change: an
+ *     L.rectangle IS a polygon built from two corners, so this costs four points per piece
+ *     and nothing else.
  *   * No per-class size. None of these eighteen classes has clearance data, so there is
  *     no footprint to ask for. They all snap to the same grid, whose edge the server
  *     reports as `tile_m`, so a wall paints the tile it stands on rather than its own
@@ -861,23 +894,131 @@ function drawStructures(data) {
   var half = (data.tile_m || 8) / 2;
   data.structures.forEach(function (s) {
     if (s.x_m === null || s.y_m === null) return;
-    L.rectangle(
-      [
-        [-s.y_m - half, s.x_m - half],
-        [-s.y_m + half, s.x_m + half],
-      ],
-      {
-        color: STRUCTURE_COLOUR,
-        weight: 1,
-        opacity: 0.9,
-        fillColor: STRUCTURE_COLOUR,
-        fillOpacity: 0.9,
-        interactive: false,
-        pane: "foundations",
-      }
-    ).addTo(group);
+    L.polygon(footprintCorners(s.x_m, s.y_m, half, half, s.yaw), {
+      color: STRUCTURE_COLOUR,
+      weight: 1,
+      opacity: 0.9,
+      fillColor: STRUCTURE_COLOUR,
+      fillOpacity: 0.9,
+      interactive: false,
+      pane: "foundations",
+    }).addTo(group);
   });
 }
+
+/* The conveyor network, drawn as the routes it actually takes.
+ *
+ * New with schema 12, which is the whole reason this layer did not exist: the splines were
+ * decoded by the parser and thrown away at the projection, so the map could show the
+ * concrete and the machines and nothing about what joined them.
+ *
+ * ONE colour for the whole network, and tier as a width step rather than a second palette.
+ * There is a real base map underneath now, and five hues of belt over a photographic
+ * terrain would be the loudest thing on the page for information a player reads off a
+ * popup anyway. The step is deliberately small -- 1.8 px at Mk1/Mk2 up to 3 px at Mk4/Mk5
+ * -- so a trunk line reads as heavier than a feeder without either of them shouting.
+ *
+ * A LIFT gets a ring instead of a line, because a line is not available: a lift is exactly
+ * vertical (measured, server-side -- all 302 on this world have zero horizontal extent),
+ * so its top-down polyline is one point and a polyline through it draws nothing at all.
+ * The ring is also the right picture: seen from above, a lift is a hole in the floor.
+ */
+/* Mid steel, and mid on purpose: this is the one layer with no ground of its own, so it has
+ * to read over the dark concrete it mostly runs on AND over pale sand where it crosses
+ * country. A near-white line does the first and vanishes into the second -- and at 3,085
+ * routes it was also, briefly, the loudest thing on a page that now has real terrain under
+ * it. A mid tone is darker than the sand and lighter than the concrete, which is the only
+ * value that has contrast both ways without being bright. */
+var BELT_COLOUR = "#93a5b4";
+var LIFT_FILL = "#252a30"; // the hole the ring is drawn around.
+
+/* Tier as width. `items_per_min` is the dump's own figure for the class -- 60, 120, 270,
+ * 480, 780 -- so this is a banding of a measurement rather than a parse of "Mk3" out of a
+ * display name. An unknown tier draws at the middle width: thinnest would read as Mk1. */
+function beltWeight(items_per_min) {
+  if (!items_per_min) return 2.2;
+  if (items_per_min >= 480) return 3;
+  if (items_per_min >= 270) return 2.4;
+  return 1.8;
+}
+
+function beltPopup(b, first, last) {
+  return popup([
+    ["belt", b.name || b.cls],
+    // Said out loud, because the glyph is the one encoding on this map that exists
+    // because of a measurement rather than because of a preference.
+    ["kind", b.lift ? "conveyor lift — vertical, so drawn as a ring" : null],
+    ["rate", b.items_per_min ? b.items_per_min + " items/min at 100%" : null],
+    // Travel order, input to output: the projection reverses the save's own output-first
+    // storage, so these two rows mean what they say.
+    ["from", first[0] + ", " + first[1] + " m"],
+    ["to", last[0] + ", " + last[1] + " m"],
+    ["rise", Math.round((last[2] - first[2]) * 10) / 10 + " m"],
+    ["chain", "#" + b.chain],
+  ]);
+}
+
+function drawBelts(data) {
+  // Off by default at the whole-world zoom, exactly like `machines` and for the same
+  // reason: 3,085 routes across 7 km is a smear. See reveal().
+  var group = layer("belts", false, BELT_COLOUR);
+  data.belts.forEach(function (b) {
+    var points = b.points_m.map(function (p) {
+      return [-p[1], p[0]];
+    });
+    var first = b.points_m[0];
+    var last = b.points_m[b.points_m.length - 1];
+    var piece;
+    if (b.lift) {
+      piece = L.circleMarker(points[0], {
+        radius: 3.5,
+        color: BELT_COLOUR,
+        weight: 1.5,
+        fillColor: LIFT_FILL,
+        fillOpacity: 0.9,
+      });
+    } else if (points.length < 2) {
+      return; // a route with one point is not a route, and this is not a lift
+    } else {
+      piece = L.polyline(points, {
+        color: BELT_COLOUR,
+        weight: beltWeight(b.items_per_min),
+        opacity: 0.85,
+      });
+    }
+    piece.bindPopup(beltPopup(b, first, last)).addTo(group);
+  });
+  sinkBelts();
+}
+
+/* Belts share the overlay canvas with the machines and the node dots, so the rule
+ * raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
+ * match wins. A belt run crosses every machine it feeds, and a polyline's hit area is its
+ * width plus Leaflet's click tolerance -- so a belts layer added after the machines would
+ * quietly take the click on every machine a belt passes over. Pushed to the back instead:
+ * under the machines, under the node dots, still over the foundations (a separate pane, so
+ * a separate canvas, so unaffected either way).
+ *
+ * Its own pane would be the tidier answer and is not one: Leaflet gives every pane its own
+ * canvas, the DOM delivers a click to the topmost element under the pointer, and the
+ * overlay pane's canvas covers the entire viewport -- so a clickable layer below it is not
+ * clickable at all. That is also why this is safe to call whenever: `bringToBack` is a
+ * no-op on a path whose group is not on the map, which is the state this layer starts in.
+ */
+function sinkBelts() {
+  var group = state.layers.belts;
+  if (!group) return;
+  group.eachLayer(function (piece) {
+    if (piece.bringToBack) piece.bringToBack();
+  });
+  raiseNodeDots();
+}
+
+// A layer added long after both fetches landed is appended to the canvas' draw list, i.e.
+// on top of everything -- so the sink has to run again when the player ticks the box.
+map.on("overlayadd", function (event) {
+  if (state.layers.belts && event.layer === state.layers.belts) sinkBelts();
+});
 
 /* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
  * An extractor is drawn exactly on the node it drains, and whichever of /api/nodes and
@@ -949,13 +1090,13 @@ function drawNodes(data) {
   }
 }
 
-/* Machines at their real size: `w_m`/`l_m` are the building's own footprint, so a
- * Manufacturer (18x20 m) reads as the eight-times-larger thing it is next to a
- * Constructor (8x10 m). Null for the classes the docs dump gives no clearance data --
- * both biomass burners here -- and those fall back to the 6 m square every machine used
- * to get. Axis-aligned, and for the same reason the foundations are: the projection
- * carries no yaw, so a machine the player rotated 90 degrees draws at its unrotated
- * extent rather than at a guessed one. */
+/* Machines at their real size AND their real facing: `w_m`/`l_m` are the building's own
+ * footprint, so a Manufacturer (18x20 m) reads as the eight-times-larger thing it is next
+ * to a Constructor (8x10 m), and `yaw` turns that footprint the way the player placed it.
+ * Null footprints for the classes the docs dump gives no clearance data -- both biomass
+ * burners here -- and those fall back to the 6 m square every machine used to get, which
+ * rotates to itself. A null yaw draws axis-aligned; see footprintCorners for why that is
+ * not the same statement as a yaw of zero. */
 var MACHINE_FALLBACK_M = 6;
 
 function drawMachines(data) {
@@ -965,18 +1106,12 @@ function drawMachines(data) {
       if (m.x_m === null) return;
       var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
       var l = (m.l_m || MACHINE_FALLBACK_M) / 2;
-      L.rectangle(
-        [
-          [-m.y_m - l, m.x_m - w],
-          [-m.y_m + l, m.x_m + w],
-        ],
-        {
-          color: KIND_COLOUR[kind],
-          weight: 1,
-          fillOpacity: m.paused ? 0.15 : 0.65,
-          dashArray: m.paused ? "2,2" : null,
-        }
-      )
+      L.polygon(footprintCorners(m.x_m, m.y_m, w, l, m.yaw), {
+        color: KIND_COLOUR[kind],
+        weight: 1,
+        fillOpacity: m.paused ? 0.15 : 0.65,
+        dashArray: m.paused ? "2,2" : null,
+      })
         .bindPopup(
           popup([
             ["building", m.name],
@@ -984,6 +1119,10 @@ function drawMachines(data) {
             ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
             ["paused", m.paused ? "yes" : null],
             ["footprint", m.w_m && m.l_m ? m.w_m + " x " + m.l_m + " m" : null],
+            // Degrees about world Z, positive turning +X towards +Y -- the same number
+            // the drawing is turned by, so a reader can check the picture against it.
+            // Absent, not "0", when the projection carries no facing at all.
+            ["facing", m.yaw === null || m.yaw === undefined ? null : Math.round(m.yaw) + "°"],
             ["at", m.x_m + ", " + m.y_m + " m"],
             ["instance", code(m.instance_leaf)],
           ])
@@ -994,22 +1133,42 @@ function drawMachines(data) {
   raiseNodeDots();
 }
 
-/* `machines` is off at the whole-world zoom on purpose: 438 rectangles across 7 km is a
- * smear, and unticking it is the right default. What was wrong is what happened next --
- * clicking a factory label flew the map to that factory's own extent and landed on bare
- * concrete, with the reason eight unfolded rows down a control the player had not opened.
+/* `machines` and `belts` are both off at the whole-world zoom on purpose: 438 rectangles
+ * and 3,085 routes across 7 km are a smear, and unticking them is the right default. What
+ * was wrong is what happened next -- clicking a factory label flew the map to that
+ * factory's own extent and landed on bare concrete, with the reason eight unfolded rows
+ * down a control the player had not opened.
  *
- * So the click that changes the SCALE turns the layer on, once, and says so. Not zoom:
+ * So the click that changes the SCALE turns those layers on, once, and says so. Not zoom:
  * a layer that ticked and unticked itself as the map moved would be the only control on
  * this page the player does not own, and the checkbox would be lying about who decided.
  * This is the same grammar as everything else here -- a ticked box, unticked by whoever
- * wants it unticked -- reached by the one gesture that means "show me this factory". */
-function revealMachines() {
-  var group = state.layers.machines;
-  if (!group || map.hasLayer(group)) return;
-  group.addTo(map);
-  note("machines turned on — untick the machines layer to hide them again");
+ * wants it unticked -- reached by the one gesture that means "show me this factory".
+ *
+ * One function for the whole set, rather than one per layer, so the grammar cannot drift:
+ * a layer that is factory-scale information is off at world scale and arrives with the
+ * flight. One NOTE for the whole set too -- two toasts for one click would read as two
+ * events, and the player made one gesture. */
+function reveal(names) {
+  var turned = [];
+  names.forEach(function (name) {
+    var group = state.layers[name];
+    if (!group || map.hasLayer(group)) return;
+    group.addTo(map);
+    turned.push(name);
+  });
+  if (!turned.length) return;
+  note(
+    turned.join(" and ") +
+      " turned on — untick " +
+      (turned.length > 1 ? "those layers" : "the " + turned[0] + " layer") +
+      " to hide them again"
+  );
 }
+
+// What "show me this factory" means, in layers. A factory at factory scale is its machines
+// and the routes between them; both are unreadable at the zoom the click starts from.
+var FACTORY_LAYERS = ["machines", "belts"];
 
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
@@ -1092,8 +1251,8 @@ function factoryAnchor(row, text, className, rows) {
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
     marker.on("click", function () {
-      // A factory at factory scale IS its machines; see revealMachines.
-      revealMachines();
+      // A factory at factory scale IS its machines and the belts between them; see reveal.
+      reveal(FACTORY_LAYERS);
       map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
     });
   }
@@ -1578,6 +1737,15 @@ function loadStatic() {
       if (!live()) return;
       clearPrefixed(["foundations"]);
       fail("structures: " + friendly(e));
+    });
+  get("/api/belts")
+    .then(function (d) {
+      if (live()) drawBelts(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["belts"]);
+      fail("belts: " + friendly(e));
     });
   get("/api/factories")
     .then(function (d) {
