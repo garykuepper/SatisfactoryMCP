@@ -18,7 +18,10 @@ from pathlib import Path
 
 from ... import config
 
-SCHEMA_VERSION = 11
+#: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
+#: every pickle written by an older schema misses rather than being served without its new
+#: fields. 12 added placement yaw and belt splines.
+SCHEMA_VERSION = 12
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

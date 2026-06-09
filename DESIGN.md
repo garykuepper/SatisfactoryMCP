@@ -166,7 +166,7 @@ SatisfactoryMcp/
                        # normalize.py (-> items / recipes / buildings / schematics)
                        # model.py  search.py  footprint.py  constants.py
       saveio/          # projection.py: spawns the extractor, validates, caches
-                       # extract.py: runs IN the child, builds the schema-11 projection
+                       # extract.py: runs IN the child, builds the schema-12 projection
       text.py          # num + plural ONLY — the two helpers domain may reach
     domain/            # returns dataclasses and dicts, NEVER formatted text
       world/           # state.py: WorldState, a thin aggregate over the facets
@@ -3525,8 +3525,8 @@ the folder. What that list turns out to be is not a formality; it is the only re
 player has collected, and it has a section of its own at §6.11.
 
 Decoding is **lazy**, which is measured rather than stylistic: reading every chain costs 0.46 s on
-top of a 2.10 s parse — 22% — for data no projection field touches, so `actorSpecificInfo` decodes
-on first access and caches. `_attach_trailer` runs for actors only; calling it on all 1.24 M
+top of a 2.10 s parse — 22% — which no projection field touched at the time and which schema 12's
+`belts` key now pays deliberately, so `actorSpecificInfo` decodes on first access and caches. `_attach_trailer` runs for actors only; calling it on all 1.24 M
 objects cost another 5%.
 
 Knowing all eight closed the hole this section used to end on: **an actor's trailer is now
@@ -3976,6 +3976,33 @@ platforms from raw projection data in a scratch script, before any schema work. 
 bands emerge or the idea dies for the cost of an afternoon. Open input from Lukas before
 stage 2: are his multi-floor factories uniform-height stacks or mixed heights (4 m logistics
 under 8 m machine floors)? That decides how clever band-height inference must be.
+
+### Schema 12 landed the geometry (2026-07-31)
+
+The prerequisite above is done, and the floor view is still parked — this was worth doing on
+its own, because the world map drew angled platforms as staircases and drew no belts at all.
+
+* **Yaw**, one float in degrees, on every lightweight buildable (a fifth column on a
+  `structures` row) and on every machine / extractor / generator record. Positive turns +X
+  towards +Y, directly comparable with `atan2(dy, dx)` over `pos`; range `(-180, 180]`.
+  Verified against the layout rather than against the formula: on five angled platforms the
+  bearing between tile-spaced foundations equals their yaw modulo 90 to within 0.002°.
+  **Z only** — of 9,153 `Build_*` actors just 396 carry any pitch or roll, all of them
+  wall-mounted pipe and ceiling parts, and no lightweight buildable carries any.
+* **Belts**, a new `belts` key: `[chainIndex, classIndex, [[x, y, z], …]]` per belt piece, in
+  travel order, world centimetres. Conveyor **lifts** are in it — same records, told apart by
+  class — which is what §16b needs them for. The splines are stored in the chain actor's
+  frame and are translated back; all 51,200 chains on this disk carry an identity rotation, so
+  nothing has to be un-rotated *yet*.
+* **Cost, measured on the reference save:** the projection grew 938,012 → 1,209,739 bytes
+  (+29.0%), the pickle 824,652 → 1,091,625 (+32.4%), and the parse 2.41 s → 2.87 s (+19%,
+  the lazy chain trailers). **Not thinned, and that was measured too:** the spline points are
+  already only the bends — 2,237 of 3,085 pieces are 2-point straight lines — so
+  Douglas-Peucker at 1 cm drops 8% of points to save 1.2% of the projection, and at a lossy
+  100 cm still saves only 3.2%. There is nothing there to win.
+* **The parity ripple resolved as planned.** `tests/test_savparse_parity.py` filters the
+  projection back to the schema-11 shape through an explicit list of what 12 added, and
+  `vendor_parity.json` is untouched.
 
 ---
 

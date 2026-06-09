@@ -19,6 +19,14 @@ measured against the bytes rather than against the other parser.
 These tests need real saves and skip without them. That is deliberate: the rest of the suite runs
 on committed fixtures with no game install, and this one is the exception, because a digest of a
 projection is only meaningful against the save it came from.
+
+**Schema 12 and why the bank is not re-banked.** The projection has since grown a placement yaw
+and a ``belts`` key. Those fields did not exist while the oracle did, so it never had an opinion
+about them, and re-recording the bank against this parser would replace an independent
+measurement with this parser's own output -- the one thing that would make every test here
+vacuous. So the comparison runs on a projection FILTERED BACK to the schema-11 shape, by the
+explicit list in ``SCHEMA_12_ADDITIONS`` below. Additive fields are legitimately outside the
+deleted oracle's scope; a *changed* schema-11 field is exactly what this still catches.
 """
 
 from __future__ import annotations
@@ -38,6 +46,55 @@ SIDECAR = REPO / "src" / "satisfactory_mcp" / "core" / "saveio" / "extract.py"
 #: Header keys that describe the FILE rather than the world, so they are excluded from the
 #: digest: a save copied to another path or re-read after a touch is the same world.
 VOLATILE = {"path", "filename", "mtime_ns", "size"}
+
+#: Everything schema 12 added, named one by one rather than detected. Guessing structurally --
+#: "drop keys the bank has never seen", "drop record fields the bank cannot know about" -- would
+#: also silently absorb a field this parser started emitting BY MISTAKE, which is the class of
+#: regression the bank exists to catch. Written out, adding to this list is a decision somebody
+#: has to make and a reviewer can see.
+SCHEMA_12_ADDITIONS = {
+    #: A whole new top-level key: per-belt spline polylines.
+    "keys": ("belts",),
+    #: The version label is itself one of the 20 banked keys, and it is the one key that is
+    #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
+    #: schema-11 number; leaving 12 here would report drift on every save on the grounds
+    #: that the schema changed, which is the thing being announced rather than a fault.
+    "schema_version": 11,
+    #: A new field on every record of these keys: top-down placement yaw in degrees.
+    "record_fields": {"machines": "yaw", "extractors": "yaw", "generators": "yaw"},
+    #: ``structures.instances`` rows were ``[classIndex, x, y, z]`` and gained a fifth column,
+    #: the same yaw. A row is positional, so the addition is a length, not a name.
+    "row_width": {"structures": 4},
+}
+
+
+def as_schema_11(projection: dict) -> dict:
+    """The projection with schema 12's additions removed, and nothing else touched.
+
+    Not a general downgrade: it undoes exactly ``SCHEMA_12_ADDITIONS`` and leaves every other
+    difference -- which is the point, because every other difference is drift.
+    """
+    out = {k: v for k, v in projection.items() if k not in SCHEMA_12_ADDITIONS["keys"]}
+    if "schema_version" in out:
+        out["schema_version"] = SCHEMA_12_ADDITIONS["schema_version"]
+    for key, field in SCHEMA_12_ADDITIONS["record_fields"].items():
+        if isinstance(out.get(key), list):
+            out[key] = [
+                {k: v for k, v in record.items() if k != field}
+                if isinstance(record, dict)
+                else record
+                for record in out[key]
+            ]
+    for key, width in SCHEMA_12_ADDITIONS["row_width"].items():
+        payload = out.get(key)
+        if isinstance(payload, dict) and isinstance(payload.get("instances"), list):
+            out[key] = {
+                **payload,
+                "instances": [
+                    row[:width] if isinstance(row, list) else row for row in payload["instances"]
+                ],
+            }
+    return out
 
 
 def _digest(value) -> str:
@@ -83,7 +140,8 @@ def _projection(path: Path) -> dict:
 def test_the_banked_reference_is_what_it_claims(banked):
     """The fixture is evidence, so its own shape is worth pinning.
 
-    A truncated or half-written bank would make every comparison below vacuously pass.
+    A truncated or half-written bank would make every comparison below vacuously pass. The
+    schema stays 11 for ever: it records what the oracle emitted, not what this parser emits.
     """
     assert banked["_meta"]["saves"] == len(banked["saves"]) == 31
     assert banked["_meta"]["schema_version"] == 11
@@ -94,6 +152,47 @@ def test_the_banked_reference_is_what_it_claims(banked):
         assert len(entry) == 21, (name, len(entry))
 
 
+def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
+    """The mechanism the comparison below now depends on, pinned without a save.
+
+    Two halves, and the second is the one that matters. A filter that removed too much -- or
+    that simply returned a constant -- would make every digest agree for ever, so it is not
+    enough to show that adding schema 12's fields leaves the digests alone: changing a
+    schema-11 field must still move them.
+    """
+    eleven = {
+        "schema_version": 11,
+        "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0]}],
+        "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0]}],
+        "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0]}],
+        "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [[0, 10, 20, 30]]},
+        "warnings": [],
+    }
+    twelve = {
+        "schema_version": 12,
+        "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
+        "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
+        "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [[0, 10, 20, 30, -20.0]],
+        },
+        "belts": {"classes": ["Build_ConveyorBeltMk3_C"], "segments": [[0, 0, [[1, 2, 3]]]]},
+        "warnings": [],
+    }
+    filtered = as_schema_11(twelve)
+    assert filtered == eleven, "the filter did not land back on the schema-11 shape"
+    assert {k: _digest(v) for k, v in filtered.items()} == {
+        k: _digest(v) for k, v in eleven.items()
+    }
+
+    moved = dict(twelve)
+    moved["machines"] = [{**twelve["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
+        "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
+    )
+
+
 @pytest.mark.integration
 def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
     """The replayed acceptance test, and the reason the bank exists.
@@ -101,6 +200,9 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
     Every key of every save that both parsers once read must still digest to the value the
     vendored one produced. A difference here is this parser having drifted from the only
     independent check it ever had.
+
+    Compared through ``as_schema_11``: what the oracle never saw cannot be part of an
+    agreement with it.
     """
     by_name = {p.name: p for p in saves_root.rglob("*.sav")}
     checked = 0
@@ -111,6 +213,8 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             continue
         proj = _projection(path)
         assert "error" not in proj, (name, proj.get("detail"))
+        assert proj["schema_version"] == 12, (name, "unexpected schema for the filter")
+        proj = as_schema_11(proj)
         for key, want in entry.items():
             if key == "n_objects_value":
                 assert proj["n_objects"] == want, (name, key)

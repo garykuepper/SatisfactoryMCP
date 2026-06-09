@@ -1,9 +1,11 @@
 """The class-specific bytes trailing an actor's property list, for the seven non-foundation classes.
 
 Conveyor chains and their three RepSize variants, power lines, and the circuit and player-state
-subsystems. Nothing in the projection reads any of them -- these are decoded so that all eight
-classes carrying trailing bytes are accounted for, which is what would let an actor's trailer be
-length-checked the way a component's already is, and so that belt contents are reachable at all.
+subsystems. These were decoded so that all eight classes carrying trailing bytes are accounted
+for, which is what lets an actor's trailer be length-checked the way a component's already is;
+the projection read none of them at the time. It reads the chains' spline geometry now, as
+``belts`` -- ``test_sidecar_transform`` covers that seam, and everything below stays a test of
+the bytes rather than of what anyone does with them.
 
 **How the layout was established, and therefore what these tests are really pinning.** There
 are no separators and no per-field lengths: a record is right only if the walk ends exactly
@@ -188,9 +190,9 @@ def test_the_player_state_carries_a_length_checked_account_id(blobs):
 
 
 def test_a_trailer_is_decoded_once_and_only_when_asked(blobs):
-    """Decoding every chain costs 22% of a whole save's parse for data no projection field
-    reads, so it happens on first access. Two things have to hold for that to be safe: it must
-    not happen during the parse, and it must not happen twice."""
+    """Decoding every chain costs 22% of a whole save's parse, and a header-only scan wants
+    none of it, so it happens on first access. Two things have to hold for that to be safe: it
+    must not happen during the parse, and it must not happen twice."""
     cls, blob = next((c, b) for c, b in blobs if c == POWER_LINE)
     calls = []
 

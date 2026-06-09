@@ -3,20 +3,22 @@
 Eight classes in a save write data after their properties that the property serialiser knows
 nothing about. The biggest, ``FGLightweightBuildableSubsystem``, has its own module because it
 holds every foundation in the world and the projection is built from it. This one covers the
-other seven, all of which the projection reads nothing from:
+other seven:
 
 * **conveyor chains** and their three ``RepSize`` variants -- the belts a chain spans, their
   spline geometry, and every item riding on them. 76.6 MB plus 30.4 MB across the 31 readable
-  saves, easily the largest thing in a save after the lightweight blob.
+  saves, easily the largest thing in a save after the lightweight blob. The projection's
+  ``belts`` key is built from the spline geometry; the items on the belts nothing reads.
 * **power lines** -- the two connections each line joins. 8.0 MB.
 * the **circuit** and **player-state** subsystems, 4.5 KB and 558 bytes across all 31 saves.
 
 **Decoding is lazy, and that is a measured decision.** Reading every chain on the reference
-save costs 0.46 s on top of a 2.10 s parse -- 22% -- for data no projection field uses. So
-``ParsedObject.actorSpecificInfo`` decodes on first access and caches; a save read for the
-projection never pays it, and a caller that wants belt contents gets them without a second
-pass. A malformed trailer therefore raises inside the caller rather than at the save boundary,
-which is safe because the sidecar's ``except ParseError`` wraps projection building too.
+save costs 0.46 s on top of a 2.10 s parse -- 22%. So ``ParsedObject.actorSpecificInfo``
+decodes on first access and caches: a header-only scan and every caller that wants none of
+this pays nothing, and the sidecar pays only for the chains, once. A malformed trailer
+therefore raises inside the caller rather than at the save boundary, which is safe because the
+sidecar's ``except ParseError`` wraps projection building too -- and the projection additionally
+catches it per chain, so one unreadable belt costs a belt rather than the world.
 
 **Verification.** Every reader here is checked by *exact consumption*: a record read correctly
 ends precisely where the object declared its trailing bytes end, and any wrong field width

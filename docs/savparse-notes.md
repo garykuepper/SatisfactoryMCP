@@ -1196,8 +1196,8 @@ points, 36,773 power lines** and one circuit list and account id per save — **
 one consuming its declared bytes exactly**, at both save versions.
 
 **Decoding is lazy, and that is measured.** Reading every chain costs 0.46 s on top of a 2.10 s
-parse — 22% — for data no projection field touches, so `ParsedObject.actorSpecificInfo` decodes on
-first access and caches. A malformed trailer therefore raises inside the caller rather than at the
+parse — 22% — which no projection field touched at the time and which the schema-12 `belts` key
+now pays on purpose, so `ParsedObject.actorSpecificInfo` decodes on first access and caches. A malformed trailer therefore raises inside the caller rather than at the
 save boundary, which is safe because the sidecar's `except ParseError` wraps projection building
 too. `_attach_trailer` is also called for actors only: running it on all 1.24 M objects, components
 included, cost 5% of the parse for nothing.

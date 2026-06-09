@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-11 projection is this project's shape, versioned with this project's cache,
+the schema-12 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -34,6 +34,7 @@ the switch that chose between them went with it -- see the comment above the imp
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import traceback
@@ -61,7 +62,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -183,6 +184,43 @@ def pos_of(header) -> list | None:
         return None
 
 
+def yaw_of(quat) -> float:
+    """Top-down facing in degrees from a placement quaternion ``(x, y, z, w)``.
+
+    **The convention, and it is measured rather than assumed.**
+
+    * **Axis: world Z (up), and only Z.** Every one of the reference save's 8,347
+      lightweight buildables has ``x == y == 0`` exactly, and of its 9,153 ``Build_*``
+      actors only 396 do not -- pipeline flow indicators, ceiling attachments and wall
+      poles, i.e. parts mounted on a wall, none of them a machine. So a single yaw is the
+      whole rotation of everything a top-down or floor view draws, which is why §16b of
+      DESIGN.md settles for one float instead of three.
+    * **Handedness: positive yaw turns +X towards +Y**, in the same coordinates the
+      projection's ``pos`` reports -- that is, it is directly comparable with
+      ``atan2(dy, dx)`` between two positions, with no sign flip and no axis swap.
+    * **Range** ``(-180, 180]``, the range ``atan2`` gives -- after one fold. A quaternion
+      stored as float32, which is what an actor header carries, lands a half-turn on
+      ``-179.999...``, so rounding alone would emit both ``-180.0`` and ``180.0`` for the
+      same facing and a consumer bucketing yaws would see two of them.
+
+    Verified against the geometry rather than against a formula. Take the 440 ``8x1``
+    foundations of the reference world's ``-20`` degree platform: their 928 pairs sitting
+    exactly one 800 cm tile apart lie at ``70.0000`` degrees modulo 90 (spread 0.0016),
+    and ``-20 mod 90 = 70``. The same holds for the ``-10`` / ``70`` / ``160`` / ``30``
+    degree groups -- 2,588 / 425 / 264 / 66 tile-spaced pairs, each within 0.001 degrees of
+    its own yaw. A flipped sign or a swapped axis fails all five.
+
+    The general form is kept even though ``x == y == 0`` reduces it to ``2*atan2(z, w)``:
+    the 396 wall-mounted actors above do carry pitch, and this is their yaw, not nonsense.
+    """
+    try:
+        x, y, z, w = (float(v) for v in quat)
+    except (TypeError, ValueError):
+        return 0.0
+    deg = round(math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))), 2)
+    return 180.0 if deg == -180.0 else deg
+
+
 def header_info(path: str) -> dict:
     i = read_save_info(path)
     st = os.stat(path)
@@ -240,6 +278,8 @@ def extract(path: str) -> dict:
         # collected: nothing in a save says a power slug exists, only that one no longer does.
         "removed": {"cells": [], "instances": [], "counts": {}},
         "structures": {"classes": [], "instances": []},
+        # Belt routing, as polylines. Schema 12; see `_belts`.
+        "belts": {"classes": [], "segments": []},
         "machines": [],
         "extractors": [],
         "generators": [],
@@ -259,6 +299,10 @@ def extract(path: str) -> dict:
     }
     counts: dict[str, int] = {}
     n_objects = 0
+    #: (chain actor world position, the actor) for every conveyor chain. Held rather than
+    #: decoded here because the trailing bytes decode lazily and doing it in the walk would
+    #: interleave a 0.3 s decode with the property pass for no gain -- see `_belts`.
+    chain_actors: list[tuple] = []
 
     # --- connectivity interning -------------------------------------------
     actor_ix: dict[str, int] = {}
@@ -435,6 +479,11 @@ def extract(path: str) -> dict:
             if fluid:
                 out["pipe_networks"].append({"instance": instance, "fluid": fluid})
             continue
+        # Four class names, not one: the three ``_RepSize*`` variants are the same actor
+        # with a bigger replication budget and the identical record.
+        if cls.startswith("FGConveyorChainActor"):
+            chain_actors.append((getattr(header, "position", None), obj))
+            continue
 
         if cls == "Char_Player_C":
             out["players"].append(
@@ -464,6 +513,10 @@ def extract(path: str) -> dict:
             "cls": cls,
             "instance": instance,
             "pos": pos_of(header),
+            # Always emitted, like `pos` and unlike the property-derived fields below: an
+            # actor header always carries a transform, so an absent yaw would mean the
+            # projection is old rather than the building is unrotated.
+            "yaw": yaw_of(getattr(header, "rotation", None)),
         }
         if "mCurrentPotential" in p:
             record["clock"] = round(float(p["mCurrentPotential"]), 6)
@@ -524,6 +577,7 @@ def extract(path: str) -> dict:
         "power": power_edges,
     }
     out["building_counts"] = dict(sorted(counts.items()))
+    out["belts"] = _belts(chain_actors)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
@@ -768,6 +822,13 @@ def _structures(obj) -> dict:
     each instance is ``[rotationQuaternion, position, ...]`` -- so unlike the class
     census above, the transform is the SECOND element, not derivable from the count.
 
+    Rows are ``[classIndex, x, y, z, yaw]``. The yaw column arrived in schema 12 and is
+    what stops a client drawing an angled platform as a staircase: 4,631 of the reference
+    save's 8,347 pieces sit at a yaw that is not a multiple of 90, across 34 distinct
+    angles. It is always present -- 0.0 is "axis-aligned", not "unknown" -- and every
+    consumer of these rows reads them positionally with a ``len(row) >= 4`` guard, so the
+    extra column is additive for a reader that predates it.
+
     Interned and rounded to whole centimetres: 8,372 pieces cost 198 KB this way
     against roughly 1.2 MB emitted naively, and sub-centimetre precision is meaningless
     for deciding whether two 8 m foundations touch.
@@ -778,7 +839,7 @@ def _structures(obj) -> dict:
     """
     classes: list[str] = []
     index: dict[str, int] = {}
-    instances: list[list[int]] = []
+    instances: list[list] = []
 
     for entry in getattr(obj, "actorSpecificInfo", None) or []:
         if not (isinstance(entry, list) and len(entry) == 2):
@@ -796,11 +857,128 @@ def _structures(obj) -> dict:
                 continue
             pos = inst[1]
             try:
-                instances.append([ci, int(pos[0]), int(pos[1]), int(pos[2])])
+                instances.append([ci, int(pos[0]), int(pos[1]), int(pos[2]), yaw_of(inst[0])])
             except (TypeError, ValueError, IndexError):
                 continue
 
     return {"classes": classes, "instances": instances}
+
+
+def _belts(chains: list) -> dict:
+    """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``.
+
+    The one thing a map of a factory cannot be drawn without and the projection had no
+    field for. Belts are not lightweight buildables and their geometry is not in any
+    property: it lives in ``FGConveyorChainActor``'s trailing bytes, which
+    ``pioneersav.trailers`` decodes and which nothing read until schema 12.
+
+    Rows are ``[chainIndex, classIndex, [[x, y, z], ...]]``:
+
+    * **chainIndex** groups segments into the run the game itself groups them into -- one
+      chain is one continuous flow of items, 1,909 chains over 3,085 belt pieces on the
+      reference save. Dense and ordered, so a consumer that wants per-chain polylines
+      concatenates the rows sharing an index and a consumer that wants per-belt polylines
+      draws each row.
+    * **classIndex** interns the belt's class, which carries both the mark and whether the
+      piece is a belt or a LIFT -- 302 lift segments here, on 183 chains. A floor view
+      needs exactly that distinction: a lift is the connector between two Z bands.
+    * The points are the spline's control points at the same whole-centimetre precision
+      ``_structures`` uses, and there is nothing to thin: a straight belt is
+      2 points and the reference save's 3,085 segments carry 8,292 points between them,
+      2.7 apiece. They are already the bends and nothing else.
+
+    **Two facts about the source that this function is entirely about, both measured.**
+
+    1. **The spline is in the chain actor's frame**, so the actor's own position has to be
+       added back. Compared against the belt actors' own headers, ``point + chainPos`` is a
+       median 0.0 cm from the belt it belongs to, where the raw point is 156,041 cm away --
+       a whole map. All **51,200 chains across the 66 saves on this disk** carry an identity
+       rotation, so there is no orientation to undo; a chain that ever carried one would
+       need this to rotate the points before translating them, which is why the measurement
+       is stated rather than the assumption made quietly.
+    2. **Segments are stored output-first.** ``pioneersav.trailers`` records that offsets
+       grow towards the output and that ``segments[-1]`` holds offset 0, i.e. the chain's
+       input, so rows come out reversed -- in TRAVEL ORDER, input first. Measured over the
+       reference save's 1,176 joins between consecutive segments of one chain: reversed,
+       1,096 of them are the exact same point and the other 80 are the 200/300/400 cm of
+       spline-less offset a conveyor lift junction carries. In file order the median join
+       is 2,450 cm and the worst 11,200, i.e. every chain is drawn as a zigzag.
+
+    A chain whose trailing bytes will not decode costs that chain and is reported on
+    stderr, not the whole projection: belts are new and a save that projected yesterday
+    must not stop projecting because one trailer is unreadable.
+    """
+    classes: list[str] = []
+    index: dict[str, int] = {}
+    segments: list[list] = []
+    chain_ix = 0
+
+    for origin, obj in chains:
+        try:
+            info = obj.actorSpecificInfo
+        except PARSE_ERROR as exc:
+            print(f"pioneersav: conveyor chain skipped: {exc}", file=sys.stderr)
+            continue
+        if not (isinstance(info, list) and len(info) >= 3 and isinstance(info[2], list)):
+            continue
+        try:
+            ox, oy, oz = (float(v) for v in origin)
+        except (TypeError, ValueError):
+            continue
+
+        rows: list[list] = []
+        for seg in reversed(info[2]):
+            if not (isinstance(seg, list) and len(seg) >= 3):
+                continue
+            cls = _conveyor_class(ref_path(seg[1]) or "")
+            if not cls:
+                continue
+            points = []
+            for point in seg[2] if isinstance(seg[2], list) else ():
+                try:
+                    at = point[0]
+                    # Rounded, not truncated as `_structures` does. That field's truncation
+                    # is in the banked parity digests and cannot move now; a belt point is
+                    # new, and rounding is both unbiased and exactly commutative with the
+                    # whole-centimetre translation above, which is what lets a test check
+                    # the frame correction by moving the chain and subtracting.
+                    points.append([round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)])
+                except (TypeError, ValueError, IndexError):
+                    continue
+            # A single point is not a route. 2 is the commonest case by far -- a straight
+            # belt -- and the most that can be said about a 1-point segment is where it is.
+            if len(points) < 2:
+                continue
+            ci = index.get(cls)
+            if ci is None:
+                ci = index[cls] = len(classes)
+                classes.append(cls)
+            rows.append([chain_ix, ci, points])
+        if rows:
+            segments.extend(rows)
+            chain_ix += 1
+
+    return {"classes": classes, "segments": segments}
+
+
+def _conveyor_class(path: str) -> str:
+    """``...PersistentLevel.Build_ConveyorBeltMk3_C_1264`` -> ``Build_ConveyorBeltMk3_C``.
+
+    A chain names its belts by instance, not by class, so the class is recovered from the
+    name -- the same stripping ``_removed_class`` does, except that the trailing ``_C``
+    stays, because these names are compared against class names that carry it.
+
+    Checked rather than trusted: unlike a destroyed actor, a conveyor DOES have an actor
+    header of its own, so the stripped name can be held against the real ``typePath``. Over
+    the whole save folder the two agree on **83,389 of 83,389 segments**, with none whose
+    belt is missing a header -- which is why the class is taken from the cheap source
+    instead of the projection carrying a second index of every belt actor in the world.
+    """
+    leaf = path.rsplit(".", 1)[-1]
+    parts = leaf.split("_")
+    if parts and parts[-1].isdigit():
+        parts.pop()
+    return "_".join(parts) if len(parts) > 1 else ""
 
 
 def inventory_bucket(instance: str) -> str:

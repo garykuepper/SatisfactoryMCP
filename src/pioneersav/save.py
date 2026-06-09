@@ -173,7 +173,8 @@ def _attach_trailer(
     Nothing is decoded here. Only the class is known at this point, and only here, so what
     gets attached is the *ability* to decode -- ``ParsedObject.actorSpecificInfo`` calls it on
     first access. Eager decoding would add 22% to a save's parse time for the conveyor chains
-    alone, which no projection field reads.
+    alone; the projection's ``belts`` key now pays part of that deliberately, and every caller
+    that does not want belt geometry still pays none of it.
 
     **The check is the point of knowing all eight classes.** A component's trailer has always
     been length-checked; an actor's could not be, because an actor of one of these classes
