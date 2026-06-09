@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import types
 from pathlib import Path
 
 import pytest
@@ -385,6 +386,156 @@ def test_a_local_sidecar_can_repin_the_map_images_corners(client, tmp_path, monk
     assert client.head("/api/mapimage").headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
 
 
+#: A 1x1 PNG. Small enough to write a whole fake pyramid out of, which is the point: these
+#: tests need a tiles/ tree with the right SHAPE, not any picture.
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ=="
+)
+
+
+def _fake_pyramid(local: Path, max_z: int = 2) -> int:
+    """A tiles/ tree of tiny PNGs at the layout the generator writes. Returns the count."""
+    count = 0
+    for z in range(max_z + 1):
+        (local / web_api.MAP_TILES_DIR_NAME / str(z)).mkdir(parents=True)
+        for x in range(1 << z):
+            for y in range(1 << z):
+                (local / web_api.MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png").write_bytes(_PNG)
+                count += 1
+    return count
+
+
+def test_the_tile_pyramid_is_a_loader_too_and_names_the_tool_that_writes_it(
+    client, tmp_path, monkeypatch
+):
+    """Absent, present, and the probe the page opens with -- the same posture as map.png.
+
+    The pyramid is the page's first choice for the base map, so "no pyramid" is asked on
+    every clean load and must not be a console error: HEAD says 204 while GET keeps the
+    404 that names the generator.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+
+    r = client.get("/api/maptiles/0/0/0")
+    assert r.status_code == 404
+    message = r.json()["error"]
+    assert str(tmp_path / "local" / "tiles") in message
+    assert "gen_map_image.py" in message
+    assert client.head("/api/maptiles/0/0/0").status_code == 204
+
+    (tmp_path / "local").mkdir()
+    _fake_pyramid(tmp_path / "local")
+
+    r = client.get("/api/maptiles/2/3/1")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content == _PNG
+    # The probe answers every question the tile layer is built from at once.
+    head = client.head("/api/maptiles/0/0/0")
+    assert head.status_code == 200
+    assert head.headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+    assert head.headers["x-map-tile-px"] == str(web_api.MAP_TILE_PX)
+    assert head.headers["x-map-tile-max-z"] == str(web_api.MAP_TILE_MAX_Z)
+    assert "immutable" in head.headers["cache-control"]
+    # A tile is immutable per build, so the tag it is fetched under has to revalidate free.
+    etag = head.headers["etag"]
+    assert client.get("/api/maptiles/0/0/0", headers={"If-None-Match": etag}).status_code == 304
+
+
+def test_a_tile_outside_the_pyramid_is_a_404_and_cannot_name_a_file(client, tmp_path, monkeypatch):
+    """Off the grid, off the end, and shaped like an escape -- all answered, none served.
+
+    The endpoint takes three ints, so the only strings that reach it are integers: a
+    segment with a slash, a dot-dot or an encoded one never matches the route at all.
+    That is the whole traversal argument, and it is asserted rather than asserted-to.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    (tmp_path / "local").mkdir()
+    _fake_pyramid(tmp_path / "local")
+
+    # z0 is one tile, so (1, 0) is off its grid; z6 is past the top of this pyramid.
+    for path in ("/api/maptiles/0/1/0", "/api/maptiles/0/0/1", "/api/maptiles/2/4/0"):
+        assert client.get(path).status_code == 404, path
+        assert "2**z" in client.get(path).json()["error"]
+    assert client.get("/api/maptiles/6/0/0").status_code == 404
+    assert client.get("/api/maptiles/-1/0/0").status_code == 404
+
+    # And nothing that is not an integer is even routed to the handler.
+    for path in (
+        "/api/maptiles/0/0/..%2f..%2f..%2fmap",
+        "/api/maptiles/0/..%2f..%2fmap/0",
+        "/api/maptiles/0/0/0.png",
+        "/api/maptiles/0/0/%2e%2e",
+    ):
+        assert client.get(path).status_code in (404, 422), path
+
+    # The path builder says the same thing on its own, which is what the endpoint leans on.
+    assert web_api.map_tile_path(0, 0, 0, 5).name == "0_0.png"
+    assert web_api.map_tile_path(0, 1, 0, 5) is None
+    assert web_api.map_tile_path(6, 0, 0, 5) is None
+    assert web_api.map_tile_path(3, 7, 7, 5) is not None
+    assert web_api.map_tile_path(3, 8, 0, 5) is None
+
+
+class _FakeSheet:
+    """The three things ``cut_pyramid`` asks of a Pillow image, and nothing else.
+
+    Pillow is the generator's dependency, deliberately not this project's, so the cutting
+    is exercised against a stand-in: what is under test here is the tree that comes out --
+    the levels, the names, the count -- not anybody's Lanczos filter.
+    """
+
+    def __init__(self, width: int):
+        self.width = width
+
+    def resize(self, size, _filter):
+        return _FakeSheet(size[0])
+
+    def crop(self, box):
+        return _FakeTile(box)
+
+
+class _FakeTile:
+    def __init__(self, box):
+        self.box = box
+
+    def save(self, path, **_kwargs):
+        path.write_bytes(_PNG)
+
+
+def test_the_pyramid_is_renamed_into_place_so_a_reader_never_meets_half_of_one(tmp_path):
+    """An interrupted run must leave no tree at all rather than a tree missing levels.
+
+    So the cut goes to a staging directory and is renamed over the old one, and the count
+    is checked against what is really on disk before the swap. Both leftovers of a run that
+    died mid-swap -- the staging tree and the retired one -- are cleared rather than merged
+    into, and a level the new pyramid does not have cannot survive from the old one.
+    """
+    gen = _gen_map_image()
+    assert gen.pyramid_top_z(8192) == 5
+    assert gen.pyramid_top_z(2048) == 3
+    assert gen.pyramid_top_z(256) == 0
+    with pytest.raises(SystemExit):
+        gen.pyramid_top_z(5000)
+
+    tiles = tmp_path / gen.TILES_DIR_NAME
+    (tiles / "9").mkdir(parents=True)
+    (tiles / "9" / "0_0.png").write_bytes(b"a level the new cut does not have")
+    (tmp_path / gen.TILES_STAGING / "3").mkdir(parents=True)
+    (tmp_path / gen.TILES_STAGING / "3" / "0_0.png").write_bytes(b"half of a dead run")
+
+    imaging = types.SimpleNamespace(LANCZOS="the filter, which the stand-in ignores")
+    stats = gen.install_pyramid(_FakeSheet(1024), imaging, tmp_path)
+
+    assert (stats["max_z"], stats["count"]) == (2, 1 + 4 + 16)
+    assert stats["tile_px"] == gen.PYRAMID_TILE_PX
+    assert not (tmp_path / gen.TILES_STAGING).exists(), "staging is not left behind"
+    assert not (tmp_path / gen.TILES_RETIRED).exists(), "nor is the tree it replaced"
+    assert sorted(p.name for p in tiles.iterdir()) == ["0", "1", "2"]
+    assert len(list(tiles.rglob("*.png"))) == stats["count"]
+    assert (tiles / gen.tile_relpath(2, 3, 3)).read_bytes() == _PNG
+
+
 def _gen_map_image():
     """``tools/gen_map_image.py``, imported by path -- ``tools/`` is not a package."""
     import importlib.util
@@ -417,6 +568,13 @@ def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
         layout={"layout_holds": True},
         calibration={"pin_holds": True},
         versions={"pyooz": "0.0.8", "texture2ddecoder": "1.0.6", "pillow": "12.3.0"},
+        tiles={
+            "tile_px": gen.PYRAMID_TILE_PX,
+            "max_z": gen.pyramid_top_z(gen.SHEET_PX),
+            "count": 1365,
+            "bytes": 21_000_000,
+            "game_version_pinned": pin,
+        },
     )
 
     monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
@@ -441,6 +599,32 @@ def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
     assert gen.pinned_build(written) == pin
     assert gen.pinned_build({}) is None
     assert gen.pinned_build({"_meta": {"sources": {}}}) is None
+
+    # The pyramid half of the same join: the tool records how it cut the tree and the
+    # endpoint configures the page's tile grid from that record, so the two cannot hold
+    # different opinions about the shape of the thing being served.
+    assert gen.TILES_DIR_NAME == web_api.MAP_TILES_DIR_NAME
+    assert gen.PYRAMID_TILE_PX == web_api.MAP_TILE_PX
+    assert gen.pyramid_top_z(gen.SHEET_PX) == web_api.MAP_TILE_MAX_Z
+    assert gen.tile_relpath(3, 5, 6) == "3/5_6.png"
+    assert web_api.map_tile_path(3, 5, 6, 5) == local / gen.TILES_DIR_NAME / gen.tile_relpath(
+        3, 5, 6
+    )
+
+    read_back = web_api._map_pyramid()
+    assert (read_back["tile_px"], read_back["max_z"]) == (gen.PYRAMID_TILE_PX, 5)
+    # And the build tag moves when the pyramid does, because that tag is what a browser
+    # holding an immutable tile keys on.
+    _fake_pyramid(local, max_z=0)
+    assert client.head("/api/maptiles/0/0/0").headers["x-map-build"] == read_back["build"]
+    sidecar["_meta"]["tiles"]["count"] = 1364
+    (local / web_api.MAP_BOUNDS_NAME).write_text(json.dumps(sidecar), encoding="utf-8")
+    assert client.head("/api/maptiles/0/0/0").headers["x-map-build"] != read_back["build"]
+
+    # A sidecar that says nothing about tiles still serves them, at the defaults.
+    (local / web_api.MAP_BOUNDS_NAME).write_text("{}", encoding="utf-8")
+    bare = web_api._map_pyramid()
+    assert (bare["tile_px"], bare["max_z"]) == (web_api.MAP_TILE_PX, web_api.MAP_TILE_MAX_Z)
 
 
 def test_machines_split_by_kind_and_name_their_buildings(client, state):

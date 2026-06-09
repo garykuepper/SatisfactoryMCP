@@ -24,6 +24,17 @@ differ like two scanlines 100 rows apart. The run refuses to write unless the ch
 reading beats both the other reading and the distant control, so a slice being renamed or
 re-cut cannot silently produce a mirrored world.
 
+**And it is cut into a pyramid, because one 8192 px sheet is the wrong thing to hand a
+browser.** ``data/local/tiles/{z}/{x}_{y}.png`` holds the same sheet at one resolution per
+zoom: z0 is the whole world in a single 256 px tile, z5 is the full 8192 in 32x32 of them,
+1,365 tiles in all. The page then fetches the pixels it can actually show -- a few hundred
+KB at the whole-world framing instead of 16.2 MB that decodes to 268 MB of RGBA -- and
+``/api/maptiles`` serves them. ``map.png`` is still written: it is what a page falls back
+to when it finds no pyramid, and the one file a reader can open and eyeball. The pyramid
+is written to ``tiles.incoming`` and **renamed** into place, so ``tiles/`` is either whole
+or absent; a run interrupted halfway leaves a staging directory nothing serves rather than
+a tree missing the levels it had not reached.
+
 **The ``.ubulk`` length is the integrity check.** Each is exactly 11,182,080 bytes, which
 is the mip chain 4096 down to 128 stored largest-first -- ``MIP_SIZES`` derives that total
 rather than quoting it, so the constant cannot drift from the arithmetic. Mip 0 is
@@ -84,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -126,6 +138,23 @@ BOUNDS_M = {"x_min_m": -3247.0, "x_max_m": 4253.0, "y_min_m": -3750.0, "y_max_m"
 LOCAL_DIR = ROOT / "data" / "local"
 IMAGE_NAME = "map.png"
 SIDECAR_NAME = "map.json"
+
+#: And where the pyramid goes: ``tiles/{z}/{x}_{y}.png``, cut from the same sheet in the
+#: same run. ``map.png`` stays -- it is the fallback for a page that finds no pyramid, and
+#: the one file a reader can open and eyeball -- but it is 16 MB of 8192x8192 that a
+#: browser decodes to 268 MB of RGBA whatever the view is, which is what the pyramid is
+#: for: at the whole-world framing the page fetches a few hundred KB of z2 instead.
+#: ``PYRAMID_TILE_PX`` is deliberately not called TILE_PX: a "tile" in this file is one of
+#: the four 4096 px slices the game ships, and this is the 256 px square a browser fetches.
+TILES_DIR_NAME = "tiles"
+PYRAMID_TILE_PX = 256
+
+#: The staging and retirement names beside it. A pyramid is only ever *renamed* into
+#: place, so a reader can never meet half of one: an interrupted run leaves
+#: ``tiles.incoming`` -- which nothing serves and the next run deletes -- rather than a
+#: ``tiles/`` tree that is missing the levels the run had not got to yet.
+TILES_STAGING = TILES_DIR_NAME + ".incoming"
+TILES_RETIRED = TILES_DIR_NAME + ".retired"
 
 #: Where the sidecar records the build, and what the staleness guard reads back.
 PIN_PATH = ("sources", "map_slices", "game_version_pinned")
@@ -390,6 +419,115 @@ def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
 
 
 # --------------------------------------------------------------------------------------
+# The pyramid: the same sheet, cut small enough that a view fetches only what it shows.
+# --------------------------------------------------------------------------------------
+
+
+def pyramid_top_z(sheet_px: int, tile_px: int = PYRAMID_TILE_PX) -> int:
+    """The deepest level of a pyramid over a ``sheet_px`` square: 8192 -> 5.
+
+    Level z holds ``2**z`` tiles a side, so level ``top`` is the sheet at its own
+    resolution. Derived rather than typed in, because ``--size`` can halve the sheet and a
+    pyramid one level too deep is a level of tiles upscaled from nothing.
+    """
+    levels = sheet_px // tile_px
+    if levels < 1 or levels & (levels - 1):
+        raise SystemExit(
+            f"a {sheet_px} px sheet is not a power-of-two multiple of {tile_px} px tiles, "
+            "so no pyramid divides it evenly"
+        )
+    return levels.bit_length() - 1
+
+
+def tile_relpath(z: int, x: int, y: int) -> str:
+    """``{z}/{x}_{y}.png`` -- the one place the layout is written down.
+
+    The web API has the same function, and a test asserts the two agree: the tool that
+    writes the tree and the endpoint that serves it must not hold two opinions about
+    where a tile lives.
+    """
+    return f"{z}/{x}_{y}.png"
+
+
+def cut_pyramid(sheet, image_mod, dest: Path, tile_px: int = PYRAMID_TILE_PX) -> dict:
+    """Cut ``sheet`` into ``dest/{z}/{x}_{y}.png`` for every level, and say what it wrote.
+
+    Each level below the top is one Lanczos downscale of the whole sheet, sliced up --
+    downscaling the sheet once per level rather than each tile from its four children
+    keeps every level a resampling of the original pixels, so no level accumulates the
+    softening of five successive halvings.
+
+    The levels are cheap: level z is a quarter of level z+1, so everything under the top
+    adds a third again to the top's own bytes.
+    """
+    top = pyramid_top_z(sheet.width, tile_px)
+    levels = []
+    for z in range(top + 1):
+        side = tile_px << z
+        level = sheet if side == sheet.width else sheet.resize((side, side), image_mod.LANCZOS)
+        out = dest / str(z)
+        out.mkdir(parents=True, exist_ok=True)
+        written = 0
+        for y in range(1 << z):
+            for x in range(1 << z):
+                box = (x * tile_px, y * tile_px, (x + 1) * tile_px, (y + 1) * tile_px)
+                path = dest / tile_relpath(z, x, y)
+                level.crop(box).save(path, format="PNG", optimize=True)
+                written += path.stat().st_size
+        levels.append({"z": z, "sheet_px": side, "tiles": (1 << z) ** 2, "bytes": written})
+        print(f"  pyramid z{z}: {side}x{side}, {(1 << z) ** 2} tiles, {written / 1e6:.2f} MB")
+    return {
+        "layout": f"{TILES_DIR_NAME}/{{z}}/{{x}}_{{y}}.png",
+        "tile_px": tile_px,
+        "max_z": top,
+        "count": sum(level["tiles"] for level in levels),
+        "bytes": sum(level["bytes"] for level in levels),
+        "levels": levels,
+        "role": (
+            "the same sheet at one resolution per zoom, so the page fetches the pixels it "
+            "can actually show. map.png is still written beside it: it is what a page "
+            "falls back to when there is no pyramid, and the one file a reader can open."
+        ),
+        "completeness": (
+            "written to " + TILES_STAGING + " and renamed into place, so this directory is "
+            "either a whole pyramid or absent -- an interrupted run cannot leave a partial "
+            "one for a reader to trust. count is what a doubter can check it against."
+        ),
+    }
+
+
+def install_pyramid(sheet, image_mod, out_dir: Path, tile_px: int = PYRAMID_TILE_PX) -> dict:
+    """Cut the pyramid into staging, then rename it over any older one.
+
+    The rename is the whole point: ``tiles/`` appears complete or not at all. A previous
+    tree is moved aside first (Windows will not rename onto a non-empty directory) and
+    deleted afterwards, and any leftovers from a run that died mid-swap are cleared first
+    rather than merged into.
+    """
+    staging = out_dir / TILES_STAGING
+    retired = out_dir / TILES_RETIRED
+    final = out_dir / TILES_DIR_NAME
+    for stale in (staging, retired):
+        if stale.exists():
+            shutil.rmtree(stale)
+    staging.mkdir(parents=True)
+    stats = cut_pyramid(sheet, image_mod, staging, tile_px)
+
+    on_disk = sum(1 for _ in staging.rglob("*.png"))
+    if on_disk != stats["count"]:
+        raise SystemExit(
+            f"the pyramid was cut with {stats['count']} tiles but {on_disk} PNGs are in "
+            f"{staging} -- refusing to install a tree that does not match its own count"
+        )
+    if final.exists():
+        final.rename(retired)
+    staging.rename(final)
+    if retired.exists():
+        shutil.rmtree(retired)
+    return stats
+
+
+# --------------------------------------------------------------------------------------
 # The sidecar, and the staleness guard that reads it back.
 # --------------------------------------------------------------------------------------
 
@@ -413,6 +551,7 @@ def build_sidecar(
     layout: dict,
     calibration: dict,
     versions: dict[str, str],
+    tiles: dict | None = None,
 ) -> dict:
     """The file the web API reads, plus the provenance a reader needs to date it.
 
@@ -424,9 +563,9 @@ def build_sidecar(
         **BOUNDS_M,
         "_meta": {
             "description": (
-                "Corners for data/local/map.png, and where that picture came from. Both "
-                "files are local: data/local/ is gitignored and no map imagery is ever "
-                "committed to this repository."
+                "Corners for data/local/map.png and the tiles/ pyramid cut from it, and "
+                "where that picture came from. All of it is local: data/local/ is "
+                "gitignored and no map imagery is ever committed to this repository."
             ),
             "bounds": (
                 "metres, game axes -- +X east, +Y south. These are the corners of the "
@@ -460,6 +599,7 @@ def build_sidecar(
                 },
             },
             "image": image,
+            "tiles": tiles or {"absent": "this run wrote no pyramid; map.png is the whole map"},
             "integrity": integrity,
             "layout": layout,
             "calibration": calibration,
@@ -491,8 +631,8 @@ def build_sidecar(
                 "sources.map_slices.game_version_pinned is the build this picture was cut "
                 "from, in the same shape data/resource_nodes.json uses, so an image and a "
                 "node table from different builds are comparable on sight. "
-                "tools/gen_map_image.py refuses to overwrite map.png unless this sidecar "
-                "names the build then installed; --force says it anyway."
+                "tools/gen_map_image.py refuses to overwrite map.png OR tiles/ unless this "
+                "sidecar names the build then installed; --force says it anyway."
             ),
         },
     }
@@ -533,12 +673,14 @@ def main() -> int:
         "--out-dir",
         type=Path,
         default=LOCAL_DIR,
-        help="destination directory for map.png and map.json (gitignored)",
+        help="destination directory for map.png, map.json and tiles/ (gitignored)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="overwrite a map.png this run cannot show was cut from the installed build",
+        help=(
+            "overwrite a map.png or tiles/ this run cannot show was cut from the installed build"
+        ),
     )
     args = parser.parse_args()
 
@@ -562,15 +704,19 @@ def main() -> int:
     out_dir: Path = args.out_dir
     image_path = out_dir / IMAGE_NAME
     sidecar_path = out_dir / SIDECAR_NAME
-    if image_path.is_file() and not args.force:
+    tiles_dir = out_dir / TILES_DIR_NAME
+    # The pyramid is covered by the same refusal as the picture, and for the same reason:
+    # a tiles/ tree cut from another build is somebody else's artwork of another world.
+    if (image_path.is_file() or tiles_dir.is_dir()) and not args.force:
         existing = None
         try:
             existing = pinned_build(json.loads(sidecar_path.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError):
             existing = None
         if existing != build_pin:
+            there = " and ".join(str(p) for p in (image_path, tiles_dir) if p.exists())
             print(
-                f"{image_path} already exists and this run cannot show it was cut from the "
+                f"{there} already exists and this run cannot show it was cut from the "
                 f"installed build.\n"
                 f"  installed: {build_pin}\n"
                 f"  that file: {existing or 'no sidecar, or no build recorded in it'}\n"
@@ -660,6 +806,13 @@ def main() -> int:
     written = image_path.stat().st_size
     print(f"wrote {image_path}  {args.size}x{args.size}  {written} B  ({written / 1e6:.1f} MB)")
 
+    tiles = install_pyramid(sheet, image_mod, out_dir)
+    tiles["game_version_pinned"] = build_pin
+    print(
+        f"wrote {out_dir / TILES_DIR_NAME}  {tiles['count']} tiles over z0..z{tiles['max_z']}  "
+        f"{tiles['bytes']} B  ({tiles['bytes'] / 1e6:.1f} MB)"
+    )
+
     image = {
         "file": IMAGE_NAME,
         "width_px": args.size,
@@ -694,6 +847,7 @@ def main() -> int:
         layout=layout,
         calibration=calibration,
         versions=versions,
+        tiles=tiles,
     )
     sidecar_path.write_text(json.dumps(sidecar, indent=1), encoding="utf-8")
     print(f"wrote {sidecar_path}  {sidecar_path.stat().st_size} B")
@@ -702,7 +856,7 @@ def main() -> int:
             **BOUNDS_M
         )
     )
-    print("neither file is committed: data/local/ is gitignored and stays that way.")
+    print("none of it is committed: data/local/ is gitignored and stays that way.")
     return 0
 
 

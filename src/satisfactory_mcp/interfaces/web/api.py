@@ -20,6 +20,7 @@ that cannot tell "no nodes" from "no save" will draw an empty map and say nothin
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from dataclasses import asdict
@@ -420,6 +421,20 @@ LOCAL_DIR_NAME = "local"
 MAP_IMAGE_NAME = "map.png"
 MAP_BOUNDS_NAME = "map.json"
 
+#: And where the same render's tile pyramid goes, if the generator cut one. One 8192 px
+#: sheet is 16 MB on the wire and 268 MB of RGBA in the browser however far out the view
+#: is zoomed; the pyramid is that sheet at one resolution per zoom, so a whole-world
+#: framing costs the 16 tiles of z2 and nothing else. ``tools/gen_map_image.py`` writes it,
+#: renaming the finished tree into place so this endpoint can never serve half of one.
+MAP_TILES_DIR_NAME = "tiles"
+
+#: What a pyramid looks like when the sidecar does not say: 256 px tiles, z0 (the world in
+#: one tile) through z5 (the full 8192 in 32x32). Both are read back from ``_meta.tiles``
+#: when it is there, so a pyramid cut at another size is served at that size rather than
+#: half-refused.
+MAP_TILE_PX = 256
+MAP_TILE_MAX_Z = 5
+
 #: The corners of the in-game map square, metres, game axes. The playable content is
 #: strictly inside it: ``frame.content_bbox`` in ``data/satisfactory_regions.json`` --
 #: the min/max over 2,688 static world objects -- is x [-2988.4, 4065.6], y [-3141.0,
@@ -451,6 +466,61 @@ def _map_bounds() -> dict[str, float]:
     except (OSError, ValueError, TypeError):
         return bounds
     return bounds
+
+
+def _map_pyramid() -> dict[str, Any]:
+    """What the sidecar says about the pyramid: its tile size, its depth, its build.
+
+    Same posture as ``_map_bounds``: an absent or malformed sidecar is not an error, it is
+    a pyramid described by the defaults above. ``build`` is a short digest of what the
+    generator recorded -- the game build it cut, and how many tiles that came to -- and is
+    only ever used as a cache tag, so a sidecar that says nothing simply produces a stable
+    tag for "nothing".
+    """
+    meta: Any = {}
+    try:
+        meta = json.loads((_local_dir() / MAP_BOUNDS_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    tiles: Any = meta.get("_meta") if isinstance(meta, dict) else None
+    tiles = tiles.get("tiles") if isinstance(tiles, dict) else None
+    if not isinstance(tiles, dict):
+        tiles = {}
+
+    def _whole(key: str, default: int, floor: int) -> int:
+        value = tiles.get(key)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= floor
+            else default
+        )
+
+    stamp = "|".join(
+        str(tiles.get(key)) for key in ("game_version_pinned", "count", "bytes", "max_z")
+    )
+    return {
+        "tile_px": _whole("tile_px", MAP_TILE_PX, 1),
+        "max_z": _whole("max_z", MAP_TILE_MAX_Z, 0),
+        "build": hashlib.sha256(stamp.encode("utf-8")).hexdigest()[:12],
+    }
+
+
+def map_tile_path(z: int, x: int, y: int, max_z: int = MAP_TILE_MAX_Z) -> Path | None:
+    """Where one pyramid tile lives, or ``None`` if ``(z, x, y)`` is off the pyramid.
+
+    The only place this side writes the layout ``tiles/{z}/{x}_{y}.png`` down, and a test
+    holds it against the generator's own copy so the writer and the reader cannot drift
+    apart. Nothing here joins a string a caller supplied: the three coordinates arrive as
+    ints -- FastAPI answers anything else with a 422 before this runs -- and are checked
+    against the ``2**z`` grid of their own level before they become a filename, so no
+    request can name a path outside the tree, whatever it is shaped like.
+    """
+    if not 0 <= z <= max_z:
+        return None
+    span = 1 << z
+    if not (0 <= x < span and 0 <= y < span):
+        return None
+    return _local_dir() / MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png"
 
 
 @router.get("/regions")
@@ -563,6 +633,66 @@ def mapimage(request: Request) -> Any:
             "Cache-Control": "no-cache",
         },
     )
+
+
+@router.api_route("/maptiles/{z}/{x}/{y}", methods=["GET", "HEAD"])
+def maptiles(request: Request, z: int, x: int, y: int) -> Any:
+    """One tile of the pyramid ``tools/gen_map_image.py`` cuts beside ``map.png``.
+
+    The same picture as ``/api/mapimage``, at one resolution per zoom instead of all of it
+    at once, and the same posture: nothing is shipped, this is a loader.
+
+    **HEAD 204 for an absent pyramid, like the image probe next door.** The page probes
+    ``0/0/0`` to decide between the pyramid and the single overlay, and an absent optional
+    file is the ordinary answer -- a 404 on every clean page load teaches the reader to
+    ignore red lines in the console. GET keeps its 404 and names the tool that would write
+    the tree.
+
+    **Off the pyramid is 404, and cannot be anything else.** ``z``, ``x`` and ``y`` are
+    typed ``int``, so a path segment that is not one never reaches this function -- FastAPI
+    answers 422 -- and ``map_tile_path`` range-checks the three against the level's own
+    grid before building a name. The client is bounds-clamped as well, so in practice this
+    404 fires for a hand-typed URL rather than for the map.
+
+    **Cached hard, and stamped with the build.** A tile is immutable for a given cut of the
+    game's artwork, so the page asks for it with ``?v=`` the build tag this endpoint hands
+    out on the probe: regenerating the pyramid changes the tag, which changes every URL,
+    which is what makes ``immutable`` safe to send. The ETag carries the same tag for
+    anything that revalidates instead.
+    """
+    pyramid = _map_pyramid()
+    path = map_tile_path(z, x, y, pyramid["max_z"])
+    if path is None:
+        return _fail(
+            f"no tile {z}/{x}/{y}: this pyramid runs z0..z{pyramid['max_z']}, and level z "
+            "is a 2**z by 2**z grid, so x and y stop there",
+            404,
+        )
+    if not path.is_file():
+        if request.method == "HEAD":
+            return Response(status_code=204)
+        return _fail(
+            f"no map tiles: {path.parent.parent} is written by tools/gen_map_image.py, "
+            "which cuts it out of your own installed game beside map.png. Like the image, "
+            "it is only ever read locally, never uploaded and never committed.",
+            404,
+        )
+    b = _map_bounds()
+    etag = f'"{pyramid["build"]}"'
+    headers = {
+        # The corners, the shape of the grid and the build, on the probe the page already
+        # makes -- so the client configures its tile layer from the server rather than from
+        # a second opinion about how the pyramid was cut.
+        "X-Map-Bounds-M": "{x_min_m},{y_min_m},{x_max_m},{y_max_m}".format(**b),
+        "X-Map-Tile-Px": str(pyramid["tile_px"]),
+        "X-Map-Tile-Max-Z": str(pyramid["max_z"]),
+        "X-Map-Build": pyramid["build"],
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "ETag": etag,
+    }
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, headers=headers)
 
 
 # ------------------------------------------------------------------- machines
