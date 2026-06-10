@@ -627,6 +627,182 @@ def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
     assert (bare["tile_px"], bare["max_z"]) == (web_api.MAP_TILE_PX, web_api.MAP_TILE_MAX_Z)
 
 
+def test_the_enhanced_pyramid_is_two_levels_deeper_and_the_server_follows_it_there(
+    client, tmp_path, monkeypatch
+):
+    """``--enhance`` adds z6 and z7, and nothing on the serving side is hardcoded to z5.
+
+    The depth is the sidecar's to state and the endpoint's to read: ``MAP_TILE_MAX_Z`` is
+    only the answer for a sidecar that says nothing, and a pyramid that says seven must be
+    served to seven. So the arithmetic is asserted where it is written down -- two levels
+    for a 4x upscale, 16,384 tiles at z7, 21,845 in the whole tree -- and then a tile at
+    the far corner of z7 is actually fetched through the route, with the level above it and
+    the column past its edge both refused.
+    """
+    gen = _gen_map_image()
+
+    # Two levels for 4x, none for 1x, and a scale that is not a power of two divides no grid.
+    assert gen.enhanced_top_z(gen.SHEET_PX) == gen.pyramid_top_z(gen.SHEET_PX) + 2 == 7
+    assert gen.enhanced_top_z(gen.SHEET_PX, 1) == 5
+    assert gen.enhanced_top_z(2048, 4) == 5
+    with pytest.raises(SystemExit):
+        gen.enhanced_top_z(gen.SHEET_PX, 3)
+
+    # z7 is 128 tiles a side of the 32768 px sheet, and the whole tree is (4**8 - 1) / 3.
+    assert (1 << 7) * gen.PYRAMID_TILE_PX == gen.SHEET_PX * gen.ENHANCE_SCALE
+    assert (1 << 6) ** 2 == 4096
+    assert (1 << 7) ** 2 == 16384
+    assert sum(4**z for z in range(8)) == 21845
+
+    # And the two halves of the record are merged, not appended to by hand: the count the
+    # installer checks the tree against is re-summed from the levels a reader could count.
+    plain = {
+        "max_z": 5,
+        "enhanced": False,
+        "count": 1365,
+        "bytes": 100,
+        "levels": [{"z": z, "tiles": 4**z, "bytes": 10} for z in range(6)],
+    }
+    merged = gen.merge_enhanced(
+        plain,
+        {
+            "levels": [{"z": 6, "tiles": 4096, "bytes": 40}, {"z": 7, "tiles": 16384, "bytes": 50}],
+            "enhancement": {"model": gen.ENHANCE_MODEL},
+        },
+    )
+    assert (merged["max_z"], merged["enhanced"], merged["count"]) == (7, True, 21845)
+    assert merged["bytes"] == 60 + 90
+    assert merged["enhancement"]["model"] == gen.ENHANCE_MODEL
+    assert plain["max_z"] == 5, "the plain record is not mutated under the caller"
+
+    # The layout at the new depth, on both sides of the wire.
+    assert gen.tile_relpath(7, 127, 127) == "7/127_127.png"
+    assert web_api.map_tile_path(7, 127, 127, 7) is not None
+    assert web_api.map_tile_path(7, 128, 0, 7) is None
+    assert web_api.map_tile_path(8, 0, 0, 7) is None
+    # ... and the same coordinate is off the end of a pyramid that was never enhanced.
+    assert web_api.map_tile_path(7, 0, 0, 5) is None
+
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    for z, x, y in ((0, 0, 0), (7, 127, 127)):
+        path = local / web_api.MAP_TILES_DIR_NAME / str(z)
+        path.mkdir(parents=True)
+        (path / f"{x}_{y}.png").write_bytes(_PNG)
+    (local / web_api.MAP_BOUNDS_NAME).write_text(
+        json.dumps({"_meta": {"tiles": {"tile_px": 256, "max_z": 7, "enhanced": True}}}),
+        encoding="utf-8",
+    )
+
+    # The probe the page builds its tile grid from now says seven, which is the whole of
+    # what makes the browser ask for the two new levels at all.
+    assert client.head("/api/maptiles/0/0/0").headers["x-map-tile-max-z"] == "7"
+    assert client.get("/api/maptiles/7/127/127").status_code == 200
+    assert client.get("/api/maptiles/7/128/127").status_code == 404
+    assert client.get("/api/maptiles/8/0/0").status_code == 404
+
+
+def test_the_faint_mask_covers_weak_strokes_and_leaves_everything_else_to_the_ai(tmp_path):
+    """The hybrid's one rule, on arrays where the answer is known by construction.
+
+    ``faint_mask`` decides where the upscaler is overruled, so what has to hold is that it
+    is a blend weight (in [0, 1] everywhere, or the blend is not a blend) and that it fires
+    on exactly the band it claims: nothing on flat fill, nothing on a stroke deep enough
+    that the model renders it well, something on a stroke shallow enough that the model
+    drops it. No GPU and no upscaler is involved -- this is the mask, not the pipeline.
+    """
+    numpy = pytest.importorskip("numpy")
+    gen = _gen_map_image()
+
+    flat = numpy.full((48, 48), 200.0, numpy.float32)
+    assert gen.faint_mask(flat).max() == 0.0, "there is nothing to protect on flat fill"
+
+    faint = flat.copy()
+    faint[:, 24] = 200.0 - (gen.FAINT_LO + gen.FAINT_HI) / 2  # squarely inside the band
+    weights = gen.faint_mask(faint)
+    assert weights.min() >= 0.0 and weights.max() <= 1.0, "a blend weight, or it is not one"
+    assert weights.max() > 0.0, "a faint stroke is exactly what the mask exists for"
+    assert weights[:, 24].max() == weights.max(), "and it is centred on the stroke"
+    assert weights[:, 0].max() == 0.0, "while the flat fill four columns away stays untouched"
+
+    strong = flat.copy()
+    strong[:, 24] = 40.0  # far past FAINT_HI: the AI renders this better than Lanczos does
+    assert gen.faint_mask(strong).max() == 0.0
+
+    # The band is a band, not a threshold: the same stroke at both ends of it is out.
+    below = flat.copy()
+    below[:, 24] = 200.0 - gen.FAINT_LO / 2
+    assert gen.faint_mask(below).max() == 0.0
+
+
+def test_an_enhanced_pyramid_is_not_quietly_replaced_by_a_plain_one(tmp_path):
+    """The no-silent-downgrade rule, and the sidecar round trip it reads through.
+
+    The cross-build guard already refuses to overwrite somebody else's artwork. This is its
+    other half: a re-run that would cost the reader the two zoom levels they generated last
+    time is drift too, and the same posture applies -- announce it, do not perform it. Only
+    one of the four combinations is a downgrade, and asserting all four is what keeps the
+    rule from quietly becoming "refuse whenever anything was enhanced".
+
+    The flag has to survive JSON to be worth anything, so it is read back out of the file
+    the tool really writes rather than out of the dict it built.
+    """
+    gen = _gen_map_image()
+    pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
+    common = dict(
+        build_pin=pin,
+        build_raw={"Changelist": 495413},
+        image={"file": gen.IMAGE_NAME},
+        integrity={},
+        layout={"layout_holds": True},
+        calibration={"pin_holds": True},
+        versions={"pillow": "12.3.0"},
+    )
+    enhancement = {
+        "model": gen.ENHANCE_MODEL,
+        "scale": gen.ENHANCE_SCALE,
+        "source_tile_px": gen.ENHANCE_TILE_PX,
+        "overlap_px": gen.ENHANCE_OVERLAP_PX,
+        "binary": {"url": gen.ENHANCE_URL, "sha256": gen.ENHANCE_SHA256},
+        "timings_s": {"upscale": 66.7, "total": 400.0},
+    }
+    sharp = gen.build_sidecar(
+        tiles={"tile_px": 256, "max_z": 7, "enhanced": True, "enhancement": enhancement},
+        **common,
+    )
+    plain = gen.build_sidecar(tiles={"tile_px": 256, "max_z": 5, "enhanced": False}, **common)
+
+    path = tmp_path / gen.SIDECAR_NAME
+    path.write_text(json.dumps(sharp, indent=1, allow_nan=False), encoding="utf-8")
+    read_back = json.loads(path.read_text(encoding="utf-8"))
+    assert gen.pinned_enhanced(read_back) is True
+    # Everything the sidecar promised about that stage is still in it, and pinned.
+    written = read_back["_meta"]["tiles"]["enhancement"]
+    assert written["binary"]["sha256"] == gen.ENHANCE_SHA256
+    assert written["binary"]["url"].endswith(".zip")
+    assert (written["model"], written["scale"]) == (gen.ENHANCE_MODEL, 4)
+    assert (written["source_tile_px"], written["overlap_px"]) == (1024, 96)
+    assert written["timings_s"]["total"] == 400.0
+    # The build pin still reads through the same file, so the two guards do not shadow.
+    assert gen.pinned_build(read_back) == pin
+
+    # Anything that is not a literal true is a plain pyramid, including every sidecar
+    # written before this stage existed.
+    assert gen.pinned_enhanced(plain) is False
+    assert gen.pinned_enhanced({}) is False
+    assert gen.pinned_enhanced({"_meta": {"tiles": {}}}) is False
+    assert gen.pinned_enhanced({"_meta": {"tiles": {"enhanced": "yes"}}}) is False
+    assert gen.pinned_enhanced({"_meta": {"tiles": "not a mapping"}}) is False
+
+    # And the rule itself: only sharp-then-plain is refused.
+    assert gen.enhancement_downgrades(read_back, enhance_now=False) is True
+    assert gen.enhancement_downgrades(read_back, enhance_now=True) is False
+    assert gen.enhancement_downgrades(plain, enhance_now=False) is False
+    assert gen.enhancement_downgrades(plain, enhance_now=True) is False
+    assert gen.enhancement_downgrades({}, enhance_now=False) is False
+
+
 def test_machines_split_by_kind_and_name_their_buildings(client, state):
     body = client.get("/api/machines").json()
     assert set(body) == {"machines", "extractors", "generators"}
