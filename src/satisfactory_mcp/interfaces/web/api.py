@@ -707,6 +707,12 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
         )
     b = _map_bounds()
     etag = f'"{pyramid["build"]}"'
+    # ``immutable`` is earned by the ``?v=`` build tag and only by it: a tagged URL changes
+    # whenever the pyramid is recut, so the response behind it never can. The page's probe
+    # and any untagged fetch carry NO tag -- caching those hard is how a regenerated map
+    # stayed invisible behind a year-old probe until the browser cache was disabled by
+    # hand. Untagged answers revalidate instead, and the ETag makes that a 304, not bytes.
+    versioned = "v" in request.query_params
     headers = {
         # The corners, the shape of the grid and the build, on the probe the page already
         # makes -- so the client configures its tile layer from the server rather than from
@@ -715,7 +721,7 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
         "X-Map-Tile-Px": str(pyramid["tile_px"]),
         "X-Map-Tile-Max-Z": str(pyramid["max_z"]),
         "X-Map-Build": pyramid["build"],
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "public, max-age=31536000, immutable" if versioned else "no-cache",
         "ETag": etag,
     }
     if request.headers.get("if-none-match") == etag:

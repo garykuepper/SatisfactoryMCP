@@ -436,7 +436,12 @@ def test_the_tile_pyramid_is_a_loader_too_and_names_the_tool_that_writes_it(
     assert head.headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
     assert head.headers["x-map-tile-px"] == str(web_api.MAP_TILE_PX)
     assert head.headers["x-map-tile-max-z"] == str(web_api.MAP_TILE_MAX_Z)
-    assert "immutable" in head.headers["cache-control"]
+    # ``immutable`` is earned by the ``?v=`` build tag alone. The probe carries no tag, and
+    # caching IT hard is the measured failure: a regenerated pyramid stayed invisible in
+    # Firefox behind a year-old probe until the browser cache was disabled by hand.
+    assert head.headers["cache-control"] == "no-cache"
+    versioned = client.get("/api/maptiles/2/3/1?v=" + head.headers["x-map-build"])
+    assert "immutable" in versioned.headers["cache-control"]
     # A tile is immutable per build, so the tag it is fetched under has to revalidate free.
     etag = head.headers["etag"]
     assert client.get("/api/maptiles/0/0/0", headers={"If-None-Match": etag}).status_code == 304
