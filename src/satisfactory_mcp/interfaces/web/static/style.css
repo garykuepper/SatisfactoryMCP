@@ -370,17 +370,45 @@ select {
 
 /* Biome names: printed on the ground the way an atlas prints a region, which means they
    have to stay out of the way -- no box, no pointer events, and quiet enough that the
-   factory labels and the ore dots still win the eye. */
+   factory labels and the ore dots still win the eye.
+
+   These were tuned against a flat dark background that no longer exists. The base map is
+   now a render of the real world, and the real world has pale sand in the west and near
+   black forest in the south -- so a 42%-opacity light grey with a soft drop shadow was
+   invisible over half the map and merely faint over the rest. The ground under a label is
+   not knowable from here, which rules out picking a colour to suit it.
+
+   So: light text with a dark HALO, the atlas answer, which needs to know nothing about
+   what it sits on. The halo is eight offsets plus two blurs rather than a single shadow --
+   a drop shadow protects one side of a glyph and leaves the other three on the bare
+   ground, which is exactly how "CRATER LAKES" disappeared into the sand. paint-order and
+   -webkit-text-stroke would be the tidier spelling and are not used: a stroke centred on
+   the glyph outline eats into thin uppercase strokes at 11 px, and paint-order on HTML
+   text is not something this page can assume.
+
+   The fill goes opaque and the size up one step, because a halo on 42% grey just makes a
+   grey smudge legible. Letterspacing comes DOWN a little (0.18em -> 0.14em) to pay for the
+   width the larger size costs, so a long name still fits the region it names. */
 .region-label {
   background: none;
   border: none;
   box-shadow: none;
-  color: rgba(232, 230, 225, 0.42);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
+  color: rgba(245, 244, 240, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  text-shadow:
+    1px 0 1px rgba(6, 8, 10, 0.95),
+    -1px 0 1px rgba(6, 8, 10, 0.95),
+    0 1px 1px rgba(6, 8, 10, 0.95),
+    0 -1px 1px rgba(6, 8, 10, 0.95),
+    1px 1px 1px rgba(6, 8, 10, 0.95),
+    1px -1px 1px rgba(6, 8, 10, 0.95),
+    -1px 1px 1px rgba(6, 8, 10, 0.95),
+    -1px -1px 1px rgba(6, 8, 10, 0.95),
+    0 0 4px rgba(6, 8, 10, 0.85),
+    0 0 9px rgba(6, 8, 10, 0.6);
   white-space: nowrap;
   pointer-events: none;
 }
