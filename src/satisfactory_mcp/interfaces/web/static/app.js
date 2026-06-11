@@ -943,6 +943,13 @@ function drawStructures(data) {
  * vertical (measured, server-side -- all 302 on this world have zero horizontal extent),
  * so its top-down polyline is one point and a polyline through it draws nothing at all.
  * The ring is also the right picture: seen from above, a lift is a hole in the floor.
+ *
+ * A SPLITTER or MERGER gets a square, in this layer and in no other. It is a piece of the
+ * belt network -- no recipe, no power, meaningless without the runs either side of it -- so
+ * it is drawn by the layer that draws them, which is also what keeps it from being drawn
+ * twice: it is in no other payload, and the machines layer has never had it. Without them a
+ * belt-only view had a four-metre hole at every one of the world's 848 junctions, and a run
+ * that visibly stopped and started again is a run a reader has to guess is one run.
  */
 /* Mid steel, and mid on purpose: this is the one layer with no ground of its own, so it has
  * to read over the dark concrete it mostly runs on AND over pale sand where it crosses
@@ -987,6 +994,13 @@ var BELT_MIN_PX = 1.5;
  * belt width, floored a little higher than the line is, because a ring has to enclose
  * something to read as a ring rather than as a dot. */
 var LIFT_MIN_RADIUS_PX = 2;
+
+/* A splitter or merger with no measured footprint. The docs dump carries clearance for none
+ * of these four classes, so the server sends null and this is the page's own stand-in --
+ * the same arrangement, and the same reason, as MACHINE_FALLBACK_M below: a number invented
+ * server-side would arrive indistinguishable from a measurement. Four metres is the square
+ * the pieces snap to, which is also what makes a run read as continuous through one. */
+var ATTACHMENT_FALLBACK_M = 4;
 
 function beltWeight(ppm) {
   return Math.max(BELT_MIN_PX, BELT_WIDTH_M * ppm);
@@ -1043,6 +1057,26 @@ function drawBelts(data) {
     }
     piece.bindPopup(beltPopup(b, first, last)).addTo(group);
   });
+  (data.attachments || []).forEach(function (a) {
+    if (a.x_m === null || a.y_m === null) return;
+    var w = (a.w_m || ATTACHMENT_FALLBACK_M) / 2;
+    var l = (a.l_m || ATTACHMENT_FALLBACK_M) / 2;
+    L.polygon(footprintCorners(a.x_m, a.y_m, w, l, a.yaw), {
+      color: BELT_COLOUR,
+      weight: 1,
+      fillColor: BELT_COLOUR,
+      fillOpacity: 0.85,
+    })
+      .bindPopup(
+        popup([
+          ["belt part", a.name || a.cls],
+          ["facing", a.yaw === null || a.yaw === undefined ? null : Math.round(a.yaw) + "°"],
+          ["at", a.x_m + ", " + a.y_m + " m"],
+          ["instance", code(a.instance_leaf)],
+        ])
+      )
+      .addTo(group);
+  });
   sinkBelts();
 }
 
@@ -1062,10 +1096,11 @@ function drawBelts(data) {
  *   * a polygon would also change what a click means. A belt is hit-tested as a line plus
  *     Leaflet's tolerance today, and a 3,085-piece layer of two-metre ribbons would be
  *     unclickable at exactly the zooms where the popup is worth opening;
- *   * and it costs nothing to keep. Measured over all 3,085 pieces at factory zoom: 1.2 ms
- *     median for the whole pass and 3.9 ms at its worst, once per zoom step, against a
- *     16.7 ms frame -- and 300 frames sampled across twelve zoom steps hold that 16.7 ms
- *     with nothing over 23 ms, which is the same band the page had before.
+ *   * and it costs nothing to keep. Measured over the whole layer at factory zoom -- 3,933
+ *     pieces, splitters included -- 0.6 to 0.7 ms median for the pass and 3 ms at its
+ *     worst, once per zoom step, against a 16.7 ms frame. Two runs of 300 frames sampled
+ *     across twelve zoom steps sat at a 16.7 ms median and a 16.8 ms p95; one of the two
+ *     dropped a single frame (33 ms), which is one canvas redraw and not a stutter.
  *
  * There is no pop to debounce away, either -- the opposite. Leaflet scales the whole canvas
  * as one image during a zoom animation, so a belt already grows with the map mid-flight and
@@ -1078,10 +1113,12 @@ function styleBelts() {
   var weight = beltWeight(ppm);
   var radius = liftRadius(ppm);
   group.eachLayer(function (piece) {
-    // setRadius is the one thing a lift's ring has and a belt's line has not, so it is
-    // the test: a ring is sized by its radius, a run by its weight.
+    // Three kinds of piece share this layer and only two of them are sized in pixels: a
+    // lift's ring by its radius, a run by its weight. A splitter is a polygon in map units
+    // and is already the right size at every zoom -- exactly like a machine, which is the
+    // whole reason it is drawn as one.
     if (piece.setRadius) piece.setRadius(radius);
-    else if (piece.setStyle) piece.setStyle({ weight: weight });
+    else if (!(piece instanceof L.Polygon)) piece.setStyle({ weight: weight });
   });
 }
 
@@ -1100,11 +1137,23 @@ map.on("zoomend", styleBelts);
  * overlay pane's canvas covers the entire viewport -- so a clickable layer below it is not
  * clickable at all. That is also why this is safe to call whenever: `bringToBack` is a
  * no-op on a path whose group is not on the map, which is the state this layer starts in.
+ *
+ * Order INSIDE the layer matters too, and it is decided by the order of the calls: each
+ * `bringToBack` puts its caller below everything already sunk, so the piece sunk LAST ends
+ * up at the very bottom. The junction squares therefore go first and the runs after them,
+ * which leaves a splitter sitting on the lines it joins rather than under them -- a 4 m
+ * square hidden beneath a 2 m line is still visible at its corners and is not CLICKABLE,
+ * and the popup naming the piece is the whole reason it has one.
  */
 function sinkBelts() {
   var group = state.layers.belts;
   if (!group) return;
+  var squares = [];
+  var runs = [];
   group.eachLayer(function (piece) {
+    (piece instanceof L.Polygon ? squares : runs).push(piece);
+  });
+  squares.concat(runs).forEach(function (piece) {
     if (piece.bringToBack) piece.bringToBack();
   });
   raiseNodeDots();
