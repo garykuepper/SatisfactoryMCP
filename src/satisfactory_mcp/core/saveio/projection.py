@@ -20,8 +20,8 @@ from ... import config
 
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
 #: every pickle written by an older schema misses rather than being served without its new
-#: fields. 12 added placement yaw and belt splines.
-SCHEMA_VERSION = 12
+#: fields. 12 added placement yaw and belt splines; 13 added fluid pipe splines.
+SCHEMA_VERSION = 13
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3
