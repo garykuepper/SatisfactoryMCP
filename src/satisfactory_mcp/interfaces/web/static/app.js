@@ -401,6 +401,7 @@ var LAYER_ORDER = [
   "proposals",
   "foundations",
   "belts",
+  "pipes",
   "machines",
   "extractors",
   "generators",
@@ -988,28 +989,111 @@ function drawBelts(data) {
     }
     piece.bindPopup(beltPopup(b, first, last)).addTo(group);
   });
-  sinkBelts();
+  sinkRoutes();
 }
 
-/* Belts share the overlay canvas with the machines and the node dots, so the rule
- * raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
- * match wins. A belt run crosses every machine it feeds, and a polyline's hit area is its
- * width plus Leaflet's click tolerance -- so a belts layer added after the machines would
- * quietly take the click on every machine a belt passes over. Pushed to the back instead:
- * under the machines, under the node dots, still over the foundations (a separate pane, so
- * a separate canvas, so unaffected either way).
+/* The fluid network, drawn the same way and told apart by colour.
  *
- * Its own pane would be the tidier answer and is not one: Leaflet gives every pane its own
- * canvas, the DOM delivers a click to the topmost element under the pointer, and the
- * overlay pane's canvas covers the entire viewport -- so a clickable layer below it is not
- * clickable at all. That is also why this is safe to call whenever: `bringToBack` is a
- * no-op on a path whose group is not on the map, which is the state this layer starts in.
+ * New with schema 13, and the belts' other half: `mSplineData` sat on every pipeline actor
+ * the whole time and the projection dropped it, so the map could show a base's belts and
+ * nothing about its plumbing.
+ *
+ * The same posture as the belts next door, deliberately -- one colour for the whole network,
+ * tier as a width step, no second palette -- because a page that encodes two networks by two
+ * different grammars makes the reader learn twice.
+ *
+ * NO GLYPH, and that is a measurement rather than an omission. A conveyor lift gets a ring
+ * because its top-down polyline is a single point; the server measured the same question for
+ * pipes and the answer is that there is no such piece -- the tightest of this world's 503
+ * spans 11.6 cm horizontally and only one is under 50 cm. Every pipe draws as a line. The
+ * one-point guard below is still there, because "none on this world" is not "none ever".
+ *
+ * NO ARROWS, and that is the API's refusal carried through: a pipe has no flow direction in
+ * the save, so the points are the order the player dragged it and mean nothing about travel.
+ * The popup says so rather than leaving the reader to assume it, because a run of pipe drawn
+ * beside a run of belt -- which IS in travel order -- invites exactly that assumption.
  */
-function sinkBelts() {
-  var group = state.layers.belts;
-  if (!group) return;
-  group.eachLayer(function (piece) {
-    if (piece.bringToBack) piece.bringToBack();
+/* Rust, and picked by measuring rather than by taste. This layer has to separate from three
+ * things at once: the belts it runs beside, the terrain it crosses, and the amber the
+ * extractors are already drawn in -- and the last is the trap, because a water extractor is
+ * where pipes and extractors physically meet. Measured in CIE Lab against the base map under
+ * all 503 routes and against every colour already on the page: #a8613c is dE 34 from the
+ * terrain and 22 from its nearest neighbour on the page (the copper-ore dot), where the
+ * saturated amber a pipe suggests first, #d99a3e, is dE 4.5 from the extractors and would
+ * have been indistinguishable from them. Warm where the belts are cool, and dark enough not
+ * to shout over a photographic map. */
+var PIPE_COLOUR = "#a8613c";
+
+/* Tier as width, the same banding the belts use and for the same reason. `flow_m3_min` is
+ * the dump's own figure for the class -- 300 on Mk1, 600 on Mk2 -- so this is a banding of a
+ * measurement rather than a parse of "MK2" out of a display name. Two tiers, so two widths
+ * and a middle for the unknown: thinnest would read as Mk1. */
+function pipeWeight(flow_m3_min) {
+  if (!flow_m3_min) return 2.1;
+  return flow_m3_min >= 600 ? 2.6 : 1.8;
+}
+
+function pipePopup(p, first, last) {
+  return popup([
+    ["pipe", p.name || p.cls],
+    // The thing a belt cannot say. It comes off the game's own FGPipeNetwork rather than
+    // from what the pipe is plugged into, which is why it can be stated flatly.
+    ["fluid", p.fluid_name],
+    ["capacity", p.flow_m3_min ? p.flow_m3_min + " m³/min at 100%" : null],
+    // Said out loud, because the belt popup beside it says "from" and "to" and a reader is
+    // owed the difference. There is no direction in the save to draw or to print.
+    ["flow", "direction is not recorded — it is set at runtime by head lift and demand"],
+    ["ends", first[0] + ", " + first[1] + " m and " + last[0] + ", " + last[1] + " m"],
+    ["rise", Math.abs(Math.round((last[2] - first[2]) * 10) / 10) + " m"],
+    ["network", p.network === null ? null : "#" + p.network],
+  ]);
+}
+
+function drawPipes(data) {
+  // Off by default at the whole-world zoom, exactly like `belts` and `machines`. See reveal().
+  var group = layer("pipes", false, PIPE_COLOUR);
+  data.pipes.forEach(function (p) {
+    if (p.points_m.length < 2) return; // a route with one point is not a route
+    var points = p.points_m.map(function (q) {
+      return [-q[1], q[0]];
+    });
+    L.polyline(points, {
+      color: PIPE_COLOUR,
+      weight: pipeWeight(p.flow_m3_min),
+      opacity: 0.85,
+    })
+      .bindPopup(pipePopup(p, p.points_m[0], p.points_m[p.points_m.length - 1]))
+      .addTo(group);
+  });
+  sinkRoutes();
+}
+
+/* Both route layers share the overlay canvas with the machines and the node dots, so the
+ * rule raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
+ * match wins. A belt run crosses every machine it feeds and a pipe run crosses every
+ * refinery it feeds, and a polyline's hit area is its width plus Leaflet's click tolerance
+ * -- so a route layer added after the machines would quietly take the click on every machine
+ * it passes over. Pushed to the back instead: under the machines, under the node dots, still
+ * over the foundations (a separate pane, so a separate canvas, so unaffected either way).
+ *
+ * Their own pane would be the tidier answer and is not one: Leaflet gives every pane its own
+ * canvas, the DOM delivers a click to the topmost element under the pointer, and the overlay
+ * pane's canvas covers the entire viewport -- so a clickable layer below it is not clickable
+ * at all. That is also why this is safe to call whenever: `bringToBack` is a no-op on a path
+ * whose group is not on the map, which is the state both layers start in.
+ *
+ * One function over both, rather than one per layer: it is one rule, and two copies of it
+ * would drift the moment a third route layer arrives.
+ */
+var ROUTE_LAYERS = ["belts", "pipes"];
+
+function sinkRoutes() {
+  ROUTE_LAYERS.forEach(function (name) {
+    var group = state.layers[name];
+    if (!group) return;
+    group.eachLayer(function (piece) {
+      if (piece.bringToBack) piece.bringToBack();
+    });
   });
   raiseNodeDots();
 }
@@ -1017,7 +1101,7 @@ function sinkBelts() {
 // A layer added long after both fetches landed is appended to the canvas' draw list, i.e.
 // on top of everything -- so the sink has to run again when the player ticks the box.
 map.on("overlayadd", function (event) {
-  if (state.layers.belts && event.layer === state.layers.belts) sinkBelts();
+  if (ROUTE_LAYERS.some(function (n) { return state.layers[n] === event.layer; })) sinkRoutes();
 });
 
 /* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
@@ -1133,8 +1217,9 @@ function drawMachines(data) {
   raiseNodeDots();
 }
 
-/* `machines` and `belts` are both off at the whole-world zoom on purpose: 438 rectangles
- * and 3,085 routes across 7 km are a smear, and unticking them is the right default. What
+/* `machines`, `belts` and `pipes` are all off at the whole-world zoom on purpose: 438
+ * rectangles and 3,588 routes across 7 km are a smear, and unticking them is the right
+ * default. What
  * was wrong is what happened next -- clicking a factory label flew the map to that
  * factory's own extent and landed on bare concrete, with the reason eight unfolded rows
  * down a control the player had not opened.
@@ -1159,7 +1244,11 @@ function reveal(names) {
   });
   if (!turned.length) return;
   note(
-    turned.join(" and ") +
+    // "a and b" for two, "a, b and c" for three -- an Oxford-less list rather than
+    // "a and b and c", which is what a plain join gives once there are three of these.
+    (turned.length > 1
+      ? turned.slice(0, -1).join(", ") + " and " + turned[turned.length - 1]
+      : turned[0]) +
       " turned on — untick " +
       (turned.length > 1 ? "those layers" : "the " + turned[0] + " layer") +
       " to hide them again"
@@ -1167,8 +1256,10 @@ function reveal(names) {
 }
 
 // What "show me this factory" means, in layers. A factory at factory scale is its machines
-// and the routes between them; both are unreadable at the zoom the click starts from.
-var FACTORY_LAYERS = ["machines", "belts"];
+// and the routes between them -- belts AND pipes, because a refinery block is half plumbing
+// and a view that showed only the belts would read as a factory with pieces missing. All
+// three are unreadable at the zoom the click starts from.
+var FACTORY_LAYERS = ["machines", "belts", "pipes"];
 
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
@@ -1251,7 +1342,7 @@ function factoryAnchor(row, text, className, rows) {
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
     marker.on("click", function () {
-      // A factory at factory scale IS its machines and the belts between them; see reveal.
+      // A factory at factory scale IS its machines and the routes between them; see reveal.
       reveal(FACTORY_LAYERS);
       map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
     });
@@ -1746,6 +1837,15 @@ function loadStatic() {
       if (!live()) return;
       clearPrefixed(["belts"]);
       fail("belts: " + friendly(e));
+    });
+  get("/api/pipes")
+    .then(function (d) {
+      if (live()) drawPipes(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["pipes"]);
+      fail("pipes: " + friendly(e));
     });
   get("/api/factories")
     .then(function (d) {

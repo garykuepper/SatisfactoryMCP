@@ -970,6 +970,139 @@ def test_a_save_that_cannot_be_read_has_no_belt_network_either(game):
     assert "sidecar produced no output" in r.json()["error"]
 
 
+def test_pipes_are_the_plumbing_as_it_was_actually_routed(client, state):
+    """Every fluid pipe, un-interned, in metres, in the order the file stores it."""
+    body = client.get("/api/pipes").json()
+    raw = state.projection["pipes"]
+    assert body["count"] == len(raw["segments"]) == len(body["pipes"])
+    assert body["count"] > 400, "the reference world plumbs oil, water and fuel"
+    assert 0 < body["networks"] < body["count"], "pipes group into fewer networks than pipes"
+
+    row = body["pipes"][0]
+    assert set(row) == {"network", "fluid", "fluid_name", "cls", "name", "flow_m3_min", "points_m"}
+    # The class legend is resolved here, or the page would have to carry it.
+    assert row["cls"] == raw["classes"][raw["segments"][0][1]]
+    assert {r["cls"] for r in body["pipes"]} <= set(raw["classes"])
+    assert row["name"] == state.game.buildings[row["cls"]].name
+    assert not row["name"].startswith("Build_")
+
+    # Metres, like every other coordinate on this surface, and in the projection's order.
+    assert len(row["points_m"]) == len(raw["segments"][0][2])
+    for out, cm in zip(row["points_m"], raw["segments"][0][2], strict=True):
+        assert out == [pytest.approx(round(v / 100.0, 1)) for v in cm]
+    for r in body["pipes"]:
+        assert len(r["points_m"]) >= 2, "a pipe is a line; there are no vertical pipes"
+        for x_m, y_m, _z_m in r["points_m"]:
+            assert abs(x_m) < 5000 and abs(y_m) < 5000
+
+
+def test_every_pipe_says_which_fluid_it_carries(client, state):
+    """The thing a belt cannot say, and it comes from the world rather than from a guess.
+
+    The game keeps an ``FGPipeNetwork`` per connected plumbing system with the fluid on it,
+    so this is the save's own answer. Asserted against the projection's own network table
+    rather than against a list of fluid names, which would pin this world's contents.
+    """
+    body = client.get("/api/pipes").json()
+    by_id = {n["id"]: n["fluid"] for n in state.projection["pipes"]["networks"]}
+    assert all(r["fluid"] == by_id[r["network"]] for r in body["pipes"])
+    assert all(r["fluid"] is not None for r in body["pipes"]), (
+        "every pipe on this world is claimed by a network"
+    )
+    # Resolved against the dump, so a popup never shows a reader a `Desc_…_C`.
+    for r in body["pipes"]:
+        assert r["fluid_name"] == state.game.items[r["fluid"]].name
+        assert state.game.items[r["fluid"]].is_fluid
+    assert len({r["fluid"] for r in body["pipes"]}) > 1, "this world plumbs more than one"
+
+    # The tier's own rate, rather than an "MK2" the page would have to parse out of a name.
+    assert {r["flow_m3_min"] for r in body["pipes"]} <= {300.0, 600.0}
+    assert len({r["flow_m3_min"] for r in body["pipes"]}) == 2, "Mk1 and Mk2 both built here"
+
+
+def test_no_pipe_row_claims_a_flow_direction(client):
+    """The refusal, pinned. There is no direction in the save -- a pipe's two connectors are
+    numbered rather than named input and output, and which way a fluid moves is decided at
+    runtime by head lift and demand. A field here would be an invention, and a client that
+    found one would draw arrows with it."""
+    row = client.get("/api/pipes").json()["pipes"][0]
+    assert not {"direction", "from", "to", "flow_direction", "reversed"} & set(row)
+
+
+def test_a_world_with_no_pipes_answers_with_empty_plumbing(game):
+    """Asserted through the shapes the projection has carried, exactly as the belts next
+    door are: a young save has laid no pipe, and that is not an error."""
+    for projection in (
+        {},
+        {"pipes": {}},
+        {"pipes": {"classes": [], "networks": [], "segments": []}},
+    ):
+        app = create_app(
+            state_loader=lambda save=None, world=None, p=projection: WorldState(
+                projection=p, game=game
+            ),
+            game_loader=lambda: game,
+        )
+        with TestClient(app) as c:
+            assert c.get("/api/pipes").json() == {"pipes": [], "count": 0, "networks": 0}
+
+
+def test_a_malformed_pipe_segment_costs_one_piece_not_the_plumbing(game):
+    """Raw projection data, read guarded field by field -- the structures rule, again."""
+    projection = {
+        "pipes": {
+            "classes": ["Build_Pipeline_C"],
+            "networks": [{"id": 7, "fluid": "Desc_Water_C"}, "not a network"],
+            "segments": [
+                [0, 0, [[100, 200, 300], [400, 500, 600]]],
+                [1, 0],  # short: no points
+                ["net", 0, [[100, 200, 300]]],  # unparseable network index
+                [9, 0, [[700, 800, 900], [1, 2, 3]]],  # network index off the end
+                [1, 0, [[10, 20, 30], [40, 50, 60]]],  # network entry is not a dict
+                [0, 9, [[700, 800, 900], [1, 2, 3]]],  # class index off the end
+                [0, 0, [[100, 200], "not a point", [100, 200, 300]]],  # one usable point
+                [0, 0, []],  # no geometry at all
+                "not a segment",
+            ],
+        }
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        body = c.get("/api/pipes").json()
+    assert body["count"] == 5
+    assert body["pipes"][0] == {
+        "network": 7,
+        "fluid": "Desc_Water_C",
+        "fluid_name": "Water",
+        "cls": "Build_Pipeline_C",
+        "name": "Pipeline Mk.1",
+        "flow_m3_min": 300.0,
+        "points_m": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+    }
+    # A pipe whose network the table cannot name is still a pipe on real ground: it keeps
+    # its route and loses what the network would have told us. Null, not a guessed fluid.
+    for orphan in (body["pipes"][1], body["pipes"][2]):
+        assert (orphan["network"], orphan["fluid"], orphan["fluid_name"]) == (None, None, None)
+        assert orphan["points_m"], "an unclaimed pipe is still drawn"
+    # A piece whose class the legend cannot name keeps its route and its fluid.
+    unnamed = body["pipes"][3]
+    assert (unnamed["cls"], unnamed["flow_m3_min"]) == (None, None)
+    assert unnamed["fluid"] == "Desc_Water_C"
+    assert body["pipes"][4]["points_m"] == [[1.0, 2.0, 3.0]]
+    assert body["networks"] == 1
+
+
+def test_a_save_that_cannot_be_read_has_no_plumbing_either(game):
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/pipes")
+    assert r.status_code == 404
+    assert "sidecar produced no output" in r.json()["error"]
+
+
 def test_factories_report_named_labels_and_proposals(client, state):
     body = client.get("/api/factories").json()
     assert len(body["labels"]) == len(state.labels.labels)
