@@ -208,14 +208,17 @@ var PICKUP_FALLBACK = "#7fd1b9";
 var PLAYER_COLOUR = "#f5f0e8";
 
 // One muted colour per biome letter, keyed exactly like /api/regions' legend. Hand-picked
-// to read as terrain at a glance -- sand for the deserts, greens for the forests, teal
+// to read as ground at a glance -- sand for the deserts, greens for the forests, teal
 // along the coast, murk for the swamp -- and, like the ore palette above, they are 21 hex
 // strings rather than a single pixel of anyone's artwork.
 //
-// Dark on purpose, and painted at full opacity: a translucent cell has to blend against
-// the sea colour at its edges too, and 768 of them sharing borders turns that blend into
-// a visible 256 m grid. These are the blended values, baked in, so the cells of one
-// region merge into one shape.
+// Dark on purpose, and every CELL is painted at full opacity, always: a translucent cell
+// has to blend against whatever is at its edges too, and 768 of them sharing borders turns
+// that blend into a visible 256 m grid. These are the blended values, baked in, so the
+// cells of one region merge into one shape.
+//
+// Transparency over the map render is therefore NOT done here -- see REGION_BLEND, which
+// fades the finished composite once, at the pane.
 var REGION_COLOUR = {
   A: "#3e3e3c", // Abyss Cliffs
   B: "#284e5a", // Blue Crater
@@ -385,21 +388,30 @@ map.attributionControl
   .addAttribution("map data from your save &middot; Leaflet");
 
 /* One flat 10 km square of "land" used to be drawn here, in the overlay pane. It was a
- * stand-in for terrain and it is gone: the biome raster is the real thing, and an opaque
+ * stand-in for ground and it is gone: the biome raster is the real thing, and an opaque
  * square in the overlay pane would sit on top of it. What was inside that square is now
  * painted per biome, and what is outside is the page's sea colour -- which is the whole
  * trick behind the coastline. */
 
-/* The ground everything else stands on gets its own pane, below overlayPane (400), so
- * terrain can never end up in front of a node the player is trying to click. The
- * stacking is decided here, once, instead of by the order things happen to be drawn. */
+/* The optional map render -- tile pyramid or single overlay -- gets the bottom pane of
+ * the three, so the region fill can be drawn OVER it rather than instead of it. It used
+ * to share the regions pane, which was harmless only for as long as the two were mutually
+ * exclusive; combining them made the stacking a question of which loader finished first. */
+map.createPane("basemap");
+map.getPane("basemap").style.zIndex = 340;
+
+/* The biome regions everything else stands on get their own pane, below overlayPane (400),
+ * so the region fill can never end up in front of a node the player is trying to click. The
+ * stacking is decided here, once, instead of by the order things happen to be drawn.
+ *
+ * The pane is also the unit of transparency: see REGION_BLEND. */
 map.createPane("regions");
 map.getPane("regions").style.zIndex = 350;
 
 /* The player's own concrete, in its own pane between the biome raster (350) and the
- * overlay pane (400): a floor plan has to cover the terrain it was poured on and sit
+ * overlay pane (400): a floor plan has to cover the ground it was poured on and sit
  * under every machine, node and label that stands on it. Leaflet builds one canvas per
- * pane, so this is also what keeps 8,000 rectangles off the same canvas as the terrain. */
+ * pane, so this is also what keeps 8,000 rectangles off the region cells' canvas. */
 map.createPane("foundations");
 map.getPane("foundations").style.zIndex = 360;
 
@@ -409,7 +421,7 @@ map.getPane("foundations").style.zIndex = 360;
  * rank each group is given when it is created -- chrome first, then machine layers, then
  * nodes alphabetically, then pickups alphabetically. */
 var LAYER_ORDER = [
-  "terrain",
+  "regions",
   "map image",
   "region names",
   "player",
@@ -645,7 +657,7 @@ function sectionHead(section, rows) {
  *
  * A family box is undoable -- untick "pickups", tick it again, and the ten rows are back
  * where they were, because they were all on or all off either way. A master box is not:
- * this control's rows are deliberately NOT uniform (terrain on, machines off, nine of ten
+ * this control's rows are deliberately NOT uniform (regions on, machines off, nine of ten
  * pickup families off), and one click that unticked all 34 would throw that selection away.
  * Re-ticking would not restore it -- it would turn all 34 ON, which is a different map than
  * the one the player had. So the one gesture whose undo does not undo is the one gesture
@@ -797,6 +809,55 @@ function clearPrefixed(prefixes) {
 
 var REGION_FILL = 1; // see REGION_COLOUR: opaque cells, or the shared borders become a grid.
 
+/* How much of the map render shows through the region fill when BOTH are drawn.
+ *
+ * The two used to be alternatives -- a render arriving unticked the region box (see
+ * baseImageryShown) and that was the end of it. It still does, because a photograph of the
+ * world is the better picture of the world; but ticking the box back on is now a legitimate
+ * thing to want -- "which biome is this?" answered OVER the artwork rather than instead of
+ * it -- and at REGION_FILL that answer is a wall of flat colour hiding what it annotates.
+ *
+ * The alpha goes on the PANE, not on the cells, and that distinction is the whole fix. A
+ * per-cell fillOpacity of 0.45 blends 768 rectangles against the picture ONE AT A TIME, and
+ * every shared border -- where a cell's antialiased edge and its neighbour's overlap -- is
+ * blended twice. That is a visible 256 m grid, which is exactly why the cells are opaque and
+ * their strokes are their own fill colour. Painted opaque into the pane's own canvas they
+ * still merge into one shape; the browser then composites that finished shape over the tiles
+ * once, at this alpha, and a border is no different from a cell interior.
+ *
+ * 0.45 by eye over both extremes of the render -- the pale sand of the Dune Desert, where a
+ * heavier fill turns the dunes to mud, and the near-black canopy of the Northern Forest,
+ * where a lighter one leaves the region tint invisible. Region NAMES are unaffected: they
+ * are tooltips, and tooltips live in Leaflet's tooltipPane. */
+var REGION_BLEND = 0.45;
+
+/* Whether a map render is actually on screen right now: the layer exists, has something in
+ * it, and its box is ticked. All three matter -- the group is created empty by the probe
+ * and the box is the player's to untick. */
+function baseImageryOn() {
+  var group = state.layers["map image"];
+  return !!(group && map.hasLayer(group) && group.getLayers().length);
+}
+
+/* Applied on every layer change, because every path into "both are drawn" is one: the
+ * render finishing, the render failing back, and either box being ticked by hand.
+ *
+ * Guarded against its own no-ops rather than debounced. Drawing a world adds thousands of
+ * layers to the map, each of which fires this, and the guard turns all but the two that
+ * change anything into three property reads. */
+var regionBlend = "";
+
+function updateRegionBlend() {
+  var pane = map.getPane("regions");
+  if (!pane) return;
+  var want = baseImageryOn() ? String(REGION_BLEND) : "";
+  if (want === regionBlend) return;
+  regionBlend = want;
+  pane.style.opacity = want;
+}
+
+map.on("layeradd layerremove", updateRegionBlend);
+
 /* The base map: one flat rectangle per 256 m raster cell, plus a name per region.
  *
  * Orientation is the whole trap here and the API's docstring spells it out: grid row 0 is
@@ -810,7 +871,10 @@ var REGION_FILL = 1; // see REGION_COLOUR: opaque cells, or the shared borders b
  * inspector. The server moves those anchors onto the region's own cells.
  */
 function drawRegions(data) {
-  var terrain = layer("terrain", true);
+  // "regions" and "region names": one row for the fill, one for the labels over it, named
+  // as the pair they are. The fill was called "terrain" until there was a real terrain
+  // render to be confused with -- what it draws is biome regions, and always was.
+  var regions = layer("regions", true);
   var names = layer("region names", true);
   var cell = data.cell_m;
   data.grid.forEach(function (row, j) {
@@ -827,7 +891,7 @@ function drawRegions(data) {
         ],
         {
           // Stroked in its own fill colour so neighbouring cells of one biome merge into
-          // a shape instead of showing a grid; interactive:false so the terrain never
+          // a shape instead of showing a grid; interactive:false so the region fill never
           // eats a click meant for a node sitting on top of it.
           color: colour,
           weight: 1,
@@ -837,7 +901,7 @@ function drawRegions(data) {
           interactive: false,
           pane: "regions",
         }
-      ).addTo(terrain);
+      ).addTo(regions);
     }
   });
 
@@ -1704,17 +1768,26 @@ function mapImageLatLngBounds(b) {
   ]);
 }
 
-/* A real render beats the cell fill it covers, so the fill steps aside -- by unticking its
- * box, so one click brings it back. */
+/* A real render beats the flat cell fill over it, so the fill steps aside -- by unticking
+ * its box, so one click brings it back.
+ *
+ * Still an untick and not something cleverer, now that the two CAN be shown together: the
+ * render is the better answer to "what is here" and a page that opened with a biome wash
+ * over it would be hiding its own best picture. What changed is only what the click back on
+ * gets you -- REGION_BLEND, rather than the wash. */
 function baseImageryShown() {
-  if (state.layers.terrain) map.removeLayer(state.layers.terrain);
+  if (state.layers.regions) map.removeLayer(state.layers.regions);
+  updateRegionBlend();
 }
 
-/* ...and back, if the render turns out not to draw. */
+/* ...and back, if the render turns out not to draw. Full opacity comes back with it: with
+ * no picture underneath there is nothing to see through to, and REGION_BLEND against the
+ * page's sea colour would only wash the biomes out. */
 function baseImageryFailed(group, message) {
   group.clearLayers();
   map.removeLayer(group);
-  if (state.layers.terrain) state.layers.terrain.addTo(map);
+  if (state.layers.regions) state.layers.regions.addTo(map);
+  updateRegionBlend();
   fail(message);
 }
 
@@ -1729,7 +1802,7 @@ function baseImageryFailed(group, message) {
  *
  * Nothing is shipped, so both probes' 204 is the ordinary answer. A file that EXISTS but
  * does not decode -- a truncated download, an error page saved as .png -- must not cost
- * the biome base map: the error event puts the terrain back and says what happened,
+ * the biome base map: the error event puts the region fill back and says what happened,
  * instead of leaving a silent sea-coloured page. */
 function loadMapImage() {
   return fetch("/api/maptiles/0/0/0", { method: "HEAD" })
@@ -1798,7 +1871,7 @@ function addTilePyramid(response) {
   var group = layer("map image", true);
   var url = "/api/maptiles/{z}/{x}/{y}" + (tag ? "?v=" + encodeURIComponent(tag) : "");
   var tiles = new PyramidLayer(url, {
-    pane: "regions",
+    pane: "basemap",
     tileSize: tilePx,
     noWrap: true,
     // Clamped to the world the tiles cover, so a pan out into the sea beyond it asks for
@@ -1836,7 +1909,7 @@ function loadMapImageOverlay() {
     var b = mapImageBounds(r);
     var group = layer("map image", true);
     var image = L.imageOverlay("/api/mapimage", mapImageLatLngBounds(b), {
-      pane: "regions",
+      pane: "basemap",
       interactive: false,
     });
     image.on("error", function () {
