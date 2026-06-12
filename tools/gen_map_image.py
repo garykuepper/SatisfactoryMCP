@@ -98,7 +98,14 @@ The same recipe, with the flag on the end:
 
     uv run python tools/gen_map_image.py --pyooz-path <tmp>/mapvenv/Lib/site-packages --enhance
 
-Four things about that stage are findings rather than choices, and each is pinned here.
+The stage is four passes and the model is only the second, because a second read-only
+bake-off round measured the model's two remaining defects and found both of them fixable
+from outside it. On five sampled regions the amended pipeline beats the plain hybrid on
+every metric in every region: round-trip error 5.35 to 4.98, flat-fill colour drift 0.894
+to 0.438, weak-stroke retention 0.823 to 0.911 against a target of 1.0, and edge gradient
+26.6 to 26.9 -- sharper, not the softer that usually pays for the rest.
+
+Six things about that stage are findings rather than choices, and each is pinned here.
 
 *Tiling is mandatory, not an optimisation.* Handed the whole 32768 px output the binary
 segfaults at about 70% of the rows: 32768*32768*3 is 3,221,225,472, and the index into its
@@ -115,6 +122,28 @@ out. Lanczos is the only candidate that keeps weak strokes at full depth, so the
 the AI everywhere except a feathered mask over faint detail, where it is Lanczos --
 computed from the same source pixels, at about 6% coverage. ``faint_mask`` is the whole
 rule and is measured on the SOURCE alone, so it is reproducible from the input.
+
+*And a mark the model never drew cannot be repaired, so the faintest ones are raised
+first.* Repairing the output is a floor, not a cure: a mark 4 to 10 luma below what it is
+drawn on sits under the model's own response floor, and what comes back is a blend of two
+renderings of a stroke that has already half-vanished from one of them. ``presharpen``
+therefore unsharps the INPUT -- three rounds, sigma 1, amount 0.14, so about a third of
+gain on that band -- on a mask of the same depth statistic, and hands the model something
+it can see. Two details of it are measurements. The mask stops at ``PRESHARPEN_HI`` = 10
+rather than the repair's 14, because a mid stroke handed extra contrast is a mid stroke the
+model expands harder; decoupling the two bands costs 0.03 of weak retention and buys back
+the whole of that. And the mask is a depth mask rather than the edge detector this is
+usually done with: XDoG is tuned for near-black anime linework and on this artwork it
+selects 74-90% of the STRONG band and 1-5% of the weak one -- exactly backwards -- which
+was measured as making the output worse than doing nothing at all.
+
+*The model also drifts the flat fills, so the low frequencies are taken back off it.* An
+upscaler is entitled to an opinion about detail the source does not resolve. It is not
+entitled to one about what colour a fill is, and this one moves the largest fill in a
+square by up to a whole level of the map's palette. ``colour_fix`` subtracts the output's
+low band and adds the source's, at sigma 6 in output pixels -- wide enough to pass a 4 to
+8 px stroke through untouched -- which halves that drift for no measurable sharpness. It is
+one line of arithmetic and the largest single improvement of the two.
 
 *The low levels still come from the original sheet.* z0..z5 are Lanczos downscales of the
 8192 px artwork exactly as they were before ``--enhance`` existed; only z6 and z7, which
@@ -136,6 +165,13 @@ And an enhanced pyramid is not silently downgraded. A later plain re-run over a
 ``tiles/`` tree whose sidecar says ``enhanced`` refuses in the same breath as the
 cross-build guard, for the same reason: a refresh that quietly halves the map's resolution
 is drift, and drift is announced. ``--enhance`` again, or ``--force``.
+
+That guard compares recipe NUMBERS, not a boolean, because "enhanced" stopped being one
+thing the moment this pipeline was amended. ``ENHANCE_RECIPES`` names each of them and
+``ENHANCE_RECIPE`` is what this file cuts; the sidecar records it, and a run refuses only
+when its own recipe is behind what is already on disk. So re-cutting recipe 1's tiles with
+recipe 2 is the upgrade it plainly is and runs without a flag, while a reader can still
+read off which pipeline drew the pixels they are looking at.
 
 The stage needs ``numpy`` and ``scipy``, which unlike Pillow ARE dependencies of this
 project, so they come from the project environment that ``uv run`` provides -- which is
@@ -260,6 +296,53 @@ FAINT_LO = 3.0
 FAINT_HI = 14.0
 FAINT_FEATHER = 5
 
+#: The pre-sharpen, which runs on the INPUT square before the model ever sees it: three
+#: rounds of unsharp masking, blended in only where the same depth statistic says there is
+#: a faint mark. The amount is small on purpose -- it is a nudge that carries the weak band
+#: over the model's own floor, not a sharpening pass -- and a second bake-off round measured
+#: this exact set against five regions.
+#:
+#: PRESHARPEN_HI is 10 rather than the repair's 14, and the two masks are deliberately not
+#: the same object. The repair's band must cover the mid strokes it protects; the
+#: pre-sharpen's must not, because amplifying a mid stroke hands the model more contrast to
+#: expand and pushes mid retention from 1.07 to 1.13. Decoupling costs 0.03 of weak-stroke
+#: retention and buys back the whole of that regression.
+#:
+#: The mask is a hard one here, not a ramp: above PRESHARPEN_ON it is on, then it grows by
+#: one PASSIVE round -- a pixel joins only if more than three of its eight neighbours are
+#: already in, so a mark thickens and a lone speck of noise does not spread -- and
+#: PRESHARPEN_EDGE feathers the result so the blend still has no edge.
+PRESHARPEN_ROUNDS = 3
+PRESHARPEN_SIGMA = 1.0
+PRESHARPEN_AMOUNT = 0.14
+PRESHARPEN_HI = 10.0
+PRESHARPEN_ON = 0.15
+PRESHARPEN_NEIGHBOURS = 4
+PRESHARPEN_EDGE = 0.6
+
+#: The colour fix, on the output: the model may decide high-frequency detail, but the low
+#: frequencies are the source's and it has no business moving them. Sigma is in pixels of
+#: the 4x output and must exceed a stroke's width there -- strokes are 4 to 8 px at 4x -- or
+#: the fix blurs back the sharpening it exists to protect. All three channels, which
+#: measured better than the chroma-only form on every metric.
+COLOUR_FIX_SIGMA = 6.0
+
+#: Which recipe cut the pixels, so that "enhanced" is not one thing forever. The
+#: no-silent-downgrade guard compares these numbers rather than a boolean: re-cutting an
+#: older recipe's tiles with a newer one is an upgrade and must not be refused, and a plain
+#: run is recipe 0 and still is. Recipe 1 wrote no number -- it is what a sidecar that says
+#: ``enhanced`` and nothing else describes -- which is why ``pinned_recipe`` reads that case
+#: as 1 rather than as "unknown".
+ENHANCE_RECIPES = {
+    0: "no enhancement: z0..z5 cut straight from the game's own artwork, Lanczos",
+    1: "upscale, then Lanczos back over the faint marks",
+    2: (
+        "unsharp the faint marks first, then upscale, then Lanczos back over the faint "
+        "marks, then put the source's low frequencies back"
+    ),
+}
+ENHANCE_RECIPE = 2
+
 #: Where the seam check reads, in tile rows of the enhanced top level, and the columns its
 #: control averages over. One arbitrary pair of adjacent columns is far too noisy a
 #: denominator -- on quiet ground it is near zero and any seam divides into it enormously --
@@ -285,7 +368,16 @@ PIN_PATH = ("sources", "map_slices", "game_version_pinned")
 #: And where it records whether the pyramid beside it was enhanced, which is what the
 #: no-silent-downgrade guard reads back. It lives inside the ``tiles`` block rather than
 #: beside it because it is a fact about that pyramid, and the two are replaced together.
+#: ``RECIPE_PATH`` is the finer-grained half of the same statement: which recipe, not just
+#: whether. Both are read, because every sidecar written before the recipe existed carries
+#: only the boolean and still describes a real pipeline.
 ENHANCED_PATH = ("tiles", "enhanced")
+RECIPE_PATH = ("tiles", "enhancement", "recipe")
+
+#: What a sidecar that says ``enhanced`` but names no recipe was cut by. Not "unknown": the
+#: boolean was introduced by recipe 1 and retired by recipe 2, so there is exactly one
+#: pipeline it can mean.
+UNNUMBERED_RECIPE = 1
 
 #: The calibration's own knobs. The sweep resolution is what bounds the claim: a pin that
 #: survives +-300 m in 50 m steps is right to about 100 m, and no better than that.
@@ -913,27 +1005,147 @@ def check_array_stack() -> tuple[str, str]:
     return numpy.__version__, scipy.__version__
 
 
-def faint_mask(luma):
-    """Where the AI must not be trusted: 1 on faint marks, 0 on flat fill and strong ones.
+def faint_depth(luma):
+    """How far each pixel sits below its own neighbourhood, grown to cover a mark's halo.
 
-    Measured on the SOURCE luma alone, so the mask is reproducible from the input without
-    reference to any candidate's output -- which is what makes the blend below a rule
-    rather than a taste. ``depth`` is how far a pixel sits below the local mean of its
-    neighbourhood; the map's marks are all darker than what they are drawn on. Between
-    FAINT_LO and FAINT_HI is the band the model erases, and the two clips are the two ends
-    of it: nothing to protect on flat fill, and above the band the AI is the better answer.
-
-    Returns weights in [0, 1] -- a product of two clipped ramps, box-blurred, which cannot
-    leave the interval -- so the caller can blend with it without clamping again.
+    The one statistic both masks are built on, and the reason they can disagree about
+    where the faint band ENDS without disagreeing about what faintness is. Measured on the
+    SOURCE luma alone, so everything downstream is reproducible from the input without
+    reference to any candidate's output -- which is what makes the blends below rules
+    rather than tastes. The map's marks are all darker than what they are drawn on, so
+    depth is positive on a mark and near zero on flat fill.
     """
     import numpy as np
     from scipy.ndimage import maximum_filter, uniform_filter
 
-    depth = uniform_filter(luma.astype(np.float32), FAINT_WINDOW) - luma.astype(np.float32)
-    grown = maximum_filter(depth, FAINT_GROW)
-    weight = np.clip((FAINT_HI - grown) / (FAINT_HI - FAINT_LO), 0.0, 1.0)
-    weight *= np.clip((grown - FAINT_LO) / FAINT_LO, 0.0, 1.0)
+    value = luma.astype(np.float32)
+    return maximum_filter(uniform_filter(value, FAINT_WINDOW) - value, FAINT_GROW)
+
+
+def faint_band(depth, hi: float):
+    """The band from FAINT_LO to ``hi``, as feathered weights in [0, 1].
+
+    A product of two clipped ramps -- nothing to select on flat fill, nothing above the
+    band either -- box-blurred, which cannot leave the interval. So a caller can blend
+    with it without clamping again.
+    """
+    import numpy as np
+    from scipy.ndimage import uniform_filter
+
+    weight = np.clip((hi - depth) / (hi - FAINT_LO), 0.0, 1.0)
+    weight *= np.clip((depth - FAINT_LO) / FAINT_LO, 0.0, 1.0)
     return uniform_filter(weight, FAINT_FEATHER)
+
+
+def faint_mask(luma):
+    """Where the AI must not be trusted: 1 on faint marks, 0 on flat fill and strong ones.
+
+    Between FAINT_LO and FAINT_HI is the band the model erases, and the two ends of the
+    band are the two ends of the argument: nothing to protect on flat fill, and above it
+    the AI is the better answer than Lanczos is.
+    """
+    return faint_band(faint_depth(luma), FAINT_HI)
+
+
+def presharpen_mask(luma):
+    """Where the input is nudged before the model sees it: a hard mask, grown passively.
+
+    The repair's band and this one are the same shape and stop in different places --
+    PRESHARPEN_HI against FAINT_HI -- because they are asked different questions. The
+    repair covers every stroke the model weakens, mid ones included. The pre-sharpen must
+    cover only the weak ones: handing the model a mid stroke with more contrast in it is
+    handing it something to expand, and it does.
+
+    Boolean rather than a ramp, because what follows is a blend of two images and the
+    feather belongs on the blend. One PASSIVE dilation round then thickens a mark without
+    letting a lone pixel spread: a pixel joins only if PRESHARPEN_NEIGHBOURS or more of its
+    eight neighbours are already in, which a speck of noise cannot satisfy and the shoulder
+    of a real stroke always can.
+    """
+    import numpy as np
+    from scipy.ndimage import convolve
+
+    inside = faint_band(faint_depth(luma), PRESHARPEN_HI) > PRESHARPEN_ON
+    neighbours = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)
+    grown = convolve(inside.astype(np.uint8), neighbours, mode="nearest")
+    return inside | (grown >= PRESHARPEN_NEIGHBOURS)
+
+
+def presharpen_pixels(rgb):
+    """Unsharp the faint marks of one source square, and nothing else. Returns (rgb, mask).
+
+    The model's floor is the problem this is aimed at: a mark 4 to 10 luma below its
+    surroundings is faint enough that the upscaler renders it away, and no amount of
+    repairing the output puts back a stroke that was never drawn. Amplifying it by a third
+    on the way IN carries it over that floor, and the model then keeps about 85% of what it
+    was handed instead of 79% of a mark it half-missed.
+
+    Only on the mask: unsharping the whole square would raise the strong strokes too, which
+    is the failure mode the second bake-off round measured and rejected. Past the mask and
+    the two pixels its feather reaches, the blend weight is exactly zero and the arithmetic
+    is exactly the identity -- so this is not "mostly the source" anywhere, it is the
+    source, and the sharpening cannot leak onto a fill it was never meant to touch.
+
+    Arrays in, arrays out, so this is testable without an imaging library: ``presharpen``
+    below is the two lines that make it an image.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    flat = np.asarray(rgb, np.float32)
+    sharp = flat.copy()
+    for _ in range(PRESHARPEN_ROUNDS):
+        blurred = gaussian_filter(sharp, (PRESHARPEN_SIGMA, PRESHARPEN_SIGMA, 0))
+        sharp += PRESHARPEN_AMOUNT * (sharp - blurred)
+    mask = presharpen_mask(flat.mean(2))
+    weight = gaussian_filter(mask.astype(np.float32), PRESHARPEN_EDGE)[..., None]
+    blend = flat * (1.0 - weight) + np.clip(sharp, 0.0, 255.0) * weight
+    return np.clip(blend, 0.0, 255.0), mask
+
+
+def presharpen(source, image_mod):
+    """``presharpen_pixels`` on one source square. Returns (image, mask coverage)."""
+    import numpy as np
+
+    blend, mask = presharpen_pixels(np.asarray(source.convert("RGB"), np.float32))
+    return image_mod.fromarray(blend.astype(np.uint8)), float(mask.mean())
+
+
+def colour_fix_pixels(out_rgb, source_rgb, sigma: float = COLOUR_FIX_SIGMA):
+    """Put the source's low frequencies back into the output, and leave the detail alone.
+
+        fixed = out - blur(out, sigma) + blur(source, sigma)
+
+    An upscaler is allowed an opinion about detail the source does not resolve. It is not
+    allowed one about what colour a flat fill is, and this model quietly drifts them: the
+    largest fill in a square comes back up to a whole level of the map's own palette away
+    from where it started. Swapping the low band for the source's costs nothing measurable
+    in sharpness and halves that drift on its own -- the single largest improvement the
+    second bake-off round found, and one line of arithmetic.
+
+    Both arrays are at the OUTPUT's resolution and ``sigma`` is in its pixels: the source
+    is Lanczos'd up to meet it rather than blurred small and stretched, because the cheap
+    way is half the cost and drifts half again as much.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    out = np.array(out_rgb, np.float32)
+    out -= gaussian_filter(out, (sigma, sigma, 0))
+    out += gaussian_filter(np.asarray(source_rgb, np.float32), (sigma, sigma, 0))
+    return np.clip(out, 0.0, 255.0, out=out)
+
+
+def colour_fix(upscaled, source, image_mod, sigma: float = COLOUR_FIX_SIGMA):
+    """``colour_fix_pixels`` on one upscaled square, against the source Lanczos'd to meet it."""
+    import numpy as np
+
+    fixed = colour_fix_pixels(
+        np.asarray(upscaled.convert("RGB"), np.float32),
+        np.asarray(source.resize(upscaled.size, image_mod.LANCZOS), np.float32),
+        sigma,
+    )
+    return image_mod.fromarray(fixed.astype(np.uint8))
 
 
 def hybrid_upscale(source, upscaled, image_mod, scale: int = ENHANCE_SCALE):
@@ -1155,6 +1367,11 @@ def enhance_levels(
     both more than a machine wants to spend and the exact overflow that makes the binary
     segfault. It exists only as sixty-four cores, each cut into its z7 tiles and its z6
     ones as soon as it is blended and then dropped.
+
+    Four stages, and the model is only the second. The squares written to ``in/`` are
+    pre-sharpened and are the model's input alone; every stage that needs the untouched
+    source re-cuts it from the sheet rather than reading them back, because a repair
+    measured against an already-sharpened square would be measuring its own work.
     """
     top = pyramid_top_z(sheet.width, tile_px)
     enhanced_top = enhanced_top_z(sheet.width, scale, tile_px)
@@ -1169,14 +1386,24 @@ def enhance_levels(
         directory.mkdir(parents=True)
 
     started = time.perf_counter()
+    t_presharpen = 0.0
+    lifted: list[float] = []
     for ty in range(grid):
         for tx in range(grid):
             crop = _padded_crop(sheet, image_mod, tx, ty, source_tile, overlap)
+            mark = time.perf_counter()
+            crop, raised = presharpen(crop, image_mod)
+            t_presharpen += time.perf_counter() - mark
+            lifted.append(raised)
             crop.save(src_dir / f"t_{tx:02d}_{ty:02d}.png")
-    t_cut = time.perf_counter() - started
+    t_cut = time.perf_counter() - started - t_presharpen
     print(
         f"  enhance: {grid * grid} source squares of {source_tile + 2 * overlap}px "
         f"({source_tile} + 2x{overlap} overlap) cut in {t_cut:.1f}s"
+    )
+    print(
+        f"  enhance: pre-sharpened in {t_presharpen:.1f}s; that mask covers "
+        f"{sum(lifted) / len(lifted) * 100:.1f}% of the sheet"
     )
 
     started = time.perf_counter()
@@ -1198,24 +1425,38 @@ def enhance_levels(
     )
 
     started = time.perf_counter()
+    t_repair = t_colour = 0.0
     core_px = source_tile * scale
     margin = overlap * scale
     per_level = {z: 0 for z in range(top + 1, enhanced_top + 1)}
     coverage: list[float] = []
     for ty in range(grid):
         for tx in range(grid):
-            name = f"t_{tx:02d}_{ty:02d}.png"
-            source = image_mod.open(src_dir / name).convert("RGB")
-            upscaled = image_mod.open(up_dir / name).convert("RGB")
+            # The square as the game drew it. `in/` holds the pre-sharpened one, which is
+            # the model's input and nothing else's: both stages below are corrections
+            # TOWARDS the source, and correcting towards a sharpened copy corrects nothing.
+            source = _padded_crop(sheet, image_mod, tx, ty, source_tile, overlap)
+            upscaled = image_mod.open(up_dir / f"t_{tx:02d}_{ty:02d}.png").convert("RGB")
+            mark = time.perf_counter()
             blended, covered = hybrid_upscale(source, upscaled, image_mod, scale)
-            core = blended.crop((margin, margin, margin + core_px, margin + core_px))
+            t_repair += time.perf_counter() - mark
+            mark = time.perf_counter()
+            # Before the crop, not after: the blur reaches about 25 px and a core cut first
+            # would have no neighbour to reach into, which is a seam in the making.
+            fixed = colour_fix(blended, source, image_mod)
+            t_colour += time.perf_counter() - mark
+            core = fixed.crop((margin, margin, margin + core_px, margin + core_px))
             coverage.append(covered)
             for z in per_level:
                 side = core_px >> (enhanced_top - z)
                 piece = core if side == core_px else core.resize((side, side), image_mod.LANCZOS)
                 span = side // tile_px
                 per_level[z] += cut_square(piece, dest, z, tx * span, ty * span, tile_px)
-    t_pyramid = time.perf_counter() - started
+    t_pyramid = time.perf_counter() - started - t_repair - t_colour
+    print(
+        f"  enhance: faint detail repaired in {t_repair:.1f}s, low frequencies restored in "
+        f"{t_colour:.1f}s ({t_colour / (grid * grid):.2f}s each)"
+    )
 
     levels = []
     for z, written in sorted(per_level.items()):
@@ -1226,7 +1467,10 @@ def enhance_levels(
                 "sheet_px": side,
                 "tiles": (1 << z) ** 2,
                 "bytes": written,
-                "from": f"the sheet upscaled {scale}x by {ENHANCE_MODEL}, faint detail restored",
+                "from": (
+                    f"the sheet pre-sharpened, upscaled {scale}x by {ENHANCE_MODEL}, faint "
+                    "detail restored and low frequencies put back"
+                ),
             }
         )
         print(f"  pyramid z{z}: {side}x{side}, {(1 << z) ** 2} tiles, {written / 1e6:.2f} MB")
@@ -1253,6 +1497,16 @@ def enhance_levels(
     return {
         "levels": levels,
         "enhancement": {
+            "recipe": ENHANCE_RECIPE,
+            "recipe_name": ENHANCE_RECIPES[ENHANCE_RECIPE],
+            "recipe_history": {str(n): text for n, text in ENHANCE_RECIPES.items()},
+            "recipe_role": (
+                "which pipeline cut the tiles beside this sidecar. The no-silent-downgrade "
+                "guard compares these numbers rather than a boolean, so re-cutting an older "
+                "recipe's tiles with a newer one reads as the upgrade it is; a pyramid whose "
+                "sidecar says enhanced and names no recipe was cut by recipe "
+                f"{UNNUMBERED_RECIPE}."
+            ),
             "model": ENHANCE_MODEL,
             "scale": scale,
             "source_tile_px": source_tile,
@@ -1268,6 +1522,35 @@ def enhance_levels(
                     "Real-ESRGAN ncnn-Vulkan, BSD-3-Clause, by Xintao Wang et al. A "
                     "prebuilt binary run offline at generation time; not vendored, not a "
                     "dependency of this project, and no part of it is in the output."
+                ),
+            },
+            "presharpen": {
+                "rule": (
+                    "input = source * (1 - m) + unsharp(source) * m, m from presharpen_mask "
+                    "on the source luma alone, fed to the model in place of the source"
+                ),
+                "rounds": PRESHARPEN_ROUNDS,
+                "sigma_px": PRESHARPEN_SIGMA,
+                "amount": PRESHARPEN_AMOUNT,
+                "window_px": FAINT_WINDOW,
+                "grow_px": FAINT_GROW,
+                "band": [FAINT_LO, PRESHARPEN_HI],
+                "feather_px": FAINT_FEATHER,
+                "mask_on_above": PRESHARPEN_ON,
+                "dilation": (
+                    f"one passive round: a pixel joins the mask only if at least "
+                    f"{PRESHARPEN_NEIGHBOURS} of its 8 neighbours are already in it"
+                ),
+                "edge_feather_px": PRESHARPEN_EDGE,
+                "mask_coverage": round(sum(lifted) / len(lifted), 4),
+                "why": (
+                    "repairing the output cannot put back a stroke the model never drew, and "
+                    "a mark 4 to 10 luma below its surroundings is under the model's floor. "
+                    "Raising the weak band by about a third on the way IN carries it over, "
+                    "and the model keeps some 85% of what it is handed against 79% of a mark "
+                    "it half-missed. The band stops at "
+                    f"{PRESHARPEN_HI} rather than the repair's {FAINT_HI} because amplifying "
+                    "a mid stroke gives the model more contrast to expand, not less."
                 ),
             },
             "hybrid": {
@@ -1287,13 +1570,34 @@ def enhance_levels(
                     "are and nowhere else."
                 ),
             },
+            "colour_fix": {
+                "rule": (
+                    "output = out - blur(out, sigma) + blur(lanczos(source), sigma), all "
+                    "three channels, at the 4x output's own resolution"
+                ),
+                "sigma_px": COLOUR_FIX_SIGMA,
+                "sigma_measured_in": "pixels of the enhanced output, not of the source",
+                "why": (
+                    "the model may decide detail the source does not resolve; it may not "
+                    "decide what colour a flat fill is, and it drifts them by up to a whole "
+                    "level of the map's own palette. Swapping the low band back halves that "
+                    "for no measurable sharpness, which is the largest single improvement "
+                    f"the second bake-off round found. Sigma exceeds a stroke's width at "
+                    f"{scale}x or the fix would blur back the sharpening it protects."
+                ),
+            },
             "seams": seams,
             "low_zoom": low,
             "timings_s": {
                 "cut_source_squares": round(t_cut, 2),
+                "presharpen": round(t_presharpen, 2),
                 "upscale": round(t_upscale, 2),
-                "blend_and_cut": round(t_pyramid, 2),
-                "total": round(t_cut + t_upscale + t_pyramid, 2),
+                "faint_repair": round(t_repair, 2),
+                "colour_fix": round(t_colour, 2),
+                "cut_enhanced_levels": round(t_pyramid, 2),
+                "total": round(
+                    t_cut + t_presharpen + t_upscale + t_repair + t_colour + t_pyramid, 2
+                ),
             },
         },
     }
@@ -1329,16 +1633,42 @@ def pinned_enhanced(sidecar: dict) -> bool:
     return node is True
 
 
-def enhancement_downgrades(sidecar: dict, enhance_now: bool) -> bool:
-    """Would this run replace an enhanced pyramid with a plainer one? Then it must not.
+def pinned_recipe(sidecar: dict) -> int:
+    """Which enhancement recipe cut the pyramid an existing sidecar describes.
+
+    0 for a plain one. A sidecar that names a recipe is taken at its word; one that says
+    only ``enhanced: true`` is recipe ``UNNUMBERED_RECIPE``, because the boolean existed
+    for exactly one pipeline before this number replaced it. Anything that is not a whole
+    number -- a string, a float, ``true`` itself, which ``bool`` makes an ``int`` in Python
+    and is not one here -- falls back to the boolean rather than being believed.
+    """
+    node: object = sidecar.get("_meta")
+    for key in RECIPE_PATH:
+        if not isinstance(node, dict):
+            node = None
+            break
+        node = node.get(key)
+    if isinstance(node, int) and not isinstance(node, bool) and node > 0:
+        return node
+    return UNNUMBERED_RECIPE if pinned_enhanced(sidecar) else 0
+
+
+def enhancement_downgrades(sidecar: dict, enhance_now: bool, recipe: int = ENHANCE_RECIPE) -> bool:
+    """Would this run replace a pyramid with one cut by a plainer recipe? Then it must not.
 
     The whole rule, in one place so the test can hold it rather than re-derive it from the
     branch in ``main``. Enhancing an unenhanced pyramid is an upgrade and never blocked;
-    re-enhancing an enhanced one is a refresh; only the fourth case is the silent quality
-    loss this guards -- a plain re-run over a tree the reader had sharpened, which would
-    otherwise halve the map's usable resolution and say nothing.
+    re-cutting with the same recipe is a refresh, and with a later one an upgrade again.
+    Only a run whose recipe is BEHIND what is already on disk is the silent quality loss
+    this guards -- most often a plain re-run over a tree the reader had sharpened, which
+    would otherwise halve the map's usable resolution and say nothing, but equally an older
+    checkout re-cutting tiles a newer recipe drew.
+
+    Which is why the comparison is on the number and not on the boolean: an amended
+    pipeline is a different picture, and a reader who runs the newer one must not be told
+    they are downgrading their own map.
     """
-    return pinned_enhanced(sidecar) and not enhance_now
+    return pinned_recipe(sidecar) > (recipe if enhance_now else 0)
 
 
 def build_sidecar(
@@ -1432,9 +1762,11 @@ def build_sidecar(
                 "node table from different builds are comparable on sight. "
                 "tools/gen_map_image.py refuses to overwrite map.png OR tiles/ unless this "
                 "sidecar names the build then installed; --force says it anyway. tiles."
-                "enhanced is the second half of the same posture: a run WITHOUT --enhance "
-                "refuses to replace a pyramid this says was enhanced, because a refresh "
-                "that quietly drops two zoom levels is drift too."
+                "enhancement.recipe is the second half of the same posture: a run whose "
+                "recipe is BEHIND the one named here refuses to replace these tiles, "
+                "because a refresh that quietly costs two zoom levels -- or re-cuts them "
+                "with a pipeline that was measured worse -- is drift too. A later recipe "
+                "over an earlier one is an upgrade and runs."
             ),
         },
     }
@@ -1539,12 +1871,16 @@ def main() -> int:
         # The other half of the staleness posture: a refresh may not quietly cost the
         # reader the two zoom levels they generated last time.
         if enhancement_downgrades(sidecar_now, args.enhance):
+            have = pinned_recipe(sidecar_now)
+            want = ENHANCE_RECIPE if args.enhance else 0
             print(
-                f"{tiles_dir} was cut with --enhance and this run was not, so it would "
-                "replace a z0..z7 pyramid with a z0..z5 one.\n"
-                "A refresh that quietly drops the two sharpest zoom levels is exactly the "
-                "kind of drift this tool announces rather than performs. Pass --enhance to "
-                "keep them, or --force to accept the plainer map."
+                f"{tiles_dir} was cut by enhancement recipe {have} -- "
+                f"{ENHANCE_RECIPES.get(have, 'a recipe this checkout has never heard of')} "
+                f"-- and this run would cut it with recipe {want}: "
+                f"{ENHANCE_RECIPES[want]}.\n"
+                "A refresh that quietly costs the reader picture they already generated is "
+                "exactly the kind of drift this tool announces rather than performs. Pass "
+                "--enhance to keep it, or --force to accept the plainer map."
             )
             return 5
         existing = pinned_build(sidecar_now)

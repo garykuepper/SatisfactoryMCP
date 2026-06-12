@@ -741,6 +741,105 @@ def test_the_faint_mask_covers_weak_strokes_and_leaves_everything_else_to_the_ai
     assert gen.faint_mask(below).max() == 0.0
 
 
+def test_the_presharpen_raises_the_weak_band_and_nothing_else():
+    """The stage that runs BEFORE the model, on arrays where the answer is known.
+
+    Repairing the output cannot put back a stroke the model never drew, so the faintest
+    marks are raised on the way in. Three things have to hold for that to be a rule rather
+    than a wash of contrast: it fires only on the weak band, it deepens the mark it fires
+    on, and past the mask and the couple of pixels its feather reaches the source comes
+    through untouched -- not "nearly", exactly, because the blend weight there is zero.
+
+    And the fourth, which is the whole reason there are two masks: the pre-sharpen's band
+    stops short of the repair's. A stroke between the two ceilings is protected on the way
+    out and must NOT be amplified on the way in, because handing the model more contrast on
+    a mid stroke is handing it something to expand.
+    """
+    numpy = pytest.importorskip("numpy")
+    gen = _gen_map_image()
+
+    def square(depth):
+        """A flat 200 fill with one column drawn ``depth`` luma below it, as RGB."""
+        page = numpy.full((64, 64, 3), 200.0, numpy.float32)
+        page[:, 32] = 200.0 - depth
+        return page
+
+    # A box mean over FAINT_WINDOW turns a drawn depth d into a measured 8d/9, which is
+    # what both bands are expressed in -- so the drawn numbers here are scaled to land
+    # squarely inside the intervals rather than near their ends.
+    weak = square(6.5 * 9 / 8)
+    mid = square(12.0 * 9 / 8)
+    strong = square(60.0)
+
+    # The band is a blend weight wherever it is used, so it is bounded like one.
+    for page in (weak, mid, strong):
+        band = gen.faint_band(gen.faint_depth(page.mean(2)), gen.PRESHARPEN_HI)
+        assert band.min() >= 0.0 and band.max() <= 1.0, "a blend weight, or it is not one"
+
+    assert not gen.presharpen_mask(numpy.full((64, 64), 200.0, numpy.float32)).any(), (
+        "there is nothing to lift on flat fill"
+    )
+    assert gen.presharpen_mask(weak.mean(2))[:, 32].all(), "the weak band is what this exists for"
+    assert not gen.presharpen_mask(strong.mean(2)).any(), "the model renders a strong stroke well"
+
+    # The two ceilings, and the gap between them that only one mask covers.
+    assert gen.PRESHARPEN_HI < gen.FAINT_HI
+    assert gen.faint_mask(mid.mean(2)).max() > 0.0, "the repair still protects a mid stroke"
+    assert not gen.presharpen_mask(mid.mean(2)).any(), "and the pre-sharpen leaves it alone"
+
+    lifted, mask = gen.presharpen_pixels(weak)
+    assert lifted.min() >= 0.0 and lifted.max() <= 255.0
+    assert lifted[:, 32, 0].max() < weak[:, 32, 0].min(), "the mark it fires on comes out deeper"
+    assert 0.0 < mask.mean() < 0.25, "and on a small part of the square, not most of it"
+    # Past the mask and its feather it is the identity, not an approximation of one.
+    marked = numpy.flatnonzero(mask.any(0))
+    far = numpy.ones(weak.shape[1], bool)
+    far[marked.min() - 3 : marked.max() + 4] = False
+    assert far.sum() > 40, "and there is a real fill left over to check that on"
+    assert numpy.array_equal(lifted[:, far], weak[:, far])
+
+    untouched, empty = gen.presharpen_pixels(strong)
+    assert not empty.any()
+    assert numpy.array_equal(untouched, strong), "an empty mask blends nothing at all"
+
+
+def test_the_colour_fix_hands_the_flat_fills_back_to_the_source():
+    """The stage that runs after the repair, on a drift constructed to be recognised.
+
+    The model's other measured defect is that it moves the colour of a flat fill -- by up
+    to a whole level of the map's own palette, which is a visible step in a picture whose
+    fills ARE its levels. So the output's low frequencies are replaced by the source's, and
+    the two things that has to do are: put a flat fill back exactly where the source had
+    it, and leave the detail the model was entitled to invent alone.
+    """
+    numpy = pytest.importorskip("numpy")
+    gen = _gen_map_image()
+
+    source = numpy.full((128, 128, 3), 180.0, numpy.float32)
+    source[:, 60:68] = 120.0  # a stroke, at the source's own depth
+
+    drifted = source + 9.0  # the whole fill has wandered nine levels of grey
+    drifted[:, 60:68] = 100.0  # and the model has deepened the stroke, which is its business
+
+    fixed = gen.colour_fix_pixels(drifted, source)
+    assert fixed.min() >= 0.0 and fixed.max() <= 255.0
+
+    # Well away from the stroke and from the edges -- further than the blur reaches -- the
+    # fill is back at the source's own value, and the drift is gone rather than reduced.
+    fill = fixed[40:88, 100:124]
+    assert abs(float(fill.mean()) - 180.0) < 0.01
+    assert float(numpy.abs(fill - 180.0).max()) < 0.01
+    assert abs(float(drifted[40:88, 100:124].mean()) - 189.0) < 0.01, "there was a drift to fix"
+
+    # The stroke is still deeper than the source drew it: the fix protects the sharpening
+    # rather than blurring it back, which is what sigma exceeding a stroke's width buys.
+    assert fixed[:, 64, 0].max() < source[:, 64, 0].min()
+    assert gen.COLOUR_FIX_SIGMA > 4.0, "or the blur would sit inside a stroke at 4x"
+
+    # A source that never drifted is left where it is, to within rounding.
+    assert float(numpy.abs(gen.colour_fix_pixels(source, source) - source).max()) < 1e-3
+
+
 def test_an_enhanced_pyramid_is_not_quietly_replaced_by_a_plain_one(tmp_path):
     """The no-silent-downgrade rule, and the sidecar round trip it reads through.
 
@@ -765,12 +864,22 @@ def test_an_enhanced_pyramid_is_not_quietly_replaced_by_a_plain_one(tmp_path):
         versions={"pillow": "12.3.0"},
     )
     enhancement = {
+        "recipe": gen.ENHANCE_RECIPE,
+        "recipe_name": gen.ENHANCE_RECIPES[gen.ENHANCE_RECIPE],
         "model": gen.ENHANCE_MODEL,
         "scale": gen.ENHANCE_SCALE,
         "source_tile_px": gen.ENHANCE_TILE_PX,
         "overlap_px": gen.ENHANCE_OVERLAP_PX,
         "binary": {"url": gen.ENHANCE_URL, "sha256": gen.ENHANCE_SHA256},
-        "timings_s": {"upscale": 66.7, "total": 400.0},
+        "presharpen": {
+            "rounds": gen.PRESHARPEN_ROUNDS,
+            "amount": gen.PRESHARPEN_AMOUNT,
+            "band": [gen.FAINT_LO, gen.PRESHARPEN_HI],
+            "mask_coverage": 0.0431,
+        },
+        "hybrid": {"band": [gen.FAINT_LO, gen.FAINT_HI], "mask_coverage": 0.0355},
+        "colour_fix": {"sigma_px": gen.COLOUR_FIX_SIGMA},
+        "timings_s": {"upscale": 66.7, "colour_fix": 320.4, "total": 400.0},
     }
     sharp = gen.build_sidecar(
         tiles={"tile_px": 256, "max_z": 7, "enhanced": True, "enhancement": enhancement},
@@ -789,6 +898,15 @@ def test_an_enhanced_pyramid_is_not_quietly_replaced_by_a_plain_one(tmp_path):
     assert (written["model"], written["scale"]) == (gen.ENHANCE_MODEL, 4)
     assert (written["source_tile_px"], written["overlap_px"]) == (1024, 96)
     assert written["timings_s"]["total"] == 400.0
+    # Both new stages, with the parameters that make them reproducible, and the recipe that
+    # names the whole of it -- a reader must be able to tell which pipeline cut these tiles.
+    assert written["recipe"] == gen.ENHANCE_RECIPE
+    assert written["recipe_name"] == gen.ENHANCE_RECIPES[gen.ENHANCE_RECIPE]
+    assert (written["presharpen"]["rounds"], written["presharpen"]["amount"]) == (3, 0.14)
+    assert written["presharpen"]["band"] == [gen.FAINT_LO, gen.PRESHARPEN_HI]
+    assert written["hybrid"]["band"] == [gen.FAINT_LO, gen.FAINT_HI]
+    assert written["presharpen"]["band"][1] < written["hybrid"]["band"][1]
+    assert written["colour_fix"]["sigma_px"] == gen.COLOUR_FIX_SIGMA
     # The build pin still reads through the same file, so the two guards do not shadow.
     assert gen.pinned_build(read_back) == pin
 
@@ -800,12 +918,35 @@ def test_an_enhanced_pyramid_is_not_quietly_replaced_by_a_plain_one(tmp_path):
     assert gen.pinned_enhanced({"_meta": {"tiles": {"enhanced": "yes"}}}) is False
     assert gen.pinned_enhanced({"_meta": {"tiles": "not a mapping"}}) is False
 
-    # And the rule itself: only sharp-then-plain is refused.
+    # The recipe survives the same round trip, and a sidecar from before recipes existed
+    # reads as the one pipeline the bare boolean can have meant.
+    older = json.loads(json.dumps(gen.build_sidecar(tiles={"enhanced": True}, **common)))
+    assert gen.pinned_recipe(read_back) == gen.ENHANCE_RECIPE
+    assert gen.pinned_recipe(older) == gen.UNNUMBERED_RECIPE == 1
+    assert gen.pinned_recipe(plain) == 0
+    assert gen.pinned_recipe({}) == 0
+    # Nothing but a whole number above zero is believed; the boolean decides the rest.
+    for junk in (True, "2", 2.0, 0, -1, None):
+        assert gen.pinned_recipe({"_meta": {"tiles": {"enhancement": {"recipe": junk}}}}) == 0
+
+    # And the rule itself, which compares recipes rather than a flag: only a run BEHIND
+    # what is on disk is refused.
     assert gen.enhancement_downgrades(read_back, enhance_now=False) is True
     assert gen.enhancement_downgrades(read_back, enhance_now=True) is False
     assert gen.enhancement_downgrades(plain, enhance_now=False) is False
     assert gen.enhancement_downgrades(plain, enhance_now=True) is False
     assert gen.enhancement_downgrades({}, enhance_now=False) is False
+    # An amended pipeline over the recipe it amends is an upgrade, and must not be called
+    # a downgrade -- that refusal is what a re-cut with this file would otherwise hit.
+    assert gen.ENHANCE_RECIPE > gen.UNNUMBERED_RECIPE
+    assert gen.enhancement_downgrades(older, enhance_now=True) is False
+    assert gen.enhancement_downgrades(older, enhance_now=False) is True
+    # ... and the same tiles re-cut by the recipe that drew them is a refresh, not a loss.
+    assert (
+        gen.enhancement_downgrades(read_back, enhance_now=True, recipe=gen.ENHANCE_RECIPE) is False
+    )
+    # The one case the number adds: an older checkout over a newer recipe's tiles.
+    assert gen.enhancement_downgrades(read_back, enhance_now=True, recipe=1) is True
 
 
 def test_machines_split_by_kind_and_name_their_buildings(client, state):
