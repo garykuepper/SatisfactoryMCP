@@ -908,6 +908,111 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
     }
 
 
+# ---------------------------------------------------------------------- pipes
+
+
+def _pipe_class(st: WorldState, cls: str | None) -> dict[str, Any]:
+    """What one pipe class is, resolved once per class rather than once per piece."""
+    building = st.game.buildings.get(cls) if cls else None
+    return {
+        "cls": cls,
+        "name": building.name if building else _pretty_cls(cls),
+        # The dump's own throughput for the tier -- 300 on Mk1, 600 on Mk2 -- rather than a
+        # "Mk2" the page would have to parse back out of a display name, exactly as the belts
+        # next door take `items_per_min`. ``null`` where the dump is silent.
+        "flow_m3_min": (building.flow_m3_min or None) if building else None,
+    }
+
+
+@router.get("/pipes")
+def pipes(request: Request, save: str | None = None, world: str | None = None) -> Any:
+    """Every fluid pipe, as the polyline it was actually built along, and what it carries.
+
+    New in schema 13, and the belts' other half. The geometry was never hidden the way the
+    belts' was -- a pipe's spline is an ordinary ``mSplineData`` PROPERTY on the pipeline
+    actor, stored in the actor's own frame and translated back at the projection -- so this
+    is the same shape one layer down: ``{"classes": [...], "networks": [...], "segments":
+    [[network_index, class_index, [[x, y, z], ...]], ...]}`` in world centimetres, resolved
+    here so the page carries no legend, every field read guarded so a malformed segment costs
+    that segment.
+
+    **Each pipe says which fluid it carries**, which is the thing a belt cannot say: the game
+    keeps an ``FGPipeNetwork`` per connected plumbing system with the fluid on it and its
+    members listed, so ``fluid`` is the world's own answer rather than an inference from what
+    the pipe is plugged into. All 503 pipes on the reference world are claimed by one of its
+    19 networks -- 215 crude oil, 198 water, 55 fuel, 31 heavy oil residue, 4 alumina
+    solution. ``null`` for a pipe no network claims, which happens on none of them here but
+    is what an empty or half-built network would give.
+
+    **There is no flow direction in here, because there is none in the save.** A belt has an
+    input end and an output end and the projection puts its points in travel order; a pipe
+    has ``PipelineConnection0`` and ``PipelineConnection1``, an ``mFluidBox`` that is one
+    float of contents, and a flow indicator actor carrying nothing but its paint. Which way a
+    fluid moves is decided at runtime by head lift and demand and reverses when they do. So
+    the points are in the order the file stores them -- the order the player dragged the pipe
+    -- and that is not a claim about travel. A client must not draw an arrow from it.
+
+    Sent one row per piece, ungrouped, the posture ``/api/belts`` and ``/api/structures`` both
+    take. Measured on the reference world -- 503 pipes, 1,987 points, 48 KB -- an order
+    smaller than the 562 KB of belts beside it, because there are six times fewer of them.
+    Nothing to thin: 3.9 points a pipe, and they are already only the corners.
+
+    Not in here: pumps, junctions, valves and fluid buffers. They carry no spline at all, only
+    a header position, so they are a different row shape and a different question -- the same
+    question the belts key leaves open about splitters and mergers.
+    """
+    try:
+        st = _state(request, save, world)
+    except Exception as exc:
+        return _fail(f"could not read save: {exc}", 404)
+
+    raw = st.projection.get("pipes") or {}
+    classes = list(raw.get("classes") or ())
+    networks = list(raw.get("networks") or ())
+    resolved: dict[int, dict[str, Any]] = {}
+    rows = []
+    for seg in raw.get("segments") or ():
+        if not isinstance(seg, (list, tuple)) or len(seg) < 3:
+            continue
+        try:
+            net = int(seg[0])
+            index = int(seg[1])
+        except (TypeError, ValueError):
+            continue
+        points = []
+        for p in seg[2] or ():
+            if not isinstance(p, (list, tuple)) or len(p) < 3:
+                continue
+            try:
+                points.append([_m(float(p[0])), _m(float(p[1])), _m(float(p[2]))])
+            except (TypeError, ValueError):
+                continue
+        if not points:
+            continue  # nothing to place; a piece with no geometry is not a piece
+        if index not in resolved:
+            resolved[index] = _pipe_class(st, classes[index] if 0 <= index < len(classes) else None)
+        entry = networks[net] if 0 <= net < len(networks) else {}
+        fluid = entry.get("fluid") if isinstance(entry, dict) else None
+        rows.append(
+            {
+                # The game's own network id, not the index into the list above: the index is
+                # an encoding detail of this payload and the id is a thing in the world.
+                "network": entry.get("id") if isinstance(entry, dict) else None,
+                "fluid": fluid,
+                # Resolved against the dump like every other class here, so a popup never has
+                # to show a reader a `Desc_…_C`.
+                "fluid_name": st.game.item_name(fluid) if fluid else None,
+                **resolved[index],
+                "points_m": points,
+            }
+        )
+    return {
+        "pipes": rows,
+        "count": len(rows),
+        "networks": len({r["network"] for r in rows if r["network"] is not None}),
+    }
+
+
 # ------------------------------------------------------------------ factories
 
 

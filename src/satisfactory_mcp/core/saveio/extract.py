@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-12 projection is this project's shape, versioned with this project's cache,
+the schema-13 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -62,7 +62,19 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
+
+#: The four pipeline classes that carry an ``mSplineData`` -- the fluid pipes, Mk1 and Mk2,
+#: each in the ordinary and the ``NoIndicator`` variant a player gets when the flow indicator
+#: is switched off. Listed rather than pattern-matched: ``Build_PipeHyper_C`` carries the
+#: identical property and is a HYPERTUBE, which moves a player and no fluid at all, and
+#: ``Build_PipelineSupport_C`` is a pole with a height and no geometry at all. See `_pipes`.
+PIPE_CLASSES = (
+    "Build_Pipeline_C",
+    "Build_PipelineMK2_C",
+    "Build_Pipeline_NoIndicator_C",
+    "Build_PipelineMK2_NoIndicator_C",
+)
 
 _MANUFACTURER_HINTS = (
     "ConstructorMk1",
@@ -280,6 +292,8 @@ def extract(path: str) -> dict:
         "structures": {"classes": [], "instances": []},
         # Belt routing, as polylines. Schema 12; see `_belts`.
         "belts": {"classes": [], "segments": []},
+        # Fluid pipe routing, as polylines. Schema 13; see `_pipes`.
+        "pipes": {"classes": [], "networks": [], "segments": []},
         "machines": [],
         "extractors": [],
         "generators": [],
@@ -303,6 +317,12 @@ def extract(path: str) -> dict:
     #: decoded here because the trailing bytes decode lazily and doing it in the walk would
     #: interleave a 0.3 s decode with the property pass for no gain -- see `_belts`.
     chain_actors: list[tuple] = []
+    #: (class, instanceName, world position, mSplineData) per fluid pipe, and
+    #: (mPipeNetworkID, fluid, [member paths]) per pipe network. Both held rather than
+    #: resolved in the walk because a pipe's fluid comes off its NETWORK, and a network
+    #: actor can be written after the pipes it owns -- see `_pipes`.
+    pipe_actors: list[tuple] = []
+    pipe_nets: list[tuple] = []
 
     # --- connectivity interning -------------------------------------------
     actor_ix: dict[str, int] = {}
@@ -478,6 +498,15 @@ def extract(path: str) -> dict:
             fluid = ref_class(p.get("mFluidDescriptor"))
             if fluid:
                 out["pipe_networks"].append({"instance": instance, "fluid": fluid})
+            # Held for `_pipes` whether or not it named a fluid: an empty network still owns
+            # its pipes, and "drawn, fluid unknown" beats "not drawn".
+            pipe_nets.append(
+                (
+                    p.get("mPipeNetworkID"),
+                    fluid,
+                    [ref_path(m) for m in p.get("mFluidIntegrantScriptInterfaces") or []],
+                )
+            )
             continue
         # Four class names, not one: the three ``_RepSize*`` variants are the same actor
         # with a bigger replication budget and the identical record.
@@ -508,6 +537,13 @@ def extract(path: str) -> dict:
         if not cls.startswith("Build_"):
             continue
         counts[cls] = counts.get(cls, 0) + 1
+
+        # Held, not `continue`d past: a pipe is still a Build_ actor and still owes
+        # `building_counts` its tally, which is a schema-11 key that predates all of this.
+        if cls in PIPE_CLASSES:
+            pipe_actors.append(
+                (cls, instance, getattr(header, "position", None), p.get("mSplineData"))
+            )
 
         record = {
             "cls": cls,
@@ -578,6 +614,7 @@ def extract(path: str) -> dict:
     }
     out["building_counts"] = dict(sorted(counts.items()))
     out["belts"] = _belts(chain_actors)
+    out["pipes"] = _pipes(pipe_actors, pipe_nets)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
@@ -979,6 +1016,97 @@ def _conveyor_class(path: str) -> str:
     if parts and parts[-1].isdigit():
         parts.pop()
     return "_".join(parts) if len(parts) > 1 else ""
+
+
+def _pipes(actors: list, networks: list) -> dict:
+    """Every fluid pipe's route, as polylines, and the fluid each one carries.
+
+    ``actors`` is ``[(class, instanceName, actorPosition, mSplineData), ...]`` and
+    ``networks`` is ``[(mPipeNetworkID, fluidClass, [memberPath, ...]), ...]``.
+
+    The other half of "draw what the player built". Belts came out of a trailer; a pipe is
+    simpler and was in reach the whole time -- **the spline is a PROPERTY**, ``mSplineData``,
+    an array of structs whose ``Location`` is one control point. (Its ``ArriveTangent`` and
+    ``LeaveTangent`` are the curve's shape between the points and are dropped: the game
+    builds pipes out of straight runs and elbows, and the reference save's 503 pipes are 224
+    two-point straights and 195 six-point elbows.)
+
+    Rows are ``[networkIndex, classIndex, [[x, y, z], ...]]``:
+
+    * **networkIndex** points into ``networks``, ``[{"id": ..., "fluid": ...}, ...]`` -- the
+      game's own ``FGPipeNetwork`` grouping, 19 of them here, and the reason this key can say
+      WATER or CRUDE OIL rather than only "a pipe". ``-1`` for a pipe no network claims,
+      which happens on none of the reference save's 503.
+    * **classIndex** interns the build class: Mk1 and Mk2, each with a ``NoIndicator``
+      variant, which is a pipe whose flow indicator the player switched off.
+    * The points are whole centimetres, like ``_belts``, and there is nothing to thin --
+      1,987 points over 503 pipes, 3.9 apiece, and they are already only the corners.
+
+    **The frame is the actor's, translated and not rotated -- measured, not assumed.** Every
+    ``Location`` is stored relative to the pipe's own actor position, so that position is
+    added back. That the first point of all 503 is exactly ``(0, 0, 0)`` proves the frame is
+    local but proves nothing about which correction is right, so the check is made against
+    things the pipes did not write:
+
+    * The world's 306 ``Build_PipelineFlowIndicator_C`` actors are hung ON a pipe. Translated,
+      294 of them sit within 10 cm of a pipe polyline -- **median 0.0 cm, p95 4.7 cm**. Raw,
+      not one is within 10 cm of any pipe.
+    * Pipe endpoints against the 141 junctions and pumps: translated, the median endpoint is
+      6.0 m from the nearest fitting and 400 of 1,006 are within 3 m; raw, the median is
+      1.7 km, which is a map away.
+
+    **No rotation to undo, and that is the same statement `_belts` makes about chains**: all
+    **18,069 pipeline actors across the 66 saves on this disk** carry an identity quaternion.
+    A pipe that ever carried one would need its points rotated before translating, so the
+    measurement is stated rather than the assumption made quietly.
+
+    **Flow direction is NOT in here, because it is not in the save.** A pipe's two connectors
+    are named ``PipelineConnection0`` and ``PipelineConnection1`` -- not input and output,
+    unlike a belt's -- ``mFluidBox`` is a single float of contents, and the flow indicator
+    actor carries nothing but its paint. The spline's own order is the order the player
+    dragged it, which is not a claim about which way the fluid goes; in this game that is
+    decided at runtime by head lift and demand and reverses when they do. So the points come
+    out in file order and no consumer is told they mean travel.
+    """
+    fluid_of: dict[str, int] = {}
+    nets: list[dict] = []
+    for net_id, fluid, members in networks:
+        ni = len(nets)
+        nets.append({"id": net_id if isinstance(net_id, int) else None, "fluid": fluid})
+        for member in members:
+            if member:
+                fluid_of[member] = ni
+
+    classes: list[str] = []
+    index: dict[str, int] = {}
+    segments: list[list] = []
+
+    for cls, instance, origin, spline in actors:
+        if not isinstance(spline, list):
+            continue
+        try:
+            ox, oy, oz = (float(v) for v in origin)
+        except (TypeError, ValueError):
+            continue
+        points = []
+        for entry in spline:
+            at = struct_fields(entry).get("Location")
+            try:
+                points.append([round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)])
+            except (TypeError, ValueError, IndexError):
+                continue
+        # A single point is not a route, the same bar `_belts` sets -- and unlike a belt
+        # there is no lift here to except: not one of the reference save's 503 pipes is
+        # vertical (minimum horizontal span 11.6 cm), so every pipe is drawable as a line.
+        if len(points) < 2:
+            continue
+        ci = index.get(cls)
+        if ci is None:
+            ci = index[cls] = len(classes)
+            classes.append(cls)
+        segments.append([fluid_of.get(str(instance), -1), ci, points])
+
+    return {"classes": classes, "networks": nets, "segments": segments}
 
 
 def inventory_bucket(instance: str) -> str:

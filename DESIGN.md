@@ -166,7 +166,7 @@ SatisfactoryMcp/
                        # normalize.py (-> items / recipes / buildings / schematics)
                        # model.py  search.py  footprint.py  constants.py
       saveio/          # projection.py: spawns the extractor, validates, caches
-                       # extract.py: runs IN the child, builds the schema-12 projection
+                       # extract.py: runs IN the child, builds the schema-13 projection
       text.py          # num + plural ONLY — the two helpers domain may reach
     domain/            # returns dataclasses and dicts, NEVER formatted text
       world/           # state.py: WorldState, a thin aggregate over the facets
@@ -4003,6 +4003,43 @@ its own, because the world map drew angled platforms as staircases and drew no b
 * **The parity ripple resolved as planned.** `tests/test_savparse_parity.py` filters the
   projection back to the schema-11 shape through an explicit list of what 12 added, and
   `vendor_parity.json` is untouched.
+
+### Schema 13 landed the plumbing (2026-07-31)
+
+The other half of "draw what the player built". Belts came out of a trailer and cost a lazy
+decode; a pipe's route was in reach the whole time and nothing asked for it.
+
+* **Pipes**, a new `pipes` key: `{classes, networks, segments}`, with a segment
+  `[networkIndex, classIndex, [[x, y, z], …]]` per pipe, world centimetres. The spline is an
+  ordinary **property** — `mSplineData`, an array of structs whose `Location` is a control
+  point — on `Build_Pipeline_C` / `Build_PipelineMK2_C` and their two `NoIndicator` variants.
+  503 pipes and 1,987 points on the reference save.
+* **The frame is the actor's, translated and not rotated**, and that is measured rather than
+  assumed. Every `Location` is actor-local (the first point of all 503 is exactly `(0,0,0)`,
+  which proves the frame is local and nothing about the correction), so the check is against
+  things the pipes did not write: translated, 294 of the world's 306 pipeline **flow
+  indicators** sit within 10 cm of a pipe polyline (median 0.0, p95 4.7 cm) where raw not one
+  does, and pipe endpoints are a median 6.0 m from the nearest junction or pump against 1.7 km
+  raw. All **18,069 pipeline actors across the 66 saves on this disk** carry an identity
+  rotation, the same statement `belts` makes about chains.
+* **The fluid comes with it**, which is what a belt cannot say: `FGPipeNetwork` carries the
+  fluid descriptor and lists its members, so every one of the reference world's 503 pipes is
+  claimed by one of its 19 networks — 215 crude oil, 198 water, 55 fuel, 31 heavy oil residue,
+  4 alumina solution.
+* **No flow direction, and that is a refusal rather than an omission.** A belt has an input
+  and an output end and `belts` is emitted in travel order; a pipe has `PipelineConnection0`
+  and `PipelineConnection1`, an `mFluidBox` that is one float of contents, and a flow
+  indicator actor carrying nothing but its paint. Direction is decided at runtime by head lift
+  and demand and reverses when they do, so the points stay in file order and no consumer is
+  told they mean travel. `/api/pipes` ships no arrows.
+* **Cost, measured on the reference save:** the projection grew 1,209,739 → 1,258,597 bytes
+  (+4.0%), of which `pipes` is 48 KB. **The time did not move** — best of 5 interleaved runs,
+  3.03 s either way (medians 3.08 and 3.09) — which is the difference between this and the
+  belts: those cost +19% because a chain trailer had to be decoded, and these were already
+  being parsed as ordinary properties, so `_pipes` only reads what the walk had in hand.
+* **Not in it:** pumps, junctions, valves and fluid buffers. They carry no spline, only a
+  header position, so they are a different row shape and the same open question `belts` leaves
+  about splitters and mergers.
 
 ---
 

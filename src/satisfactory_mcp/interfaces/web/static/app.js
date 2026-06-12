@@ -429,6 +429,7 @@ var LAYER_ORDER = [
   "proposals",
   "foundations",
   "belts",
+  "pipes",
   "machines",
   "extractors",
   "generators",
@@ -1050,9 +1051,15 @@ function beltColour(items_per_min) {
  * The floor is where honesty stops paying. At the whole-world zoom a metre is 0.14 px, so a
  * true-size belt would be a quarter-pixel of nothing; 1.5 px is a hairline that still draws.
  * Above about zoom -2 the physical width wins and the floor is never reached, which is the
- * whole point -- the floor is a lower bound on visibility, not a second styling rule. */
+ * whole point -- the floor is a lower bound on visibility, not a second styling rule.
+ *
+ * The floor is ROUTE_MIN_PX and not BELT_MIN_PX because it is not a statement about belts:
+ * it is the width below which a stroked line stops being drawn at all, and the pipes next
+ * door -- narrower in the world, so floored a zoom step sooner -- reach it for the same
+ * reason. One hairline for both, or the two networks fade out at different zooms and the
+ * page invents a difference the world does not have. */
 var BELT_WIDTH_M = 2;
-var BELT_MIN_PX = 1.5;
+var ROUTE_MIN_PX = 1.5;
 
 /* A lift is the same two metres seen end-on, so its ring is that circle: radius half the
  * belt width, floored a little higher than the line is, because a ring has to enclose
@@ -1066,8 +1073,15 @@ var LIFT_MIN_RADIUS_PX = 2;
  * the pieces snap to, which is also what makes a run read as continuous through one. */
 var ATTACHMENT_FALLBACK_M = 4;
 
+/* A route's stroke width, in pixels, from its width in the world. The one place the two
+ * network layers agree completely: a belt is two metres and a pipe is 1.3, and past the
+ * floor each is drawn at whatever that is worth on screen right now. */
+function routeWeight(width_m, ppm) {
+  return Math.max(ROUTE_MIN_PX, width_m * ppm);
+}
+
 function beltWeight(ppm) {
-  return Math.max(BELT_MIN_PX, BELT_WIDTH_M * ppm);
+  return routeWeight(BELT_WIDTH_M, ppm);
 }
 
 function liftRadius(ppm) {
@@ -1141,10 +1155,10 @@ function drawBelts(data) {
       )
       .addTo(group);
   });
-  sinkBelts();
+  sinkRoutes();
 }
 
-/* The pixels half of the belt layer, re-derived whenever the scale changes.
+/* The pixels half of both route layers, re-derived whenever the scale changes.
  *
  * A polyline's weight and a circleMarker's radius are the two sizes on this page that are
  * given in screen pixels, so they are the two that do NOT follow the map on their own -- a
@@ -1152,7 +1166,7 @@ function drawBelts(data) {
  * factory, which is why it read as a thread beside machines drawn at their true footprint.
  * Everything else here is a polygon in map units and needs none of this.
  *
- * Restyling on zoomend, rather than drawing belts as thin polygons in map units:
+ * Restyling on zoomend, rather than drawing the routes as thin polygons in map units:
  *
  *   * a polygon cannot have a floor. Below zoom -2 a true two-metre belt is a fraction of a
  *     pixel, and the floor is what keeps the network visible at the world view at all --
@@ -1170,55 +1184,178 @@ function drawBelts(data) {
  * as one image during a zoom animation, so a belt already grows with the map mid-flight and
  * used to SNAP BACK to its fixed pixel width when the canvas was redrawn at the end. Landing
  * on the width the animation was already showing is what removes that snap. */
-function styleBelts() {
-  var group = state.layers.belts;
-  if (!group) return;
+function styleRoutes() {
   var ppm = pixelsPerMetre();
-  var weight = beltWeight(ppm);
   var radius = liftRadius(ppm);
-  group.eachLayer(function (piece) {
-    // Three kinds of piece share this layer and only two of them are sized in pixels: a
-    // lift's ring by its radius, a run by its weight. A splitter is a polygon in map units
-    // and is already the right size at every zoom -- exactly like a machine, which is the
-    // whole reason it is drawn as one.
-    if (piece.setRadius) piece.setRadius(radius);
-    else if (!(piece instanceof L.Polygon)) piece.setStyle({ weight: weight });
+  ROUTE_LAYERS.forEach(function (name) {
+    var group = state.layers[name];
+    if (!group) return;
+    var weight = routeWeight(ROUTE_WIDTH_M[name], ppm);
+    group.eachLayer(function (piece) {
+      // Three kinds of piece share these layers and only two of them are sized in pixels: a
+      // lift's ring by its radius, a run by its weight. A splitter is a polygon in map units
+      // and is already the right size at every zoom -- exactly like a machine, which is the
+      // whole reason it is drawn as one.
+      if (piece.setRadius) piece.setRadius(radius);
+      else if (!(piece instanceof L.Polygon)) piece.setStyle({ weight: weight });
+    });
   });
 }
 
-map.on("zoomend", styleBelts);
+map.on("zoomend", styleRoutes);
 
-/* Belts share the overlay canvas with the machines and the node dots, so the rule
- * raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
- * match wins. A belt run crosses every machine it feeds, and a polyline's hit area is its
- * width plus Leaflet's click tolerance -- so a belts layer added after the machines would
- * quietly take the click on every machine a belt passes over. Pushed to the back instead:
- * under the machines, under the node dots, still over the foundations (a separate pane, so
- * a separate canvas, so unaffected either way).
+/* The fluid network, drawn the same way and told apart by colour.
  *
- * Its own pane would be the tidier answer and is not one: Leaflet gives every pane its own
- * canvas, the DOM delivers a click to the topmost element under the pointer, and the
- * overlay pane's canvas covers the entire viewport -- so a clickable layer below it is not
- * clickable at all. That is also why this is safe to call whenever: `bringToBack` is a
- * no-op on a path whose group is not on the map, which is the state this layer starts in.
+ * New with schema 13, and the belts' other half: `mSplineData` sat on every pipeline actor
+ * the whole time and the projection dropped it, so the map could show a base's belts and
+ * nothing about its plumbing.
  *
- * Order INSIDE the layer matters too, and it is decided by the order of the calls: each
+ * The same posture as the belts next door, deliberately -- one colour family for the whole
+ * network, tier as a VALUE step inside it, width physical, no second palette -- because a
+ * page that encodes two networks by two different grammars makes the reader learn twice.
+ *
+ * NO GLYPH, and that is a measurement rather than an omission. A conveyor lift gets a ring
+ * because its top-down polyline is a single point; the server measured the same question for
+ * pipes and the answer is that there is no such piece -- the tightest of this world's 503
+ * spans 11.6 cm horizontally and only one is under 50 cm. Every pipe draws as a line. The
+ * one-point guard below is still there, because "none on this world" is not "none ever".
+ *
+ * NO ARROWS, and that is the API's refusal carried through: a pipe has no flow direction in
+ * the save, so the points are the order the player dragged it and mean nothing about travel.
+ * The popup says so rather than leaving the reader to assume it, because a run of pipe drawn
+ * beside a run of belt -- which IS in travel order -- invites exactly that assumption.
+ */
+/* Rust, and picked by measuring rather than by taste. This layer has to separate from three
+ * things at once: the belts it runs beside, the terrain it crosses, and the amber the
+ * extractors are already drawn in -- and the last is the trap, because a water extractor is
+ * where pipes and extractors physically meet. Measured in CIE Lab against the base map under
+ * all 503 routes and against every colour already on the page: #a8613c is dE 34 from the
+ * terrain and 22 from its nearest neighbour on the page (the copper-ore dot), where the
+ * saturated amber a pipe suggests first, #d99a3e, is dE 4.5 from the extractors and would
+ * have been indistinguishable from them. Warm where the belts are cool, and dark enough not
+ * to shout over a photographic map. */
+var PIPE_COLOUR = "#a8613c";
+
+/* The two tier tones, one step of value either side of PIPE_COLOUR -- which stays the middle
+ * one, so the swatch in the layer control is still the network's own colour. The step is the
+ * belts' step, twenty points of each channel, and it lands where the belts' does: dE 15.7
+ * between Mk1 and Mk2 against the belts' 15.6 between their slowest and fastest.
+ *
+ * Re-measured rather than assumed safe, because PIPE_COLOUR was itself chosen by measurement
+ * and a ramp can walk a colour into a neighbour. In CIE Lab both tones stay clear of every
+ * other colour on the page -- nearest is the generator red at dE 28.9 and 28.3, where the
+ * base sits at 27.6, so the ramp moves away from it rather than toward -- and the extractor
+ * amber that ruled out a brighter pipe stays 40.9 and 32.4 away, against the dE 4.5 that
+ * disqualified #d99a3e. */
+var PIPE_MK1 = "#944d28";
+var PIPE_MK2 = "#bc7550";
+
+/* Tier as value, the same banding the belts use and for the same reason -- and for one more.
+ * `flow_m3_min` is the dump's own figure for the class -- 300 on Mk1, 600 on Mk2 -- so this
+ * is a banding of a measurement rather than a parse of "MK2" out of a display name.
+ *
+ * It could not have stayed a width step once the belts' became physical. A Pipeline Mk.2 is
+ * not a wider pipe: it is the same 1.3 m bore with a better pump rating, and it snaps to the
+ * same holes in the same supports. A map that drew it wider would be contradicting its own
+ * scale bar, and contradicting the belts beside it, which gave up exactly this encoding for
+ * exactly this reason. Two tiers, so two tones and the middle for the unknown: the darker
+ * would read as Mk1. */
+function pipeColour(flow_m3_min) {
+  if (!flow_m3_min) return PIPE_COLOUR;
+  return flow_m3_min >= 600 ? PIPE_MK2 : PIPE_MK1;
+}
+
+/* A pipe is 1.3 m across, and like the belt's two metres it is a CONSTANT rather than a
+ * field: the save carries a centre line and no bore, and both tiers ride the same frame.
+ * Narrower than a belt, so it reaches ROUTE_MIN_PX about a zoom step sooner -- which is the
+ * true picture, a pipe IS thinner than a belt, and the floor is what keeps it from being
+ * nothing at all at the whole-world view. */
+var PIPE_WIDTH_M = 1.3;
+
+function pipeWeight(ppm) {
+  return routeWeight(PIPE_WIDTH_M, ppm);
+}
+
+function pipePopup(p, first, last) {
+  return popup([
+    ["pipe", p.name || p.cls],
+    // The thing a belt cannot say. It comes off the game's own FGPipeNetwork rather than
+    // from what the pipe is plugged into, which is why it can be stated flatly.
+    ["fluid", p.fluid_name],
+    ["capacity", p.flow_m3_min ? p.flow_m3_min + " m³/min at 100%" : null],
+    // Said out loud, because the belt popup beside it says "from" and "to" and a reader is
+    // owed the difference. There is no direction in the save to draw or to print.
+    ["flow", "direction is not recorded — it is set at runtime by head lift and demand"],
+    ["ends", first[0] + ", " + first[1] + " m and " + last[0] + ", " + last[1] + " m"],
+    ["rise", Math.abs(Math.round((last[2] - first[2]) * 10) / 10) + " m"],
+    ["network", p.network === null ? null : "#" + p.network],
+  ]);
+}
+
+function drawPipes(data) {
+  // Off by default at the whole-world zoom, exactly like `belts` and `machines`. See reveal().
+  var group = layer("pipes", false, PIPE_COLOUR);
+  var ppm = pixelsPerMetre();
+  data.pipes.forEach(function (p) {
+    if (p.points_m.length < 2) return; // a route with one point is not a route
+    var points = p.points_m.map(function (q) {
+      return [-q[1], q[0]];
+    });
+    L.polyline(points, {
+      color: pipeColour(p.flow_m3_min),
+      weight: pipeWeight(ppm),
+      opacity: 0.85,
+    })
+      .bindPopup(pipePopup(p, p.points_m[0], p.points_m[p.points_m.length - 1]))
+      .addTo(group);
+  });
+  sinkRoutes();
+}
+
+/* Both route layers share the overlay canvas with the machines and the node dots, so the
+ * rule raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
+ * match wins. A belt run crosses every machine it feeds and a pipe run crosses every
+ * refinery it feeds, and a polyline's hit area is its width plus Leaflet's click tolerance
+ * -- so a route layer added after the machines would quietly take the click on every machine
+ * it passes over. Pushed to the back instead: under the machines, under the node dots, still
+ * over the foundations (a separate pane, so a separate canvas, so unaffected either way).
+ *
+ * Their own pane would be the tidier answer and is not one: Leaflet gives every pane its own
+ * canvas, the DOM delivers a click to the topmost element under the pointer, and the overlay
+ * pane's canvas covers the entire viewport -- so a clickable layer below it is not clickable
+ * at all. That is also why this is safe to call whenever: `bringToBack` is a no-op on a path
+ * whose group is not on the map, which is the state both layers start in.
+ *
+ * One function over both, rather than one per layer: it is one rule, and two copies of it
+ * would drift the moment a third route layer arrives. Same for styleRoutes above, and for
+ * ROUTE_WIDTH_M, which is the only thing either function needs to tell the two apart.
+ *
+ * Order INSIDE a layer matters too, and it is decided by the order of the calls: each
  * `bringToBack` puts its caller below everything already sunk, so the piece sunk LAST ends
  * up at the very bottom. The junction squares therefore go first and the runs after them,
  * which leaves a splitter sitting on the lines it joins rather than under them -- a 4 m
  * square hidden beneath a 2 m line is still visible at its corners and is not CLICKABLE,
- * and the popup naming the piece is the whole reason it has one.
+ * and the popup naming the piece is the whole reason it has one. The pipes layer holds no
+ * polygons, so for it the partition is a no-op and the loop is the same loop.
  */
-function sinkBelts() {
-  var group = state.layers.belts;
-  if (!group) return;
-  var squares = [];
-  var runs = [];
-  group.eachLayer(function (piece) {
-    (piece instanceof L.Polygon ? squares : runs).push(piece);
-  });
-  squares.concat(runs).forEach(function (piece) {
-    if (piece.bringToBack) piece.bringToBack();
+var ROUTE_LAYERS = ["belts", "pipes"];
+
+/* What each route layer is worth in metres. The one place the two differ, so the one place
+ * the shared passes above have to look. */
+var ROUTE_WIDTH_M = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
+
+function sinkRoutes() {
+  ROUTE_LAYERS.forEach(function (name) {
+    var group = state.layers[name];
+    if (!group) return;
+    var squares = [];
+    var runs = [];
+    group.eachLayer(function (piece) {
+      (piece instanceof L.Polygon ? squares : runs).push(piece);
+    });
+    squares.concat(runs).forEach(function (piece) {
+      if (piece.bringToBack) piece.bringToBack();
+    });
   });
   raiseNodeDots();
 }
@@ -1226,7 +1363,7 @@ function sinkBelts() {
 // A layer added long after both fetches landed is appended to the canvas' draw list, i.e.
 // on top of everything -- so the sink has to run again when the player ticks the box.
 map.on("overlayadd", function (event) {
-  if (state.layers.belts && event.layer === state.layers.belts) sinkBelts();
+  if (ROUTE_LAYERS.some(function (n) { return state.layers[n] === event.layer; })) sinkRoutes();
 });
 
 /* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
@@ -1342,8 +1479,9 @@ function drawMachines(data) {
   raiseNodeDots();
 }
 
-/* `machines` and `belts` are both off at the whole-world zoom on purpose: 438 rectangles
- * and 3,085 routes across 7 km are a smear, and unticking them is the right default. What
+/* `machines`, `belts` and `pipes` are all off at the whole-world zoom on purpose: 438
+ * rectangles and 3,588 routes across 7 km are a smear, and unticking them is the right
+ * default. What
  * was wrong is what happened next -- clicking a factory label flew the map to that
  * factory's own extent and landed on bare concrete, with the reason eight unfolded rows
  * down a control the player had not opened.
@@ -1368,7 +1506,11 @@ function reveal(names) {
   });
   if (!turned.length) return;
   note(
-    turned.join(" and ") +
+    // "a and b" for two, "a, b and c" for three -- an Oxford-less list rather than
+    // "a and b and c", which is what a plain join gives once there are three of these.
+    (turned.length > 1
+      ? turned.slice(0, -1).join(", ") + " and " + turned[turned.length - 1]
+      : turned[0]) +
       " turned on — untick " +
       (turned.length > 1 ? "those layers" : "the " + turned[0] + " layer") +
       " to hide them again"
@@ -1376,8 +1518,10 @@ function reveal(names) {
 }
 
 // What "show me this factory" means, in layers. A factory at factory scale is its machines
-// and the routes between them; both are unreadable at the zoom the click starts from.
-var FACTORY_LAYERS = ["machines", "belts"];
+// and the routes between them -- belts AND pipes, because a refinery block is half plumbing
+// and a view that showed only the belts would read as a factory with pieces missing. All
+// three are unreadable at the zoom the click starts from.
+var FACTORY_LAYERS = ["machines", "belts", "pipes"];
 
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
@@ -1460,7 +1604,7 @@ function factoryAnchor(row, text, className, rows) {
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
     marker.on("click", function () {
-      // A factory at factory scale IS its machines and the belts between them; see reveal.
+      // A factory at factory scale IS its machines and the routes between them; see reveal.
       reveal(FACTORY_LAYERS);
       map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
     });
@@ -1964,6 +2108,15 @@ function loadStatic() {
       if (!live()) return;
       clearPrefixed(["belts"]);
       fail("belts: " + friendly(e));
+    });
+  get("/api/pipes")
+    .then(function (d) {
+      if (live()) drawPipes(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["pipes"]);
+      fail("pipes: " + friendly(e));
     });
   get("/api/factories")
     .then(function (d) {
