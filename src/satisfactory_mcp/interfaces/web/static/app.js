@@ -1808,22 +1808,37 @@ function drawCollectibles(data) {
  */
 
 function elevationRows(e) {
-  // Unsurveyed ground gets one line, not three saying the same nothing. There is no
-  // heightmap anywhere in this project's inputs, so "no samples" is a real answer.
+  // The extracted heightfield goes first when there is one, because it is the only answer
+  // measured AT the point rather than near it. Which layer of the field answered rides
+  // along with it: a landscape texel and a fill texel are both "the terrain" and they are
+  // a metre and four metres good respectively, so quoting one number for both would be
+  // the same overclaim as one median over nodes and foundations.
+  var rows = [];
+  if (e.terrain_m !== null && e.terrain_m !== undefined) {
+    var acc = e.terrain_accuracy_m === null ? "" : " ±" + e.terrain_accuracy_m + " m";
+    rows.push(["terrain", e.terrain_m + " m (" + e.terrain_source + acc + ")"]);
+    // Water is information, never a correction: the field's own generator measured that
+    // gating terrain on it makes the terrain worse, so it is shown beside the ground and
+    // never instead of it.
+    if (e.terrain_water_m !== null && e.terrain_water_m !== undefined) {
+      rows.push(["water", e.terrain_water_m + " m surface, above this ground"]);
+    }
+  }
+  // Unsurveyed ground gets one line, not three saying the same nothing. With no field and
+  // nothing standing nearby, "nothing known" is a real answer and the honest one.
   if (!e.ground_count && !e.built_count) {
+    if (rows.length) return rows;
     return [["elevation", "nothing known within " + e.radius_m + " m"]];
   }
   // Ground and built stay apart, exactly as the server sends them: a node rests on
   // terrain and a foundation is wherever the player put it, so one median labelled
   // "elevation" would be the platform's height on any developed site.
-  var rows = [
-    [
-      "ground",
-      e.ground_count
-        ? e.ground_m + " m (median of " + e.ground_count + ", spread " + e.ground_spread_m + " m)"
-        : "no ground samples within " + e.radius_m + " m",
-    ],
-  ];
+  rows.push([
+    "ground",
+    e.ground_count
+      ? e.ground_m + " m (median of " + e.ground_count + ", spread " + e.ground_spread_m + " m)"
+      : "no ground samples within " + e.radius_m + " m",
+  ]);
   if (e.built_count) {
     rows.push(["built", e.built_m + " m (median of " + e.built_count + ")"]);
   }

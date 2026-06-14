@@ -6,12 +6,14 @@ and no test may need one. Everything here therefore runs on a **synthetic** fiel
 only way to assert what the absent case does, since the machine that generated a real field
 would otherwise never exercise it.
 
-Four things are pinned, and each is a place a plausible-looking mistake would ship quietly:
+Five things are pinned, and each is a place a plausible-looking mistake would ship quietly:
 
 * the codec round-trips exactly, including the wrap the row-delta relies on;
 * the fill layer's no-data test is on the DECODED height, not on ``raw > 0``;
 * a missing or broken field is ``None`` and never an exception;
-* the reader's sampler is the one the generator validates on.
+* an elevation probe prefers the field where it has an answer, keeps the sampled
+  populations intact, and says nothing where the field says nothing;
+* the endpoint's JSON carries which layer answered and how good that layer is.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from satisfactory_mcp.domain.spatial import elevation
 from satisfactory_mcp.domain.spatial import heightfield as hf
 
 # --------------------------------------------------------------------------------------
@@ -283,6 +286,139 @@ def test_a_field_without_a_water_channel_still_answers(tmp_path):
     reading = field.at(FAKE_X0, FAKE_Y0 + 4 * FAKE_SPACING)
     assert reading.z_m == -15.0
     assert reading.water_m is None and reading.submerged is False
+
+
+# --------------------------------------------------------------------------------------
+# The elevation probe: a fourth source, beside the populations rather than inside them.
+# --------------------------------------------------------------------------------------
+
+
+def _samples() -> list[elevation.Sample]:
+    """Three nodes and a foundation, all within the probe radius of the field's origin."""
+    return [
+        elevation.Sample("node", FAKE_X0, FAKE_Y0, 1000.0),
+        elevation.Sample("node", FAKE_X0 + 100.0, FAKE_Y0, 1200.0),
+        elevation.Sample("node", FAKE_X0, FAKE_Y0 + 100.0, 1400.0),
+        elevation.Sample("structure", FAKE_X0, FAKE_Y0, 3000.0),
+    ]
+
+
+def test_a_probe_without_a_field_is_the_probe_it_always_was(tmp_path):
+    """The default, and the case on almost every machine. Nothing may change for it."""
+    near = elevation.probe(FAKE_X0, FAKE_Y0, _samples(), radius_m=200.0)
+    assert near.terrain is None and near.terrain_m is None
+    assert near.ground == [10.0, 12.0, 14.0]
+    assert near.built == [30.0]
+    assert near.fill_m == 18.0
+
+
+def test_the_field_is_a_fourth_answer_and_does_not_touch_the_sampled_populations(tmp_path):
+    """The whole design in one assertion: a texel read is reported, never averaged in.
+
+    The field says 12.3 m at this coordinate and the three nodes nearby median to 12.0 m.
+    Folding the reading into ``ground`` would move that median, put a 0.2 m measurement in
+    with points up to 200 m away, and cost the caller the ability to tell them apart. So
+    ``ground``, ``built`` and ``fill_m`` come out bit for bit what they were without a
+    field, and the reading arrives beside them with its own provenance.
+    """
+    field = hf.load_field(build_field(tmp_path))
+    without = elevation.probe(FAKE_X0, FAKE_Y0, _samples(), radius_m=200.0)
+    near = elevation.probe(FAKE_X0, FAKE_Y0, _samples(), radius_m=200.0, terrain_field=field)
+
+    assert near.terrain_m == 12.3
+    assert near.terrain.source == "landscape"
+    assert near.terrain.accuracy_m == 0.205
+    assert (near.ground, near.built, near.fill_m) == (without.ground, without.built, without.fill_m)
+    assert near.counts == without.counts == {"node": 3, "structure": 1}
+
+
+def test_a_field_that_knows_nothing_here_leaves_the_probe_saying_nothing(tmp_path):
+    """No-data must not become a number, and it must not disturb the samples either."""
+    field = hf.load_field(build_field(tmp_path))
+    near = elevation.probe(
+        FAKE_X0, FAKE_Y0 + 3 * FAKE_SPACING, _samples(), radius_m=500.0, terrain_field=field
+    )
+    assert near.terrain is None and near.terrain_m is None
+    assert near.ground == [10.0, 12.0, 14.0]
+
+
+def test_the_field_does_not_lower_the_refusal_to_invent_a_ground_level(tmp_path):
+    """``MIN_GROUND_SAMPLES`` survives the heightmap arriving, and that is deliberate.
+
+    A terrain reading is not a ground sample. One node plus a field is still one node, and
+    a fill depth quoted from it would be the invented number this module exists to refuse
+    -- so ``fill_m`` stays ``None`` however good the terrain is.
+    """
+    field = hf.load_field(build_field(tmp_path))
+    thin = [
+        elevation.Sample("node", FAKE_X0, FAKE_Y0, 1000.0),
+        elevation.Sample("structure", FAKE_X0, FAKE_Y0, 3000.0),
+    ]
+    near = elevation.probe(FAKE_X0, FAKE_Y0, thin, radius_m=200.0, terrain_field=field)
+    assert near.terrain_m == 12.3, "the field answered"
+    assert len(near.ground) < elevation.MIN_GROUND_SAMPLES
+    assert near.fill_m is None, "one node became a ground level because a field turned up"
+
+
+# --------------------------------------------------------------------------------------
+# The endpoint.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_inspect_endpoint_says_which_source_answered(tmp_path, monkeypatch):
+    """The popup's whole claim, over the wire: a number, its layer, and that layer's error.
+
+    The loader is replaced rather than the data directory pointed elsewhere, so this runs
+    identically on a machine that has a real field and on one that has never had one.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web.app import create_app
+
+    field = hf.load_field(build_field(tmp_path))
+    monkeypatch.setattr(web_api, "_terrain_field", lambda: field)
+    # The synthetic field is pinned at the map's south-west corner, so ask about a point
+    # inside it in metres -- which is the unit the endpoint takes and the popup prints.
+    x_m, y_m = FAKE_X0 / 100.0, FAKE_Y0 / 100.0
+
+    app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: None)
+    with TestClient(app) as client:
+        body = client.get("/api/inspect", params={"x_m": x_m, "y_m": y_m}).json()
+
+    e = body["elevation"]
+    assert e["terrain_m"] == 12.3
+    assert e["terrain_source"] == "landscape"
+    assert e["terrain_accuracy_m"] == 0.205
+    assert e["terrain_note"] is None
+    assert e["terrain_water_m"] is None
+    # And the populations are still there, still separate, still labelled.
+    assert "ground_m" in e and "ground_count" in e and "fill_note" in e
+
+
+def test_the_endpoint_says_WHY_there_is_no_terrain_rather_than_leaving_a_null(monkeypatch):
+    """A null with no reason beside it reads as a bug, exactly as ``fill_note`` decided.
+
+    Two causes, and they call for different actions from the reader: no field on this
+    machine means "run the generator", and no data at this point means "there is nothing
+    there". So they are different sentences.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web.app import create_app
+
+    monkeypatch.setattr(web_api, "_terrain_field", lambda: None)
+    app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: None)
+    with TestClient(app) as client:
+        body = client.get("/api/inspect", params={"x_m": 0.0, "y_m": 0.0}).json()
+
+    e = body["elevation"]
+    assert e["terrain_m"] is None and e["terrain_source"] is None
+    assert "no terrain field on this machine" in e["terrain_note"]
+    assert "gen_world_heightmap.py" in e["terrain_note"]
 
 
 def test_the_generator_and_the_loader_agree_on_the_file_names_and_the_grid():

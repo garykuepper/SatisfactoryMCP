@@ -1,5 +1,24 @@
-"""How high the ground is, sampled -- because there is no heightmap.
+"""How high the ground is: measured where the terrain has been extracted, sampled elsewhere.
 
+This module opened with "because there is no heightmap" for as long as that was true.
+**It is not true any more.** ``tools/gen_world_heightmap.py`` decodes the cooked UE
+Landscape heightfield and the Chaos collision geometry of 20,227 placed rocks out of the
+reader's own installed game and writes a 1 m field to ``data/local/heightmap/``, measured
+at 0.21 m median error against the 626 static resource nodes. The premise this file was
+built on is gone, and saying so is the first thing it has to do.
+
+What has **not** changed is everything the module argued for, because the field is a fourth
+kind of evidence rather than a replacement for the other three. It is:
+
+* **optional** -- the raster is derived from Coffee Stain's cooked assets, so the
+  repository ships none of it and never will. Most machines have no field, every caller
+  gets ``None``, and the sampled populations below are the whole answer there.
+* **not a sample** -- a texel read is the game's own terrain looked up, not somebody's
+  save reporting where a thing stands. It is reported beside the populations and is never
+  averaged into one. See ``Elevation.terrain``.
+
+The sampled populations, unchanged
+----------------------------------
 Nothing in Docs.json or the save carries terrain. What both carry is a large number of
 things whose Z is exact, scattered across the whole map:
 
@@ -9,9 +28,11 @@ things whose Z is exact, scattered across the whole map:
   ``[class, x, y, z]``.
 * **566 production buildings**, from their actor transforms.
 
-So the honest answer to "how high is it here" is a *sample*, with its count and its
-spread, and never an interpolated surface. A single number invented from three points
-40 m apart reads as measured and is not.
+So without a field the honest answer to "how high is it here" is still a *sample*, with its
+count and its spread, and never an interpolated surface. A single number invented from
+three points 40 m apart reads as measured and is not, and ``MIN_GROUND_SAMPLES`` still
+refuses to quote a fill depth below three of them. A heightmap arriving on the machine does
+not turn three nodes into a ground level; it answers a different question beside them.
 
 Nodes and structures are kept apart on purpose
 ----------------------------------------------
@@ -22,14 +43,28 @@ and near a big platform the structures outnumber the nodes hundreds to one, so t
 would silently become "the height of that platform" while still being labelled ground.
 
 They are therefore reported as separate populations, and the caller is told which is which.
-Where they disagree, that disagreement is the interesting part: it is the fill depth.
+Where they disagree, that disagreement is the interesting part: it is the fill depth. The
+field makes a third kind of disagreement visible -- terrain against ground samples -- and
+it is left visible for the same reason.
+
+The field answers with its own uncertainty
+------------------------------------------
+A texel is not uniformly good. ``provenance`` says which layer answered, and the accuracy
+the generator *measured* for that layer rides along with the number:
+
+* **landscape** -- the cooked 1 m heightfield, 0.205 m measured over 430 nodes.
+* **cliff** -- rasterised collision geometry of a real rock, 0.210 m over 187 nodes.
+* **fill** -- the 2048 px interface raster outside the landscape frame, 3.897 m per
+  quantisation step and the coarsest thing in the field.
+* **no data** -- open ocean and two cave mouths, about a fifth of the box. ``terrain`` is
+  ``None`` there, and the right answer is to say nothing.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import geo
+from . import geo, heightfield
 
 __all__ = ["Elevation", "Sample", "probe", "sample_points"]
 
@@ -52,12 +87,28 @@ class Sample:
 
 @dataclass
 class Elevation:
-    """Known elevations near a point, kept as populations rather than one number."""
+    """Known elevations near a point, kept as populations rather than one number.
+
+    ``terrain`` is the fourth source and stands apart from ``samples`` deliberately: it is
+    one texel of the extracted heightfield read at exactly this coordinate, not a thing
+    somebody's save says is standing somewhere near it. Folding it into the populations
+    would put a reading with 0.2 m accuracy into a median with points 40 m away, and the
+    caller would lose both the precision and the ability to tell the two apart.
+
+    ``None`` whenever there is no field on this machine -- which is most of them -- or when
+    the field has no data at this coordinate.
+    """
 
     x: float
     y: float
     radius_m: float
     samples: list[Sample] = field(default_factory=list)
+    terrain: heightfield.Reading | None = None
+
+    @property
+    def terrain_m(self) -> float | None:
+        """The field's own answer in metres, or ``None`` if it has none here."""
+        return None if self.terrain is None else self.terrain.z_m
 
     def of(self, *sources: str) -> list[float]:
         keep = set(sources) if sources else None
@@ -152,9 +203,25 @@ def sample_points(node_table=None, state=None) -> list[Sample]:
     return out
 
 
-def probe(x: float, y: float, samples: list[Sample], radius_m: float = 200.0) -> Elevation:
-    """Elevation samples within ``radius_m`` of a point. Coordinates in centimetres."""
+def probe(
+    x: float,
+    y: float,
+    samples: list[Sample],
+    radius_m: float = 200.0,
+    terrain_field: heightfield.Field | None = None,
+) -> Elevation:
+    """Elevation samples within ``radius_m`` of a point. Coordinates in centimetres.
+
+    ``terrain_field`` is passed in rather than loaded here, and defaulting it to ``None``
+    means "no field was consulted" rather than "look one up". A domain function that
+    reached for ``data/local/`` on its own would make every caller's answer depend on
+    whether somebody had run a generator, silently and without the caller having asked --
+    which is the same posture ``/api/mapimage`` takes about the map image, for the same
+    reason. The interface layer decides whether to offer one.
+    """
     out = Elevation(x=x, y=y, radius_m=radius_m)
+    if terrain_field is not None:
+        out.terrain = terrain_field.at(x, y)
     for s in samples:
         d = geo.distance_m((x, y), (s.x, s.y))
         if d <= radius_m:

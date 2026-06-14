@@ -37,6 +37,7 @@ from ...domain.collectibles.service import collect_view
 from ...domain.factories import identity as fidentity
 from ...domain.spatial import elevation as spatial_elevation
 from ...domain.spatial import geo
+from ...domain.spatial import heightfield as spatial_heightfield
 from ...domain.spatial import nodes as spatial_nodes
 from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
@@ -316,18 +317,38 @@ INSPECT_RADIUS_M = 200.0
 INSPECT_NEAREST = 5
 
 
+def _terrain_field():
+    """The extracted 1 m heightfield, or ``None`` on a machine that has none.
+
+    A loader and only a loader, exactly like ``/api/mapimage``: the raster is derived from
+    the game's cooked assets, so this repository ships none and most installs have none.
+    Wrapped in a function of its own rather than called inline so a test can replace it
+    with a synthetic field and get a deterministic answer without a game install.
+    """
+    return spatial_heightfield.load_field()
+
+
 def _elevation_json(near: spatial_elevation.Elevation) -> dict:
     """A probe as JSON, with the reason for every number it declines to give.
 
-    Ground and built stay separate populations all the way out to the page, because that
-    is the whole point of the module they come from: a node rests on terrain, a foundation
-    is wherever the player put it, and averaging them near a platform produces the
-    platform's height wearing the word "ground".
+    Four sources, and each is labelled as what it is. ``terrain_m`` is one texel of the
+    extracted heightfield read at exactly the coordinate asked about; ground and built are
+    populations of things standing nearby. They stay apart all the way out to the page,
+    because that is the whole point of the module they come from: a node rests on terrain,
+    a foundation is wherever the player put it, a texel is the game's own ground, and one
+    median over the three would be a number describing none of them.
+
+    ``terrain_source`` says which layer of the field answered and ``terrain_accuracy_m``
+    carries what the generator measured for that layer, so a reading is never quoted
+    without the uncertainty that belongs to it -- a 0.2 m landscape texel and a 3.9 m fill
+    texel are both "the terrain" and are not the same claim.
 
     ``fill_m`` is ``null`` more often than not, and a null with no reason next to it reads
     as a bug. It has exactly two causes -- fewer than ``MIN_GROUND_SAMPLES`` nodes nearby,
     or nothing built nearby -- and ``fill_note`` names whichever one applied. Neither is
-    ever rendered as 0: zero fill is a real, different measurement.
+    ever rendered as 0: zero fill is a real, different measurement. ``terrain_note`` does
+    the same job for the field, and it too has exactly two causes: no field on this
+    machine, or a coordinate the field has no data for.
     """
     ground, built = near.ground, near.built
     # Derived from the samples actually present rather than from a hardcoded list, so a
@@ -348,8 +369,22 @@ def _elevation_json(near: spatial_elevation.Elevation) -> dict:
     def _round(value: float | None) -> float | None:
         return None if value is None else round(value, 1)
 
+    terrain = near.terrain
+    terrain_note = None
+    if terrain is None:
+        terrain_note = (
+            "the field has no data at this point -- open ocean, or a cave mouth"
+            if _terrain_field() is not None
+            else "no terrain field on this machine (run tools/gen_world_heightmap.py)"
+        )
+
     return {
         "radius_m": near.radius_m,
+        "terrain_m": _round(near.terrain_m),
+        "terrain_source": terrain.source if terrain else None,
+        "terrain_accuracy_m": terrain.accuracy_m if terrain else None,
+        "terrain_water_m": _round(terrain.water_m) if terrain and terrain.submerged else None,
+        "terrain_note": terrain_note,
         "ground_m": _round(near.median(*spatial_elevation.GROUND_SOURCES)),
         "ground_spread_m": _round(near.spread(*spatial_elevation.GROUND_SOURCES)),
         "ground_count": len(ground),
@@ -406,9 +441,18 @@ def inspect(
     population and the occupancy join, and ``save_error`` says so out loud rather than
     letting "no extractor here" quietly mean "no save here".
 
+    **And it prefers the extracted terrain when there is any.** On a machine where
+    ``tools/gen_world_heightmap.py`` has been run, the 1 m field answers "how high is it
+    here" for unexplored ground with one number at the coordinate asked about, instead of a
+    population of things standing near it -- and it says which layer of itself answered, so
+    a 0.2 m landscape reading and a 3.9 m fill reading are told apart. Where there is no
+    field, or the field has no data there, this is exactly the endpoint it was before.
+
     Not cached, deliberately and by measurement: ``sample_points`` over the 320-hour
     reference world builds 9,525 samples in 2.0 ms and ``probe`` scans them in 0.8 ms, so
-    a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click.
+    a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click. The
+    field is cached, because it is 0.45 s of zlib and 170 MB either way -- but by the
+    loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
     """
     try:
         table = spatial_nodes.load_nodes()
@@ -425,7 +469,11 @@ def inspect(
 
     x, y = x_m * 100.0, y_m * 100.0
     near = spatial_elevation.probe(
-        x, y, spatial_elevation.sample_points(table, st), INSPECT_RADIUS_M
+        x,
+        y,
+        spatial_elevation.sample_points(table, st),
+        INSPECT_RADIUS_M,
+        terrain_field=_terrain_field(),
     )
     taken = spatial_nodes.occupancy(st.projection) if st is not None else {}
     return {
