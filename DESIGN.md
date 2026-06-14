@@ -4004,10 +4004,12 @@ its own, because the world map drew angled platforms as staircases and drew no b
   projection back to the schema-11 shape through an explicit list of what 12 added, and
   `vendor_parity.json` is untouched.
 
-### Schema 13 landed the plumbing (2026-07-31)
+### Schema 13 landed the plumbing, and the junctions (2026-07-31)
 
-The other half of "draw what the player built". Belts came out of a trailer and cost a lazy
-decode; a pipe's route was in reach the whole time and nothing asked for it.
+The other half of "draw what the player built", in two pieces that shipped together because
+they answer the same complaint about the same map. Belts came out of a trailer and cost a lazy
+decode; a pipe's route was in reach the whole time and nothing asked for it, and a splitter's
+placement was being *built and then dropped on the floor*.
 
 * **Pipes**, a new `pipes` key: `{classes, networks, segments}`, with a segment
   `[networkIndex, classIndex, [[x, y, z], …]]` per pipe, world centimetres. The spline is an
@@ -4037,9 +4039,28 @@ decode; a pipe's route was in reach the whole time and nothing asked for it.
   3.03 s either way (medians 3.08 and 3.09) — which is the difference between this and the
   belts: those cost +19% because a chain trailer had to be decoded, and these were already
   being parsed as ordinary properties, so `_pipes` only reads what the walk had in hand.
+* **Attachments**, a new `attachments` key, and the answer to the question `belts` left open:
+  the splitters and mergers a run passes THROUGH. They carry no spline — a splitter is a point
+  with a facing, not a route — so they are a row shape of their own, the machine record minus
+  the recipe and clock a splitter has no business having. 848 on the reference world: 481
+  splitters, 364 mergers, 3 smart splitters. Without them a belt-only view had a four-metre
+  hole at every junction, and a run that visibly stops and starts again is a run a reader has
+  to guess is one run.
+* **`Build_ConveyorCeilingAttachment_C` is deliberately excluded**, and that exclusion is
+  pinned by a test. It shares the word and is a different thing — a pole a belt hangs from,
+  not a piece items pass through — so a filter matching `ConveyorAttachment` would swallow all
+  95 of them and draw them as the same square. The hint list names the two families it wants
+  rather than matching a prefix, for exactly this reason.
+* **Their own list, and exactly one list.** An attachment is in the `elif` chain beside the
+  machines, extractors and generators, so a class lands in one of them or none — which is what
+  makes "the map has them" and "the map has them once" the same claim, and it is asserted at
+  the projection rather than at the endpoint for that reason. They ride out on `/api/belts`
+  rather than `/api/machines`: a splitter runs no recipe, draws no power, and is meaningless
+  without the runs either side of it, so it travels with the runs and is drawn by the layer
+  that draws them.
 * **Not in it:** pumps, junctions, valves and fluid buffers. They carry no spline, only a
-  header position, so they are a different row shape and the same open question `belts` leaves
-  about splitters and mergers.
+  header position — the same shape `attachments` uses, so the road is open; what is missing is
+  a reason to draw a valve that the belt junctions did not also have.
 
 ---
 

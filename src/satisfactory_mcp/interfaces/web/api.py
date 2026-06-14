@@ -842,6 +842,30 @@ def _belt_class(st: WorldState, cls: str | None) -> dict[str, Any]:
     }
 
 
+def _attachment_row(st: WorldState, row: dict) -> dict:
+    """One splitter or merger: where it stands, which way it faces, and what it is.
+
+    Shorter than ``_record_row`` on purpose. A splitter has no recipe, no clock and nothing
+    to pause, so the machine row's shape would be six null columns saying that six times;
+    what a belt attachment IS, is a placement. ``w_m``/``l_m`` are asked for anyway, and are
+    ``null`` for all four of these classes today, because the dump carries no clearance for
+    them -- the same null the machines endpoint sends for a biomass burner, and for the same
+    reason: a size invented here would be indistinguishable from a measured one.
+    """
+    cls = row.get("cls") or ""
+    building = st.game.buildings.get(cls)
+    footprint = getattr(building, "footprint", None) if building else None
+    return {
+        "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
+        "cls": row.get("cls"),
+        "name": building.name if building else _pretty_cls(cls),
+        **_xyz(row.get("pos")),
+        "yaw": _yaw(row.get("yaw")),
+        "w_m": round(footprint.width_m, 1) if footprint else None,
+        "l_m": round(footprint.depth_m, 1) if footprint else None,
+    }
+
+
 @router.get("/belts")
 def belts(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every conveyor belt and lift, as the polyline it was actually built along.
@@ -870,6 +894,18 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
     world -- 3,085 pieces, 8,292 points, 562 KB -- which is the same order as the floor
     plan beside it (8,347 pieces, 708 KB). The geometry is already only the bends: 2,237 of
     the 3,085 pieces are two-point straight lines, 2.7 points per piece overall.
+
+    **``attachments`` rides along, and belongs here rather than with the machines.** A
+    splitter or a merger is a piece of the belt network -- it runs no recipe, draws no power
+    and is meaningless without the runs either side of it -- so it travels with the runs and
+    is drawn by the layer that draws them. That is also what keeps it from being drawn twice:
+    it is in no other payload, so a map with the machines layer on and the belts layer off
+    shows no splitters at all, which is the honest picture of "these are belt parts".
+
+    They carry no spline -- a splitter is a point with a facing, not a route -- so they are a
+    row shape of their own: where it stands, which way it faces, and what it is. 848 of them
+    on the reference world -- 481 splitters, 364 mergers, 3 smart splitters -- 170 KB against
+    the 562 KB of runs they join.
     """
     try:
         st = _state(request, save, world)
@@ -901,10 +937,17 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
         if index not in resolved:
             resolved[index] = _belt_class(st, classes[index] if 0 <= index < len(classes) else None)
         rows.append({"chain": chain, **resolved[index], "points_m": points})
+    attachments = [
+        _attachment_row(st, row)
+        for row in st.projection.get("attachments") or ()
+        if isinstance(row, dict)
+    ]
     return {
         "belts": rows,
         "count": len(rows),
         "chains": len({r["chain"] for r in rows}),
+        "attachments": attachments,
+        "attachment_count": len(attachments),
     }
 
 

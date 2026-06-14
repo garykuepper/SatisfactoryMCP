@@ -1,6 +1,7 @@
-"""Schemas 12 and 13: the placement yaw, the belt splines and the pipe splines.
+"""Schemas 12 and 13: the placement yaw, the belt splines, the pipe splines, and the splitters
+and mergers those belts pass through.
 
-All three are geometry the parser already decoded and the projection threw away, and all three
+All four are geometry the parser already decoded and the projection threw away, and all four
 are here for the same reason -- a client could only draw the world axis-aligned, beltless and
 unplumbed, so an angled platform came out as a staircase and a factory came out as a scatter of
 rectangles.
@@ -28,6 +29,7 @@ import pytest
 from pioneersav import ParseError, Reader, read_trailer
 from pioneersav.trailers import CONVEYOR_CHAIN
 from satisfactory_mcp.core.saveio.extract import (
+    _ATTACHMENT_HINTS,
     PIPE_CLASSES,
     _belts,
     _conveyor_class,
@@ -315,6 +317,66 @@ def test_a_belts_class_comes_off_the_instance_name_with_its_C_intact():
     )
     assert _conveyor_class("Build_ConveyorLiftMk4_C_2147") == "Build_ConveyorLiftMk4_C"
     assert _conveyor_class("") == ""
+
+
+# ------------------------------------------------------------------- belt attachments
+
+
+def test_the_splitters_and_mergers_are_kept_and_the_ceiling_mounts_are_not(projection):
+    """The class filter, held against the census rather than against itself.
+
+    A splitter is an ordinary ``Build_`` actor and the projection used to build its record and
+    drop it on the floor, so a belt-only map had a hole at every junction. It is kept now -- and
+    the interesting half is what is NOT: ``Build_ConveyorCeilingAttachment_C`` shares the word
+    and is a pole a belt hangs from, not a piece the items pass through. A filter that matched
+    ``ConveyorAttachment`` would swallow all 95 of them, and they would draw the same square
+    while meaning something else.
+    """
+    counts = projection["building_counts"]
+    rows = projection["attachments"]
+    kept = {c for c in counts if any(h in c for h in _ATTACHMENT_HINTS)}
+    assert kept == {r["cls"] for r in rows}
+    assert sum(counts[c] for c in kept) == len(rows), "every one in the census is a row"
+    assert len(rows) > 800, "the reference world splits and merges a great deal"
+    assert "Build_ConveyorCeilingAttachment_C" not in {r["cls"] for r in rows}
+    assert counts["Build_ConveyorCeilingAttachment_C"] == 95, "and they ARE in the world"
+
+
+def test_an_attachment_is_a_placement_and_carries_one(projection):
+    """What a splitter is, is where it stands and which way it faces.
+
+    Same record shape as a machine's, minus the fields a splitter has no business having: it
+    runs no recipe and holds no clock, and a row claiming either would be inventing one.
+    """
+    rows = projection["attachments"]
+    for r in rows:
+        assert set(r) >= {"cls", "instance", "pos", "yaw"}
+        assert not {"recipe", "clock", "node", "fuel"} & set(r)
+        assert len(r["pos"]) == 3
+        assert r["yaw"] is None or -180 <= r["yaw"] <= 180
+    # In the world with everything else, not at the origin: the record is the actor header's
+    # own transform, and a splitter drawn at (0, 0) would be out at sea with the untranslated
+    # pipes above.
+    xs = [r["pos"][0] for r in rows]
+    ys = [r["pos"][1] for r in rows]
+    structures = projection["structures"]["instances"]
+    assert min(s[1] for s in structures) - 20_000 <= min(xs)
+    assert max(xs) <= max(s[1] for s in structures) + 20_000
+    assert min(s[2] for s in structures) - 20_000 <= min(ys)
+    assert max(ys) <= max(s[2] for s in structures) + 20_000
+
+
+def test_an_attachment_is_in_exactly_one_of_the_projections_placement_lists(projection):
+    """The belts layer draws these; the machines layer must not draw them too.
+
+    Checked at the projection rather than at the endpoint, because this is where a class ends
+    up in a list: the ``elif`` chain is what makes the two claims -- "the map has them" and "the
+    map has them once" -- the same claim.
+    """
+    attached = {r["instance"] for r in projection["attachments"]}
+    assert attached
+    for key in PLACED:
+        assert not attached & {r["instance"] for r in projection[key]}
 
 
 # ------------------------------------------------------------------------------- pipes

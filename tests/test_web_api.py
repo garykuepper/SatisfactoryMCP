@@ -1240,7 +1240,13 @@ def test_a_world_with_no_belts_answers_with_an_empty_network(game):
             game_loader=lambda: game,
         )
         with TestClient(app) as c:
-            assert c.get("/api/belts").json() == {"belts": [], "count": 0, "chains": 0}
+            assert c.get("/api/belts").json() == {
+                "belts": [],
+                "count": 0,
+                "chains": 0,
+                "attachments": [],
+                "attachment_count": 0,
+            }
 
 
 def test_a_malformed_belt_segment_costs_one_piece_not_the_network(game):
@@ -1282,6 +1288,57 @@ def test_a_malformed_belt_segment_costs_one_piece_not_the_network(game):
     assert unnamed["points_m"] == [[7.0, 8.0, 9.0], [0.0, 0.0, 0.0]]
     assert body["belts"][2]["points_m"] == [[1.0, 2.0, 3.0]]
     assert body["chains"] == 3
+
+
+def test_the_splitters_and_mergers_ride_with_the_belts_and_with_nothing_else(client, state):
+    """A belt run passes THROUGH a splitter, so the belts payload carries them.
+
+    Two claims, and the second is the one that keeps the map honest. First: every splitter
+    and merger the projection holds comes back as a placement -- where it stands, which way
+    it faces, what it is -- because that is all a splitter is. Second: it comes back HERE and
+    nowhere else, so the belts layer can draw them without any risk of the machines layer
+    drawing the same square underneath.
+    """
+    body = client.get("/api/belts").json()
+    raw = state.projection["attachments"]
+    assert body["attachment_count"] == len(raw) == len(body["attachments"])
+    assert body["attachment_count"] > 800, "the reference world splits and merges a great deal"
+
+    row = body["attachments"][0]
+    assert set(row) == {"instance_leaf", "cls", "name", "x_m", "y_m", "z_m", "yaw", "w_m", "l_m"}
+    assert "." not in row["instance_leaf"]
+    # Metres, like every other coordinate on this surface. A regression here is silent.
+    assert row["x_m"] == pytest.approx(round(raw[0]["pos"][0] / 100.0, 1))
+    assert row["y_m"] == pytest.approx(round(raw[0]["pos"][1] / 100.0, 1))
+    for r in body["attachments"]:
+        assert abs(r["x_m"]) < 5000 and abs(r["y_m"]) < 5000
+        assert r["name"] and not r["name"].startswith("Build_")
+        # No clearance data for any of these classes, so the map draws its own square and
+        # the server says so with a null rather than inventing one.
+        assert (r["w_m"], r["l_m"]) == (None, None)
+        assert r["yaw"] is None or -180 <= r["yaw"] <= 180
+
+    kinds = {r["name"] for r in body["attachments"]}
+    assert kinds == {"Conveyor Splitter", "Conveyor Merger", "Smart Splitter"}
+
+    # The no-double-draw claim, checked rather than asserted in a comment.
+    machines = client.get("/api/machines").json()
+    drawn = {r["instance_leaf"] for kind in machines for r in machines[kind]}
+    assert not drawn & {r["instance_leaf"] for r in body["attachments"]}
+
+
+def test_a_world_that_split_no_belt_answers_with_no_attachments(game):
+    """A young save has laid no belt and split nothing, and neither is an error."""
+    for projection in ({}, {"attachments": []}, {"attachments": ["not a record"]}):
+        app = create_app(
+            state_loader=lambda save=None, world=None, p=projection: WorldState(
+                projection=p, game=game
+            ),
+            game_loader=lambda: game,
+        )
+        with TestClient(app) as c:
+            body = c.get("/api/belts").json()
+        assert (body["attachments"], body["attachment_count"]) == ([], 0)
 
 
 def test_a_save_that_cannot_be_read_has_no_belt_network_either(game):

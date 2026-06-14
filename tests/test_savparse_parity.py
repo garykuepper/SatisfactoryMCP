@@ -57,8 +57,9 @@ VOLATILE = {"path", "filename", "mtime_ns", "size"}
 #: the class of regression the bank exists to catch. Written out, adding to this list is a
 #: decision somebody has to make and a reviewer can see.
 POST_11_ADDITIONS = {
-    #: Whole new top-level keys: per-belt spline polylines (12) and per-pipe ones (13).
-    "keys": ("belts", "pipes"),
+    #: Whole new top-level keys: per-belt spline polylines (12), per-pipe ones (13), and the
+    #: splitters and mergers those belt runs pass through (13).
+    "keys": ("belts", "pipes", "attachments"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
     #: schema-11 number; leaving the current number here would report drift on every save on
@@ -183,6 +184,9 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
             "instances": [[0, 10, 20, 30, -20.0]],
         },
         "belts": {"classes": ["Build_ConveyorBeltMk3_C"], "segments": [[0, 0, [[1, 2, 3]]]]},
+        "attachments": [
+            {"cls": "Build_ConveyorAttachmentSplitter_C", "pos": [1.0, 2.0, 3.0], "yaw": 90.0}
+        ],
         "pipes": {
             "classes": ["Build_Pipeline_C"],
             "networks": [{"id": 3, "fluid": "Desc_Water_C"}],

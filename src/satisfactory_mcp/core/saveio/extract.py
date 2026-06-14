@@ -106,6 +106,18 @@ _GENERATOR_HINTS = (
     "GeneratorGeoThermal",
     "GeneratorIntegratedBiomass",
 )
+#: The pieces a belt run passes THROUGH: splitters, the smart and programmable splitters,
+#: and mergers. They are ordinary Build_ actors with a transform, and until now the record
+#: built for them was thrown away, so a map drawing belts alone showed a four-metre hole
+#: wherever a run was split or joined -- 842 of them on the reference world.
+#:
+#: ``Build_ConveyorCeilingAttachment_C`` is deliberately NOT here despite the shared word:
+#: a ceiling mount is a pole a belt hangs from, not a piece the items pass through, and the
+#: two would draw the same square while meaning different things.
+_ATTACHMENT_HINTS = (
+    "ConveyorAttachmentSplitter",
+    "ConveyorAttachmentMerger",
+)
 
 
 def truthy(value) -> bool:
@@ -297,6 +309,11 @@ def extract(path: str) -> dict:
         "machines": [],
         "extractors": [],
         "generators": [],
+        # The splitters and mergers a belt run passes through. Schema 13; see
+        # `_ATTACHMENT_HINTS`. Their own list rather than a fourth kind of machine: they
+        # run no recipe, draw no power and belong to the belt network, which is also the
+        # layer that draws them.
+        "attachments": [],
         "pipe_networks": [],
         "depot": {},
         # Split by owner: lumping machine buffers in with carried stock overstates
@@ -585,6 +602,10 @@ def extract(path: str) -> dict:
         elif any(h in cls for h in _GENERATOR_HINTS):
             record["fuel"] = ref_class(p.get("mCurrentFuelClass"))
             out["generators"].append(record)
+        elif any(h in cls for h in _ATTACHMENT_HINTS):
+            # Nothing to read off the properties: what a splitter is, is where it stands
+            # and which way it faces, and `record` already carries both.
+            out["attachments"].append(record)
 
     # Buffers, now that every component has been seen.
     for owner, sides in buffers.items():
