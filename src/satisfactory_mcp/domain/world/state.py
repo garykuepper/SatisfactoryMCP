@@ -29,6 +29,7 @@ from ..progression.phases import PhaseLedger
 from ..progression.research import ResearchGates
 from ..progression.shards import OverclockBudget
 from ..progression.unlocks import UnlockSet
+from . import flow as world_flow
 from . import sites as world_sites
 from . import water as world_water
 from .carriers import CarrierSet
@@ -133,6 +134,15 @@ class WorldState:
         from ..factories.build import build_graph
 
         return build_graph(self.projection)
+
+    @cached_property
+    def pipe_flow(self) -> list[dict]:
+        """Which way each pipe carries fluid, inferred once per state.
+
+        Cached for the same reason ``graph`` is: it walks the plumbing once per pipe, and
+        every caller wants the whole answer rather than one row of it.
+        """
+        return world_flow.pipe_flow(self.projection)
 
     @cached_property
     def structures(self):
