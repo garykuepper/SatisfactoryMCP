@@ -62,7 +62,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 #: The four pipeline classes that carry an ``mSplineData`` -- the fluid pipes, Mk1 and Mk2,
 #: each in the ordinary and the ``NoIndicator`` variant a player gets when the flow indicator
@@ -635,7 +635,10 @@ def extract(path: str) -> dict:
     }
     out["building_counts"] = dict(sorted(counts.items()))
     out["belts"] = _belts(chain_actors)
-    out["pipes"] = _pipes(pipe_actors, pipe_nets)
+    # ``actor_ix`` READ-ONLY, hence the dict rather than ``actor_id``: the graph's actor
+    # list was snapshotted three lines up, so interning a new name here would mint an
+    # index past the end of it. A pipe with no connection at all gets -1 instead.
+    out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
@@ -1039,11 +1042,12 @@ def _conveyor_class(path: str) -> str:
     return "_".join(parts) if len(parts) > 1 else ""
 
 
-def _pipes(actors: list, networks: list) -> dict:
+def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
     """Every fluid pipe's route, as polylines, and the fluid each one carries.
 
-    ``actors`` is ``[(class, instanceName, actorPosition, mSplineData), ...]`` and
-    ``networks`` is ``[(mPipeNetworkID, fluidClass, [memberPath, ...]), ...]``.
+    ``actors`` is ``[(class, instanceName, actorPosition, mSplineData), ...]``,
+    ``networks`` is ``[(mPipeNetworkID, fluidClass, [memberPath, ...]), ...]``, and
+    ``actor_ix`` is the connectivity graph's ``{shortName: index}``, read only.
 
     The other half of "draw what the player built". Belts came out of a trailer; a pipe is
     simpler and was in reach the whole time -- **the spline is a PROPERTY**, ``mSplineData``,
@@ -1052,7 +1056,7 @@ def _pipes(actors: list, networks: list) -> dict:
     builds pipes out of straight runs and elbows, and the reference save's 503 pipes are 224
     two-point straights and 195 six-point elbows.)
 
-    Rows are ``[networkIndex, classIndex, [[x, y, z], ...]]``:
+    Rows are ``[networkIndex, classIndex, [[x, y, z], ...], actorIndex]``:
 
     * **networkIndex** points into ``networks``, ``[{"id": ..., "fluid": ...}, ...]`` -- the
       game's own ``FGPipeNetwork`` grouping, 19 of them here, and the reason this key can say
@@ -1062,6 +1066,8 @@ def _pipes(actors: list, networks: list) -> dict:
       variant, which is a pipe whose flow indicator the player switched off.
     * The points are whole centimetres, like ``_belts``, and there is nothing to thin --
       1,987 points over 503 pipes, 3.9 apiece, and they are already only the corners.
+    * **actorIndex** points into ``graph["actors"]`` -- schema 14, one integer, and the whole
+      of that schema's change. See below for why a fourth column beats a fifth key.
 
     **The frame is the actor's, translated and not rotated -- measured, not assumed.** Every
     ``Location`` is stored relative to the pipe's own actor position, so that position is
@@ -1081,13 +1087,34 @@ def _pipes(actors: list, networks: list) -> dict:
     A pipe that ever carried one would need its points rotated before translating, so the
     measurement is stated rather than the assumption made quietly.
 
-    **Flow direction is NOT in here, because it is not in the save.** A pipe's two connectors
-    are named ``PipelineConnection0`` and ``PipelineConnection1`` -- not input and output,
-    unlike a belt's -- ``mFluidBox`` is a single float of contents, and the flow indicator
-    actor carries nothing but its paint. The spline's own order is the order the player
-    dragged it, which is not a claim about which way the fluid goes; in this game that is
-    decided at runtime by head lift and demand and reverses when they do. So the points come
-    out in file order and no consumer is told they mean travel.
+    **Flow direction is still not ON a pipe, and schema 14 does not pretend otherwise.** A
+    pipe's two connectors are named ``PipelineConnection0`` and ``PipelineConnection1`` -- not
+    input and output, unlike a belt's -- ``mFluidBox`` is a single float of contents, and the
+    flow indicator actor carries nothing but its paint. The spline's own order is the order the
+    player dragged it. All of that stands.
+
+    **What was never interrogated is the rest of the network, and the rest of the network says
+    a great deal.** Every fluid connection is a COMPONENT carrying ``mConnectedComponent``,
+    which the walk above has been folding into ``graph["material"]`` since schema 11 -- 1,560
+    directed pipe couplings on the reference save, **total** (no connection lacks a peer),
+    **symmetric** (all 1,560 name each other back) and never crossing an ``mPipeNetworkID``.
+    And the component's own name types the port at a machine: ``PipeInputFactory`` on 36 of
+    this world's refinery ports against ``PipeOutputFactory`` on 12, ``ConnectionAny0``/``1``
+    on the fluid buffers, plain ``FGPipeConnectionFactory`` where the building has one port and
+    its own role settles it. That is the game's ``EPipeConnectionType`` -- Consumer, Producer,
+    Any -- surviving in the serialised component name.
+
+    So the graph and its typed ends were already in the projection, and the ONE thing missing
+    was the join: a segment row could not be matched to the ``graph["actors"]`` entry that owns
+    it. ``actorIndex`` is that join and nothing more. The direction itself is inferred a layer
+    up, in ``domain/world/flow.py``, where the guesswork can be labelled and refused; this file
+    keeps emitting only what the save states.
+
+    **Which end of the spline is which, measured.** ``PipelineConnection0`` is ``points[0]``
+    and ``PipelineConnection1`` is ``points[-1]``: over the 221 pipe-to-pipe couplings the two
+    claimed endpoints land **0.06 cm apart at the median, p95 0.11 cm**, where the opposite
+    reading puts them a median of **52.5 m** apart and never once inside 10 cm. All 559
+    pipe-to-machine couplings agree, with the claimed endpoint nearer the machine every time.
     """
     fluid_of: dict[str, int] = {}
     nets: list[dict] = []
@@ -1125,7 +1152,14 @@ def _pipes(actors: list, networks: list) -> dict:
         if ci is None:
             ci = index[cls] = len(classes)
             classes.append(cls)
-        segments.append([fluid_of.get(str(instance), -1), ci, points])
+        segments.append(
+            [
+                fluid_of.get(str(instance), -1),
+                ci,
+                points,
+                actor_ix.get(str(instance).rsplit(".", 1)[-1], -1),
+            ]
+        )
 
     return {"classes": classes, "networks": nets, "segments": segments}
 

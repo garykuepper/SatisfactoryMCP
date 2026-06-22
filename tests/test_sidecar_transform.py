@@ -405,21 +405,48 @@ def _spline(*points) -> list:
 
 
 def test_the_pipes_key_is_interned_polylines_in_whole_centimetres(projection):
-    """The shape, field by field: ``[networkIndex, classIndex, [[x, y, z], ...]]``."""
+    """The shape, field by field: ``[networkIndex, classIndex, [[x, y, z], ...], actorIndex]``."""
     pipes = projection["pipes"]
     classes = pipes["classes"]
     networks = pipes["networks"]
     rows = pipes["segments"]
+    actors = projection["graph"]["actors"]
     assert set(classes) <= set(PIPE_CLASSES) and classes
     assert rows, "the reference world has 503 pipes"
     assert networks, "and 19 pipe networks"
 
-    for net, ci, points in rows:
+    for net, ci, points, actor in rows:
         assert 0 <= ci < len(classes)
         assert -1 <= net < len(networks)
         assert len(points) >= 2, "a polyline needs two points"
         for p in points:
             assert len(p) == 3 and all(isinstance(c, int) for c in p), p
+        # Schema 14. The whole of it: an index INTO an existing list, never past its end.
+        assert -1 <= actor < len(actors)
+
+
+def test_a_pipes_actor_index_names_that_very_pipe_in_the_connection_graph(projection):
+    """The join schema 14 exists for, checked against the class it claims to point at.
+
+    The segment says which ``graph["actors"]`` entry owns it. If that index were off by one --
+    or interned after the graph's own list was snapshotted, which is the bug the read-only
+    lookup in ``extract`` prevents -- it would still be a valid index and would still resolve,
+    to the wrong actor. So it is checked by NAME: the entry it points at has to be a pipeline
+    of the very class the row's own ``classIndex`` interns.
+    """
+    pipes = projection["pipes"]
+    classes = pipes["classes"]
+    actors = projection["graph"]["actors"]
+    unclaimed = 0
+    for _net, ci, _points, actor in pipes["segments"]:
+        if actor < 0:
+            unclaimed += 1  # a pipe connected to nothing at all: legal, and none here
+            continue
+        assert actors[actor].startswith(classes[ci] + "_"), (actors[actor], classes[ci])
+    assert unclaimed == 0, "every pipe on this world is plugged into something"
+    # And distinct, which a shared or defaulted index would break.
+    claimed = [row[3] for row in pipes["segments"]]
+    assert len(set(claimed)) == len(claimed)
 
 
 def test_a_pipe_is_a_fluid_pipe_and_a_hypertube_is_not(projection):
@@ -449,7 +476,7 @@ def test_pipes_are_placed_in_the_world_and_not_in_the_actors_own_frame(projectio
     piled on the map origin, out at sea. Checking them against the foundations is what catches
     it, the same way the belts above are checked.
     """
-    points = [p for _, _, pts in projection["pipes"]["segments"] for p in pts]
+    points = [p for _, _, pts, _ in projection["pipes"]["segments"] for p in pts]
     rows = projection["structures"]["instances"]
     for axis in (0, 1, 2):
         lo = min(r[axis + 1] for r in rows) - 20_000
@@ -465,8 +492,8 @@ def test_every_pipe_belongs_to_a_network_that_names_a_fluid(projection):
     rows = projection["pipes"]["segments"]
     assert all(n["fluid"] for n in networks), "a network with no fluid on this world"
     assert all(isinstance(n["id"], int) for n in networks)
-    assert all(net >= 0 for net, _, _ in rows), "every pipe here is claimed by a network"
-    fluids = {networks[net]["fluid"] for net, _, _ in rows}
+    assert all(net >= 0 for net, _, _, _ in rows), "every pipe here is claimed by a network"
+    fluids = {networks[net]["fluid"] for net, _, _, _ in rows}
     assert len(fluids) > 1 and all(f.startswith("Desc_") for f in fluids)
 
 
@@ -482,7 +509,7 @@ def test_no_pipe_is_vertical_so_none_needs_a_glyph(projection):
             (min(p[0] for p in pts), min(p[1] for p in pts)),
             (max(p[0] for p in pts), max(p[1] for p in pts)),
         )
-        for _, _, pts in projection["pipes"]["segments"]
+        for _, _, pts, _ in projection["pipes"]["segments"]
     ]
     assert min(spans) > 10.0, "a pipe with no horizontal extent would draw as nothing"
 
@@ -507,6 +534,7 @@ def test_pipes_are_translated_by_their_actor_and_not_rotated_by_it():
             )
         ],
         nets,
+        {"Build_Pipeline_C_1": 0},
     )
     moved = _pipes(
         [
@@ -518,6 +546,7 @@ def test_pipes_are_translated_by_their_actor_and_not_rotated_by_it():
             )
         ],
         nets,
+        {"Build_Pipeline_C_1": 0},
     )
     assert base["segments"][0][2] == [[0, 0, 0], [0, 100, 0], [0, 100, 250]]
     assert [[p[0] - 1000, p[1] + 2000, p[2] - 3000] for p in moved["segments"][0][2]] == base[
@@ -541,20 +570,21 @@ def test_a_pipe_no_network_claims_is_still_drawn():
             )
         ],
         [(3, "Desc_Water_C", ["x.Build_Pipeline_C_1"])],
+        {"Build_PipelineMK2_C_9": 4},
     )
-    assert out["segments"] == [[-1, 0, [[0, 0, 0], [0, 800, 0]]]]
+    assert out["segments"] == [[-1, 0, [[0, 0, 0], [0, 800, 0]], 4]]
     assert out["networks"] == [{"id": 3, "fluid": "Desc_Water_C"}]
 
 
 def test_a_pipe_of_nothing_recognisable_is_dropped_rather_than_raising():
     """Same reasoning as ``_belts``: this runs on whatever the property decoder produced."""
     empty = {"classes": [], "networks": [], "segments": []}
-    assert _pipes([], []) == empty
-    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), None)], []) == empty
-    assert _pipes([("Build_Pipeline_C", "i", None, _spline((0, 0, 0), (1, 1, 1)))], []) == empty
-    assert _pipes([("Build_Pipeline_C", "i", ("x", 0, 0), _spline((0, 0, 0)))], []) == empty
+    assert _pipes([], [], {}) == empty
+    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), None)], [], {}) == empty
+    assert _pipes([("Build_Pipeline_C", "i", None, _spline((0, 0, 0), (1, 1, 1)))], [], {}) == empty
+    assert _pipes([("Build_Pipeline_C", "i", ("x", 0, 0), _spline((0, 0, 0)))], [], {}) == empty
     # One point is not a route, the same bar the belts set.
-    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), _spline((0, 0, 0)))], []) == empty
+    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), _spline((0, 0, 0)))], [], {}) == empty
     # A struct with no Location among its fields costs that point, not the pipe.
     assert _pipes(
         [
@@ -566,8 +596,9 @@ def test_a_pipe_of_nothing_recognisable_is_dropped_rather_than_raising():
             )
         ],
         [],
-    )["segments"] == [[-1, 0, [[0, 0, 0], [0, 400, 0]]]]
+        {},
+    )["segments"] == [[-1, 0, [[0, 0, 0], [0, 400, 0]], -1]]
     # A network whose id is not an integer keeps its fluid and loses its id.
-    assert _pipes([], [(None, "Desc_Water_C", [])])["networks"] == [
+    assert _pipes([], [(None, "Desc_Water_C", [])], {})["networks"] == [
         {"id": None, "fluid": "Desc_Water_C"}
     ]

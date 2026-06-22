@@ -21,8 +21,11 @@ from ... import config
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
 #: every pickle written by an older schema misses rather than being served without its new
 #: fields. 12 added placement yaw and belt splines; 13 added fluid pipe splines and the belt
-#: attachments -- the splitters and mergers a run passes through.
-SCHEMA_VERSION = 13
+#: attachments -- the splitters and mergers a run passes through; 14 added a fourth column to
+#: a pipe segment, the index of its own actor, which joins the drawn pipe to the connection
+#: graph that has been in ``graph["material"]`` since schema 11 and is what lets flow
+#: direction be inferred.
+SCHEMA_VERSION = 14
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3
