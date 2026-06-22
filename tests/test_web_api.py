@@ -1358,7 +1358,17 @@ def test_pipes_are_the_plumbing_as_it_was_actually_routed(client, state):
     assert 0 < body["networks"] < body["count"], "pipes group into fewer networks than pipes"
 
     row = body["pipes"][0]
-    assert set(row) == {"network", "fluid", "fluid_name", "cls", "name", "flow_m3_min", "points_m"}
+    assert set(row) == {
+        "network",
+        "fluid",
+        "fluid_name",
+        "cls",
+        "name",
+        "flow_m3_min",
+        "points_m",
+        "direction",
+        "basis",
+    }
     # The class legend is resolved here, or the page would have to carry it.
     assert row["cls"] == raw["classes"][raw["segments"][0][1]]
     assert {r["cls"] for r in body["pipes"]} <= set(raw["classes"])
@@ -1399,13 +1409,39 @@ def test_every_pipe_says_which_fluid_it_carries(client, state):
     assert len({r["flow_m3_min"] for r in body["pipes"]}) == 2, "Mk1 and Mk2 both built here"
 
 
-def test_no_pipe_row_claims_a_flow_direction(client):
-    """The refusal, pinned. There is no direction in the save -- a pipe's two connectors are
-    numbered rather than named input and output, and which way a fluid moves is decided at
-    runtime by head lift and demand. A field here would be an invention, and a client that
-    found one would draw arrows with it."""
-    row = client.get("/api/pipes").json()["pipes"][0]
-    assert not {"direction", "from", "to", "flow_direction", "reversed"} & set(row)
+def test_every_pipe_row_says_which_way_it_flows_or_says_it_does_not_know(client, state):
+    """The refusal replaced by a labelled answer, and the label is the point.
+
+    There is still no direction stored ON a pipe -- its two connectors are numbered rather
+    than named input and output. What there IS, and what the old refusal never interrogated,
+    is the rest of the network: the save serialises every fluid coupling and TYPES a machine's
+    ports. So a row now carries a direction where the plumbing admits only one, and ``unknown``
+    where it admits two, with ``basis`` naming which of those a reader is looking at.
+
+    Pinned here so that a direction can never arrive unlabelled, which is the invention the
+    old test was guarding against: ``unknown`` and ``unresolved`` go together in both
+    directions, and nothing else does.
+    """
+    body = client.get("/api/pipes").json()
+    rows = body["pipes"]
+    for r in rows:
+        assert r["direction"] in {"forward", "reverse", "unknown"}
+        assert r["basis"] in {"machine port", "pump", "propagated", "unresolved"}
+        assert (r["direction"] == "unknown") == (r["basis"] == "unresolved"), r
+
+    directed = [r for r in rows if r["direction"] != "unknown"]
+    assert body["directed"] == len(directed)
+    assert directed, "this world's plumbing is not one giant ambiguity"
+    assert len(directed) < len(rows), "nor is any of it free"
+    # Both readings occur: the spline's own order is the order the player dragged it, so a
+    # projection where every pipe came out `forward` would mean the direction was being read
+    # off the point order rather than off the network.
+    assert {r["direction"] for r in directed} == {"forward", "reverse"}
+    # And all three warrants are exercised, or a basis is dead code nobody would notice.
+    assert {r["basis"] for r in directed} == {"machine port", "pump", "propagated"}
+    assert len(directed) == sum(1 for f in state.pipe_flow if f["direction"] != "unknown"), (
+        "the surface reports exactly what the domain service decided"
+    )
 
 
 def test_a_world_with_no_pipes_answers_with_empty_plumbing(game):
@@ -1423,7 +1459,12 @@ def test_a_world_with_no_pipes_answers_with_empty_plumbing(game):
             game_loader=lambda: game,
         )
         with TestClient(app) as c:
-            assert c.get("/api/pipes").json() == {"pipes": [], "count": 0, "networks": 0}
+            assert c.get("/api/pipes").json() == {
+                "pipes": [],
+                "count": 0,
+                "networks": 0,
+                "directed": 0,
+            }
 
 
 def test_a_malformed_pipe_segment_costs_one_piece_not_the_plumbing(game):
@@ -1460,6 +1501,10 @@ def test_a_malformed_pipe_segment_costs_one_piece_not_the_plumbing(game):
         "name": "Pipeline Mk.1",
         "flow_m3_min": 300.0,
         "points_m": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        # No fourth column and no graph, so nothing to join and nothing to infer -- which is
+        # exactly the schema-13 projection's answer too, rather than a crash or a guess.
+        "direction": "unknown",
+        "basis": "unresolved",
     }
     # A pipe whose network the table cannot name is still a pipe on real ground: it keeps
     # its route and loses what the network would have told us. Null, not a guessed fluid.

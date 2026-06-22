@@ -59,6 +59,13 @@ VOLATILE = {"path", "filename", "mtime_ns", "size"}
 POST_11_ADDITIONS = {
     #: Whole new top-level keys: per-belt spline polylines (12), per-pipe ones (13), and the
     #: splitters and mergers those belt runs pass through (13).
+    #:
+    #: Schema 14 added a FOURTH COLUMN to a pipe segment -- the index of its own actor in
+    #: ``graph["actors"]``, which joins a drawn pipe to the connection graph -- and needs no
+    #: entry of its own for one reason worth writing down rather than leaving to be rederived:
+    #: the change is confined inside ``pipes``, and ``pipes`` is already dropped whole. Had it
+    #: widened a schema-11 row instead, it would have owed ``row_width`` an entry, exactly as
+    #: ``structures`` does below.
     "keys": ("belts", "pipes", "attachments"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
@@ -227,7 +234,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             continue
         proj = _projection(path)
         assert "error" not in proj, (name, proj.get("detail"))
-        assert proj["schema_version"] == 13, (name, "unexpected schema for the filter")
+        assert proj["schema_version"] == 14, (name, "unexpected schema for the filter")
         proj = as_schema_11(proj)
         for key, want in entry.items():
             if key == "n_objects_value":

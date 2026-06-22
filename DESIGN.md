@@ -4033,7 +4033,9 @@ placement was being *built and then dropped on the floor*.
   and `PipelineConnection1`, an `mFluidBox` that is one float of contents, and a flow
   indicator actor carrying nothing but its paint. Direction is decided at runtime by head lift
   and demand and reverses when they do, so the points stay in file order and no consumer is
-  told they mean travel. `/api/pipes` ships no arrows.
+  told they mean travel. `/api/pipes` ships no arrows. **Superseded four days later by schema
+  14 below** — not because that finding was wrong, but because it was answering about the
+  pipe when the question was about the plumbing.
 * **Cost, measured on the reference save:** the projection grew 1,209,739 → 1,258,597 bytes
   (+4.0%), of which `pipes` is 48 KB. **The time did not move** — best of 5 interleaved runs,
   3.03 s either way (medians 3.08 and 3.09) — which is the difference between this and the
@@ -4061,6 +4063,46 @@ placement was being *built and then dropped on the floor*.
 * **Not in it:** pumps, junctions, valves and fluid buffers. They carry no spline, only a
   header position — the same shape `attachments` uses, so the road is open; what is missing is
   a reason to draw a valve that the belt junctions did not also have.
+
+### Schema 14: the plumbing knew all along (2026-07-31)
+
+Schema 13 said flow direction is not in the save, and that is still true **of a pipe**. It was
+never asked of the network. Prompted by the pipe next to a pump, where "direction is not
+recorded" reads as obtuseness rather than as honesty.
+
+* **What was there the whole time.** Every fluid connection is a component carrying
+  `mConnectedComponent`, which the walk has been folding into `graph["material"]` since schema
+  11 — **1,560 directed couplings on the reference save, total, symmetric, none crossing an
+  `mPipeNetworkID`**. And the component's *name* types a machine's port: `PipeInputFactory`,
+  `PipeOutputFactory`, `ConnectionAny0`/`1` — the game's own Consumer / Producer / Any,
+  surviving into the file. So the graph and its typed ends were already in the projection.
+* **One integer is the whole schema change.** A fourth column on a pipe segment, the index of
+  its own actor in `graph["actors"]`, because the one thing missing was the *join* between a
+  drawn pipe and the graph entry that owns it. **+2,481 bytes, +0.18%**, and every schema-13
+  key is leaf-identical in the regenerated fixture. `PipelineConnection0` is `points[0]`:
+  measured over 221 pipe-to-pipe couplings at a **median 0.06 cm**, against 52.5 m the other
+  way round, with all 559 pipe-to-machine couplings agreeing.
+* **The inference lives in `domain/world/flow.py`, not in the extractor**, which keeps emitting
+  only what the save states. Two conservative models — a cut argument over the typed ports, and
+  a pump being one-way — plus conservation propagation with a guard against inventing flow into
+  a dead stub. **365 of 503 resolved**, each labelled `machine port`, `pump` or `propagated`,
+  and the other 138 keep the old honest `unknown`: a pipe in a loop, or a trunk with producers
+  and consumers on both sides, genuinely has two legal answers without the rates.
+* **Checked four ways, none of them the inference marking its own homework.** The two models
+  overlap on 118 pipes and **agree on all 118**. A conservation audit finds **no node among 293
+  where fluid appears from nowhere**. Following the flow to its end from all 365 **never
+  arrives at a producer or leaves a consumer**. And water extractor → coal generator is known a
+  priori: **39 right, 0 wrong**. The pump convention has its own oracle — this world's
+  unfinished 696 m oil lift, 9 pumps climbing 240 m with neither end plumbed, comes out running
+  **191 m uphill**, which is the only reading under which nine pumps make sense.
+* **Chevrons at factory zoom, and nothing at world zoom.** 400 marks over 337 pipes, one per
+  24 m with a 4 m floor, geometry in metres so they scale with the map, drawn only once a
+  chevron clears 5 px (zoom 1, which is `FACTORY_MAX_ZOOM`). Frame band unmoved: 16.7 ms
+  median and 16.8 ms p95 with them and without, interleaved over 720 frames each.
+* **Belts are deliberately NOT marked**, though their points are already in travel order. The
+  chevron function takes a polyline and a flag precisely so `ROUTE_CHEVRONS.belts = true` is
+  the whole of the work; it stays false because 3,085 belt runs is a decision about the map
+  that nobody asked for.
 
 ---
 

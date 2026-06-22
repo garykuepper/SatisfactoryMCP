@@ -1187,16 +1187,20 @@ function drawBelts(data) {
 function styleRoutes() {
   var ppm = pixelsPerMetre();
   var radius = liftRadius(ppm);
+  var alpha = chevronOpacity(ppm);
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
     if (!group) return;
     var weight = routeWeight(ROUTE_WIDTH_M[name], ppm);
     group.eachLayer(function (piece) {
-      // Three kinds of piece share these layers and only two of them are sized in pixels: a
-      // lift's ring by its radius, a run by its weight. A splitter is a polygon in map units
-      // and is already the right size at every zoom -- exactly like a machine, which is the
-      // whole reason it is drawn as one.
-      if (piece.setRadius) piece.setRadius(radius);
+      // Four kinds of piece share these layers now and only two of them are sized in pixels:
+      // a lift's ring by its radius, a run by its weight. A splitter is a polygon in map
+      // units and is already the right size at every zoom -- exactly like a machine, which is
+      // the whole reason it is drawn as one. A chevron is map units too, so what changes for
+      // it is not its size but whether it is drawn at all: it is the one piece here that has
+      // a zoom BELOW which it is noise rather than information.
+      if (piece._chevron) piece.setStyle({ opacity: alpha });
+      else if (piece.setRadius) piece.setRadius(radius);
       else if (!(piece instanceof L.Polygon)) piece.setStyle({ weight: weight });
     });
   });
@@ -1220,10 +1224,13 @@ map.on("zoomend", styleRoutes);
  * spans 11.6 cm horizontally and only one is under 50 cm. Every pipe draws as a line. The
  * one-point guard below is still there, because "none on this world" is not "none ever".
  *
- * NO ARROWS, and that is the API's refusal carried through: a pipe has no flow direction in
- * the save, so the points are the order the player dragged it and mean nothing about travel.
- * The popup says so rather than leaving the reader to assume it, because a run of pipe drawn
- * beside a run of belt -- which IS in travel order -- invites exactly that assumption.
+ * ARROWS ON 365 OF THE 503, and a stated refusal on the rest. The save still does not record
+ * a pipe's flow direction -- that never changes -- but it does record the whole plumbing
+ * graph and it TYPES a machine's ports, so `/api/pipes` now infers a direction where the
+ * network admits only one and says `unknown` where it admits two. A pipe hanging off a water
+ * extractor had an obvious answer and printing "not recorded" at it read as obtuseness rather
+ * than as honesty. So: chevrons on the resolved ones, nothing at all on the rest, and a popup
+ * that names which of the two a reader is looking at.
  */
 /* Rust, and picked by measuring rather than by taste. This layer has to separate from three
  * things at once: the belts it runs beside, the terrain it crosses, and the amber the
@@ -1276,26 +1283,142 @@ function pipeWeight(ppm) {
   return routeWeight(PIPE_WIDTH_M, ppm);
 }
 
+/* What the popup says about a direction, keyed by what the server based it on. Short on
+ * purpose: the row it replaces was a sentence explaining why there was nothing to say, and
+ * the whole point of the change is that on 365 of 503 pipes there now is. The `from` and
+ * `to` rows carry the direction itself, exactly as they do on a belt, so this row only has
+ * to carry the WARRANT. */
+var PIPE_FLOW_BASIS = {
+  "machine port": "→ a typed machine port at one end",
+  pump: "→ pump orientation",
+  propagated: "→ inferred from the network",
+};
+
+/* And the honest refusal, kept for the 138 the network genuinely does not settle -- a pipe
+ * in a loop, or a trunk with producers and consumers on both sides. Shorter than the
+ * sentence it replaces, because it is now the exception rather than the rule. */
+var PIPE_FLOW_UNKNOWN = "not recorded, and the network does not imply it";
+
 function pipePopup(p, first, last) {
+  var known = p.direction === "forward" || p.direction === "reverse";
+  var head = p.direction === "reverse" ? last : first;
+  var tail = p.direction === "reverse" ? first : last;
   return popup([
     ["pipe", p.name || p.cls],
     // The thing a belt cannot say. It comes off the game's own FGPipeNetwork rather than
     // from what the pipe is plugged into, which is why it can be stated flatly.
     ["fluid", p.fluid_name],
     ["capacity", p.flow_m3_min ? p.flow_m3_min + " m³/min at 100%" : null],
-    // Said out loud, because the belt popup beside it says "from" and "to" and a reader is
-    // owed the difference. There is no direction in the save to draw or to print.
-    ["flow", "direction is not recorded — it is set at runtime by head lift and demand"],
-    ["ends", first[0] + ", " + first[1] + " m and " + last[0] + ", " + last[1] + " m"],
-    ["rise", Math.abs(Math.round((last[2] - first[2]) * 10) / 10) + " m"],
+    ["flow", known ? PIPE_FLOW_BASIS[p.basis] || "→ inferred" : PIPE_FLOW_UNKNOWN],
+    // `from`/`to` where the direction is known, which is the belt popup's own wording and
+    // means the same thing there; `ends` where it is not, so the two are never confused.
+    ["from", known ? head[0] + ", " + head[1] + " m" : null],
+    ["to", known ? tail[0] + ", " + tail[1] + " m" : null],
+    ["ends", known ? null : first[0] + ", " + first[1] + " m and " + last[0] + ", " + last[1] + " m"],
+    // Signed once there is a direction to sign it against -- a pipe that climbs 6 m is a
+    // different fact from one that drops 6 m, and until now neither could be said.
+    [
+      "rise",
+      known
+        ? Math.round((tail[2] - head[2]) * 10) / 10 + " m"
+        : Math.abs(Math.round((last[2] - first[2]) * 10) / 10) + " m",
+    ],
     ["network", p.network === null ? null : "#" + p.network],
   ]);
+}
+
+/* Chevrons: the direction, drawn.
+ *
+ * Geometry in METRES, like the machines and the foundations and unlike the line it sits on,
+ * so it scales with the map for free and stays the same size relative to the plumbing at
+ * every zoom. Three metres long and 2.4 across -- a little under twice the 1.3 m bore, which
+ * is what makes it read as a mark ON the pipe rather than as a kink IN it.
+ *
+ * Placed by ARC LENGTH, not per corner: one every 24 m with a minimum of one per pipe, so a
+ * 9 m elbow gets a single mark and the 56 m trunk gets two, and a run reads as a dotted line
+ * of them rather than as a cluster at every bend. Counted in the PLAN, because that is what
+ * the map shows: a pipe's climb is not length it has anywhere to put a mark. 400 chevrons
+ * over 337 of this world's 365 resolved pipes; the 4 m floor drops the other 28, because a
+ * mark three quarters as long as the piece carrying it is not a mark, it is the piece.
+ *
+ * HIDDEN AT WORLD ZOOM, and by the same grammar the hairline floor uses -- a pixel statement,
+ * made in pixels. Below 5 px a chevron has no discernible apex; it is a dash, and a dash on a
+ * line says nothing about direction at all. Three metres reaches 5 px at zoom 1, which is
+ * FACTORY_MAX_ZOOM, i.e. exactly the scale the "show me this factory" flight lands at. At the
+ * whole-world zoom -3 a metre is 0.14 px and 412 of these would be 412 specks of noise.
+ *
+ * Not interactive: a chevron sits on top of its own pipe, and a mark that stole the pipe's
+ * popup would make the direction unreadable by making the piece unclickable. */
+var CHEVRON_LENGTH_M = 3;
+var CHEVRON_SPAN_M = 2.4;
+var CHEVRON_SPACING_M = 24;
+var CHEVRON_MIN_RUN_M = 4;
+var CHEVRON_MIN_PX = 5;
+var CHEVRON_WEIGHT_PX = 1.5;
+
+/* A value step far above both pipe tones, so it reads against the line it is drawn on, and
+ * measured like every other colour here. At its 0.7 opacity the composite over the three
+ * pipe tones is dE 26.1 to 36.7 from the pipe underneath -- unmistakably a separate mark --
+ * while the nearest colour anywhere else on the page is the iron-ore dot at dE 11.9 to 13.0,
+ * which is a filled disc on terrain rather than a thin V on a line. The extractor amber that
+ * ruled out a brighter pipe in the first place stays dE 45.5 away from the swatch. */
+var CHEVRON_COLOUR = "#e8cbb4";
+var CHEVRON_OPACITY = 0.7;
+
+function chevronOpacity(ppm) {
+  return CHEVRON_LENGTH_M * ppm >= CHEVRON_MIN_PX ? CHEVRON_OPACITY : 0;
+}
+
+/* Where the chevrons go on one route, in world metres, as [[x, y], [x, y], [x, y]] apexes.
+ *
+ * Takes a polyline and a flag rather than a pipe, so it knows nothing about plumbing: a belt
+ * has a direction too -- its points are already in travel order -- and could be marked by
+ * this same function tomorrow. See ROUTE_CHEVRONS for why it is not being marked today. */
+function routeChevrons(points_m, reverse) {
+  var pts = reverse ? points_m.slice().reverse() : points_m;
+  var runs = [];
+  var total = 0;
+  for (var i = 1; i < pts.length; i++) {
+    var dx = pts[i][0] - pts[i - 1][0];
+    var dy = pts[i][1] - pts[i - 1][1];
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (!(d > 0)) continue;
+    runs.push({ x: pts[i - 1][0], y: pts[i - 1][1], ux: dx / d, uy: dy / d, d: d, at: total });
+    total += d;
+  }
+  if (!runs.length || total < CHEVRON_MIN_RUN_M) return [];
+  var marks = [];
+  var n = Math.max(1, Math.floor(total / CHEVRON_SPACING_M));
+  for (var k = 0; k < n; k++) {
+    var along = ((k + 0.5) / n) * total;
+    var run = runs[runs.length - 1];
+    for (var j = 0; j < runs.length; j++) {
+      if (along <= runs[j].at + runs[j].d) {
+        run = runs[j];
+        break;
+      }
+    }
+    var t = along - run.at;
+    var tx = run.x + run.ux * (t + CHEVRON_LENGTH_M / 2);
+    var ty = run.y + run.uy * (t + CHEVRON_LENGTH_M / 2);
+    var bx = tx - run.ux * CHEVRON_LENGTH_M;
+    var by = ty - run.uy * CHEVRON_LENGTH_M;
+    var nx = -run.uy * (CHEVRON_SPAN_M / 2);
+    var ny = run.ux * (CHEVRON_SPAN_M / 2);
+    marks.push([
+      [bx + nx, by + ny],
+      [tx, ty],
+      [bx - nx, by - ny],
+    ]);
+  }
+  return marks;
 }
 
 function drawPipes(data) {
   // Off by default at the whole-world zoom, exactly like `belts` and `machines`. See reveal().
   var group = layer("pipes", false, PIPE_COLOUR);
   var ppm = pixelsPerMetre();
+  var alpha = chevronOpacity(ppm);
   data.pipes.forEach(function (p) {
     if (p.points_m.length < 2) return; // a route with one point is not a route
     var points = p.points_m.map(function (q) {
@@ -1308,6 +1431,23 @@ function drawPipes(data) {
     })
       .bindPopup(pipePopup(p, p.points_m[0], p.points_m[p.points_m.length - 1]))
       .addTo(group);
+    if (!ROUTE_CHEVRONS.pipes) return;
+    if (p.direction !== "forward" && p.direction !== "reverse") return;
+    routeChevrons(p.points_m, p.direction === "reverse").forEach(function (mark) {
+      var piece = L.polyline(
+        mark.map(function (q) {
+          return [-q[1], q[0]];
+        }),
+        {
+          color: CHEVRON_COLOUR,
+          weight: CHEVRON_WEIGHT_PX,
+          opacity: alpha,
+          interactive: false,
+        }
+      );
+      piece._chevron = true;
+      piece.addTo(group);
+    });
   });
   sinkRoutes();
 }
@@ -1344,18 +1484,33 @@ var ROUTE_LAYERS = ["belts", "pipes"];
  * the shared passes above have to look. */
 var ROUTE_WIDTH_M = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
 
+/* Which route layers carry direction chevrons. A BELT HAS A DIRECTION TOO -- its points are
+ * in travel order, which is the one thing the belts have always been able to say and the
+ * pipes could not -- and `routeChevrons` above takes a polyline and a flag precisely so that
+ * turning this to `true` is the whole of the work. It stays `false` because that is a
+ * decision about the map, not about the data: 3,085 belt runs would put some 2,500 more
+ * marks on the same canvas as these 412, and the owner asked for the pipes. A flag rather
+ * than an absence, so the next person finds a switch instead of a rewrite. */
+var ROUTE_CHEVRONS = { belts: false, pipes: true };
+
 function sinkRoutes() {
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
     if (!group) return;
+    var chevrons = [];
     var squares = [];
     var runs = [];
     group.eachLayer(function (piece) {
-      (piece instanceof L.Polygon ? squares : runs).push(piece);
+      (piece._chevron ? chevrons : piece instanceof L.Polygon ? squares : runs).push(piece);
     });
-    squares.concat(runs).forEach(function (piece) {
-      if (piece.bringToBack) piece.bringToBack();
-    });
+    // Sunk FIRST is left highest, per the note above, so the chevrons go before the squares
+    // and the runs: a direction mark under the line it marks would not be a mark.
+    chevrons
+      .concat(squares)
+      .concat(runs)
+      .forEach(function (piece) {
+        if (piece.bringToBack) piece.bringToBack();
+      });
   });
   raiseNodeDots();
 }

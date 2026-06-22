@@ -1035,13 +1035,22 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
     solution. ``null`` for a pipe no network claims, which happens on none of them here but
     is what an empty or half-built network would give.
 
-    **There is no flow direction in here, because there is none in the save.** A belt has an
-    input end and an output end and the projection puts its points in travel order; a pipe
-    has ``PipelineConnection0`` and ``PipelineConnection1``, an ``mFluidBox`` that is one
-    float of contents, and a flow indicator actor carrying nothing but its paint. Which way a
-    fluid moves is decided at runtime by head lift and demand and reverses when they do. So
-    the points are in the order the file stores them -- the order the player dragged the pipe
-    -- and that is not a claim about travel. A client must not draw an arrow from it.
+    **``direction`` is INFERRED, and ``basis`` says from what.** Nothing on a pipe records
+    which way the fluid goes -- that much of the old refusal stands, and the points are still
+    in the order the file stores them. But the plumbing AROUND it records a great deal: the
+    save serialises every fluid coupling, and names a machine's port ``PipeInputFactory`` or
+    ``PipeOutputFactory``. ``domain/world/flow.py`` reads that graph and declines wherever
+    more than one answer is consistent. So ``direction`` is ``forward`` along ``points_m``,
+    ``reverse`` against it, or ``unknown`` -- 365, and 138 unknown, on the reference world --
+    and ``basis`` is one of:
+
+    * ``machine port`` -- this very pipe ends at a port the save TYPES. Barely an inference.
+    * ``pump`` -- a pump or valve at one end, one-way by construction.
+    * ``propagated`` -- only the shape of the wider network settles it.
+    * ``unresolved`` -- and then ``direction`` is ``unknown``. A pipe in a loop, or a trunk
+      with producers and consumers on both sides, genuinely has no fixed direction.
+
+    A client may draw an arrow on the first three and must not on the fourth.
 
     Sent one row per piece, ungrouped, the posture ``/api/belts`` and ``/api/structures`` both
     take. Measured on the reference world -- 503 pipes, 1,987 points, 48 KB -- an order
@@ -1060,9 +1069,13 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
     raw = st.projection.get("pipes") or {}
     classes = list(raw.get("classes") or ())
     networks = list(raw.get("networks") or ())
+    # Positional against ``segments``, which is what the domain service promises, so a
+    # projection too old to carry the join reads as one long row of "unknown" rather than
+    # as an error. Guarded by index below for the same reason.
+    flows = st.pipe_flow
     resolved: dict[int, dict[str, Any]] = {}
     rows = []
-    for seg in raw.get("segments") or ():
+    for order, seg in enumerate(raw.get("segments") or ()):
         if not isinstance(seg, (list, tuple)) or len(seg) < 3:
             continue
         try:
@@ -1084,8 +1097,11 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
             resolved[index] = _pipe_class(st, classes[index] if 0 <= index < len(classes) else None)
         entry = networks[net] if 0 <= net < len(networks) else {}
         fluid = entry.get("fluid") if isinstance(entry, dict) else None
+        flow = flows[order] if 0 <= order < len(flows) else {}
         rows.append(
             {
+                "direction": flow.get("direction", "unknown"),
+                "basis": flow.get("basis", "unresolved"),
                 # The game's own network id, not the index into the list above: the index is
                 # an encoding detail of this payload and the id is a thing in the world.
                 "network": entry.get("id") if isinstance(entry, dict) else None,
@@ -1101,6 +1117,7 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
         "pipes": rows,
         "count": len(rows),
         "networks": len({r["network"] for r in rows if r["network"] is not None}),
+        "directed": sum(1 for r in rows if r["direction"] != "unknown"),
     }
 
 
