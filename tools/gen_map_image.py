@@ -715,7 +715,20 @@ def cut_square(piece, dest: Path, z: int, ox: int, oy: int, tile_px: int) -> int
     return written
 
 
-def cut_pyramid(sheet, image_mod, dest: Path, tile_px: int = PYRAMID_TILE_PX) -> dict:
+#: What a level says it was cut from when the caller does not say. The default is this
+#: file's own answer; ``tools/gen_map_renders.py`` passes its own, because the same cutter
+#: now serves three pyramids and a level record that named the artwork under a hillshade
+#: would be the one part of the sidecar a reader could not trust.
+DEFAULT_LEVEL_SOURCE = "the game's own 8192 px artwork, Lanczos"
+
+
+def cut_pyramid(
+    sheet,
+    image_mod,
+    dest: Path,
+    tile_px: int = PYRAMID_TILE_PX,
+    source: str = DEFAULT_LEVEL_SOURCE,
+) -> dict:
     """Cut ``sheet`` into ``dest/{z}/{x}_{y}.png`` for every level, and say what it wrote.
 
     Each level below the top is one Lanczos downscale of the whole sheet, sliced up --
@@ -743,7 +756,7 @@ def cut_pyramid(sheet, image_mod, dest: Path, tile_px: int = PYRAMID_TILE_PX) ->
                 "sheet_px": side,
                 "tiles": (1 << z) ** 2,
                 "bytes": written,
-                "from": "the game's own 8192 px artwork, Lanczos",
+                "from": source,
             }
         )
         print(f"  pyramid z{z}: {side}x{side}, {(1 << z) ** 2} tiles, {written / 1e6:.2f} MB")
@@ -788,7 +801,12 @@ def merge_enhanced(stats: dict, extra: dict) -> dict:
 
 
 def install_pyramid(
-    sheet, image_mod, out_dir: Path, tile_px: int = PYRAMID_TILE_PX, enhance=None
+    sheet,
+    image_mod,
+    out_dir: Path,
+    tile_px: int = PYRAMID_TILE_PX,
+    enhance=None,
+    source: str = DEFAULT_LEVEL_SOURCE,
 ) -> dict:
     """Cut the pyramid into staging, then rename it over any older one.
 
@@ -809,7 +827,7 @@ def install_pyramid(
         if stale.exists():
             shutil.rmtree(stale)
     staging.mkdir(parents=True)
-    stats = cut_pyramid(sheet, image_mod, staging, tile_px)
+    stats = cut_pyramid(sheet, image_mod, staging, tile_px, source)
     if enhance is not None:
         stats = merge_enhanced(stats, enhance(staging))
 
