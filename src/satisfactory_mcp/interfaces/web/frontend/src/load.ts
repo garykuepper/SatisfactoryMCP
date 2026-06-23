@@ -1,0 +1,181 @@
+/* Who fetches what, and when: the two waves, the epoch guard, and the redraw.
+ *
+ * The split between `loadStatic` and `loadLive` is a claim about the data rather than about
+ * the code -- nodes, concrete and routes change when the player builds, machines and
+ * collectibles change on every autosave -- so a save event refetches one wave and a world
+ * switch refetches both. This module is where every draw function is finally called, which
+ * makes it the one file that knows the whole page, and the reason every other module can
+ * afford not to.
+ */
+
+import { get } from "./api";
+import { el } from "./dom";
+import { phaseText } from "./format";
+import { drawFactories } from "./labels";
+import { clearPrefixed } from "./layers";
+import { L } from "./leaflet";
+import { map, writeHash } from "./map";
+import { drawCollectibles, drawNodes, drawPlayer } from "./markers";
+import { drawMachines, drawStructures } from "./placements";
+import { drawRegions } from "./regions";
+import { drawBelts, drawPipes } from "./routes";
+import { state } from "./state";
+import { fail, friendly } from "./toast";
+
+export function loadRegions() {
+  // Geography, not save state: no world parameter, fetched once, never refetched.
+  return fetch("/api/regions")
+    .then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok || body.error) throw new Error(body.error || r.status + " /api/regions");
+        return body;
+      });
+    })
+    .then(drawRegions)
+    .catch(function (e) {
+      fail("regions: " + friendly(e));
+    });
+}
+
+/* Every loader below is epoch-guarded: a switch bumps `state.epoch`, and a reply that
+ * comes back for an earlier epoch is dropped instead of drawn. Without this, whichever
+ * world answered LAST owned the map -- switch away from a slow world and its late reply
+ * silently repainted everything under the new world's name.
+ *
+ * The catch paths clear their layers before tosting: a failed switch must leave those
+ * layers empty, not showing the previous world under the new world's header. */
+
+export function loadStatic() {
+  // Nodes and factory shapes change only when the player builds, so they are refetched
+  // on a world switch rather than on every save write.
+  var epoch = state.epoch;
+  var live = function () {
+    return epoch === state.epoch;
+  };
+  get("/api/nodes")
+    .then(function (d) {
+      if (live()) drawNodes(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["node: "]);
+      fail("nodes: " + friendly(e));
+    });
+  get("/api/structures")
+    .then(function (d) {
+      if (live()) drawStructures(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["foundations"]);
+      fail("structures: " + friendly(e));
+    });
+  get("/api/belts")
+    .then(function (d) {
+      if (live()) drawBelts(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["belts"]);
+      fail("belts: " + friendly(e));
+    });
+  get("/api/pipes")
+    .then(function (d) {
+      if (live()) drawPipes(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["pipes"]);
+      fail("pipes: " + friendly(e));
+    });
+  get("/api/factories")
+    .then(function (d) {
+      if (live()) drawFactories(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["factory labels", "proposals"]);
+      fail("factories: " + friendly(e));
+    });
+}
+
+export function loadLive() {
+  var epoch = state.epoch;
+  var live = function () {
+    return epoch === state.epoch;
+  };
+  get("/api/machines")
+    .then(function (d) {
+      if (live()) drawMachines(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["machines", "extractors", "generators"]);
+      fail("machines: " + friendly(e));
+    });
+  get("/api/collectibles?mode=remaining")
+    .then(function (d) {
+      if (live()) drawCollectibles(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["pickup: "]);
+      fail("collectibles: " + friendly(e));
+    });
+  get("/api/summary")
+    .then(function (s) {
+      if (!live()) return;
+      busy(false);
+      drawPlayer(s.player);
+      var power = s.power;
+      var measured =
+        power.measured_draw_mw === null || power.measured_draw_mw === undefined
+          ? power.draw_mw
+          : power.measured_draw_mw;
+      var parts = [s.header.session_name];
+      var phase = phaseText(s.progression.game_phase);
+      if (phase) parts.push(phase);
+      // The measured figure, labelled: the nameplate total alone reads as "one factory
+      // from a brown-out" on a base that is mostly idle. Both live in the tooltip.
+      parts.push(Math.round(measured) + " MW drawn / " + Math.round(power.generation_mw) + " MW capacity");
+      parts.push(s.age_note);
+      var span = el("summary");
+      span.textContent = parts.join(" — ");
+      span.title =
+        "power: " +
+        Math.round(measured) +
+        " MW measured draw; " +
+        Math.round(power.draw_mw) +
+        " MW nameplate if every machine ran at once; " +
+        Math.round(power.generation_mw) +
+        " MW generation capacity";
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      busy(false);
+      clearPrefixed(["player"]);
+      // The header is the page's identity line; a failure leaves a statement, not a
+      // blank that reads as "everything is fine, there is just nothing here".
+      el("summary").textContent = "this world's save could not be read";
+      fail("summary: " + friendly(e));
+    });
+}
+
+/* A switch in progress is marked on screen -- header says so, map dims -- because the
+ * old world's layers stay visible until the new responses land, and an unmarked blend of
+ * two worlds reads as data. Cleared when this epoch's summary settles either way. */
+function busy(on) {
+  var container = el("map");
+  if (on) L.DomUtil.addClass(container, "busy");
+  else L.DomUtil.removeClass(container, "busy");
+}
+
+export function reload(note) {
+  state.epoch += 1;
+  map.closePopup(); // an open card is a claim about the previous world/save
+  el("summary").textContent = note || "loading…";
+  busy(true);
+  writeHash();
+  loadStatic();
+  loadLive();
+}

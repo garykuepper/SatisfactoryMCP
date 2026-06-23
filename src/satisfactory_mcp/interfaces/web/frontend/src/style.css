@@ -1,6 +1,6 @@
 /* Flat colour, no imagery. There is no licensable map of this world to draw, so the
    ground is painted from the project's own 256 m biome raster -- one muted colour per
-   region, in main.ts -- and the sea is simply the background showing through the cells
+   region, in regions.ts -- and the sea is simply the background showing through the cells
    the raster calls void. The only picture that can ever appear here is one the user put
    in data/local/map.png themselves. */
 
@@ -187,11 +187,12 @@ select {
   scrollbar-gutter: stable;
 }
 
-/* The control's two folds -- see decorateControl() in main.ts. Leaflet's own collapsed mode
-   is never used, so `.leaflet-control-layers-expanded` is always set and its toggle anchor
-   (whose icon is an image this project does not vendor) stays display:none where Leaflet's
-   own stylesheet put it. These rules match that stylesheet's specificity and win on order,
-   which is the only reason no !important is needed. */
+/* The control's two folds -- see decorateControl() in layercontrol.ts. Leaflet's own
+   collapsed mode is never used, so `.leaflet-control-layers-expanded` is always set and its
+   toggle anchor (whose icon is an image nothing here requests) stays display:none where
+   Leaflet's own stylesheet put it. These rules match that stylesheet's specificity and win
+   on order, which is the only reason no !important is needed -- and the order is pinned by
+   main.ts importing Leaflet's stylesheet before this one. */
 /* A folded row is COLLAPSED, not removed -- and that one word is the whole reason the
    control now keeps one width.
 
@@ -205,7 +206,7 @@ select {
    that shrink-to-fit -- which means the browser measures the widest row the control can
    ever hold, on the real strings in the real font, and holds that width in every fold
    state. That is deliberately not a px constant derived from today's data: the widest row
-   on the reference world is `pickup: customization_unlock_pickup`, a category main.ts's own
+   on the reference world is `pickup: customization_unlock_pickup`, a category palette.ts's own
    colour palette does not list at all, so a constant would have been fitted to a vocabulary
    this file cannot see the end of. The layout engine can, on every world, for free.
 
@@ -337,7 +338,7 @@ select {
 }
 
 /* A label the declutter pass found covered by a bigger factory's label -- see
-   declutter() in main.ts. Hidden entirely: a label that cannot be read cannot be a click
+   declutter() in labels.ts. Hidden entirely: a label that cannot be read cannot be a click
    target either, or it steals the click of the label drawn over it. */
 .factory-label.label-hidden {
   display: none;
@@ -345,7 +346,7 @@ select {
 
 /* "+n": the names this label is sitting on top of. Absolutely positioned so it hangs off
    the corner without widening the rectangle the declutter pass measures -- see
-   badgeHidden() in main.ts -- and clickable, because on this map a visible label is a
+   badgeHidden() in labels.ts -- and clickable, because on this map a visible label is a
    clickable one and a badge that only reported would be the one exception. */
 .factory-label .label-more {
   position: absolute;
