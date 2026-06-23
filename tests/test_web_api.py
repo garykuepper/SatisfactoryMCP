@@ -393,16 +393,43 @@ _PNG = base64.b64decode(
 )
 
 
-def _fake_pyramid(local: Path, max_z: int = 2) -> int:
-    """A tiles/ tree of tiny PNGs at the layout the generator writes. Returns the count."""
+def _fake_pyramid(local: Path, max_z: int = 2, payload: bytes = _PNG) -> int:
+    """A tiles/ tree of tiny PNGs at the layout the generator writes. Returns the count.
+
+    ``payload`` is how the layer tests tell one tree from another: three pyramids of the
+    same bytes could not show that a request reached the tree it named.
+    """
     count = 0
     for z in range(max_z + 1):
         (local / web_api.MAP_TILES_DIR_NAME / str(z)).mkdir(parents=True)
         for x in range(1 << z):
             for y in range(1 << z):
-                (local / web_api.MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png").write_bytes(_PNG)
+                (local / web_api.MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png").write_bytes(payload)
                 count += 1
     return count
+
+
+def _fake_layer(
+    local: Path,
+    layer: str,
+    max_z: int = 2,
+    sidecar: dict | None = None,
+    payload: bytes = _PNG,
+) -> int:
+    """The same tree one level down, where ``tools/gen_map_renders.py`` writes a layer.
+
+    Deliberately built through ``web_api``'s own names rather than a hand-typed path: what
+    these tests are checking is that the endpoint finds a layer where the generator puts
+    one, and a fixture that spelled the directory itself would agree with the endpoint by
+    construction rather than by the module having got it right.
+    """
+    directory = local / web_api.MAP_RENDERS_DIR_NAME / layer
+    directory.mkdir(parents=True, exist_ok=True)
+    if sidecar is not None:
+        (directory / web_api.MAP_RENDER_SIDECAR_NAME).write_text(
+            json.dumps(sidecar), encoding="utf-8"
+        )
+    return _fake_pyramid(directory, max_z, payload)
 
 
 def test_the_tile_pyramid_is_a_loader_too_and_names_the_tool_that_writes_it(
@@ -480,6 +507,328 @@ def test_a_tile_outside_the_pyramid_is_a_404_and_cannot_name_a_file(client, tmp_
     assert web_api.map_tile_path(6, 0, 0, 5) is None
     assert web_api.map_tile_path(3, 7, 7, 5) is not None
     assert web_api.map_tile_path(3, 8, 0, 5) is None
+
+
+#: Three pyramids of identical bytes could not show that a request reached the tree it
+#: named, so each fixture layer gets a PNG of its own. All three are valid 1x1 PNGs -- the
+#: point is which one comes back, not what is in it.
+_PNG_TERRAIN = _PNG[:-4] + b"TERR"
+_PNG_SATELLITE = _PNG[:-4] + b"SATL"
+
+
+def test_a_named_layer_is_served_from_its_own_tree_and_the_bare_route_is_still_map(
+    client, tmp_path, monkeypatch
+):
+    """Three pictures of one world, one grid, one path segment between them.
+
+    The design is that a layer is a directory and nothing else: same frame, same tile size,
+    same ``{z}/{x}_{y}.png``. So what has to hold is that naming a layer reaches THAT tree
+    -- proven with three different payloads rather than three identical ones -- and that the
+    route which existed before layers did still answers exactly what ``map`` answers, byte
+    for byte and header for header. That last part is not a nicety: the live page addresses
+    the base map through the bare route, and this branch must not be able to break it.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    _fake_pyramid(local)
+    _fake_layer(local, "terrain", payload=_PNG_TERRAIN)
+    _fake_layer(local, "satellite", payload=_PNG_SATELLITE)
+
+    for layer, payload in (
+        ("map", _PNG),
+        ("terrain", _PNG_TERRAIN),
+        ("satellite", _PNG_SATELLITE),
+    ):
+        r = client.get(f"/api/maptiles/{layer}/2/3/1")
+        assert r.status_code == 200, layer
+        assert r.headers["content-type"] == "image/png"
+        assert r.content == payload, layer
+        assert r.headers["x-map-layer"] == layer
+
+    # The alias is the same answer, not a similar one.
+    bare = client.get("/api/maptiles/2/3/1")
+    named = client.get("/api/maptiles/map/2/3/1")
+    assert bare.status_code == named.status_code == 200
+    assert bare.content == named.content == _PNG
+    for header in (
+        "x-map-bounds-m",
+        "x-map-layer",
+        "x-map-tile-px",
+        "x-map-tile-max-z",
+        "x-map-build",
+        "cache-control",
+        "etag",
+    ):
+        assert bare.headers[header] == named.headers[header], header
+
+    # And the two routes cannot collide: three segments has no layer to name.
+    assert web_api.map_tile_path(2, 3, 1) == local / web_api.MAP_TILES_DIR_NAME / "2" / "3_1.png"
+    assert web_api.map_tile_path(2, 3, 1, layer="terrain") == (
+        local
+        / web_api.MAP_RENDERS_DIR_NAME
+        / "terrain"
+        / web_api.MAP_TILES_DIR_NAME
+        / "2"
+        / "3_1.png"
+    )
+
+
+def test_a_layer_that_does_not_exist_and_one_that_was_never_generated_are_told_apart(
+    client, tmp_path, monkeypatch
+):
+    """Two different absences, two different answers, and neither is a stack trace.
+
+    A layer this server has never heard of is a 404 that lists the ones it has, because the
+    reader mistyped a name and the useful reply is the vocabulary. A layer it knows but
+    nobody has generated is the ordinary state of a fresh checkout: HEAD says 204 so a
+    probing page leaves no red line in the console, and GET says which tool would write it
+    -- gen_map_renders.py for a render, gen_map_image.py for the artwork, because "run the
+    generator" is not help when there are two.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+
+    unknown = client.get("/api/maptiles/bathymetry/0/0/0")
+    assert unknown.status_code == 404
+    message = unknown.json()["error"]
+    assert "bathymetry" in message
+    for layer in web_api.MAP_LAYERS:
+        assert layer in message
+
+    for layer, tool in (
+        ("map", "gen_map_image.py"),
+        ("terrain", "gen_map_renders.py"),
+        ("satellite", "gen_map_renders.py"),
+    ):
+        assert client.head(f"/api/maptiles/{layer}/0/0/0").status_code == 204, layer
+        absent = client.get(f"/api/maptiles/{layer}/0/0/0")
+        assert absent.status_code == 404
+        assert tool in absent.json()["error"], layer
+
+    # An unknown layer is refused before any of that, so it can never name a file.
+    assert web_api.map_tile_path(0, 0, 0, layer="bathymetry") is None
+    assert web_api._layer_dir("bathymetry") is None
+    assert web_api._layer_sidecar("bathymetry") is None
+    # Including when it is shaped like an escape: there is no join for it to escape through.
+    for shape in ("..", "../..", "map/../..", ".", ""):
+        assert web_api.map_tile_path(0, 0, 0, layer=shape) is None, shape
+    for path in (
+        "/api/maptiles/..%2f..%2ftiles/0/0/0",
+        "/api/maptiles/%2e%2e/0/0/0",
+        "/api/maptiles/terrain/0/0/..%2f..%2fmap",
+        "/api/maptiles/terrain/0/0/0.png",
+    ):
+        assert client.get(path).status_code in (404, 422), path
+
+
+def test_every_layer_answers_with_its_own_depth_build_and_corners(client, tmp_path, monkeypatch):
+    """A layer's headers come from the sidecar beside its own tiles, never from another's.
+
+    They are generated by different tools at different times: the artwork can be two levels
+    deeper than the renders if it was enhanced, and a satellite recut this morning must not
+    invalidate the terrain a browser cached last week. So depth, corners and build tag are
+    read per layer -- and the tag folds the layer's NAME in, because two pyramids that
+    happen to agree on every recorded number would otherwise share a cache key and serve
+    each other's ``immutable`` tiles.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    _fake_pyramid(local, max_z=1)
+    (local / web_api.MAP_BOUNDS_NAME).write_text(
+        json.dumps({"_meta": {"tiles": {"tile_px": 256, "max_z": 1, "count": 5}}}), encoding="utf-8"
+    )
+    # Deliberately the SAME recorded numbers as the artwork, and a different depth for the
+    # third, so both halves of the claim are exercised at once.
+    same = {"_meta": {"tiles": {"tile_px": 256, "max_z": 1, "count": 5}}}
+    _fake_layer(local, "terrain", max_z=1, sidecar=same)
+    _fake_layer(
+        local,
+        "satellite",
+        max_z=3,
+        sidecar={
+            "x_min_m": -100.0,
+            "_meta": {"tiles": {"tile_px": 256, "max_z": 3, "count": 85}},
+        },
+    )
+
+    heads = {layer: client.head(f"/api/maptiles/{layer}/0/0/0") for layer in web_api.MAP_LAYERS}
+    assert [
+        heads[layer].headers["x-map-tile-max-z"] for layer in ("map", "terrain", "satellite")
+    ] == ["1", "1", "3"]
+    # The artwork stops at z1 while the satellite goes to z3, from the same request shape.
+    assert client.get("/api/maptiles/map/2/0/0").status_code == 404
+    assert client.get("/api/maptiles/satellite/3/7/7").status_code == 200
+
+    tags = {layer: head.headers["x-map-build"] for layer, head in heads.items()}
+    assert len(set(tags.values())) == 3, "identical sidecars must still not share a cache tag"
+    assert tags["map"] != tags["terrain"], "and the name is what separates these two"
+
+    # Corners are the layer's own as well: the satellite's sidecar moves its western edge
+    # and the other two stay where the default puts them.
+    assert heads["satellite"].headers["x-map-bounds-m"].startswith("-100.0,")
+    assert heads["map"].headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+    assert heads["terrain"].headers["x-map-bounds-m"] == "-3247.0,-3750.0,4253.0,3750.0"
+
+    # And the tag still moves when that layer's pyramid does, which is what makes a
+    # ``?v=``-tagged tile safe to cache forever.
+    versioned = client.get(f"/api/maptiles/terrain/1/1/1?v={tags['terrain']}")
+    assert "immutable" in versioned.headers["cache-control"]
+    etag = heads["terrain"].headers["etag"]
+    assert (
+        client.get("/api/maptiles/terrain/0/0/0", headers={"If-None-Match": etag}).status_code
+        == 304
+    )
+    (local / web_api.MAP_RENDERS_DIR_NAME / "terrain" / web_api.MAP_RENDER_SIDECAR_NAME).write_text(
+        json.dumps({"_meta": {"tiles": {"tile_px": 256, "max_z": 1, "count": 6}}}), encoding="utf-8"
+    )
+    assert client.head("/api/maptiles/terrain/0/0/0").headers["x-map-build"] != tags["terrain"]
+    assert client.head("/api/maptiles/0/0/0").headers["x-map-build"] == tags["map"]
+
+
+def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, monkeypatch):
+    """``tools/gen_map_renders.py`` and this endpoint agree about names, or nothing works.
+
+    Nothing else joins the two, so the join is asserted against the tool's own constants and
+    its own sidecar builder -- the same posture the artwork's sidecar test takes next door.
+    Four names have to match, and the shape of the record the endpoint reads back has to be
+    the one the tool actually writes rather than a hand-typed sample that could drift.
+    """
+    gen = _gen_map_renders()
+
+    assert gen.RENDERS_DIR_NAME == web_api.MAP_RENDERS_DIR_NAME
+    assert gen.RENDER_SIDECAR_NAME == web_api.MAP_RENDER_SIDECAR_NAME
+    assert set(gen.LAYERS) == set(web_api.MAP_RENDER_LAYERS)
+    assert gen.BOUNDS_M == web_api.DEFAULT_MAP_BOUNDS_M
+    assert gen.PYRAMID_TILE_PX == web_api.MAP_TILE_PX
+    # z5 and no further: these layers' truth ends at the 1 m field they are sampled from.
+    assert gen.gmi.pyramid_top_z(gen.SHEET_PX) == web_api.MAP_TILE_MAX_Z == 5
+
+    pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
+    sidecar = gen.build_sidecar(
+        layer="terrain",
+        field_meta={
+            "generator": "tools/gen_world_heightmap.py",
+            "sources": {"game": {"game_version_pinned": pin}},
+        },
+        tiles={
+            "tile_px": 256,
+            "max_z": 5,
+            "count": 1365,
+            "bytes": 60_000_000,
+            "game_version_pinned": pin,
+        },
+        render={"width_px": 8192},
+        extra={},
+    )
+    assert gen.pinned_field_build(sidecar) == pin
+    assert gen.pinned_field_build({}) is None
+    assert gen.pinned_field_build({"_meta": {"sources": {}}}) is None
+
+    # The endpoint reads that file, unmodified, out of the place the tool writes it to.
+    directory = tmp_path / web_api.LOCAL_DIR_NAME / web_api.MAP_RENDERS_DIR_NAME / "terrain"
+    directory.mkdir(parents=True)
+    (directory / web_api.MAP_RENDER_SIDECAR_NAME).write_text(json.dumps(sidecar), encoding="utf-8")
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    read_back = web_api._map_pyramid("terrain")
+    assert (read_back["tile_px"], read_back["max_z"]) == (256, 5)
+    assert web_api._map_bounds("terrain") == web_api.DEFAULT_MAP_BOUNDS_M
+
+
+def test_the_sun_is_in_the_north_west_and_the_shore_is_not_a_staircase():
+    """The two rules of the render a wrong answer would still look like terrain.
+
+    Hillshade first. An inverted light source draws every valley as a ridge and the picture
+    is still a plausible relief map, so the direction is asserted on slopes whose answer is
+    known by construction: a hill face tilted toward the north-west must come back brighter
+    than the same face tilted toward the south-east, and a flat plain must sit between them.
+    Rows run south and columns run east, which is the half of it that compass angles hide.
+
+    Then the shore. ``submerged`` is a step function on a 1 m grid, so a hard composite
+    draws every coastline as metre blocks; the feather has to be a real blend -- water where
+    it is deep, ground where there is none, and strictly between the two in the band -- or
+    it is decoration rather than the antialiasing it is there to be.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+    gen = _gen_map_renders()
+
+    rows, cols = numpy.mgrid[0:9, 0:9].astype(numpy.float32)
+    flat = gen.hillshade(numpy.zeros((9, 9), numpy.float32), 1.0)
+    # Ground falling away to the north-west: high in the south-east, so the face looks at
+    # the sun. The opposite sign is the same slope turned away from it.
+    toward = gen.hillshade(rows + cols, 1.0)
+    away = gen.hillshade(-(rows + cols), 1.0)
+    assert toward.mean() > flat.mean() > away.mean()
+    assert away.min() >= gen.SHADE_FLOOR, "a shadowed face keeps its colour, it does not go black"
+    assert toward.max() <= gen.SHADE_FLOOR + gen.SHADE_RANGE + 1e-6
+    # A north-facing slope and a west-facing one are lit alike; north-east and south-west
+    # are the two the azimuth has to separate.
+    assert gen.hillshade(rows, 1.0).mean() == pytest.approx(gen.hillshade(cols, 1.0).mean())
+
+    # And the shore. A wide lake with a beach on one side: the depth feather has a band to
+    # work in, so the coverage climbs through it rather than switching.
+    ground = numpy.zeros((7, 40), numpy.float32)
+    depth = numpy.linspace(-2.0, 6.0, 40, dtype=numpy.float32)
+    water = numpy.broadcast_to(depth, (7, 40)).copy()
+    alpha = gen.water_alpha(ground, water, water > ground)
+    assert alpha.min() == pytest.approx(0.0, abs=0.02), "dry ground is not tinted"
+    assert alpha.max() == pytest.approx(1.0, abs=0.02), "open water is not half-painted"
+    assert numpy.all(numpy.diff(alpha[3]) >= -1e-6), "coverage rises with depth, never falls"
+    assert 0.05 < alpha[3][numpy.argmin(numpy.abs(depth - gen.WATER_EDGE_M / 2))] < 0.95
+
+    # A cliff into deep water has no depth band at all, and the spatial blur is what keeps
+    # that edge from being a staircase: the pixels either side of it are partial.
+    cliff = numpy.zeros((7, 40), numpy.float32)
+    cliff[:, :20] = 50.0
+    hard = gen.water_alpha(cliff, numpy.full((7, 40), 20.0, numpy.float32), cliff < 20.0)
+    assert set(numpy.round(hard[3, :14], 3)) == {0.0} and hard[3, -1] == pytest.approx(
+        1.0, abs=0.02
+    )
+    assert any(0.05 < value < 0.95 for value in hard[3, 18:22]), "the edge is antialiased"
+
+    dry_rgb = numpy.full((7, 40, 3), 200.0, numpy.float32)
+    shade = numpy.ones((7, 40), numpy.float32)
+    out = gen.water_over(dry_rgb, ground, water, alpha, shade, gen.WATER_SHALLOW, gen.WATER_DEEP)
+    assert (out[3, 0] == 200.0).all(), "ground above the water is untouched"
+    # And where it IS water it is water and only water, tinted by its own depth.
+    shallow = gen.WATER_SHALLOW * (gen.WATER_SHADE_FLOOR + gen.WATER_SHADE_RANGE)
+    assert out[3, -1] == pytest.approx(shallow, abs=12.0)
+
+
+def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():
+    """The satellite layer's colours are designed, and every area the game names has one.
+
+    The asset ships 37 RGBA entries and they are a minimap legend -- flat primaries, cyan,
+    magenta, pure white -- so they are decoded for the record and never drawn. What has to
+    hold is that the replacement is complete (an area with no colour would fall back to a
+    neutral and quietly vanish into the coast) and that it really is a satellite palette
+    rather than the legend under another name: nothing saturated, nothing at full white.
+    """
+    gen = _gen_map_renders()
+
+    assert set(gen.REGION_PAIRS.values()) <= set(gen.BIOME_COLOURS), (
+        "every game area this file checks against the region grid must also have a colour"
+    )
+    for name, colour in gen.BIOME_COLOURS.items():
+        assert len(colour) == 3 and all(0 <= c <= 255 for c in colour), name
+        assert max(colour) - min(colour) <= 110, f"{name} is more saturated than imagery gets"
+        assert max(colour) <= 220, f"{name} is brighter than imagery gets"
+    # The fallbacks are the same kind of colour, so an area a later build adds looks
+    # unremarkable rather than wrong.
+    for colour in (gen.NO_MANS_LAND_RGB, gen.UNKNOWN_BIOME_RGB):
+        assert max(colour) - min(colour) <= 40
+
+
+def _gen_map_renders():
+    """``tools/gen_map_renders.py``, imported by path -- ``tools/`` is not a package."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "tools" / "gen_map_renders.py"
+    spec = importlib.util.spec_from_file_location("gen_map_renders", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _FakeSheet:

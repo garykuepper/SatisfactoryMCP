@@ -504,6 +504,26 @@ MAP_BOUNDS_NAME = "map.json"
 #: renaming the finished tree into place so this endpoint can never serve half of one.
 MAP_TILES_DIR_NAME = "tiles"
 
+#: There is now more than one picture of this world, so a tile has to say WHICH.
+#:
+#: ``map`` is the game's own artwork under ``local/tiles/``, which is where it has always
+#: been and where ``/api/maptiles/{z}/{x}/{y}`` still finds it. The rest are renders drawn
+#: by ``tools/gen_map_renders.py`` from the 1 m heightfield -- ``terrain`` is a hypsometric
+#: relief map, ``satellite`` is the same relief coloured from the game's own biome raster --
+#: and they live one directory down, ``local/renders/<layer>/tiles/``, each with its own
+#: sidecar naming its own depth and its own build.
+#:
+#: Every layer is cut on the same frame, at the same tile size, into the same
+#: ``{z}/{x}_{y}.png`` grid. That is the whole design: switching layers is switching a
+#: directory, so a client changes one path segment and nothing else -- not its CRS, not its
+#: bounds, not its zoom range -- and a layer that has never been generated answers exactly
+#: the way an absent ``map`` always has.
+MAP_LAYER_DEFAULT = "map"
+MAP_RENDERS_DIR_NAME = "renders"
+MAP_RENDER_SIDECAR_NAME = "meta.json"
+MAP_RENDER_LAYERS = ("terrain", "satellite")
+MAP_LAYERS = (MAP_LAYER_DEFAULT, *MAP_RENDER_LAYERS)
+
 #: What a pyramid looks like when the sidecar does not say: 256 px tiles, z0 (the world in
 #: one tile) through z5 (the full 8192 in 32x32). Both are read back from ``_meta.tiles``
 #: when it is there, so a pyramid cut at another size is served at that size rather than
@@ -528,14 +548,47 @@ def _local_dir() -> Path:
     return config.data_dir() / LOCAL_DIR_NAME
 
 
-def _map_bounds() -> dict[str, float]:
-    """Where to pin the map image, defaults overridden by ``local/map.json`` if present.
+def _layer_dir(layer: str) -> Path | None:
+    """Where one layer's ``tiles/`` tree and sidecar live, or ``None`` for an unknown layer.
+
+    The artwork keeps the place it has always had -- ``local/tiles/`` beside ``map.png`` --
+    because moving it would break every cached URL and every reader's existing tree for the
+    sake of tidiness. Renders go one level down under their own name.
+    """
+    if layer == MAP_LAYER_DEFAULT:
+        return _local_dir()
+    if layer in MAP_RENDER_LAYERS:
+        return _local_dir() / MAP_RENDERS_DIR_NAME / layer
+    return None
+
+
+def _layer_sidecar(layer: str) -> Path | None:
+    """The JSON beside one layer's pyramid. ``map.json`` for the artwork, ``meta.json`` else.
+
+    Two names rather than one because ``map.json`` is also the corners file a reader may
+    have written by hand for their own ``map.png``, and it predates all of this; a render's
+    sidecar is generated and never hand-edited, so it is named for what it is.
+    """
+    directory = _layer_dir(layer)
+    if directory is None:
+        return None
+    return directory / (MAP_BOUNDS_NAME if layer == MAP_LAYER_DEFAULT else MAP_RENDER_SIDECAR_NAME)
+
+
+def _map_bounds(layer: str = MAP_LAYER_DEFAULT) -> dict[str, float]:
+    """Where to pin a layer, defaults overridden by its own sidecar if present.
 
     A malformed override is ignored rather than fatal: the picture is decoration, and a
     typo in an optional sidecar must not take the endpoint that serves it down with it.
+
+    Per layer rather than once, even though every layer this repository generates is cut on
+    the same square: the corners are a property of a picture, and a reader who drops in
+    their own ``map.png`` pinned somewhere else must not thereby move the renders.
     """
     bounds = dict(DEFAULT_MAP_BOUNDS_M)
-    path = _local_dir() / MAP_BOUNDS_NAME
+    path = _layer_sidecar(layer)
+    if path is None:
+        return bounds
     try:
         override = json.loads(path.read_text(encoding="utf-8"))
         bounds.update({k: float(override[k]) for k in DEFAULT_MAP_BOUNDS_M if k in override})
@@ -544,18 +597,23 @@ def _map_bounds() -> dict[str, float]:
     return bounds
 
 
-def _map_pyramid() -> dict[str, Any]:
-    """What the sidecar says about the pyramid: its tile size, its depth, its build.
+def _map_pyramid(layer: str = MAP_LAYER_DEFAULT) -> dict[str, Any]:
+    """What a layer's sidecar says about its pyramid: tile size, depth, build.
 
     Same posture as ``_map_bounds``: an absent or malformed sidecar is not an error, it is
     a pyramid described by the defaults above. ``build`` is a short digest of what the
     generator recorded -- the game build it cut, and how many tiles that came to -- and is
     only ever used as a cache tag, so a sidecar that says nothing simply produces a stable
     tag for "nothing".
+
+    The layer's name is folded into that digest, so two layers that happen to have been cut
+    from one build at one tile count still get different tags. Sharing a tag between two
+    pictures is how an ``immutable`` tile of one ends up cached as a tile of the other.
     """
+    path = _layer_sidecar(layer)
     meta: Any = {}
     try:
-        meta = json.loads((_local_dir() / MAP_BOUNDS_NAME).read_text(encoding="utf-8"))
+        meta = json.loads(path.read_text(encoding="utf-8")) if path is not None else {}
     except (OSError, ValueError):
         meta = {}
     tiles: Any = meta.get("_meta") if isinstance(meta, dict) else None
@@ -572,7 +630,10 @@ def _map_pyramid() -> dict[str, Any]:
         )
 
     stamp = "|".join(
-        str(tiles.get(key)) for key in ("game_version_pinned", "count", "bytes", "max_z")
+        [
+            layer,
+            *(str(tiles.get(key)) for key in ("game_version_pinned", "count", "bytes", "max_z")),
+        ]
     )
     return {
         "tile_px": _whole("tile_px", MAP_TILE_PX, 1),
@@ -581,7 +642,9 @@ def _map_pyramid() -> dict[str, Any]:
     }
 
 
-def map_tile_path(z: int, x: int, y: int, max_z: int = MAP_TILE_MAX_Z) -> Path | None:
+def map_tile_path(
+    z: int, x: int, y: int, max_z: int = MAP_TILE_MAX_Z, layer: str = MAP_LAYER_DEFAULT
+) -> Path | None:
     """Where one pyramid tile lives, or ``None`` if ``(z, x, y)`` is off the pyramid.
 
     The only place this side writes the layout ``tiles/{z}/{x}_{y}.png`` down, and a test
@@ -590,13 +653,19 @@ def map_tile_path(z: int, x: int, y: int, max_z: int = MAP_TILE_MAX_Z) -> Path |
     ints -- FastAPI answers anything else with a 422 before this runs -- and are checked
     against the ``2**z`` grid of their own level before they become a filename, so no
     request can name a path outside the tree, whatever it is shaped like.
+
+    ``layer`` is the one segment that IS a string, and it never reaches a path: it is
+    looked up in ``_layer_dir``, which answers ``None`` for anything that is not one of the
+    names this module wrote down. So a layer segment shaped like an escape is an unknown
+    layer and nothing else -- there is no join for it to escape through.
     """
-    if not 0 <= z <= max_z:
+    directory = _layer_dir(layer)
+    if directory is None or not 0 <= z <= max_z:
         return None
     span = 1 << z
     if not (0 <= x < span and 0 <= y < span):
         return None
-    return _local_dir() / MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png"
+    return directory / MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png"
 
 
 @router.get("/regions")
@@ -711,18 +780,32 @@ def mapimage(request: Request) -> Any:
     )
 
 
-@router.api_route("/maptiles/{z}/{x}/{y}", methods=["GET", "HEAD"])
-def maptiles(request: Request, z: int, x: int, y: int) -> Any:
-    """One tile of the pyramid ``tools/gen_map_image.py`` cuts beside ``map.png``.
+#: Which tool writes which layer, so an absent pyramid can say what would fill it. One
+#: sentence per layer rather than one for all of them: "run the generator" is not help when
+#: there are three trees and two generators.
+_LAYER_TOOLS = {
+    MAP_LAYER_DEFAULT: (
+        "tools/gen_map_image.py, which cuts it out of your own installed game beside map.png"
+    ),
+    "terrain": (
+        "tools/gen_map_renders.py, which draws a hypsometric relief map of this world from "
+        "the 1 m heightfield in data/local/heightmap/"
+    ),
+    "satellite": (
+        "tools/gen_map_renders.py, which draws the same relief coloured from the game's own "
+        "biome raster, from the 1 m heightfield in data/local/heightmap/"
+    ),
+}
 
-    The same picture as ``/api/mapimage``, at one resolution per zoom instead of all of it
-    at once, and the same posture: nothing is shipped, this is a loader.
+
+def _serve_tile(request: Request, layer: str, z: int, x: int, y: int) -> Any:
+    """One tile of one layer's pyramid. The whole of what both tile routes do.
 
     **HEAD 204 for an absent pyramid, like the image probe next door.** The page probes
-    ``0/0/0`` to decide between the pyramid and the single overlay, and an absent optional
-    file is the ordinary answer -- a 404 on every clean page load teaches the reader to
-    ignore red lines in the console. GET keeps its 404 and names the tool that would write
-    the tree.
+    ``0/0/0`` to decide between the pyramid and the single overlay -- and now also to decide
+    which layers exist at all -- and an absent optional file is the ordinary answer: a 404
+    on every clean page load teaches the reader to ignore red lines in the console. GET
+    keeps its 404 and names the tool that would write that particular tree.
 
     **Off the pyramid is 404, and cannot be anything else.** ``z``, ``x`` and ``y`` are
     typed ``int``, so a path segment that is not one never reaches this function -- FastAPI
@@ -730,30 +813,36 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
     grid before building a name. The client is bounds-clamped as well, so in practice this
     404 fires for a hand-typed URL rather than for the map.
 
-    **Cached hard, and stamped with the build.** A tile is immutable for a given cut of the
-    game's artwork, so the page asks for it with ``?v=`` the build tag this endpoint hands
-    out on the probe: regenerating the pyramid changes the tag, which changes every URL,
+    **Every header is that layer's own.** Depth, tile size, corners and build tag are read
+    from the sidecar beside the tiles being served, because the layers are generated
+    separately and by different tools: the artwork can be two levels deeper than the renders
+    if it was enhanced, and a regenerated satellite must not invalidate the terrain a
+    browser is holding.
+
+    **Cached hard, and stamped with the build.** A tile is immutable for a given cut, so the
+    page asks for it with ``?v=`` the build tag this endpoint hands out on the probe:
+    regenerating a pyramid changes that layer's tag, which changes every URL of that layer,
     which is what makes ``immutable`` safe to send. The ETag carries the same tag for
     anything that revalidates instead.
     """
-    pyramid = _map_pyramid()
-    path = map_tile_path(z, x, y, pyramid["max_z"])
+    pyramid = _map_pyramid(layer)
+    path = map_tile_path(z, x, y, pyramid["max_z"], layer)
     if path is None:
         return _fail(
-            f"no tile {z}/{x}/{y}: this pyramid runs z0..z{pyramid['max_z']}, and level z "
-            "is a 2**z by 2**z grid, so x and y stop there",
+            f"no tile {layer}/{z}/{x}/{y}: this pyramid runs z0..z{pyramid['max_z']}, and "
+            "level z is a 2**z by 2**z grid, so x and y stop there",
             404,
         )
     if not path.is_file():
         if request.method == "HEAD":
             return Response(status_code=204)
         return _fail(
-            f"no map tiles: {path.parent.parent} is written by tools/gen_map_image.py, "
-            "which cuts it out of your own installed game beside map.png. Like the image, "
-            "it is only ever read locally, never uploaded and never committed.",
+            f"no {layer} tiles: {path.parent.parent} is written by {_LAYER_TOOLS[layer]}. "
+            "Like the map image, it is only ever read locally, never uploaded and never "
+            "committed.",
             404,
         )
-    b = _map_bounds()
+    b = _map_bounds(layer)
     etag = f'"{pyramid["build"]}"'
     # ``immutable`` is earned by the ``?v=`` build tag and only by it: a tagged URL changes
     # whenever the pyramid is recut, so the response behind it never can. The page's probe
@@ -766,6 +855,7 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
         # makes -- so the client configures its tile layer from the server rather than from
         # a second opinion about how the pyramid was cut.
         "X-Map-Bounds-M": "{x_min_m},{y_min_m},{x_max_m},{y_max_m}".format(**b),
+        "X-Map-Layer": layer,
         "X-Map-Tile-Px": str(pyramid["tile_px"]),
         "X-Map-Tile-Max-Z": str(pyramid["max_z"]),
         "X-Map-Build": pyramid["build"],
@@ -775,6 +865,42 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
     return FileResponse(path, headers=headers)
+
+
+@router.api_route("/maptiles/{z}/{x}/{y}", methods=["GET", "HEAD"])
+def maptiles(request: Request, z: int, x: int, y: int) -> Any:
+    """The artwork pyramid, at the URL it has always had. An alias for ``map``.
+
+    Kept because it is live: every cached tile, every bookmark and the page as it stands
+    all address the base map here, and a route that moved would break all three to say the
+    same thing one segment longer. So this is not a redirect and not a deprecation -- it is
+    the default layer's name being optional, and it answers byte for byte and header for
+    header what ``/api/maptiles/map/{z}/{x}/{y}`` answers.
+    """
+    return _serve_tile(request, MAP_LAYER_DEFAULT, z, x, y)
+
+
+@router.api_route("/maptiles/{layer}/{z}/{x}/{y}", methods=["GET", "HEAD"])
+def maptiles_layer(request: Request, layer: str, z: int, x: int, y: int) -> Any:
+    """One tile of a named base layer: ``map``, ``terrain`` or ``satellite``.
+
+    Four segments where the alias above has three, so the two routes cannot collide: a
+    three-segment path has no layer to name and is the artwork by definition.
+
+    An unknown layer is a 404 that lists the ones there are, rather than a 422 about a path
+    parameter. The distinction is the reader's: asking for a layer this build does not have
+    is asking for a picture that is not there, which is the same answer as asking for a tile
+    of one that has not been generated -- and a page that probes for layers it might find
+    deserves to be told which names exist rather than which types were expected.
+    """
+    if layer not in MAP_LAYERS:
+        return _fail(
+            f"no base layer {layer!r}: this server serves {', '.join(MAP_LAYERS)}. "
+            f"{MAP_LAYER_DEFAULT} is the game's own artwork; the rest are renders drawn "
+            "from your heightfield by tools/gen_map_renders.py.",
+            404,
+        )
+    return _serve_tile(request, layer, z, x, y)
 
 
 # ------------------------------------------------------------------- machines
