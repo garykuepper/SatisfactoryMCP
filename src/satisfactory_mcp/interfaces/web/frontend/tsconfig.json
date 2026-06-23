@@ -1,0 +1,27 @@
+{
+  /* Migration setting, and it is meant to be tightened.
+     Phase 1 is a 1:1 port of a 2,600-line `var`-and-callback file: turning `strict` on in
+     the same commit that moves it would bury a behaviour regression under 400 implicit-any
+     errors, and the point of the port is that its diff is a move. `noImplicitAny` comes on
+     with the typed fetch layer; see frontend/README.md. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"],
+
+    /* Vite transpiles per file with esbuild and never type-checks, so nothing here emits:
+       `npm run check` is the only consumer, and it is a separate gate on purpose. */
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+
+    "strict": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

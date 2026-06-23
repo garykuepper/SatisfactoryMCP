@@ -1732,16 +1732,22 @@ def test_a_written_save_becomes_a_save_event(game, tmp_path, monkeypatch):
 
 
 def test_the_static_bundle_ships_the_page_and_the_vendor_licence():
-    """Redistributing Leaflet means shipping its BSD-2-Clause text next to it."""
+    """Redistributing Leaflet means shipping its BSD-2-Clause text next to it.
+
+    Leaflet is compiled into ``app.js`` now rather than served as ``vendor/leaflet.js``, so
+    there is no file to point at any more -- which is exactly why the licence text still has
+    to be here, and why the bundle names the library in its own banner. The obligation did
+    not move when the packaging did.
+    """
     assert (STATIC_DIR / "index.html").is_file()
     assert (STATIC_DIR / "app.js").is_file()
-    assert (STATIC_DIR / "style.css").is_file()
-    assert (STATIC_DIR / "vendor" / "leaflet.js").is_file()
+    assert (STATIC_DIR / "app.css").is_file()
     licence = (STATIC_DIR / "vendor" / "LEAFLET-LICENSE").read_text(encoding="utf-8")
     assert "BSD 2-Clause License" in licence
+    assert "Leaflet" in (STATIC_DIR / "app.js").read_text(encoding="utf-8")[:1000]
 
 
 def test_the_page_is_served_from_the_root(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "leaflet.js" in r.text
+    assert "app.js" in r.text

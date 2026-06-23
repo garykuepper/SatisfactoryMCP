@@ -34,6 +34,11 @@ build-backend = "hatchling.build"
 # extractor subprocess imports `pioneersav` by name, so it has to be installed beside the
 # application rather than inside it.
 packages = ["src/satisfactory_mcp", "src/pioneersav"]
+# The map page's npm project is build-time only. What the server serves is what the build
+# WROTE -- interfaces/web/static, committed -- so shipping the TypeScript beside it would
+# put a second copy of the page in the wheel, one of which nothing ever reads. `node_modules`
+# is already out by way of .gitignore; this excludes the sources it builds.
+exclude = ["src/satisfactory_mcp/interfaces/web/frontend"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
