@@ -13,7 +13,7 @@
 
 // Ore colours follow the in-game item tints closely enough to be recognisable without
 // shipping a single game asset: they are hex strings, not textures.
-export var RESOURCE_COLOUR = {
+export var RESOURCE_COLOUR: Record<string, string> = {
   Desc_OreIron_C: "#c8b6a6",
   Desc_OreCopper_C: "#e08a4b",
   Desc_Stone_C: "#cfcfcf",
@@ -30,13 +30,13 @@ export var RESOURCE_COLOUR = {
   Desc_Geyser_C: "#d97b4f", // synthetic label; a geyser is a placement target, not an item
 };
 
-export var PURITY_RADIUS = { impure: 3, normal: 4.5, pure: 6 };
+export var PURITY_RADIUS: Record<string, number> = { impure: 3, normal: 4.5, pure: 6 };
 
-export var KIND_COLOUR = { machines: "#4aa3df", extractors: "#e0a33f", generators: "#d9534f" };
+export var KIND_COLOUR: Record<string, string> = { machines: "#4aa3df", extractors: "#e0a33f", generators: "#d9534f" };
 
 // One colour per pickup category, so ten separate checkboxes stop drawing one
 // indistinguishable teal dot. Unlisted categories share the old teal as the fallback.
-export var PICKUP_COLOUR = {
+export var PICKUP_COLOUR: Record<string, string> = {
   somersloop: "#e05c5c",
   mercer_sphere: "#b06ae0",
   hard_drive: "#6ea8d8",
@@ -64,7 +64,7 @@ export var PLAYER_COLOUR = "#f5f0e8";
 //
 // Transparency over the map render is therefore NOT done here -- see REGION_BLEND in regions.ts, which
 // fades the finished composite once, at the pane.
-export var REGION_COLOUR = {
+export var REGION_COLOUR: Record<string, string> = {
   A: "#3e3e3c", // Abyss Cliffs
   B: "#284e5a", // Blue Crater
   C: "#2e5348", // Crater Lakes

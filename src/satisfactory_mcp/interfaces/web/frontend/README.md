@@ -51,29 +51,33 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | --- | --- | --- |
 | `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 40 |
 | `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 90 |
-| `src/leaflet.ts` | the one `import`, and the one `any` cast in front of it | 22 |
-| `src/state.ts` | the current selection, the epoch, the layer registry. Imports nothing | 57 |
-| `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 48 |
-| `src/toast.ts` | the message strip: failures, and the one non-failure note | 63 |
-| `src/format.ts` | resource short name, region line, phase name | 35 |
+| `src/leaflet.ts` | the one `import`, and where the private-field declarations attach | 19 |
+| `src/state.ts` | the current selection, the epoch, the layer registry. Imports nothing | 92 |
+| `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 67 |
+| `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
+| `src/format.ts` | resource short name, region line, phase name | 37 |
 | `src/palette.ts` | every colour chosen against the others, in one table | 89 |
-| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 28 |
-| `src/map.ts` | the map, the CRS, the panes, and the `[-y, x]` rule | 176 |
-| `src/layers.ts` | named layer groups, kept across a refetch | 73 |
-| `src/layercontrol.ts` | the folded control: legend, filter, tri-state families, focus | 370 |
-| `src/regions.ts` | the biome raster, and how it shares the screen with a render | 123 |
-| `src/tiles.ts` | the optional map render: pyramid, single overlay, or nothing | 185 |
-| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 542 |
-| `src/placements.ts` | the floor plan and the machines standing on it | 94 |
-| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 164 |
-| `src/labels.ts` | factory labels, the flight, and the declutter pass | 250 |
-| `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 119 |
-| `src/load.ts` | who fetches what and when; the epoch guard | 181 |
-| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 172 |
+| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 45 |
+| `src/api-types.ts` | the response shapes, hand-written from observed payloads | 276 |
+| `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1058 |
+| `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 74 |
+| `src/map.ts` | the map, the CRS, the panes, and the `[-y, x]` rule | 184 |
+| `src/layers.ts` | named layer groups, kept across a refetch | 75 |
+| `src/layercontrol.ts` | the folded control: legend, filter, tri-state families, focus | 395 |
+| `src/regions.ts` | the biome raster, and how it shares the screen with a render | 126 |
+| `src/tiles.ts` | the optional map render: pyramid, single overlay, or nothing | 187 |
+| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 563 |
+| `src/placements.ts` | the floor plan and the machines standing on it | 106 |
+| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 175 |
+| `src/labels.ts` | factory labels, the flight, and the declutter pass | 277 |
+| `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 126 |
+| `src/load.ts` | who fetches what and when; the epoch guard | 192 |
+| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 174 |
 | `src/sse.ts` | one EventSource, and what a save write means | 61 |
-| `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 423 |
+| `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 424 |
 | `public/vendor/LEAFLET-LICENSE` | copied verbatim into the build; BSD-2-Clause requires it | |
 | `vite.config.ts` | where the build writes, the banner it stamps, the dev proxy | |
+| `scripts/stamp-schema.mjs` | re-applies the generated schema's provenance header | |
 
 Two things about the graph are deliberate and easy to undo by accident.
 
@@ -94,8 +98,35 @@ it. If a dependency ever emits an `assets/` directory of its own, check what is 
 
 ## Types
 
-Not yet. `main.ts` is a straight port of a 2,600-line `var`-and-callback file and `tsconfig.json`
-is set loose to match — `strict: false`, `noImplicitAny: false`, and Leaflet cast to `any` in
-one place at the top of `main.ts`. `npm run typegen` and a strict `npm run check` land with the
-typed fetch layer; the migration order is the port first, then the module split, then the types,
-so that a behaviour regression can never hide inside a wave of type errors.
+`npm run check` is `tsc --noEmit` and it is clean under **full `strict`**, plus
+`noUnusedLocals` and `noUnusedParameters`. It needs no running server: everything it reads is
+committed.
+
+Two files carry the API, and they are authoritative for different halves.
+
+- **`src/api-schema.d.ts` is generated** by `npm run typegen` from the server's own
+  `/openapi.json`, and committed. It is the authority for which paths exist, which query
+  parameters each takes, and what a validation error looks like — `get()` only accepts a path
+  the server actually serves. It says **nothing** about response bodies: every endpoint in
+  `api.py` is annotated `-> dict`, so FastAPI publishes no response schema and all sixteen
+  `200`s come out as `unknown`. Regenerating rewrites the file whole, so its provenance header
+  is re-stamped by `scripts/stamp-schema.mjs`, which `typegen` chains.
+- **`src/api-types.ts` is hand-written**, from payloads observed against a real save. It is the
+  frontend's claim about the API, not the API's claim about itself, and it says so at the top.
+  The proper fix is response models on `api.py`, which would make this file generated too —
+  that is a change to the server's public surface and belongs in its own commit.
+
+What is still `any`, in full:
+
+- `L.Class.extend()` returns `any` in `@types/leaflet`, so `PyramidLayer` in `tiles.ts` is
+  asserted back to a `new (url, options) => TileLayer` at the point of definition. That
+  assertion is the only place the tile layer's shape is stated.
+- `L.Control.Layers.sortFunction` and a few Leaflet option bags are typed by `@types/leaflet`
+  as loosely as Leaflet itself defines them; nothing here widens them further.
+- `/api/summary` is typed for the four branches this page reads and no further. Typing the
+  other twenty would be inventing a contract for data nothing looks at.
+
+`src/leaflet-private.d.ts` declares the fields this page hangs off Leaflet objects. It keeps
+two kinds apart on purpose: the page's own marks (`_rank`, `_chevron`, `_labelWeight`), and
+three real Leaflet internals it deliberately uses (`_handlingClick`, `_update`, `layerId`).
+The second list is what to read before upgrading Leaflet.

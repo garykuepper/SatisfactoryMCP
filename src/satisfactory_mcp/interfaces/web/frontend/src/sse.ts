@@ -9,7 +9,7 @@
 import { el } from "./dom";
 import { loadLive } from "./load";
 import { state } from "./state";
-import { fail, toast } from "./toast";
+import { fail } from "./toast";
 import { refreshWorlds } from "./worlds";
 
 /* The live loop. One EventSource for the process; a save write is an edge trigger and

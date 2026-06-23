@@ -15,7 +15,9 @@ import { drawNodes } from "./markers";
 import { BOOT, currentWorld, state } from "./state";
 import { fail, friendly } from "./toast";
 
-function worldOption(w, dupes) {
+import type { NodesResponse, WorldRow, WorldsResponse } from "./api-types";
+
+function worldOption(w: WorldRow, dupes: Record<string, number>): HTMLOptionElement {
   var option = document.createElement("option");
   option.value = w.world_id;
   var hours = Math.round((w.play_duration_s || 0) / 3600);
@@ -30,9 +32,9 @@ function worldOption(w, dupes) {
   return option;
 }
 
-function fillWorldPicker(preserve) {
-  var picker = el("world");
-  var dupes = {};
+function fillWorldPicker(preserve: boolean): void {
+  var picker = el<HTMLSelectElement>("world");
+  var dupes: Record<string, number> = {};
   state.worlds.forEach(function (w) {
     dupes[w.session_name] = (dupes[w.session_name] || 0) + 1;
   });
@@ -44,8 +46,8 @@ function fillWorldPicker(preserve) {
   picker.disabled = !state.worlds.length;
 }
 
-function fillSavePicker() {
-  var picker = el("save");
+function fillSavePicker(): void {
+  var picker = el<HTMLSelectElement>("save");
   var w = currentWorld();
   picker.innerHTML = "";
   var newest = document.createElement("option");
@@ -84,15 +86,15 @@ function fillSavePicker() {
   };
 }
 
-export function loadWorlds() {
+export function loadWorlds(): Promise<void> {
   return fetch("/api/worlds")
     .then(function (r) {
-      return r.json();
+      return r.json() as Promise<WorldsResponse>;
     })
     .then(function (body) {
       if (body.error) throw new Error(body.error);
       state.worlds = body.worlds || [];
-      var picker = el("world");
+      var picker = el<HTMLSelectElement>("world");
       fillWorldPicker(false);
       picker.onchange = function () {
         state.world = picker.value;
@@ -119,14 +121,14 @@ export function loadWorlds() {
         el("summary").title = text; // the span ellipsises; the full diagnosis survives hover
         // Geography needs no save. The node table still draws -- the same table the
         // right-click inspector reads, so the two surfaces agree even with no world.
-        get("/api/nodes").then(drawNodes).catch(function () {});
+        get<NodesResponse>("/api/nodes").then(drawNodes).catch(function () {});
         return;
       }
 
       state.world =
         BOOT.world && state.worlds.some(function (w) { return w.world_id === BOOT.world; })
           ? BOOT.world
-          : state.worlds[0].world_id;
+          : state.worlds[0]!.world_id;
       picker.value = state.world;
       if (BOOT.save) {
         var w = currentWorld();
@@ -146,10 +148,10 @@ export function loadWorlds() {
 /* The picker is not a snapshot: a session started or a save written while the tab is
  * open updates the counts and can add a world. Selection and pin are preserved; a scan
  * hiccup (transient error, empty answer) must never wipe a working picker mid-session. */
-export function refreshWorlds() {
+export function refreshWorlds(): void {
   fetch("/api/worlds")
     .then(function (r) {
-      return r.json();
+      return r.json() as Promise<WorldsResponse>;
     })
     .then(function (body) {
       if (body.error || !body.worlds || !body.worlds.length) return;
@@ -157,8 +159,8 @@ export function refreshWorlds() {
       fillWorldPicker(true);
       if (!state.world) {
         // The page opened with no world at all and one has appeared: adopt it.
-        state.world = state.worlds[0].world_id;
-        el("world").value = state.world;
+        state.world = state.worlds[0]!.world_id;
+        el<HTMLSelectElement>("world").value = state.world;
         fillSavePicker();
         reload("world found — loading…");
         return;

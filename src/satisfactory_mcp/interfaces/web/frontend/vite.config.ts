@@ -14,6 +14,12 @@
 
 import { defineConfig, type Plugin } from "vite";
 
+/* Node's own global, declared rather than pulled in with `@types/node`. This file runs under
+ * Node and the rest of `src/` runs in a browser; installing the Node types to satisfy one
+ * line would put `require`, `Buffer` and `process` in scope for the whole program, where
+ * every one of them is a mistake waiting to type-check. */
+declare const process: { env: Record<string, string | undefined> };
+
 /* Stamped into every generated file, and asserted by ``tests/test_architecture.py``.
  *
  * No timestamp and no version in it, deliberately: the bundle is committed, so anything

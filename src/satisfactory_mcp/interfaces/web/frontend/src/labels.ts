@@ -14,6 +14,9 @@ import { map } from "./map";
 import { state } from "./state";
 import { note } from "./toast";
 
+import type { BboxM, FactoriesResponse, FactoryRow, PointM, ProposalRow } from "./api-types";
+import type { Row } from "./dom";
+
 /* `machines`, `belts` and `pipes` are all off at the whole-world zoom on purpose: 438
  * rectangles and 3,588 routes across 7 km are a smear, and unticking them is the right
  * default. What
@@ -31,8 +34,8 @@ import { note } from "./toast";
  * a layer that is factory-scale information is off at world scale and arrives with the
  * flight. One NOTE for the whole set too -- two toasts for one click would read as two
  * events, and the player made one gesture. */
-export function reveal(names) {
-  var turned = [];
+export function reveal(names: string[]): void {
+  var turned: string[] = [];
   names.forEach(function (name) {
     var group = state.layers[name];
     if (!group || map.hasLayer(group)) return;
@@ -85,7 +88,7 @@ var FACTORY_PAD_M = 40;
 // loses the surroundings that say where it is.
 var FACTORY_MAX_ZOOM = 1;
 
-function anchorMarker(centroid_m) {
+function anchorMarker(centroid_m: PointM): L.Marker {
   // divIcon, not the default icon: no image request, and iconSize [0,0] means the anchor
   // occupies no pointer area at all. The tooltip is the whole visible and clickable body.
   return L.marker([-centroid_m[1], centroid_m[0]], {
@@ -95,7 +98,7 @@ function anchorMarker(centroid_m) {
 
 /* A server bbox_m ([x_min, y_min, x_max, y_max], game axes) as Leaflet bounds. The y ends
  * swap, exactly as they do for the biome cells, because latitude is -y. */
-function factoryBounds(bbox_m) {
+function factoryBounds(bbox_m: BboxM | null | undefined): L.LatLngBounds | null {
   if (!bbox_m) return null;
   return L.latLngBounds(
     [-(bbox_m[3] + FACTORY_PAD_M), bbox_m[0] - FACTORY_PAD_M],
@@ -103,7 +106,12 @@ function factoryBounds(bbox_m) {
   );
 }
 
-function factoryAnchor(row, text, className, rows) {
+function factoryAnchor(
+  row: FactoryRow | ProposalRow,
+  text: string,
+  className: string,
+  rows: Row[]
+): L.Marker {
   var marker = anchorMarker(row.centroid_m);
   marker._labelWeight = row.machines || 0; // declutter priority: big factories win
   marker.bindTooltip(esc(text), {
@@ -117,16 +125,17 @@ function factoryAnchor(row, text, className, rows) {
   marker.bindPopup(popup(rows), { autoPan: false });
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
+    var to = bounds;
     marker.on("click", function () {
       // A factory at factory scale IS its machines and the routes between them; see reveal above.
       reveal(FACTORY_LAYERS);
-      map.flyToBounds(bounds, { maxZoom: FACTORY_MAX_ZOOM });
+      map.flyToBounds(to, { maxZoom: FACTORY_MAX_ZOOM });
     });
   }
   return marker;
 }
 
-export function drawFactories(data) {
+export function drawFactories(data: FactoriesResponse): void {
   var named = layer("factory labels", true);
   data.labels.forEach(function (f) {
     factoryAnchor(f, f.name, "factory-label", [
@@ -169,12 +178,29 @@ export function drawFactories(data) {
  * under it, drawn only when this pass actually hid that many at this view, and gone the
  * moment a zoom-in makes room. Clicking it steps the map toward the group it names, which
  * keeps the page's one rule about labels -- visible means clickable. */
-export function declutter() {
-  var entries = [];
+/* One label, measured. `node` is the tooltip's own element -- the thing with a screen
+ * rectangle -- and `marker` is what a badge click has to fly to. */
+interface Entry {
+  node: HTMLElement;
+  marker: L.Marker;
+  rank: number;
+  weight: number;
+}
+
+/** A label that survived the pass, its rectangle, and everything it covered. */
+interface Kept {
+  rect: DOMRect;
+  entry: Entry;
+  hidden: Entry[];
+}
+
+export function declutter(): void {
+  var entries: Entry[] = [];
   ["factory labels", "proposals"].forEach(function (name, groupRank) {
     var group = state.layers[name];
     if (!group || !map.hasLayer(group)) return;
-    group.eachLayer(function (marker) {
+    group.eachLayer(function (layer) {
+      var marker = layer as L.Marker;
       var tip = marker.getTooltip && marker.getTooltip();
       var node = tip && tip.getElement && tip.getElement();
       if (node) {
@@ -190,19 +216,20 @@ export function declutter() {
   entries.forEach(function (entry) {
     L.DomUtil.removeClass(entry.node, "label-hidden");
     var old = entry.node.querySelector(".label-more");
-    if (old) old.parentNode.removeChild(old);
+    if (old) old.parentNode!.removeChild(old);
   });
   entries.sort(function (a, b) {
     return a.rank - b.rank || b.weight - a.weight;
   });
-  var kept = [];
+  var kept: Kept[] = [];
   entries.forEach(function (entry) {
     var r = entry.node.getBoundingClientRect();
-    var covered = null;
-    kept.forEach(function (k) {
-      if (covered) return; // the highest-ranked cover owns the badge
+    // `find`, because the highest-ranked cover owns the badge and `kept` is already in rank
+    // order: it stops at the first overlap, which is what the loop this replaced achieved by
+    // testing a flag on every later element and assigning to none of them.
+    var covered = kept.find(function (k) {
       var b = k.rect;
-      if (r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom) covered = k;
+      return r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom;
     });
     if (covered) {
       L.DomUtil.addClass(entry.node, "label-hidden");
@@ -223,7 +250,7 @@ export function declutter() {
  * declutter pass reruns on zoomend -- so the step simply repeats. */
 var LABEL_STEP_ZOOM = 3;
 
-function badgeHidden(entry, hidden) {
+function badgeHidden(entry: Entry, hidden: Entry[]): void {
   // Absolutely positioned, so it hangs off the label's corner without changing the
   // rectangle this same pass just measured -- a badge that grew the box would make the
   // next run hide a label because of the badge on the one before it.

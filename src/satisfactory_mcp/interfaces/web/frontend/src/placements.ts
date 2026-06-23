@@ -13,6 +13,8 @@ import { footprintCorners } from "./map";
 import { raiseNodeDots } from "./markers";
 import { KIND_COLOUR } from "./palette";
 
+import type { MachinesResponse, StructuresResponse } from "./api-types";
+
 /* The player's floor plan: one 8 m tile per placed foundation, ramp, wall or catwalk.
  *
  *   * Drawn at its real yaw, as of schema 12. Until then the instance quaternion was
@@ -33,7 +35,7 @@ import { KIND_COLOUR } from "./palette";
  */
 var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built against the biomes.
 
-export function drawStructures(data) {
+export function drawStructures(data: StructuresResponse): void {
   var group = layer("foundations", true, STRUCTURE_COLOUR);
   var half = (data.tile_m || 8) / 2;
   data.structures.forEach(function (s) {
@@ -59,18 +61,28 @@ export function drawStructures(data) {
  * not the same statement as a yaw of zero. */
 var MACHINE_FALLBACK_M = 6;
 
-export function drawMachines(data) {
-  ["machines", "extractors", "generators"].forEach(function (kind) {
+/* The three layers /api/machines answers with, and the one row shape all three carry.
+ * Spelled as a tuple rather than inferred, so `data[kind]` is a PlacementRow[] rather than
+ * an index into an object with a string. */
+const MACHINE_KINDS = ["machines", "extractors", "generators"] as const;
+
+export function drawMachines(data: MachinesResponse): void {
+  MACHINE_KINDS.forEach(function (kind) {
     var group = layer(kind, kind !== "machines", KIND_COLOUR[kind]);
     data[kind].forEach(function (m) {
+      // One guard, on x only, exactly as it always was. The row type says y_m can be null
+      // too and the assertion below is that claim being deliberately not acted on: widening
+      // this to `|| m.y_m === null` would be a behaviour change smuggled in as a type fix,
+      // and if the projection ever sends half a position it should be visible, not silently
+      // skipped by a guard nobody decided to add.
       if (m.x_m === null) return;
       var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
       var l = (m.l_m || MACHINE_FALLBACK_M) / 2;
-      L.polygon(footprintCorners(m.x_m, m.y_m, w, l, m.yaw), {
+      L.polygon(footprintCorners(m.x_m, m.y_m!, w, l, m.yaw), {
         color: KIND_COLOUR[kind],
         weight: 1,
         fillOpacity: m.paused ? 0.15 : 0.65,
-        dashArray: m.paused ? "2,2" : null,
+        dashArray: m.paused ? "2,2" : undefined,
       })
         .bindPopup(
           popup([

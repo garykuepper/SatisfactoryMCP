@@ -22,6 +22,16 @@ import {
 import { state } from "./state";
 import { fail } from "./toast";
 
+import type { OnMap } from "./leaflet-private";
+
+import type {
+  CollectibleRow,
+  CollectiblesResponse,
+  NodeRow,
+  NodesResponse,
+  SummaryResponse,
+} from "./api-types";
+
 /* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
  * An extractor is drawn exactly on the node it drains, and whichever of /api/nodes and
  * /api/machines resolved last used to decide -- usually making all 44 occupied nodes
@@ -31,14 +41,15 @@ import { fail } from "./toast";
 export function raiseNodeDots() {
   Object.keys(state.layers).forEach(function (name) {
     if (name.indexOf("node: ") !== 0) return;
-    state.layers[name].eachLayer(function (dot) {
-      if (dot.bringToFront && dot._map) dot.bringToFront();
+    state.layers[name]!.eachLayer(function (dot) {
+      var path = dot as L.Path & OnMap;
+      if (path.bringToFront && path._map) path.bringToFront();
     });
   });
 }
 
-export function drawNodes(data) {
-  var byResource = {};
+export function drawNodes(data: NodesResponse): void {
+  var byResource: Record<string, NodeRow[]> = {};
   data.nodes.forEach(function (n) {
     (byResource[n.resource] = byResource[n.resource] || []).push(n);
   });
@@ -47,7 +58,7 @@ export function drawNodes(data) {
     var still = Object.keys(byResource).some(function (resource) {
       return "node: " + shortResource(resource) === name;
     });
-    if (!still) state.layers[name].clearLayers();
+    if (!still) state.layers[name]!.clearLayers();
   });
   Object.keys(byResource)
     .sort()
@@ -55,7 +66,7 @@ export function drawNodes(data) {
       var short = shortResource(resource);
       var colour = RESOURCE_COLOUR[resource] || "#888";
       var group = layer("node: " + short, true, colour);
-      byResource[resource].forEach(function (n) {
+      byResource[resource]!.forEach(function (n) {
         L.circleMarker(xy(n), {
           radius: PURITY_RADIUS[n.purity] || 4,
           color: colour,
@@ -94,10 +105,10 @@ export function drawNodes(data) {
 
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
-export function drawPlayer(p) {
+export function drawPlayer(p: SummaryResponse["player"]): void {
   var group = layer("player", true, PLAYER_COLOUR);
   if (!p || p.x_m === null || p.y_m === null) return;
-  L.circleMarker(xy(p), {
+  L.circleMarker(xy(p as { x_m: number; y_m: number }), {
     radius: 7,
     color: PLAYER_COLOUR,
     weight: 2,
@@ -113,8 +124,8 @@ export function drawPlayer(p) {
     .addTo(group);
 }
 
-export function drawCollectibles(data) {
-  var byCategory = {};
+export function drawCollectibles(data: CollectiblesResponse): void {
+  var byCategory: Record<string, CollectibleRow[]> = {};
   data.rows.forEach(function (r) {
     (byCategory[r.category] = byCategory[r.category] || []).push(r);
   });
@@ -122,7 +133,7 @@ export function drawCollectibles(data) {
     // A category this world has none of (all collected, or never present) must not keep
     // showing another world's markers under a still-ticked box.
     if (name.indexOf("pickup: ") === 0 && !byCategory[name.slice("pickup: ".length)]) {
-      state.layers[name].clearLayers();
+      state.layers[name]!.clearLayers();
     }
   });
   Object.keys(byCategory)
@@ -132,9 +143,9 @@ export function drawCollectibles(data) {
       // me everything" are different questions and the second one is unreadable.
       var colour = PICKUP_COLOUR[category] || PICKUP_FALLBACK;
       var group = layer("pickup: " + category, false, colour);
-      byCategory[category].forEach(function (r) {
+      byCategory[category]!.forEach(function (r) {
         var here = xy(r);
-        var mark = r.collected
+        var mark: L.Path = r.collected
           ? L.polyline(
               [
                 [

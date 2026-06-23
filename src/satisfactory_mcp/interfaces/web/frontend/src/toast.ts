@@ -21,9 +21,9 @@ var FAIL_MS = 12000;
  * something the reader can already see on the map. */
 var NOTE_MS = 6000;
 
-export function toast(message, kind, ms) {
+export function toast(message: string, kind: "fail" | "note", ms: number): void {
   var box = el("err");
-  var rows = Array.prototype.slice.call(box.children);
+  var rows: Element[] = Array.prototype.slice.call(box.children);
   rows.forEach(function (row) {
     // The same message twice is one problem, not two rows.
     if (row.textContent === message) row.remove();
@@ -41,18 +41,23 @@ export function toast(message, kind, ms) {
   }, ms);
 }
 
-export function fail(message) {
+export function fail(message: string): void {
   toast(message, "fail", FAIL_MS);
 }
 
-export function note(message) {
+export function note(message: string): void {
   toast(message, "note", NOTE_MS);
 }
 
 /* Browser-internal error phrases, translated to what they mean HERE. "Failed to fetch"
  * is Chrome for "the server you started is gone", and that is the actionable sentence. */
-export function friendly(error) {
-  var text = error && error.message ? error.message : String(error);
+export function friendly(error: unknown): string {
+  // Read structurally rather than with `instanceof Error`, which is what the untyped version
+  // did: everything this catches today is a real Error, but a rejected fetch in one more
+  // browser being a DOMException with a message would silently start printing "[object
+  // DOMException]" if this asked about the constructor instead of about the field.
+  var message = (error as { message?: unknown } | null | undefined)?.message;
+  var text = error && message ? String(message) : String(error);
   if (/Failed to fetch|NetworkError|Load failed/i.test(text)) {
     return "the server is not answering — is it still running?";
   }

@@ -15,17 +15,17 @@ import { state } from "./state";
 import { fail } from "./toast";
 
 /* The corners a base-map probe answered with, as [x_min, y_min, x_max, y_max] metres. */
-function mapImageBounds(response) {
+function mapImageBounds(response: Response): number[] {
   var raw = (response.headers.get("X-Map-Bounds-M") || "").split(",").map(Number);
   if (raw.length === 4 && raw.every(isFinite)) return raw;
   return [MAP_SQUARE_M.x_min, MAP_SQUARE_M.y_min, MAP_SQUARE_M.x_max, MAP_SQUARE_M.y_max];
 }
 
 /* Those corners as Leaflet bounds -- the [-y, x] flip, so the y ends swap. */
-function mapImageLatLngBounds(b) {
+function mapImageLatLngBounds(b: number[]): L.LatLngBounds {
   return L.latLngBounds([
-    [-b[3], b[0]],
-    [-b[1], b[2]],
+    [-b[3]!, b[0]!],
+    [-b[1]!, b[2]!],
   ]);
 }
 
@@ -44,7 +44,7 @@ function baseImageryShown() {
 /* ...and back, if the render turns out not to draw. Full opacity comes back with it: with
  * no picture underneath there is nothing to see through to, and regions.ts' REGION_BLEND against the
  * page's sea colour would only wash the biomes out. */
-function baseImageryFailed(group, message) {
+function baseImageryFailed(group: L.LayerGroup, message: string): void {
   group.clearLayers();
   map.removeLayer(group);
   if (state.layers.regions) state.layers.regions.addTo(map);
@@ -87,14 +87,16 @@ export function loadMapImage() {
  * is asked for from the one transparent pixel Leaflet keeps for the purpose, so a pan and
  * zoom session's network log has no red in it at all. */
 var PyramidLayer = L.TileLayer.extend({
-  getTileUrl: function (coords) {
-    var span = 1 << (coords.z + this.options.zoomOffset);
+  getTileUrl: function (this: L.TileLayer, coords: L.Coords) {
+    // Asserted rather than defaulted: this layer is only ever constructed below, with a
+    // zoomOffset, and `|| 0` here would be a silently different grid rather than a fix.
+    var span = 1 << (coords.z + this.options.zoomOffset!);
     if (coords.x < 0 || coords.y < 0 || coords.x >= span || coords.y >= span) {
       return L.Util.emptyImageUrl;
     }
     return L.TileLayer.prototype.getTileUrl.call(this, coords);
   },
-});
+}) as new (url: string, options: L.TileLayerOptions) => L.TileLayer;
 
 /* The pyramid, wired to the pixel space map.ts' CRS_SHEET_PX set up: Leaflet's tile level Z + 5
  * is the pyramid's z, because 256 * 2^(Z+5) is 8192 * 2^Z, and 8192 sheet pixels are one
@@ -105,7 +107,7 @@ var PyramidLayer = L.TileLayer.extend({
  * this grid cannot draw: corners that are not the square the CRS is anchored on, or a tile
  * size that is not a power-of-two fraction of the sheet. Both are drawable as one image,
  * and a tile grid quietly offset from its own picture is worse than a big picture. */
-function addTilePyramid(response) {
+function addTilePyramid(response: Response): boolean {
   var b = mapImageBounds(response);
   var anchored = [
     MAP_SQUARE_M.x_min,
@@ -114,12 +116,12 @@ function addTilePyramid(response) {
     MAP_SQUARE_M.y_max,
   ];
   var moved = b.some(function (v, i) {
-    return Math.abs(v - anchored[i]) > 1;
+    return Math.abs(v - anchored[i]!) > 1;
   });
   if (moved) return false;
 
-  var tilePx = +response.headers.get("X-Map-Tile-Px") || 256;
-  var maxZ = +response.headers.get("X-Map-Tile-Max-Z");
+  var tilePx = +response.headers.get("X-Map-Tile-Px")! || 256;
+  var maxZ = +response.headers.get("X-Map-Tile-Max-Z")!;
   if (!isFinite(maxZ) || maxZ < 0) maxZ = 5;
   var top = Math.log2(MAP_SHEET_PX / tilePx); // the pyramid z that IS the sheet: 5.
   if (!isFinite(top) || top !== Math.round(top)) return false;

@@ -32,7 +32,9 @@ var LAYER_ORDER = [
   "generators",
 ];
 
-function layerRank(name) {
+type Rank = [number, number, string];
+
+function layerRank(name: string): Rank {
   var fixed = LAYER_ORDER.indexOf(name);
   if (fixed >= 0) return [0, fixed, name];
   if (name.indexOf("node: ") === 0) return [1, 0, name];
@@ -44,7 +46,7 @@ function layerRank(name) {
  * forgetting whether it was ticked -- that is why the LayerGroup identity is kept and
  * only its contents are cleared. `colour` puts a swatch in the control row, which is
  * what makes the control readable as a legend: "node: Coal" next to its actual grey. */
-export function layer(name, on, colour) {
+export function layer(name: string, on?: boolean, colour?: string): L.LayerGroup {
   if (!state.layers[name]) {
     var group = L.layerGroup();
     group._rank = layerRank(name);
@@ -58,16 +60,16 @@ export function layer(name, on, colour) {
     control.addOverlay(group, title);
     if (on) group.addTo(map);
   }
-  return state.layers[name].clearLayers();
+  return state.layers[name]!.clearLayers();
 }
 
 /* Layers whose names are data-driven (one per resource, one per pickup category) can go
  * stale on a world switch: a category the new world does not return would otherwise keep
  * the previous world's markers under a still-ticked checkbox. */
-export function clearPrefixed(prefixes) {
+export function clearPrefixed(prefixes: string[]): void {
   Object.keys(state.layers).forEach(function (name) {
     prefixes.forEach(function (prefix) {
-      if (name.indexOf(prefix) === 0) state.layers[name].clearLayers();
+      if (name.indexOf(prefix) === 0) state.layers[name]!.clearLayers();
     });
   });
 }

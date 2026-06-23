@@ -17,9 +17,11 @@ import { BOOT, pinnedFilename, state } from "./state";
 
 var BOUND = 5000; // metres; the playable world is ~7 km across, so this frames it loosely.
 
-export var HOME_VIEW = { centre: [0, 0], zoom: -3 }; // the whole-world framing every load starts from.
+// The whole-world framing every load starts from.
+export var HOME_VIEW: { centre: L.LatLngTuple; zoom: number } = { centre: [0, 0], zoom: -3 };
 
-export function xy(row) {
+/** A row with game coordinates, plotted the page's one way round. See the note above. */
+export function xy(row: { x_m: number; y_m: number }): L.LatLngTuple {
   return [-row.y_m, row.x_m];
 }
 
@@ -77,7 +79,7 @@ state.map = map;
   var centre = HOME_VIEW.centre;
   if (BOOT.c) {
     var raw = BOOT.c.split(",");
-    if (raw.length === 2 && isFinite(+raw[0]) && isFinite(+raw[1])) centre = [-+raw[1], +raw[0]];
+    if (raw.length === 2 && isFinite(+raw[0]!) && isFinite(+raw[1]!)) centre = [-+raw[1]!, +raw[0]!];
   }
   map.setView(centre, zoom);
 })();
@@ -93,7 +95,7 @@ state.map = map;
  * be given a size in metres instead. Polygons never need it: they are already in map units
  * and scale for free, which is exactly why the machines and the floor plan have been the
  * right size at every zoom since they were drawn, and the belts were not. */
-export function pixelsPerMetre(zoom) {
+export function pixelsPerMetre(zoom?: number): number {
   var z = zoom === undefined ? map.getZoom() : zoom;
   return map.project([0, 1], z).x - map.project([0, 0], z).x;
 }
@@ -115,7 +117,7 @@ map.attributionControl
  * to share the regions pane, which was harmless only for as long as the two were mutually
  * exclusive; combining them made the stacking a question of which loader finished first. */
 map.createPane("basemap");
-map.getPane("basemap").style.zIndex = 340;
+map.getPane("basemap")!.style.zIndex = "340";
 
 /* The biome regions everything else stands on get their own pane, below overlayPane (400),
  * so the region fill can never end up in front of a node the player is trying to click. The
@@ -123,17 +125,17 @@ map.getPane("basemap").style.zIndex = 340;
  *
  * The pane is also the unit of transparency: see REGION_BLEND in regions.ts. */
 map.createPane("regions");
-map.getPane("regions").style.zIndex = 350;
+map.getPane("regions")!.style.zIndex = "350";
 
 /* The player's own concrete, in its own pane between the biome raster (350) and the
  * overlay pane (400): a floor plan has to cover the ground it was poured on and sit
  * under every machine, node and label that stands on it. Leaflet builds one canvas per
  * pane, so this is also what keeps 8,000 rectangles off the region cells' canvas. */
 map.createPane("foundations");
-map.getPane("foundations").style.zIndex = 360;
+map.getPane("foundations")!.style.zIndex = "360";
 
-export function writeHash() {
-  var parts = [];
+export function writeHash(): void {
+  var parts: string[] = [];
   if (state.world) parts.push("world=" + encodeURIComponent(state.world));
   var pinned = pinnedFilename();
   if (pinned) parts.push("save=" + encodeURIComponent(pinned));
@@ -161,7 +163,13 @@ export function writeHash() {
  * draws precisely as it did before, and the difference between the two claims stays in the
  * popup where it can be read rather than in the drawing where it cannot.
  */
-export function footprintCorners(x, y, w, l, yaw) {
+export function footprintCorners(
+  x: number,
+  y: number,
+  w: number,
+  l: number,
+  yaw: number | null | undefined
+): L.LatLngTuple[] {
   var a = ((yaw || 0) * Math.PI) / 180;
   var cos = Math.cos(a);
   var sin = Math.sin(a);

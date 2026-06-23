@@ -13,6 +13,10 @@ import { L } from "./leaflet";
 import { map } from "./map";
 import { friendly } from "./toast";
 
+import type { Elevation, InspectResponse } from "./api-types";
+import type { Row } from "./dom";
+import type { InspectedEvent } from "./leaflet-private";
+
 /* Right-click anywhere: "what is here?" answered where the question is asked.
  *
  * The map is drawn from a save and a node table, and until now it could show WHERE things
@@ -26,13 +30,13 @@ import { friendly } from "./toast";
  * asked with, and a coordinate you cannot retype is not a copyable coordinate.
  */
 
-function elevationRows(e) {
+function elevationRows(e: Elevation): Row[] {
   // The extracted heightfield goes first when there is one, because it is the only answer
   // measured AT the point rather than near it. Which layer of the field answered rides
   // along with it: a landscape texel and a fill texel are both "the terrain" and they are
   // a metre and four metres good respectively, so quoting one number for both would be
   // the same overclaim as one median over nodes and foundations.
-  var rows = [];
+  var rows: Row[] = [];
   if (e.terrain_m !== null && e.terrain_m !== undefined) {
     var acc = e.terrain_accuracy_m === null ? "" : " ±" + e.terrain_accuracy_m + " m";
     rows.push(["terrain", e.terrain_m + " m (" + e.terrain_source + acc + ")"]);
@@ -67,8 +71,10 @@ function elevationRows(e) {
   return rows;
 }
 
-function inspectHtml(d) {
-  var rows = [["region", regionLine(d.region)]].concat(elevationRows(d.elevation));
+function inspectHtml(d: InspectResponse): string {
+  var rows: Row[] = ([["region", regionLine(d.region)]] as Row[]).concat(
+    elevationRows(d.elevation)
+  );
   d.nearest.forEach(function (n, i) {
     rows.push([
       i ? "" : "nearest",
@@ -93,13 +99,14 @@ function inspectHtml(d) {
  * map listener in one block, in the order the single-file page registered them, because
  * Leaflet fires listeners in registration order and that order is now the only thing a
  * reader cannot see by looking at one module. */
-export function inspect(e) {
+export function inspect(e: L.LeafletMouseEvent): void {
   // One right-click can reach this twice -- Leaflet fires at the layer under the cursor
   // and the event propagates to the map -- so the DOM event carries a mark. Two fetches
   // and two popups for one click is the bug this one line removes.
-  if (e.originalEvent) {
-    if (e.originalEvent._inspected) return;
-    e.originalEvent._inspected = true;
+  var dom = e.originalEvent as InspectedEvent | undefined;
+  if (dom) {
+    if (dom._inspected) return;
+    dom._inspected = true;
   }
   var x = Math.round(e.latlng.lng * 10) / 10;
   var y = Math.round(-e.latlng.lat * 10) / 10;
@@ -109,7 +116,7 @@ export function inspect(e) {
     .setLatLng(e.latlng)
     .setContent("inspecting " + x + ", " + y + " m&hellip;")
     .openOn(map);
-  get("/api/inspect?x_m=" + x + "&y_m=" + y)
+  get<InspectResponse>(("/api/inspect?x_m=" + x + "&y_m=" + y) as `/api/inspect?${string}`)
     .then(function (d) {
       if (map.hasLayer(card)) card.setContent(inspectHtml(d));
     })

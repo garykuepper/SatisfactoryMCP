@@ -15,13 +15,15 @@ import { L } from "./leaflet";
 import { HOME_VIEW, map } from "./map";
 import { state } from "./state";
 
+import type { LayerInput, SectionPart } from "./leaflet-private";
+
 export var control = L.control.layers(
-  null,
+  undefined,
   {},
   {
     collapsed: false,
     sortLayers: true,
-    sortFunction: function (a, b) {
+    sortFunction: function (a: L.Layer, b: L.Layer) {
       var ra = a._rank || [9, 0, ""];
       var rb = b._rank || [9, 0, ""];
       if (ra[0] !== rb[0]) return ra[0] - rb[0];
@@ -60,15 +62,22 @@ L.control.scale({ imperial: false }).addTo(map);
  * same reason: both live in objects built once at module scope, and a switch replaces
  * layer CONTENTS without rebuilding the control, the layer groups or these flags.
  */
-var SECTIONS = [
+/** One data-driven family of control rows, folded together and toggled together. */
+interface Section {
+  key: string;
+  prefix: string;
+  title: string;
+}
+
+var SECTIONS: Section[] = [
   { key: "nodes", prefix: "node: ", title: "resource nodes" },
   { key: "pickups", prefix: "pickup: ", title: "pickups" },
 ];
 
 state.panel = { open: true, sections: { nodes: false, pickups: false } };
 
-function sectionFor(name) {
-  var found = null;
+function sectionFor(name: string): Section | null {
+  var found: Section | null = null;
   SECTIONS.forEach(function (section) {
     if (name.indexOf(section.prefix) === 0) found = section;
   });
@@ -78,30 +87,36 @@ function sectionFor(name) {
 /* A control row back to the layer it toggles. Leaflet stamps the layer's id onto the
  * checkbox it builds, and layer() files the name under that same stamp, so the mapping
  * survives every re-render of the list without parsing the row's text back. */
-function rowName(row) {
-  var input = row.querySelector("input");
+function rowName(row: HTMLElement): string {
+  var input = row.querySelector<LayerInput>("input");
   return (input && state.layerName[input.layerId]) || "";
 }
 
-function rowOn(row) {
+function rowOn(row: HTMLElement): boolean {
   var input = row.querySelector("input");
   return !!(input && input.checked);
 }
 
 /* A control row back to the LayerGroup itself, for the one caller that has to toggle a
  * layer without a human clicking its box -- see setSection. */
-function rowLayer(row) {
-  var input = row.querySelector("input");
-  return (input && state.layers[state.layerName[input.layerId]]) || null;
+function rowLayer(row: HTMLElement): L.LayerGroup | null {
+  var input = row.querySelector<LayerInput>("input");
+  return (input && state.layers[state.layerName[input.layerId]!]) || null;
 }
 
-function fold(element, folded) {
+function fold(element: HTMLElement | null, folded: boolean): void {
   if (!element) return;
   if (folded) L.DomUtil.addClass(element, "layer-folded");
   else L.DomUtil.removeClass(element, "layer-folded");
 }
 
-function foldHead(element, open, title, count, total) {
+function foldHead(
+  element: HTMLElement,
+  open: boolean,
+  title: string,
+  count: number,
+  total: number
+): void {
   element.setAttribute("role", "button");
   element.setAttribute("tabindex", "0");
   element.setAttribute("aria-expanded", open ? "true" : "false");
@@ -122,13 +137,14 @@ function foldHead(element, open, title, count, total) {
 /* Both heads say `role="button"`, so both have to answer a keyboard the way a button
  * does. Every checkbox in this control is already reachable by Tab; a fold that could only
  * be opened with a pointer would put those checkboxes behind a mouse. */
-function onActivate(element, action) {
+function onActivate(element: HTMLElement, action: () => void): void {
   L.DomEvent.on(element, "click", function (event) {
     L.DomEvent.stop(event);
     action();
   });
   L.DomEvent.on(element, "keydown", function (event) {
-    if (event.key !== "Enter" && event.key !== " ") return;
+    var key = (event as KeyboardEvent).key;
+    if (key !== "Enter" && key !== " ") return;
     L.DomEvent.stop(event);
     action();
   });
@@ -164,11 +180,11 @@ export function isBatching() {
  * only that; who cares about it is main.ts's business, and main.ts registers the pass. */
 var settled: Array<() => void> = [];
 
-export function onSettled(pass) {
+export function onSettled(pass: () => void): void {
   settled.push(pass);
 }
 
-function batch(action) {
+function batch(action: () => void): void {
   batching = true;
   control._handlingClick = true;
   try {
@@ -187,7 +203,7 @@ function batch(action) {
  * clicking their boxes: Leaflet's own `_onInputClick` would do the adding, but it ends by
  * calling `_refocusOnMap`, and a keyboard user who just pressed Space on the family box
  * would find focus on the map. */
-function setSection(rows, on) {
+function setSection(rows: HTMLElement[], on: boolean): void {
   batch(function () {
     rows.forEach(function (row) {
       var group = rowLayer(row);
@@ -209,9 +225,9 @@ function setSection(rows, on) {
  * engines, and "some are on, so turn them all on" is the rule regardless. The box is not
  * the state; it is a picture of the rows, redrawn from them on every render.
  */
-function sectionBox(section, rows) {
+function sectionBox(section: Section, rows: HTMLElement[]): HTMLInputElement {
   var on = rows.filter(rowOn).length;
-  var box = L.DomUtil.create("input", "layer-section-box");
+  var box = L.DomUtil.create("input", "layer-section-box") as HTMLInputElement & SectionPart;
   box.type = "checkbox";
   box._section = section.key;
   box._part = "box";
@@ -234,10 +250,10 @@ function sectionBox(section, rows) {
  * them -- which is why the fold listener sits on the text span rather than on the row, as
  * it used to. A fold handler on the row would also fire for a click on the box, so ticking
  * "pickups" would fold the section shut under the pointer in the same gesture. */
-function sectionHead(section, rows) {
+function sectionHead(section: Section, rows: HTMLElement[]): HTMLElement {
   var head = L.DomUtil.create("div", "layer-section");
   head.appendChild(sectionBox(section, rows));
-  var text = L.DomUtil.create("span", "layer-fold", head);
+  var text = L.DomUtil.create("span", "layer-fold", head) as HTMLSpanElement & SectionPart;
   text._section = section.key;
   text._part = "fold";
   var open = state.panel.sections[section.key];
@@ -258,9 +274,9 @@ function sectionHead(section, rows) {
  * Re-ticking would not restore it -- it would turn all 34 ON, which is a different map than
  * the one the player had. So the one gesture whose undo does not undo is the one gesture
  * this head does not offer. */
-function panelHead(rows) {
-  var container = control.getContainer();
-  var head = container.querySelector(".layers-head");
+function panelHead(rows: HTMLElement[]): HTMLElement {
+  var container = control.getContainer()!;
+  var head = container.querySelector<HTMLElement>(".layers-head");
   if (!head) {
     head = L.DomUtil.create("div", "layers-head");
     onActivate(head, function () {
@@ -287,16 +303,22 @@ function panelHead(rows) {
  * heads live inside that list, and so by the time the decorator runs the focused box is
  * already gone and activeElement is <body>. Every family toggle would drop the keyboard on
  * the floor. The mark is therefore taken BEFORE the wipe and parked here. */
-function focusMark() {
-  var active = document.activeElement;
+/** Which half of which section head held the keyboard, as a value, not an element. */
+interface FocusMark {
+  key: string;
+  part: "box" | "fold" | undefined;
+}
+
+function focusMark(): FocusMark | null {
+  var active = document.activeElement as SectionPart | null;
   return active && active._section ? { key: active._section, part: active._part } : null;
 }
 
-var pendingFocus = null;
+var pendingFocus: FocusMark | null = null;
 
 /* Re-applied after every render of the list, and idempotent: Leaflet empties the overlay
  * list on each `_update`, so the section heads are rebuilt rather than moved. */
-function decorateControl() {
+function decorateControl(): void {
   if (batching) return; // one render at the end of the batch, not one per member layer
   var container = control.getContainer();
   if (!container) return;
@@ -307,11 +329,12 @@ function decorateControl() {
   // the head held it matters now that a head is a box plus a fold.
   var focused = focusMark() || pendingFocus;
   pendingFocus = null;
-  Array.prototype.slice.call(list.querySelectorAll(".layer-section")).forEach(function (head) {
-    head.parentNode.removeChild(head);
+  var heads: Element[] = Array.prototype.slice.call(list.querySelectorAll(".layer-section"));
+  heads.forEach(function (head) {
+    head.parentNode!.removeChild(head);
   });
-  var rows = Array.prototype.slice.call(list.querySelectorAll("label"));
-  var grouped = {};
+  var rows: HTMLElement[] = Array.prototype.slice.call(list.querySelectorAll("label"));
+  var grouped: Record<string, HTMLElement[]> = {};
   rows.forEach(function (row) {
     fold(row, false);
     var section = sectionFor(rowName(row));
@@ -325,23 +348,25 @@ function decorateControl() {
       fold(row, !open);
     });
     var head = sectionHead(section, members);
-    list.insertBefore(head, members[0]);
+    list!.insertBefore(head, members[0]!);
     if (focused && focused.key === section.key) {
-      var again = head.querySelector(focused.part === "box" ? ".layer-section-box" : ".layer-fold");
+      var again = head.querySelector<HTMLElement>(
+        focused.part === "box" ? ".layer-section-box" : ".layer-fold"
+      );
       if (again) again.focus();
     }
   });
   panelHead(rows);
-  fold(container.querySelector(".leaflet-control-layers-list"), !state.panel.open);
+  fold(container.querySelector<HTMLElement>(".leaflet-control-layers-list"), !state.panel.open);
 }
 
 (function () {
   var update = control._update;
-  control._update = function () {
+  control._update = function (this: L.Control.Layers, ...args: unknown[]) {
     pendingFocus = focusMark() || pendingFocus; // before the wipe; see focusMark
-    var result = update.apply(this, arguments);
+    var result = (update as (...a: unknown[]) => unknown).apply(this, args);
     decorateControl();
-    return result;
+    return result as void;
   };
   // A checkbox click does not re-render the list, so the "n of m" counts would go stale
   // the moment anyone used the thing they are counting.
@@ -352,7 +377,7 @@ function decorateControl() {
 /* Flying to a factory label is one click; getting back out was zoom-out spam. One
  * house-shaped button under the zoom control reframes the whole world. */
 (function () {
-  var home = L.control({ position: "topleft" });
+  var home = new L.Control({ position: "topleft" });
   home.onAdd = function () {
     var bar = L.DomUtil.create("div", "leaflet-bar");
     var a = L.DomUtil.create("a", "", bar);

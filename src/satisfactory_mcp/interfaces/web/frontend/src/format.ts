@@ -6,8 +6,10 @@
  * about the same fact at two different clicks.
  */
 
+import type { Region } from "./api-types";
+
 /* A resource class as the short name the whole page uses: Desc_OreIron_C -> OreIron. */
-export function shortResource(resource) {
+export function shortResource(resource: string | null | undefined): string {
   return String(resource || "")
     .replace(/^Desc_/, "")
     .replace(/_C$/, "");
@@ -20,16 +22,16 @@ export function shortResource(resource) {
  * bare next to a MEASURED elevation would borrow that measurement's authority. `null` is
  * the ocean-or-off-map answer, and it is said plainly rather than softened into the
  * nearest bit of land. */
-export function regionLine(region) {
+export function regionLine(region: Region | null | undefined): string {
   return region ? region.name + ", " + region.confidence : "off the map";
 }
 
 /* The engine's phase asset name as words: GP_Project_Assembly_Phase_3 ->
  * "Project Assembly phase 3". Null for the pre-1.0 saves that carry no phase at all,
  * so the header can omit the segment instead of printing "phase " and a hole. */
-export function phaseText(raw) {
+export function phaseText(raw: string | null | undefined): string | null {
   if (!raw) return null;
   var match = /^GP_(.+)_Phase_(\d+)$/.exec(raw);
-  if (match) return match[1].replace(/_/g, " ") + " phase " + match[2];
+  if (match) return match[1]!.replace(/_/g, " ") + " phase " + match[2];
   return raw;
 }

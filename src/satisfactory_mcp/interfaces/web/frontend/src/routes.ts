@@ -15,6 +15,15 @@ import { footprintCorners, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
 import { state } from "./state";
 
+import type {
+  BeltRow,
+  BeltsResponse,
+  PipeRow,
+  PipesResponse,
+  Point3M,
+  PointM,
+} from "./api-types";
+
 /* The conveyor network, drawn as the routes it actually takes.
  *
  * New with schema 12, which is the whole reason this layer did not exist: the splines were
@@ -62,7 +71,7 @@ var BELT_FAST = "#a7b9c7";
  * 480, 780 -- so this is a banding of a measurement rather than a parse of "Mk3" out of a
  * display name, and it is the same banding the width step used to make. An unknown tier
  * draws at the middle tone: the darkest would read as Mk1. */
-function beltColour(items_per_min) {
+function beltColour(items_per_min: number | null | undefined): string {
   if (!items_per_min) return BELT_COLOUR;
   if (items_per_min >= 480) return BELT_FAST;
   if (items_per_min >= 270) return BELT_COLOUR;
@@ -104,19 +113,19 @@ var ATTACHMENT_FALLBACK_M = 4;
 /* A route's stroke width, in pixels, from its width in the world. The one place the two
  * network layers agree completely: a belt is two metres and a pipe is 1.3, and past the
  * floor each is drawn at whatever that is worth on screen right now. */
-function routeWeight(width_m, ppm) {
+function routeWeight(width_m: number, ppm: number): number {
   return Math.max(ROUTE_MIN_PX, width_m * ppm);
 }
 
-function beltWeight(ppm) {
+function beltWeight(ppm: number): number {
   return routeWeight(BELT_WIDTH_M, ppm);
 }
 
-function liftRadius(ppm) {
+function liftRadius(ppm: number): number {
   return Math.max(LIFT_MIN_RADIUS_PX, (BELT_WIDTH_M / 2) * ppm);
 }
 
-function beltPopup(b, first, last) {
+function beltPopup(b: BeltRow, first: Point3M, last: Point3M): string {
   return popup([
     ["belt", b.name || b.cls],
     // Said out loud, because the glyph is the one encoding on this map that exists
@@ -132,20 +141,20 @@ function beltPopup(b, first, last) {
   ]);
 }
 
-export function drawBelts(data) {
+export function drawBelts(data: BeltsResponse): void {
   // Off by default at the whole-world zoom, exactly like `machines` and for the same
   // reason: 3,085 routes across 7 km is a smear. See reveal() in labels.ts.
   var group = layer("belts", false, BELT_COLOUR);
   var ppm = pixelsPerMetre();
   data.belts.forEach(function (b) {
-    var points = b.points_m.map(function (p) {
+    var points: L.LatLngTuple[] = b.points_m.map(function (p) {
       return [-p[1], p[0]];
     });
-    var first = b.points_m[0];
-    var last = b.points_m[b.points_m.length - 1];
-    var piece;
+    var first = b.points_m[0]!;
+    var last = b.points_m[b.points_m.length - 1]!;
+    var piece: L.Path;
     if (b.lift) {
-      piece = L.circleMarker(points[0], {
+      piece = L.circleMarker(points[0]!, {
         radius: liftRadius(ppm),
         color: beltColour(b.items_per_min),
         weight: 1.5,
@@ -219,8 +228,9 @@ export function styleRoutes() {
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
     if (!group) return;
-    var weight = routeWeight(ROUTE_WIDTH_M[name], ppm);
-    group.eachLayer(function (piece) {
+    var weight = routeWeight(ROUTE_WIDTH_M[name]!, ppm);
+    group.eachLayer(function (layer) {
+      var piece = layer as L.Path & { setRadius?: (r: number) => void };
       // Four kinds of piece share these layers now and only two of them are sized in pixels:
       // a lift's ring by its radius, a run by its weight. A splitter is a polygon in map
       // units and is already the right size at every zoom -- exactly like a machine, which is
@@ -293,7 +303,7 @@ var PIPE_MK2 = "#bc7550";
  * scale bar, and contradicting the belts beside it, which gave up exactly this encoding for
  * exactly this reason. Two tiers, so two tones and the middle for the unknown: the darker
  * would read as Mk1. */
-function pipeColour(flow_m3_min) {
+function pipeColour(flow_m3_min: number | null | undefined): string {
   if (!flow_m3_min) return PIPE_COLOUR;
   return flow_m3_min >= 600 ? PIPE_MK2 : PIPE_MK1;
 }
@@ -305,7 +315,7 @@ function pipeColour(flow_m3_min) {
  * nothing at all at the whole-world view. */
 var PIPE_WIDTH_M = 1.3;
 
-function pipeWeight(ppm) {
+function pipeWeight(ppm: number): number {
   return routeWeight(PIPE_WIDTH_M, ppm);
 }
 
@@ -314,7 +324,7 @@ function pipeWeight(ppm) {
  * the whole point of the change is that on 365 of 503 pipes there now is. The `from` and
  * `to` rows carry the direction itself, exactly as they do on a belt, so this row only has
  * to carry the WARRANT. */
-var PIPE_FLOW_BASIS = {
+var PIPE_FLOW_BASIS: Record<string, string> = {
   "machine port": "→ a typed machine port at one end",
   pump: "→ pump orientation",
   propagated: "→ inferred from the network",
@@ -325,7 +335,7 @@ var PIPE_FLOW_BASIS = {
  * sentence it replaces, because it is now the exception rather than the rule. */
 var PIPE_FLOW_UNKNOWN = "not recorded, and the network does not imply it";
 
-function pipePopup(p, first, last) {
+function pipePopup(p: PipeRow, first: Point3M, last: Point3M): string {
   var known = p.direction === "forward" || p.direction === "reverse";
   var head = p.direction === "reverse" ? last : first;
   var tail = p.direction === "reverse" ? first : last;
@@ -335,7 +345,7 @@ function pipePopup(p, first, last) {
     // from what the pipe is plugged into, which is why it can be stated flatly.
     ["fluid", p.fluid_name],
     ["capacity", p.flow_m3_min ? p.flow_m3_min + " m³/min at 100%" : null],
-    ["flow", known ? PIPE_FLOW_BASIS[p.basis] || "→ inferred" : PIPE_FLOW_UNKNOWN],
+    ["flow", known ? PIPE_FLOW_BASIS[p.basis ?? ""] || "→ inferred" : PIPE_FLOW_UNKNOWN],
     // `from`/`to` where the direction is known, which is the belt popup's own wording and
     // means the same thing there; `ends` where it is not, so the two are never confused.
     ["from", known ? head[0] + ", " + head[1] + " m" : null],
@@ -391,7 +401,7 @@ var CHEVRON_WEIGHT_PX = 1.5;
 var CHEVRON_COLOUR = "#e8cbb4";
 var CHEVRON_OPACITY = 0.7;
 
-function chevronOpacity(ppm) {
+function chevronOpacity(ppm: number): number {
   return CHEVRON_LENGTH_M * ppm >= CHEVRON_MIN_PX ? CHEVRON_OPACITY : 0;
 }
 
@@ -400,27 +410,37 @@ function chevronOpacity(ppm) {
  * Takes a polyline and a flag rather than a pipe, so it knows nothing about plumbing: a belt
  * has a direction too -- its points are already in travel order -- and could be marked by
  * this same function tomorrow. See ROUTE_CHEVRONS for why it is not being marked today. */
-function routeChevrons(points_m, reverse) {
+/** One straight leg of a route, with where along the whole route it starts. */
+interface Run {
+  x: number;
+  y: number;
+  ux: number;
+  uy: number;
+  d: number;
+  at: number;
+}
+
+function routeChevrons(points_m: Point3M[], reverse: boolean): PointM[][] {
   var pts = reverse ? points_m.slice().reverse() : points_m;
-  var runs = [];
+  var runs: Run[] = [];
   var total = 0;
   for (var i = 1; i < pts.length; i++) {
-    var dx = pts[i][0] - pts[i - 1][0];
-    var dy = pts[i][1] - pts[i - 1][1];
+    var dx = pts[i]![0] - pts[i - 1]![0];
+    var dy = pts[i]![1] - pts[i - 1]![1];
     var d = Math.sqrt(dx * dx + dy * dy);
     if (!(d > 0)) continue;
-    runs.push({ x: pts[i - 1][0], y: pts[i - 1][1], ux: dx / d, uy: dy / d, d: d, at: total });
+    runs.push({ x: pts[i - 1]![0], y: pts[i - 1]![1], ux: dx / d, uy: dy / d, d: d, at: total });
     total += d;
   }
   if (!runs.length || total < CHEVRON_MIN_RUN_M) return [];
-  var marks = [];
+  var marks: PointM[][] = [];
   var n = Math.max(1, Math.floor(total / CHEVRON_SPACING_M));
   for (var k = 0; k < n; k++) {
     var along = ((k + 0.5) / n) * total;
-    var run = runs[runs.length - 1];
+    var run = runs[runs.length - 1]!;
     for (var j = 0; j < runs.length; j++) {
-      if (along <= runs[j].at + runs[j].d) {
-        run = runs[j];
+      if (along <= runs[j]!.at + runs[j]!.d) {
+        run = runs[j]!;
         break;
       }
     }
@@ -440,14 +460,14 @@ function routeChevrons(points_m, reverse) {
   return marks;
 }
 
-export function drawPipes(data) {
+export function drawPipes(data: PipesResponse): void {
   // Off by default at the whole-world zoom, exactly like `belts` and `machines`. See reveal() in labels.ts.
   var group = layer("pipes", false, PIPE_COLOUR);
   var ppm = pixelsPerMetre();
   var alpha = chevronOpacity(ppm);
   data.pipes.forEach(function (p) {
     if (p.points_m.length < 2) return; // a route with one point is not a route
-    var points = p.points_m.map(function (q) {
+    var points: L.LatLngTuple[] = p.points_m.map(function (q) {
       return [-q[1], q[0]];
     });
     L.polyline(points, {
@@ -455,13 +475,13 @@ export function drawPipes(data) {
       weight: pipeWeight(ppm),
       opacity: 0.85,
     })
-      .bindPopup(pipePopup(p, p.points_m[0], p.points_m[p.points_m.length - 1]))
+      .bindPopup(pipePopup(p, p.points_m[0]!, p.points_m[p.points_m.length - 1]!))
       .addTo(group);
     if (!ROUTE_CHEVRONS.pipes) return;
     if (p.direction !== "forward" && p.direction !== "reverse") return;
     routeChevrons(p.points_m, p.direction === "reverse").forEach(function (mark) {
       var piece = L.polyline(
-        mark.map(function (q) {
+        mark.map(function (q): L.LatLngTuple {
           return [-q[1], q[0]];
         }),
         {
@@ -508,7 +528,7 @@ export var ROUTE_LAYERS = ["belts", "pipes"];
 
 /* What each route layer is worth in metres. The one place the two differ, so the one place
  * the shared passes above have to look. */
-var ROUTE_WIDTH_M = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
+var ROUTE_WIDTH_M: Record<string, number> = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
 
 /* Which route layers carry direction chevrons. A BELT HAS A DIRECTION TOO -- its points are
  * in travel order, which is the one thing the belts have always been able to say and the
@@ -517,16 +537,17 @@ var ROUTE_WIDTH_M = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
  * decision about the map, not about the data: 3,085 belt runs would put some 2,500 more
  * marks on the same canvas as these 412, and the owner asked for the pipes. A flag rather
  * than an absence, so the next person finds a switch instead of a rewrite. */
-var ROUTE_CHEVRONS = { belts: false, pipes: true };
+var ROUTE_CHEVRONS: Record<string, boolean> = { belts: false, pipes: true };
 
 export function sinkRoutes() {
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
     if (!group) return;
-    var chevrons = [];
-    var squares = [];
-    var runs = [];
-    group.eachLayer(function (piece) {
+    var chevrons: L.Path[] = [];
+    var squares: L.Path[] = [];
+    var runs: L.Path[] = [];
+    group.eachLayer(function (layer) {
+      var piece = layer as L.Path;
       (piece._chevron ? chevrons : piece instanceof L.Polygon ? squares : runs).push(piece);
     });
     // Sunk FIRST is left highest, per the note above, so the chevrons go before the squares

@@ -14,6 +14,8 @@ import { map } from "./map";
 import { REGION_COLOUR } from "./palette";
 import { state } from "./state";
 
+import type { RegionsResponse } from "./api-types";
+
 var REGION_FILL = 1; // see REGION_COLOUR in palette.ts: opaque cells, or the shared borders become a grid.
 
 /* How much of the map render shows through the region fill when BOTH are drawn.
@@ -75,7 +77,7 @@ export function updateRegionBlend() {
  * neighbour's ground, and a name printed there contradicts the same page's right-click
  * inspector. The server moves those anchors onto the region's own cells.
  */
-export function drawRegions(data) {
+export function drawRegions(data: RegionsResponse): void {
   // "regions" and "region names": one row for the fill, one for the labels over it, named
   // as the pair they are. The fill was called "terrain" until there was a real terrain
   // render to be confused with -- what it draws is biome regions, and always was.
@@ -114,7 +116,8 @@ export function drawRegions(data) {
     // A standalone tooltip, not a zero-opacity marker: a marker would drag Leaflet's
     // default icon (and its two image requests) into the page for a label that is meant
     // to be text and nothing else.
-    var at = data.regions[name].label_m || data.regions[name].centroid_m;
+    var here = data.regions[name]!;
+    var at = here.label_m || here.centroid_m;
     L.tooltip({ permanent: true, direction: "center", className: "region-label" })
       .setLatLng([-at[1], at[0]])
       .setContent(esc(name))

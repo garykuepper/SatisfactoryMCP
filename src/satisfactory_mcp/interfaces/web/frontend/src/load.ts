@@ -22,6 +22,17 @@ import { drawBelts, drawPipes } from "./routes";
 import { state } from "./state";
 import { fail, friendly } from "./toast";
 
+import type {
+  BeltsResponse,
+  CollectiblesResponse,
+  FactoriesResponse,
+  MachinesResponse,
+  NodesResponse,
+  PipesResponse,
+  StructuresResponse,
+  SummaryResponse,
+} from "./api-types";
+
 export function loadRegions() {
   // Geography, not save state: no world parameter, fetched once, never refetched.
   return fetch("/api/regions")
@@ -52,7 +63,7 @@ export function loadStatic() {
   var live = function () {
     return epoch === state.epoch;
   };
-  get("/api/nodes")
+  get<NodesResponse>("/api/nodes")
     .then(function (d) {
       if (live()) drawNodes(d);
     })
@@ -61,7 +72,7 @@ export function loadStatic() {
       clearPrefixed(["node: "]);
       fail("nodes: " + friendly(e));
     });
-  get("/api/structures")
+  get<StructuresResponse>("/api/structures")
     .then(function (d) {
       if (live()) drawStructures(d);
     })
@@ -70,7 +81,7 @@ export function loadStatic() {
       clearPrefixed(["foundations"]);
       fail("structures: " + friendly(e));
     });
-  get("/api/belts")
+  get<BeltsResponse>("/api/belts")
     .then(function (d) {
       if (live()) drawBelts(d);
     })
@@ -79,7 +90,7 @@ export function loadStatic() {
       clearPrefixed(["belts"]);
       fail("belts: " + friendly(e));
     });
-  get("/api/pipes")
+  get<PipesResponse>("/api/pipes")
     .then(function (d) {
       if (live()) drawPipes(d);
     })
@@ -88,7 +99,7 @@ export function loadStatic() {
       clearPrefixed(["pipes"]);
       fail("pipes: " + friendly(e));
     });
-  get("/api/factories")
+  get<FactoriesResponse>("/api/factories")
     .then(function (d) {
       if (live()) drawFactories(d);
     })
@@ -104,7 +115,7 @@ export function loadLive() {
   var live = function () {
     return epoch === state.epoch;
   };
-  get("/api/machines")
+  get<MachinesResponse>("/api/machines")
     .then(function (d) {
       if (live()) drawMachines(d);
     })
@@ -113,7 +124,7 @@ export function loadLive() {
       clearPrefixed(["machines", "extractors", "generators"]);
       fail("machines: " + friendly(e));
     });
-  get("/api/collectibles?mode=remaining")
+  get<CollectiblesResponse>("/api/collectibles?mode=remaining")
     .then(function (d) {
       if (live()) drawCollectibles(d);
     })
@@ -122,7 +133,7 @@ export function loadLive() {
       clearPrefixed(["pickup: "]);
       fail("collectibles: " + friendly(e));
     });
-  get("/api/summary")
+  get<SummaryResponse>("/api/summary")
     .then(function (s) {
       if (!live()) return;
       busy(false);
@@ -164,13 +175,13 @@ export function loadLive() {
 /* A switch in progress is marked on screen -- header says so, map dims -- because the
  * old world's layers stay visible until the new responses land, and an unmarked blend of
  * two worlds reads as data. Cleared when this epoch's summary settles either way. */
-function busy(on) {
+function busy(on: boolean): void {
   var container = el("map");
   if (on) L.DomUtil.addClass(container, "busy");
   else L.DomUtil.removeClass(container, "busy");
 }
 
-export function reload(note) {
+export function reload(note?: string): void {
   state.epoch += 1;
   map.closePopup(); // an open card is a claim about the previous world/save
   el("summary").textContent = note || "loading…";
