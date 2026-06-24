@@ -4104,6 +4104,118 @@ recorded" reads as obtuseness rather than as honesty.
   the whole of the work; it stays false because 3,085 belt runs is a decision about the map
   that nobody asked for.
 
+## 17. Two more base layers, drawn rather than found (2026-07-31)
+
+The page has had one base map since there was a base map: the game's own artwork, cut out of
+the reader's install by `tools/gen_map_image.py`. The 1 m heightfield made a second kind
+possible and the game turned out to ship the ingredient for a third, so there are now three,
+and `/api/maptiles/{layer}/{z}/{x}/{y}` is how a client asks for one.
+
+**`terrain`** is the hypsometric preview the heightmap workflow produced, at full
+resolution and unretuned: a green→olive→tan→rock→snow ramp over the 1st..99.5th height
+percentile, a north-west hillshade at 45°, water tinted by its own depth, and the page's own
+`--sea` where the field knows nothing. It is a cartographer's map — the colour is the height
+and nothing else.
+
+**`satellite`** is the same relief with the colour coming from somewhere real.
+
+### The game ships biome geometry after all
+
+`data/region_names.json` says, in its own `known_limitations`, that "the game ships no biome
+geometry, so this cannot be regenerated from game data". That is now false and worth
+correcting rather than quietly working around.
+`/Game/FactoryGame/Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel`
+is a `FGMapAreaTexture`: `mDataWidth` 4096, `mAreaData` a 4096² array of palette indices, and
+`mColorToArea` resolving each index to a `UFGMapArea` object with its bounding box. 37
+indices, 17 distinct named areas plus `Area_NoMansLand`. A 2026-07 sweep saw the asset,
+called it "low prior, custom serialisation" and deferred it; it decodes in twenty lines
+through the reader this repository already has.
+
+**Its corners are measured, and the region grid is not what measured them.** Nothing in the
+asset says where those 4096 texels go. Four statistics were tried against the world box and
+three of them are unusable: least squares on per-area centroids, IoU against the
+heightfield's landscape extent, and IoU against the artwork's ocean colour all have optima
+hundreds of metres wide and drift to the edge of whatever sweep contains them, because the
+landscape extent is a rectangle rather than a shore and `NoMansLand` is a scope difference
+rather than a coastline. The one that works asks a sharper question: **does an area boundary
+land on something the map draws?** `calibrate_biome` takes the artwork sheet's edge strength
+averaged over the raster's boundary texels, divided by its edge strength everywhere. At the
+in-game map square that ratio is **1.97**; at ±600 m in any direction the best rival is
+**1.33**, at 5% larger **1.28** and 5% smaller **1.24**. So the biome raster spans exactly
+the square the artwork does — 4096 texels over 7500 m, 1.831 m to the texel, row 0 north —
+and every run re-measures it and refuses to claim the pin if the margin goes.
+
+The check by NAME is reported and is deliberately not the pin. Of the 768 non-void cells of
+the hand-traced region grid, **481 (62.6%) land on a named game area**; the other 287 are the
+outer coast, which the wiki names and the game leaves as no-man's-land. Of the **401** that
+land on a named area and whose wiki region has a one-to-one counterpart among the game's,
+**273 agree (68.1%)**. The residual is one disagreement, not noise: the wiki's Spire Coast is
+a coastal ring the game divides between four areas, and it alone accounts for 62 of the 128
+misses. A 68% agreement could not tell 100 m from 400 m; the edge ratio can, which is why
+they are two separate records in `_meta` rather than one number.
+
+### The palette is designed, and the shipped one is not used
+
+`mColorPalette` has 37 RGBA entries and they are a minimap legend: flat primaries, cyan,
+magenta, pure white. Drawing them would produce a highlighter sketch of a world. So they are
+decoded, recorded in `_meta` for a reader to see, and ignored; `BIOME_COLOURS` is a table
+written by eye against crops, desaturated and capped well below white, and a test holds it to
+both of those. Over it go four rules in an order that is the argument: the biome says what
+grows there, the **slope** overrules it because nothing grows on a cliff face, the
+**altitude** bleaches what is left, the **hillshade** lights rock and canopy alike, and the
+water goes on top because it is a different surface rather than a different ground. Two
+octaves of fixed-seed value noise keep the flats from being flat fills.
+
+Two things had to be softened before it read as imagery rather than as a choropleth. The
+area polygons meet along a mathematical line — they exist to name a place on a minimap, not
+to draw one — so the colour field is Gaussian-blurred by 24 texels (≈44 m) before it is
+sampled. And the shoreline is feathered twice: over 0.9 m of depth, which handles a beach,
+and by 0.8 output pixels of blur, which handles the great deal of this world's water that
+sits in box-shaped bodies against a cliff and has no depth band to blend in.
+
+### Layers on the serving side
+
+* **`/api/maptiles/{z}/{x}/{y}` is unchanged and is an alias for `map`.** Not a redirect and
+  not a deprecation: the live page addresses the base map there, every cached tile is keyed
+  on it, and the layered route is four segments where that one is three, so they cannot
+  collide. Both go through one `_serve_tile`.
+* **A layer is a directory.** `map` keeps `data/local/tiles/`; renders live at
+  `data/local/renders/{layer}/tiles/`, cut on the same frame at the same 256 px into the same
+  `{z}/{x}_{y}.png`. Switching layers is switching one path segment — not the CRS, not the
+  bounds, not the zoom range.
+* **Every header is that layer's own**, read from the sidecar beside its own tiles: depth,
+  tile size, corners, build. They are generated by different tools at different times, the
+  artwork can be two levels deeper if it was `--enhance`d, and the build tag folds the
+  layer's NAME in so two pyramids that agree on every recorded number still cannot share a
+  cache key and serve each other's `immutable` tiles.
+* **An unknown layer is a 404 listing the ones there are**, not a 422 about a path parameter,
+  and it never becomes a filename: the string is looked up in `_layer_dir`, which answers
+  `None` for anything that is not a name this module wrote down.
+
+### z5 and no further
+
+The artwork pyramid can invent z6 and z7 with an upscaler because a drawn map has strokes a
+model understands. These layers stop at 8192 px, which is 0.92 m to the pixel against a 1 m
+field. A z6 here would be interpolation claiming to be terrain, and there is no measurement
+that would make it not one.
+
+### Why a new tool rather than a stage on the heightmap generator
+
+`gen_world_heightmap.py`'s job is to get a field *out of the game* — sweep cooked packages,
+rasterise collision meshes, validate against 626 nodes. `gen_map_renders.py` reads that
+finished field back through the same public codec any consumer would, adds an input the
+heightmap generator has never heard of, and writes pictures. They share an input and nothing
+else: no stage, no constant, no intermediate array. Bolting them together would have coupled
+a six-minute extraction to a ninety-second render and given one `--force` two meanings. What
+*is* shared is shared by import — the codec from `domain.spatial.heightfield`, and the
+pyramid cutter, its staging rename and its refusals from `gen_map_image.py`, which grew one
+optional `source=` so a level record can say what actually drew it.
+
+Measured on the reference machine: 12 s to draw terrain and 15 s satellite at 8192², 32 s
+each to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyramid over 1,365
+tiles. Banded at 256 rows with a 4-row halo, so no pixel is computed from a one-sided
+gradient or a truncated kernel and no whole-sheet float array is ever allocated.
+
 ---
 
 ## Appendix A — current save state
