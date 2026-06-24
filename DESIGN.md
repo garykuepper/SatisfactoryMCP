@@ -3977,6 +3977,41 @@ bands emerge or the idea dies for the cost of an afternoon. Open input from Luka
 stage 2: are his multi-floor factories uniform-height stacks or mixed heights (4 m logistics
 under 8 m machine floors)? That decides how clever band-height inference must be.
 
+### Stage 0 ran, 2026-07-30: GO, with corrections
+
+**99.87%** of foundations on real platforms sit within 5 cm of a detected band (threshold
+was ~95%), and the bands are exact — eps 5 cm and 50 cm give the same answer. Confirmed on
+the oldest lightweight-capable save (Oct 2025): 99.82%. What the measurement corrects:
+
+* **A lightweight's `z` is its vertical CENTRE**: `top = z + thickness/2`. Machines' pivot
+  is their base. Verified by four independent piece families.
+* **The storey module is 12 m** (three wall courses), not 4 m — mixed with 1-2 m
+  half-steps that must stay separate bands carrying their cell area (a 6-cell mezzanine
+  must not read as a floor). Band inference is per-platform, no fixed pitch.
+* **No per-class offset table.** Production buildings sit at zero above their deck (93.2%
+  within 5 cm, n=441); belt attachments at +100 cm. Exemptions, not fits: miners (on
+  nodes, up to 28 m off-deck) and water pumps (+20 cm, on water).
+* **Orphans are on terrain, measurably**: no-band things sit a median 0.59 m above the
+  derived heightfield (89% within 2 m); band-assigned things average +26 m. "On terrain"
+  is a measurement, not a bucket.
+* **Validation check 3 was wrong as written.** 24% of lift chains are same-deck jogs
+  (belt-height hops), not floor connectors. The pinnable claims: consumers of `belts`
+  group by chain FIRST (pieces join at median 0.00 cm), and NO chain rising >=6 m lands
+  both ends on one band (0/89 in 2026, 0/75 in 2025).
+* **Floor filtering will be clean**: 84.8% of belt runs are same-deck, 93.3% never leave
+  one deck's column; endpoint height above deck has its own legal set (100/300/500 cm).
+  Pipes: 50.7% same-deck, 44.5% on terrain (plumbing hugs the ground).
+* **Unit of decomposition**: plain 4-connected XY flood fill of 8 m cells (132 platforms,
+  17 real ones). `build_structures`' slabs weld distant platforms via ramp chains (one
+  slab spans 287 m of Z) — use slabs for NAMING, flood-fill for floors.
+* **Pre-U8 saves emit zero `structures`**: the feature says "this save is too old", never
+  "this world has no floors".
+
+Stage 1 was already shipped by the map work (yaw + belts + pipes + attachments, schemas
+12-14); the stage-0 slice image was drawn from the projection alone. Remaining: stage 2
+(the `floor_decomposition` domain service + the corrected checks as tests) and stage 3
+(the floor view-state in the frontend).
+
 ### Schema 12 landed the geometry (2026-07-31)
 
 The prerequisite above is done, and the floor view is still parked — this was worth doing on
