@@ -4216,6 +4216,70 @@ each to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyrami
 tiles. Banded at 256 rows with a 4-row halo, so no pixel is computed from a one-sided
 gradient or a truncated kernel and no whole-sheet float array is ever allocated.
 
+## 18. One base map at a time, and the page says which (2026-07-31)
+
+Three pyramids on the server were three pictures the page could not ask for: the client
+addressed the artwork alias and nothing else. What it now has is the Google Earth split —
+**modes**, which are one question with one answer, kept apart from **overlays**, which are
+thirty-five independent yes/nos.
+
+**The four modes are `artwork`, `terrain`, `satellite`, `plain`**, as radios in their own
+section at the top of the layer control, above a rule and above every checkbox. `plain` is a
+real mode rather than the absence of one: it is no base imagery, which is the shipped state,
+what a fresh clone with no generated renders looks like, and — since it is the mode the biome
+tint is designed for — a thing a reader may prefer.
+
+**A mode is one `L.TileLayer` and a mode switch swaps it.** Nothing else moves: not the CRS,
+not the three panes, not one data overlay, not the region blend's rule. That is the serving
+design of §17 arriving on the client exactly as intended — same frame, same tile size, same
+grid, so the client changes one path segment. The one per-mode difference that survives is
+depth: `maxNativeZoom` comes from that layer's own `X-Map-Tile-Max-Z`, so the renders stop at
+z5 and Leaflet upscales past it while the artwork runs to its own z7 if it was `--enhance`d.
+
+**Measured, at 1600×1000 on the reference world:** the frame is unmoved by a switch — map
+rect `[0, 40, 1600, 960]`, pane transform `translate3d(0,0,0)`, scale bar `500 m`, `z=-3
+c=0,0` — identical across all four; and the network log for a switch contains that mode's
+tiles and no other layer's.
+
+### The rule that replaced the auto-untick
+
+A render arriving used to *untick* the region box, once, as an event. With four modes that
+stops being expressible: "arriving" now happens on every switch, so the same heuristic would
+throw away a choice the reader had made in between. So it is stated as a rule about states:
+**the region tint defaults OFF under any imagery mode and ON under plain** — which is the map
+the old heuristic left you on, said as a rule — **and a reader's own tick of that box wins for
+the rest of the session.** The default is what the page does when it has not been told, not
+what it does instead of being told.
+
+Programmatic ticks are told from real ones by a flag, because they cannot be told apart
+afterwards: Leaflet fires `overlayadd` from the layer's own `add` event, so `map.addLayer` and
+a click arrive identically.
+
+### Resolution order, and what a link pins
+
+`#world=…&save=…&mode=…&z=…&c=…` — subject, then picture, then viewport. An absent or unknown
+`mode` resolves **artwork → plain**, and so does a mode this machine has never generated: a
+link to someone else's terrain render should land on a map rather than on an error. Terrain
+and satellite are never chosen *for* you even when they are the only pictures on disk, because
+they are interpretations of this world rather than the map of it and the page should not have
+an opinion about which. The fragment omits `mode` entirely until the probes have answered, so
+a pan in the first fifty milliseconds cannot pin a mode nobody chose.
+
+### A mode that is not there stays on screen
+
+An ungenerated pyramid greys its row out rather than removing it, with the generator named in
+the row's `title` — the same sentence `/api/maptiles`' GET 404 carries, repeated in the client
+because the page probes with **HEAD** and HEAD answers 204 with no body on purpose. Asking for
+the message would mean asking for the error the server went out of its way not to raise. A
+pyramid whose tiles turn out not to *draw* is treated as the same thing plus a toast: the mode
+greys out with the reason in place of the generator, and the page falls back to `plain` rather
+than to another render, because silently substituting a different picture of the same world is
+the one answer that could be mistaken for success.
+
+The artwork's single-image `/api/mapimage` fallback survives as a detail of the artwork mode
+rather than a stage of a loader: probed only when its pyramid does not answer, and drawn as the
+`imageOverlay` it always was.
+
 ---
 
 ## Appendix A — current save state

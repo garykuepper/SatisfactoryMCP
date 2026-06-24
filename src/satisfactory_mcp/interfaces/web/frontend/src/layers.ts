@@ -16,10 +16,15 @@ import { state } from "./state";
  * survive a reload: overlays used to be appended in whatever order six parallel fetches
  * resolved, which shuffled 32 rows between page loads. sortLayers pins the order to the
  * rank each group is given when it is created -- chrome first, then machine layers, then
- * nodes alphabetically, then pickups alphabetically. */
+ * nodes alphabetically, then pickups alphabetically.
+ *
+ * The base map is not in this list and no longer has a row at all: it is the MODE radios at
+ * the top of the control, which are one choice among four rather than one more checkbox in a
+ * list of thirty-five, and tiles.ts puts its layer on the map directly. `plain` is what the
+ * unticked "map image" box used to mean, and it is now a state with a name rather than the
+ * absence of a tick. */
 var LAYER_ORDER = [
   "regions",
-  "map image",
   "region names",
   "player",
   "factory labels",

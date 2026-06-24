@@ -50,9 +50,9 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | file | what it is | lines |
 | --- | --- | --- |
 | `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 40 |
-| `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 90 |
+| `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 95 |
 | `src/leaflet.ts` | the one `import`, and where the private-field declarations attach | 19 |
-| `src/state.ts` | the current selection, the epoch, the layer registry. Imports nothing | 92 |
+| `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 111 |
 | `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 67 |
 | `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
 | `src/format.ts` | resource short name, region line, phase name | 37 |
@@ -61,11 +61,11 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `src/api-types.ts` | the response shapes, hand-written from observed payloads | 276 |
 | `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1058 |
 | `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 74 |
-| `src/map.ts` | the map, the CRS, the panes, and the `[-y, x]` rule | 184 |
-| `src/layers.ts` | named layer groups, kept across a refetch | 75 |
-| `src/layercontrol.ts` | the folded control: legend, filter, tri-state families, focus | 395 |
-| `src/regions.ts` | the biome raster, and how it shares the screen with a render | 126 |
-| `src/tiles.ts` | the optional map render: pyramid, single overlay, or nothing | 187 |
+| `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 197 |
+| `src/layers.ts` | named layer groups, kept across a refetch | 80 |
+| `src/layercontrol.ts` | the folded control: base-map modes, legend, filter, tri-state families, focus | 571 |
+| `src/regions.ts` | the biome raster, how it shares the screen with a render, and whose choice it is | 176 |
+| `src/tiles.ts` | the base map: four modes, one tile layer, and the probing behind both | 379 |
 | `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 563 |
 | `src/placements.ts` | the floor plan and the machines standing on it | 106 |
 | `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 175 |
@@ -79,15 +79,24 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `vite.config.ts` | where the build writes, the banner it stamps, the dev proxy | |
 | `scripts/stamp-schema.mjs` | re-applies the generated schema's provenance header | |
 
-Two things about the graph are deliberate and easy to undo by accident.
+Three things about the graph are deliberate and easy to undo by accident.
 
 `state.ts` imports nothing. `map.ts` reads `BOOT` while it is building the map, so anything
-`state.ts` imported would have to be evaluated before the map exists.
+`state.ts` imported would have to be evaluated before the map exists. It is also where
+`BaseMode` is declared, for that reason and no other: the modes belong to what the page is
+currently showing, and declaring the union beside the tile layers would make this file import
+the module that fetches tiles.
 
 `layercontrol.ts` does not import `labels.ts`. `batch()` used to end by calling `declutter()`
 by name, which put three files in a ring — control imports labels imports layers imports
 control — to say "the list has stopped changing". It now offers `onSettled`, and `main.ts`
 registers the pass.
+
+`layercontrol.ts` does not import `tiles.ts` either, and the same shape fixes it: the control
+draws the four base-map radios and `tiles.ts` registers what a click on one means, through
+`onModePick`. The arrow can only point that way — `tiles.ts` reaches the control through
+`layers.ts` already — and the seam is what keeps "which picture is the base map" out of a
+widget that otherwise knows nothing about pyramids.
 
 Leaflet is the `leaflet` npm package pinned to **1.9.4** — the exact version that used to sit
 in `static/vendor/leaflet.js` — and it is compiled into the bundle together with its own

@@ -27,11 +27,11 @@ import { declutter } from "./labels";
 import { isBatching, onSettled } from "./layercontrol";
 import { loadLive, loadRegions, loadStatic } from "./load";
 import { map, writeHash } from "./map";
-import { updateRegionBlend } from "./regions";
+import { noteRegionChoice, updateRegionBlend } from "./regions";
 import { ROUTE_LAYERS, sinkRoutes, styleRoutes } from "./routes";
 import { listen } from "./sse";
 import { state } from "./state";
-import { loadMapImage } from "./tiles";
+import { loadBaseMap } from "./tiles";
 import { loadWorlds } from "./worlds";
 
 /* ------------------------------------------------------------------- wiring */
@@ -46,8 +46,8 @@ import { loadWorlds } from "./worlds";
  * consequence and not a hypothetical one.
  *
  *   zoomend            writeHash, styleRoutes, declutter
- *   overlayadd         (the control's own decorator), sinkRoutes, declutter
- *   overlayremove      (the control's own decorator), declutter
+ *   overlayadd         (the control's own decorator), noteRegionChoice, sinkRoutes, declutter
+ *   overlayremove      (the control's own decorator), noteRegionChoice, declutter
  *
  * The control's decorator is not in this list because it is registered while the control is
  * being built, which is the only moment it can be, and it therefore always comes first --
@@ -55,6 +55,9 @@ import { loadWorlds } from "./worlds";
  */
 map.on("moveend zoomend", writeHash);
 map.on("layeradd layerremove", updateRegionBlend);
+// Which of the region box's ticks were the player's, which is what makes the base map's
+// default for it a default rather than an override. See regionsUnderMode.
+map.on("overlayadd overlayremove", noteRegionChoice);
 map.on("zoomend", styleRoutes);
 
 // A layer added long after both fetches landed is appended to the canvas' draw list, i.e.
@@ -77,7 +80,9 @@ map.on("contextmenu", inspect);
 
 /* -------------------------------------------------------------------- boot */
 
-loadRegions().then(loadMapImage);
+/* In this order and not in parallel: the base map's mode decides whether the region tint
+ * starts on, so the group it decides about has to exist by then. */
+loadRegions().then(loadBaseMap);
 
 loadWorlds().then(function () {
   // With no world there is nothing to fetch: firing the loaders anyway would bury the

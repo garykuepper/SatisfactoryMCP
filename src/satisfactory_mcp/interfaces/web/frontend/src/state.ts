@@ -24,6 +24,15 @@ export interface PanelState {
   sections: Record<string, boolean>;
 }
 
+/* Which picture of this world the base map is: the modes tiles.ts offers, as radio
+ * semantics -- exactly one, and `plain` is a real answer rather than the absence of one.
+ *
+ * The union is declared HERE rather than beside the tile layers that draw it, for the same
+ * reason `PanelState` is: it is part of what the page is currently showing, so it belongs to
+ * the object a world switch has to change all at once -- and declaring it there would make
+ * this file, which imports nothing, import the module that fetches tiles. */
+export type BaseMode = "artwork" | "terrain" | "satellite" | "plain";
+
 export interface PageState {
   world: string;
   /** A pinned save's path; "" means "the newest, refetched on save events". */
@@ -39,6 +48,12 @@ export interface PageState {
   epoch: number;
   opened: number;
   panel: PanelState;
+  /** The base-map mode; "" until the probes have said which ones exist. See tiles.ts. */
+  mode: BaseMode | "";
+  /** Whether that mode actually has a picture on the map -- which is the one thing the
+   *  region tint has to know, and the reason it is a flag here rather than a question
+   *  regions.ts asks tiles.ts (which would be a cycle: tiles.ts already imports it). */
+  imagery: boolean;
 }
 
 export var state: PageState = {
@@ -55,6 +70,10 @@ export var state: PageState = {
   // section keys are decided and where the reasoning for them lives. This is a placeholder
   // so that the field is never undefined, not a second declaration of the defaults.
   panel: { open: true, sections: {} },
+  // "" and false until loadBaseMap has probed: the page has not chosen a mode yet, and
+  // writeHash must not pin one it has not chosen.
+  mode: "",
+  imagery: false,
 };
 
 /* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a

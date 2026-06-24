@@ -286,8 +286,40 @@ select {
   color: #9aa0a8;
 }
 
-/* How many of a folded family are drawn. The count is the whole reason a fold is honest:
-   "resource nodes, 14 of 14" answers "are the ore dots on?" without unfolding anything. */
+/* The MODE section: which picture the base map is, as radios rather than checkboxes.
+
+   The rule under it is the whole of what makes the two kinds of row read as two kinds of
+   question. Above it: one answer out of four, and picking one un-picks the others. Below it:
+   a couple of dozen independent yes/nos. Leaflet draws its own separator between base layers
+   and overlays for the same reason and this section is not one of its base layers -- see
+   renderModes in layercontrol.ts for why -- so the line is drawn here. */
+.layer-modes {
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Leaflet's own rows are `display: block` labels and these sit in the same column, so they
+   are too: a flex row here would put the radio and its word on a different baseline from
+   the checkbox and its word one row down. */
+.layer-mode {
+  display: block;
+}
+
+/* A mode whose pyramid has never been generated stays LISTED and greyed rather than being
+   left out. The row is where the page names the tool that would draw it -- in `title`, put
+   there by renderModes -- and a name that is simply absent asks nobody to go looking. The
+   help cursor is the hint that the row has something to say; the disabled radio inside it
+   already refuses clicks and the keyboard. */
+.layer-mode-off {
+  opacity: 0.45;
+  cursor: help;
+}
+
+/* What a fold head says without being opened: how many of a folded family are drawn, or --
+   for the modes, where one of four is always the answer -- which one. "resource nodes, 14 of
+   14" answers "are the ore dots on?" and "base map, satellite" answers "what am I looking
+   at?", both without unfolding anything. */
 .layer-count {
   margin-left: auto;
   padding-left: 10px;

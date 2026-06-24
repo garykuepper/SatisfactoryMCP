@@ -18,13 +18,13 @@ import type { RegionsResponse } from "./api-types";
 
 var REGION_FILL = 1; // see REGION_COLOUR in palette.ts: opaque cells, or the shared borders become a grid.
 
-/* How much of the map render shows through the region fill when BOTH are drawn.
+/* How much of the base map shows through the region fill when BOTH are drawn.
  *
- * The two used to be alternatives -- a render arriving unticked the region box (see
- * baseImageryShown in tiles.ts) and that was the end of it. It still does, because a photograph of the
- * world is the better picture of the world; but ticking the box back on is now a legitimate
- * thing to want -- "which biome is this?" answered OVER the artwork rather than instead of
- * it -- and at REGION_FILL that answer is a wall of flat colour hiding what it annotates.
+ * The two used to be alternatives -- a render arriving unticked the region box and that was
+ * the end of it. The tint is an OVERLAY now and works over all four base-map modes, because
+ * a photograph of the world is the better picture of the world but "which biome is this?"
+ * answered OVER that picture rather than instead of it is a legitimate thing to want -- and
+ * at REGION_FILL that answer is a wall of flat colour hiding what it annotates.
  *
  * The alpha goes on the PANE, not on the cells, and that distinction is the whole fix. A
  * per-cell fillOpacity of 0.45 blends 768 rectangles against the picture ONE AT A TIME, and
@@ -40,29 +40,79 @@ var REGION_FILL = 1; // see REGION_COLOUR in palette.ts: opaque cells, or the sh
  * are tooltips, and tooltips live in Leaflet's tooltipPane. */
 var REGION_BLEND = 0.45;
 
-/* Whether a map render is actually on screen right now: the layer exists, has something in
- * it, and its box is ticked. All three matter -- the group is created empty by the probe
- * and the box is the player's to untick. */
-function baseImageryOn() {
-  var group = state.layers["map image"];
-  return !!(group && map.hasLayer(group) && group.getLayers().length);
-}
-
-/* Applied on every layer change, because every path into "both are drawn" is one: the
- * render finishing, the render failing back, and either box being ticked by hand.
+/* Applied on every layer change, because every path into "both are drawn" is one: a mode
+ * switch, a mode's tiles failing back to plain, and the region box being ticked by hand.
+ *
+ * `state.imagery` rather than a question asked of tiles.ts: that module already imports this
+ * one, so the arrow can only point this way, and what the blend needs is one boolean rather
+ * than the mode's name -- plain and a mode whose picture is not on the map are the same
+ * thing to a compositor.
  *
  * Guarded against its own no-ops rather than debounced. Drawing a world adds thousands of
  * layers to the map, each of which fires this, and the guard turns all but the two that
- * change anything into three property reads. */
+ * change anything into two property reads. */
 var regionBlend = "";
 
 export function updateRegionBlend() {
   var pane = map.getPane("regions");
   if (!pane) return;
-  var want = baseImageryOn() ? String(REGION_BLEND) : "";
+  var want = state.imagery ? String(REGION_BLEND) : "";
   if (want === regionBlend) return;
   regionBlend = want;
   pane.style.opacity = want;
+}
+
+/* Whether the region tint is on: the mode's business until the player says otherwise.
+ *
+ * The old rule was an EVENT -- a render arriving unticked the box, once, and whatever
+ * happened afterwards was whatever happened. With four modes that stops being expressible:
+ * "arriving" happens on every switch, so the same heuristic would untick the box each time
+ * the player looked at the terrain and back, quietly throwing away a choice they had made
+ * in between.
+ *
+ * So it is stated as a rule about states instead of a reaction to a transition. OFF under
+ * any imagery mode, because a real picture of the world is the better answer to "what is
+ * here" and a page that opened with a biome wash over its own best picture would be hiding
+ * it. ON under plain, because there is then nothing to hide and nothing to blend against --
+ * which is the same map the old heuristic left you on, now said as a rule.
+ *
+ * And the rule stops applying the moment the player disagrees with it. One tick of that box
+ * is a decision about this session, and every mode switch after it leaves the box alone: the
+ * default is what the page does when it has not been told, not what it does instead of being
+ * told. */
+var chosen = false;
+
+/* Programmatic ticks are not decisions, and there is no way to tell them apart afterwards:
+ * Leaflet fires `overlayadd` from the LAYER's own add event, so `map.addLayer(group)` is
+ * indistinguishable from a click by the time the event arrives. The flag is the same trick
+ * `setSection` uses in layercontrol.ts for the same reason. */
+var applying = false;
+
+/* ...and nothing at all counts before the modes exist. `drawRegions` adds the group to the
+ * map as it creates it, which fires `overlayadd` on a page where nobody has clicked
+ * anything -- and that one event would otherwise be read as the player's word forever. */
+var armed = false;
+
+export function regionsUnderMode(imagery: boolean): void {
+  armed = true;
+  var group = state.layers["regions"];
+  if (!group || chosen) return;
+  var want = !imagery;
+  if (map.hasLayer(group) === want) return;
+  applying = true;
+  try {
+    if (want) group.addTo(map);
+    else map.removeLayer(group);
+  } finally {
+    applying = false;
+  }
+}
+
+/** Registered in main.ts with the rest of the map listeners, so the order it runs in is
+ *  written down in one place rather than decided by the import graph. */
+export function noteRegionChoice(event: L.LeafletEvent): void {
+  if (!armed || applying) return;
+  if ((event as L.LayersControlEvent).layer === state.layers["regions"]) chosen = true;
 }
 
 /* The base map: one flat rectangle per 256 m raster cell, plus a name per region.

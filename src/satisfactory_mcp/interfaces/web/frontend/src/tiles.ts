@@ -1,18 +1,119 @@
-/* The optional map render: a tile pyramid if one was cut, one big overlay if not, and
- * nothing at all as the shipped default.
+/* The base map: which picture of this world everything else stands on.
  *
- * Its own module because "is there a picture of this world on disk" is a question with three
- * answers and two failure modes, and the probing is the bulk of it. Nothing here draws the
- * world; it decides which of two Leaflet layers to hand the basemap pane, and puts the biome
- * fill back if the file it found turns out not to decode.
+ * Four MODES, radio semantics, exactly one at a time -- the game's own artwork, a
+ * hypsometric terrain render, a biome-coloured satellite render, and plain: no imagery at
+ * all, which is the shipped state and not an error. A mode is at most one L.TileLayer
+ * against `/api/maptiles/{layer}/{z}/{x}/{y}`, so switching modes swaps that one layer and
+ * touches nothing else -- not the CRS, not the panes, not a single data overlay, not the
+ * region blend's rule. That is the server's design showing through and the reason this file
+ * is short: every pyramid is cut on the same frame, at the same tile size, into the same
+ * grid, so a client changes one path segment and nothing else.
+ *
+ * Each pyramid still describes ITSELF, though, and that is the one per-mode difference that
+ * matters: the renders stop at z5 and the artwork can run deeper, so `maxNativeZoom` comes
+ * from that layer's own probe headers and Leaflet upscales past it rather than asking for a
+ * level that is not there.
+ *
+ * Probing is the bulk of it, as it always was, because "is there a picture of this world on
+ * disk" is now three questions with a fallback hanging off the first: an absent artwork
+ * pyramid still falls back to the single `/api/mapimage` overlay, which is what a render
+ * someone else made gets drawn as. That fallback is a detail of the ARTWORK mode now rather
+ * than a stage of one loader, which is the whole of what folding it into the mode model
+ * means.
+ *
+ * The radios are drawn by layercontrol.ts, which knows nothing about tiles; this file knows
+ * nothing about folds. `onModePick` is the seam, and it points this way because tiles.ts
+ * already reaches the control through layers.ts -- an import the other way would be a ring.
  */
 
+import { onModePick, showModes } from "./layercontrol";
 import { L } from "./leaflet";
-import { layer } from "./layers";
-import { MAP_SHEET_PX, MAP_SQUARE_M, map } from "./map";
-import { updateRegionBlend } from "./regions";
-import { state } from "./state";
+import { MAP_SHEET_PX, MAP_SQUARE_M, map, writeHash } from "./map";
+import { regionsUnderMode, updateRegionBlend } from "./regions";
+import { BOOT, state } from "./state";
 import { fail } from "./toast";
+
+import type { ModeChoice } from "./layercontrol";
+import type { BaseMode } from "./state";
+
+/** One base-map mode: a radio in the control, and at most one layer on the map. */
+interface ModeSpec {
+  key: BaseMode;
+  /** The path segment `/api/maptiles/{layer}/` answers on. "" is Plain: no imagery. */
+  layer: string;
+  label: string;
+  /** The row's tooltip when the mode can be picked: what this picture actually is. */
+  about: string;
+  /* ...and what it says when it cannot: which tool writes that tree.
+   *
+   * Repeated here rather than read off the wire, and that is deliberate. The API's GET 404
+   * carries exactly this sentence, but the page probes with HEAD and HEAD answers 204 with
+   * no body -- on purpose, because an absent optional render is the ordinary state and a
+   * 404 on every clean load teaches the reader to ignore red lines. Asking for the message
+   * would mean asking for the error the server went out of its way not to raise. */
+  generator: string;
+}
+
+var MODES: ModeSpec[] = [
+  {
+    key: "artwork",
+    layer: "map",
+    label: "artwork",
+    about: "the game's own map artwork",
+    generator: "tools/gen_map_image.py, which cuts it out of your own installed game",
+  },
+  {
+    key: "terrain",
+    layer: "terrain",
+    label: "terrain",
+    about: "a hypsometric relief map of this world, drawn from its own heightfield",
+    generator:
+      "tools/gen_map_renders.py, which draws a hypsometric relief map of this world from " +
+      "the 1 m heightfield in data/local/heightmap/",
+  },
+  {
+    key: "satellite",
+    layer: "satellite",
+    label: "satellite",
+    about: "the same relief, coloured from the game's own biome raster",
+    generator:
+      "tools/gen_map_renders.py, which draws the same relief coloured from the game's own " +
+      "biome raster, from the 1 m heightfield in data/local/heightmap/",
+  },
+  {
+    key: "plain",
+    layer: "",
+    label: "plain",
+    about: "no base imagery — the biome regions on the page's own sea",
+    generator: "",
+  },
+];
+
+/* How to build each mode's layer, decided once by the probes and never again.
+ *
+ * A function rather than the layer itself, so that a mode nobody looks at costs nothing: a
+ * TileLayer constructed and never added still holds its options and its event handlers, and
+ * three of these would sit there for the two modes the player did not pick. Building on
+ * demand also means a mode that broke can be rebuilt by picking it again after a reload,
+ * without this module keeping a corpse.
+ *
+ * A key that is not here is a mode whose pyramid is not on disk -- or one whose tiles turned
+ * out not to draw, which `modeFailed` treats as the same thing for the same reason. */
+var makers: Partial<Record<BaseMode, () => L.Layer>> = {};
+
+/** Why a mode cannot be picked, when the reason is not simply "never generated". */
+var refusals: Partial<Record<BaseMode, string>> = {};
+
+/** The one layer the active mode has on the map, so a switch can take it off again. */
+var drawn: L.Layer | null = null;
+
+function specFor(key: string): ModeSpec | null {
+  var found: ModeSpec | null = null;
+  MODES.forEach(function (spec) {
+    if (spec.key === key) found = spec;
+  });
+  return found;
+}
 
 /* The corners a base-map probe answered with, as [x_min, y_min, x_max, y_max] metres. */
 function mapImageBounds(response: Response): number[] {
@@ -29,51 +130,23 @@ function mapImageLatLngBounds(b: number[]): L.LatLngBounds {
   ]);
 }
 
-/* A real render beats the flat cell fill over it, so the fill steps aside -- by unticking
- * its box, so one click brings it back.
+/* A picture that turns out not to draw stops being a mode.
  *
- * Still an untick and not something cleverer, now that the two CAN be shown together: the
- * render is the better answer to "what is here" and a page that opened with a biome wash
- * over it would be hiding its own best picture. What changed is only what the click back on
- * gets you -- REGION_BLEND, rather than the wash. */
-function baseImageryShown() {
-  if (state.layers.regions) map.removeLayer(state.layers.regions);
-  updateRegionBlend();
-}
-
-/* ...and back, if the render turns out not to draw. Full opacity comes back with it: with
- * no picture underneath there is nothing to see through to, and regions.ts' REGION_BLEND against the
- * page's sea colour would only wash the biomes out. */
-function baseImageryFailed(group: L.LayerGroup, message: string): void {
-  group.clearLayers();
-  map.removeLayer(group);
-  if (state.layers.regions) state.layers.regions.addTo(map);
-  updateRegionBlend();
+ * A truncated download, an error page saved as .png, a pyramid half-deleted under a running
+ * server: the file EXISTS, so the probe said yes, and the first tile says otherwise. The
+ * honest response is the one an absent pyramid already gets -- the mode greys out, with the
+ * reason in its tooltip instead of the generator's name -- plus a toast, because unlike an
+ * absent render this one IS a fault and the player asked for it by name.
+ *
+ * Falling back to plain rather than to another render: the player picked a picture, and
+ * silently substituting a different picture of the same world is the one answer that could
+ * be mistaken for success. Plain cannot be. */
+function modeFailed(spec: ModeSpec, why: string, message: string): void {
+  delete makers[spec.key];
+  refusals[spec.key] = why;
+  if (state.mode === spec.key) setMode("plain", false);
+  else showModes(modeChoices(), state.mode || "plain");
   fail(message);
-}
-
-/* The optional half of the base map, in the order of preference the server can answer.
- *
- *   1. the tile pyramid at data/local/tiles/, if gen_map_image.py cut one -- the same
- *      picture at one resolution per zoom, so a whole-world view costs the sixteen tiles
- *      of z2 rather than 16 MB of 8192x8192 that decodes to 268 MB of RGBA;
- *   2. the single data/local/map.png overlay, which is what the pyramid falls back to and
- *      what a render someone else made still gets;
- *   3. nothing, which is the shipped state and not an error.
- *
- * Nothing is shipped, so both probes' 204 is the ordinary answer. A file that EXISTS but
- * does not decode -- a truncated download, an error page saved as .png -- must not cost
- * the biome base map: the error event puts the region fill back and says what happened,
- * instead of leaving a silent sea-coloured page. */
-export function loadMapImage() {
-  return fetch("/api/maptiles/0/0/0", { method: "HEAD" })
-    .then(function (r) {
-      if (r.status === 200 && addTilePyramid(r)) return;
-      return loadMapImageOverlay();
-    })
-    .catch(function () {
-      /* the probe failing means no picture, which is the default state anyway */
-    });
 }
 
 /* A TileLayer that knows how many tiles its pyramid actually has.
@@ -98,16 +171,18 @@ var PyramidLayer = L.TileLayer.extend({
   },
 }) as new (url: string, options: L.TileLayerOptions) => L.TileLayer;
 
-/* The pyramid, wired to the pixel space map.ts' CRS_SHEET_PX set up: Leaflet's tile level Z + 5
- * is the pyramid's z, because 256 * 2^(Z+5) is 8192 * 2^Z, and 8192 sheet pixels are one
+/* One pyramid, wired to the pixel space map.ts' CRS_SHEET_PX set up: Leaflet's tile level Z
+ * + 5 is the pyramid's z, because 256 * 2^(Z+5) is 8192 * 2^Z, and 8192 sheet pixels are one
  * screen pixel each at map zoom 0. So the level Leaflet asks for is the level whose pixels
  * match the view, which is the whole point of cutting a pyramid.
  *
- * Returns false -- fall back to the single overlay -- when the server describes a pyramid
+ * Returns null -- this mode cannot be drawn as a pyramid -- when the server describes one
  * this grid cannot draw: corners that are not the square the CRS is anchored on, or a tile
- * size that is not a power-of-two fraction of the sheet. Both are drawable as one image,
- * and a tile grid quietly offset from its own picture is worse than a big picture. */
-function addTilePyramid(response: Response): boolean {
+ * size that is not a power-of-two fraction of the sheet. For the artwork that means the
+ * single-image fallback, which draws either of those correctly; for a render it means the
+ * mode is not offered, because a render is only ever cut by the generator that pins this
+ * frame, and a tile grid quietly offset from its own picture is worse than no picture. */
+function pyramidMaker(spec: ModeSpec, response: Response): (() => L.Layer) | null {
   var b = mapImageBounds(response);
   var anchored = [
     MAP_SQUARE_M.x_min,
@@ -118,70 +193,187 @@ function addTilePyramid(response: Response): boolean {
   var moved = b.some(function (v, i) {
     return Math.abs(v - anchored[i]!) > 1;
   });
-  if (moved) return false;
+  if (moved) return null;
 
   var tilePx = +response.headers.get("X-Map-Tile-Px")! || 256;
+  // Each layer's OWN depth: the renders stop at z5 and the artwork can be cut deeper, so
+  // this is the one number a mode switch actually has to carry across. Past it Leaflet
+  // upscales the deepest level it has instead of asking for one that is not there.
   var maxZ = +response.headers.get("X-Map-Tile-Max-Z")!;
   if (!isFinite(maxZ) || maxZ < 0) maxZ = 5;
   var top = Math.log2(MAP_SHEET_PX / tilePx); // the pyramid z that IS the sheet: 5.
-  if (!isFinite(top) || top !== Math.round(top)) return false;
+  if (!isFinite(top) || top !== Math.round(top)) return null;
 
   // The build tag makes every URL change when the pyramid is recut, which is what lets
   // the server mark a tile immutable: a pan that comes back over old ground refetches
   // nothing at all, and a regenerated map is picked up on the next load rather than a
-  // day later.
+  // day later. It is per layer, so recutting the satellite cannot invalidate the terrain
+  // a browser is holding.
   var tag = response.headers.get("X-Map-Build");
-  var group = layer("map image", true);
-  var url = "/api/maptiles/{z}/{x}/{y}" + (tag ? "?v=" + encodeURIComponent(tag) : "");
-  var tiles = new PyramidLayer(url, {
-    pane: "basemap",
-    tileSize: tilePx,
-    noWrap: true,
-    // Clamped to the world the tiles cover, so a pan out into the sea beyond it asks for
-    // nothing. This is the coarse half of it -- see PyramidLayer for the exact half.
-    bounds: mapImageLatLngBounds(b),
-    minZoom: map.getMinZoom(),
-    maxZoom: map.getMaxZoom(),
-    // Below z0 there is nothing smaller to fetch and above the top nothing sharper: both
-    // ends reuse the level they have, scaled, instead of asking for a level that is not
-    // there.
-    minNativeZoom: -top,
-    maxNativeZoom: maxZ - top,
-    zoomOffset: top,
-    updateWhenZooming: false,
-  });
-  var broken = false;
-  tiles.on("tileerror", function () {
-    if (broken) return;
-    broken = true;
-    baseImageryFailed(
-      group,
-      "map tiles: data/local/tiles/ is there but a tile would not load — showing the biome map instead"
-    );
-  });
-  tiles.addTo(group);
-  baseImageryShown();
-  return true;
+  var url =
+    "/api/maptiles/" + spec.layer + "/{z}/{x}/{y}" + (tag ? "?v=" + encodeURIComponent(tag) : "");
+  var bounds = mapImageLatLngBounds(b);
+
+  return function () {
+    var tiles = new PyramidLayer(url, {
+      pane: "basemap",
+      tileSize: tilePx,
+      noWrap: true,
+      // Clamped to the world the tiles cover, so a pan out into the sea beyond it asks for
+      // nothing. This is the coarse half of it -- see PyramidLayer for the exact half.
+      bounds: bounds,
+      minZoom: map.getMinZoom(),
+      maxZoom: map.getMaxZoom(),
+      // Below z0 there is nothing smaller to fetch and above the top nothing sharper: both
+      // ends reuse the level they have, scaled, instead of asking for a level that is not
+      // there.
+      minNativeZoom: -top,
+      maxNativeZoom: maxZ - top,
+      zoomOffset: top,
+      updateWhenZooming: false,
+    });
+    var broke = false;
+    tiles.on("tileerror", function () {
+      if (broke) return;
+      broke = true;
+      modeFailed(
+        spec,
+        "the pyramid is on disk but a tile would not load",
+        spec.label + " tiles: the pyramid is there but a tile would not load — showing plain instead"
+      );
+    });
+    return tiles;
+  };
 }
 
-/* The whole sheet as one imageOverlay: the fallback, and what any render that is not this
- * generator's -- other corners, no pyramid -- is still drawn as. */
-function loadMapImageOverlay() {
-  return fetch("/api/mapimage", { method: "HEAD" }).then(function (r) {
-    if (r.status !== 200) return; // 204: no local render, which is the default state
-    var b = mapImageBounds(r);
-    var group = layer("map image", true);
-    var image = L.imageOverlay("/api/mapimage", mapImageLatLngBounds(b), {
+/* The whole sheet as one imageOverlay: the artwork mode's fallback, and what any render
+ * that is not this generator's -- other corners, no pyramid -- is still drawn as. */
+function overlayMaker(spec: ModeSpec, response: Response): () => L.Layer {
+  var bounds = mapImageLatLngBounds(mapImageBounds(response));
+  return function () {
+    var image = L.imageOverlay("/api/mapimage", bounds, {
       pane: "basemap",
       interactive: false,
     });
     image.on("error", function () {
-      baseImageryFailed(
-        group,
-        "map image: data/local/map.png exists but could not be decoded — showing the biome map instead"
+      modeFailed(
+        spec,
+        "data/local/map.png exists but could not be decoded",
+        "map image: data/local/map.png exists but could not be decoded — showing plain instead"
       );
     });
-    image.addTo(group);
-    baseImageryShown();
+    return image;
+  };
+}
+
+/** One HEAD against one pyramid's z0 tile. Never rejects: a probe that fails is a mode
+ *  that is not there, which is the ordinary state for all three of them. */
+function probePyramid(spec: ModeSpec): Promise<void> {
+  return fetch("/api/maptiles/" + spec.layer + "/0/0/0", { method: "HEAD" })
+    .then(function (r) {
+      if (r.status !== 200) return; // 204: never generated, and that is not an error
+      var make = pyramidMaker(spec, r);
+      if (make) makers[spec.key] = make;
+    })
+    .catch(function () {
+      /* the probe failing means no picture, which is the default state anyway */
+    });
+}
+
+/** ...and the artwork's fallback, probed only when its pyramid did not answer. */
+function probeMapImage(spec: ModeSpec): Promise<void> {
+  return fetch("/api/mapimage", { method: "HEAD" })
+    .then(function (r) {
+      if (r.status !== 200) return; // 204: no local render, which is the default state
+      makers[spec.key] = overlayMaker(spec, r);
+    })
+    .catch(function () {
+      /* same as above: no picture is the shipped answer */
+    });
+}
+
+/** The rows layercontrol.ts draws, rebuilt from the probes every time anything changes. */
+function modeChoices(): ModeChoice[] {
+  return MODES.map(function (spec): ModeChoice {
+    var ready = spec.key === "plain" || !!makers[spec.key];
+    return {
+      key: spec.key,
+      label: spec.label,
+      ready: ready,
+      note: ready
+        ? spec.about
+        : refusals[spec.key] || "not generated yet — written by " + spec.generator,
+    };
   });
+}
+
+/* Swap the one layer, and nothing else.
+ *
+ * Everything a mode switch does NOT do is the point of the function being this short: the
+ * panes were created once by map.ts, the overlays are the player's and are left where they
+ * were, the CRS and the tile grid are the same for every layer the server cuts. What
+ * changes is which directory the tiles come from and how deep it goes.
+ *
+ * A mode that cannot be drawn resolves to plain rather than refusing, because the two
+ * callers that can ask for one are a pasted link and a tile that just broke, and both of
+ * them deserve a map. `pinned` is what tells a click from a boot: a click is a decision and
+ * belongs in the fragment, while the boot resolution is what the fragment is read BY and
+ * would otherwise write a mode into the URL of a page nobody chose anything on. */
+export function setMode(key: BaseMode, pinned: boolean): void {
+  var mode: BaseMode = key === "plain" || makers[key] ? key : "plain";
+  if (drawn) {
+    map.removeLayer(drawn);
+    drawn = null;
+  }
+  var make = makers[mode];
+  if (make) {
+    drawn = make();
+    drawn.addTo(map);
+  }
+  state.mode = mode;
+  state.imagery = !!drawn;
+  regionsUnderMode(state.imagery);
+  updateRegionBlend();
+  showModes(modeChoices(), mode);
+  if (pinned) writeHash();
+}
+
+/* Which mode a fresh page opens in.
+ *
+ * The fragment first, so a pasted link pins the whole view -- and only if that mode can
+ * actually be drawn here, because a link to a render this machine never generated should
+ * land on a map rather than on an empty one. Otherwise the order this page has always used,
+ * now stated as a rule instead of left as the shape of a fallback chain: the artwork if it
+ * is there, and plain if it is not.
+ *
+ * Terrain and satellite are never chosen FOR you, even when they are the only pictures on
+ * disk. They are interpretations of this world rather than the map of it, and which one to
+ * look at is a question with no default answer -- so the page opens on the one picture that
+ * is not an opinion, and the radios say what else there is. */
+function bootMode(): BaseMode {
+  var asked = specFor(BOOT.mode || "");
+  if (asked && (asked.key === "plain" || makers[asked.key])) return asked.key;
+  return makers.artwork ? "artwork" : "plain";
+}
+
+/* Probe every pyramid once, then open on a mode. Three HEADs in parallel rather than the
+ * chain this used to be: they are independent questions about three independent directories,
+ * and the artwork's own fallback is the only thing that has to wait for an answer. */
+export function loadBaseMap(): Promise<void> {
+  onModePick(function (key) {
+    setMode(key as BaseMode, true);
+  });
+  return Promise.all(
+    MODES.filter(function (spec) {
+      return !!spec.layer;
+    }).map(probePyramid)
+  )
+    .then(function () {
+      var artwork = specFor("artwork");
+      if (!artwork || makers.artwork) return;
+      return probeMapImage(artwork);
+    })
+    .then(function () {
+      setMode(bootMode(), false);
+    });
 }

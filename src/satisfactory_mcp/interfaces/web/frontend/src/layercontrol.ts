@@ -1,13 +1,21 @@
 /* The layer control: the map's legend, its only filter, and the two folds that make
- * thirty-three rows fit on a laptop.
+ * thirty-five rows fit on a laptop.
  *
  * The largest module here, and it stays one file because it is one widget: the folds, the
  * tri-state family boxes, the focus that has to survive Leaflet emptying the list, and the
  * batching that stops fourteen layer events becoming twenty-eight renders are four halves of
  * the same problem, and each of them is written the way it is because of the other three.
  *
- * It knows about layers and nothing about what is drawn in them. `onSettled` is why -- see
- * the note there.
+ * Above all of that sits the MODE section, and it is deliberately a different kind of thing:
+ * radios, not checkboxes. "Which picture is the base map" is one question with one answer,
+ * and "what is drawn on top of it" is a couple of dozen independent ones -- so the two are
+ * different gestures with a rule between them, rather than one more checkbox that happens to
+ * turn the others off. That is the split Google Earth makes, and it is the reason a mode
+ * switch leaves every overlay exactly as the player left it.
+ *
+ * It knows about layers and nothing about what is drawn in them, and about modes without
+ * knowing what a tile pyramid is. `onSettled` and `onModePick` are why -- see the notes
+ * there.
  */
 
 import { esc } from "./dom";
@@ -35,9 +43,10 @@ export var control = L.control.layers(
 state.control = control;
 L.control.scale({ imperial: false }).addTo(map);
 
-/* Thirty-three rows on the reference world -- 291x690 px, 12.5% of a 1600x1000 viewport
- * and a great deal more of a laptop -- permanently, because the control was built with
- * `collapsed: false` and nothing else could fold it.
+/* Thirty-five overlay rows on the reference world, plus the four modes above them --
+ * 306x700 px fully open, 13% of a 1600x1000 viewport and a great deal more of a laptop --
+ * permanently, because the control was built with `collapsed: false` and nothing else could
+ * fold it. (Thirty-three when this was written; the pickup families grew.)
  *
  * `collapsed: true` is not the fix. This control is the map's legend (every swatch) and
  * its only filter, so hiding it behind Leaflet's own hover toggle would make the page's
@@ -49,9 +58,12 @@ L.control.scale({ imperial: false }).addTo(map);
  *     layers exist and how many are drawn, so "there ARE layers here" survives folding.
  *   * A section head folds one data-driven family -- the `node:` rows, the `pickup:` rows
  *     -- and those two start folded, because they are the families that grow with the
- *     world and that turned a nine-row legend into thirty-three. Their heads carry the
+ *     world and that turned a nine-row legend into thirty-five. Their heads carry the
  *     same "n of m" count, which is what lets a folded section still answer "are the ore
  *     dots on?" without unfolding it.
+ *   * The MODE head folds the four base-map radios, and starts OPEN: it is four rows that
+ *     never grow, and it is the row that answers "why is the map dark?". Its tail is the
+ *     active mode's name rather than a count, because one of four is always the answer.
  *
  * A section head also OWNS its family: the checkbox on it ticks or unticks all fourteen
  * node rows at once, in the three states such a box can honestly be in -- see sectionBox.
@@ -74,7 +86,15 @@ var SECTIONS: Section[] = [
   { key: "pickups", prefix: "pickup: ", title: "pickups" },
 ];
 
-state.panel = { open: true, sections: { nodes: false, pickups: false } };
+/** The MODE section's fold, kept in the same map as the families' so one mechanism folds
+ *  all three -- see renderModes for why it is the only section built from a list rather
+ *  than discovered from the rows Leaflet drew. */
+var MODE_SECTION = "modes";
+
+/** The radio group's name, which is the whole of what makes the four exclusive. */
+var MODE_GROUP = "basemap-mode";
+
+state.panel = { open: true, sections: { modes: true, nodes: false, pickups: false } };
 
 function sectionFor(name: string): Section | null {
   var found: Section | null = null;
@@ -110,6 +130,14 @@ function fold(element: HTMLElement | null, folded: boolean): void {
   else L.DomUtil.removeClass(element, "layer-folded");
 }
 
+/* A fold head, in the one grammar all three of them share: a caret, a title, and a tail at
+ * the right edge that says what is inside without opening it.
+ *
+ * The tail is a STRING rather than the "n of m" it started as, because the MODE head's
+ * answer is not a count: one of four is always chosen, so "1 of 4" would be a fact that is
+ * true forever and says nothing, where the mode's own name is the whole answer. `note` is
+ * the same sentence for the tooltip, which each caller phrases for itself -- "drawn right
+ * now" is true of a family of layers and false of a radio. */
 function foldHead(
   element: HTMLElement,
   // `boolean | undefined`, because a section key that is not in `state.panel.sections`
@@ -118,8 +146,8 @@ function foldHead(
   // the same thing twice.
   open: boolean | undefined,
   title: string,
-  count: number,
-  total: number
+  tail: string,
+  note: string
 ): void {
   element.setAttribute("role", "button");
   element.setAttribute("tabindex", "0");
@@ -130,12 +158,14 @@ function foldHead(
     "</span>" +
     esc(title) +
     '<span class="layer-count">' +
-    count +
-    " of " +
-    total +
+    esc(tail) +
     "</span>";
-  element.title =
-    (open ? "hide " : "show ") + title + " — " + count + " of " + total + " drawn right now";
+  element.title = (open ? "hide " : "show ") + title + " — " + note;
+}
+
+/** What both counting heads put in their tail and their tooltip. */
+function drawnOf(count: number, total: number): string {
+  return count + " of " + total;
 }
 
 /* Both heads say `role="button"`, so both have to answer a keyboard the way a button
@@ -261,7 +291,8 @@ function sectionHead(section: Section, rows: HTMLElement[]): HTMLElement {
   text._section = section.key;
   text._part = "fold";
   var open = state.panel.sections[section.key];
-  foldHead(text, open, section.title, rows.filter(rowOn).length, rows.length);
+  var tail = drawnOf(rows.filter(rowOn).length, rows.length);
+  foldHead(text, open, section.title, tail, tail + " drawn right now");
   onActivate(text, function () {
     state.panel.sections[section.key] = !state.panel.sections[section.key];
     decorateControl();
@@ -274,10 +305,14 @@ function sectionHead(section: Section, rows: HTMLElement[]): HTMLElement {
  * A family box is undoable -- untick "pickups", tick it again, and the ten rows are back
  * where they were, because they were all on or all off either way. A master box is not:
  * this control's rows are deliberately NOT uniform (regions on, machines off, nine of ten
- * pickup families off), and one click that unticked all 34 would throw that selection away.
- * Re-ticking would not restore it -- it would turn all 34 ON, which is a different map than
+ * pickup families off), and one click that unticked all 35 would throw that selection away.
+ * Re-ticking would not restore it -- it would turn all 35 ON, which is a different map than
  * the one the player had. So the one gesture whose undo does not undo is the one gesture
- * this head does not offer. */
+ * this head does not offer.
+ *
+ * The MODE radios are not counted here and never were candidates for it: they are not
+ * overlays, they live outside the list this head measures, and "how many of four modes are
+ * drawn" has one answer forever. */
 function panelHead(rows: HTMLElement[]): HTMLElement {
   var container = control.getContainer()!;
   var head = container.querySelector<HTMLElement>(".layers-head");
@@ -291,11 +326,151 @@ function panelHead(rows: HTMLElement[]): HTMLElement {
     // what stays on screen when the list folds, so it has to be the top of the box.
     container.insertBefore(head, container.firstChild);
   }
-  foldHead(head, state.panel.open, "layers", rows.filter(rowOn).length, rows.length);
+  var tail = drawnOf(rows.filter(rowOn).length, rows.length);
+  foldHead(head, state.panel.open, "layers", tail, tail + " drawn right now");
   fold(head, false);
   if (state.panel.open) L.DomUtil.removeClass(head, "shut");
   else L.DomUtil.addClass(head, "shut");
   return head;
+}
+
+/* ------------------------------------------------------------------- the modes */
+
+/** One row of the MODE section: a radio, and why it can or cannot be picked. */
+export interface ModeChoice {
+  key: string;
+  label: string;
+  /** false greys the row out; `note` then says which generator would fill it. */
+  ready: boolean;
+  /** The row's tooltip either way: what this picture is, or what would draw it. */
+  note: string;
+}
+
+var choices: ModeChoice[] = [];
+var activeMode = "";
+
+/* Who to tell when a radio is picked, registered rather than imported -- the same seam as
+ * `onSettled` above, and here for the same reason: this control draws the modes and must
+ * not know what a tile pyramid is. Importing tiles.ts to call it would also close a ring,
+ * because tiles.ts reaches this file through layers.ts already.
+ *
+ * One owner rather than a list, unlike `onSettled`: "which picture is the base map" has a
+ * single answer applied in a single place, and a second listener could only disagree. */
+var pickMode: (key: string) => void = function () {};
+
+export function onModePick(pick: (key: string) => void): void {
+  pickMode = pick;
+}
+
+/** The modes as they now stand, and which one is drawn. Called once when the probes land
+ *  and again on every switch -- including the one a failed tile forces. */
+export function showModes(rows: ModeChoice[], active: string): void {
+  choices = rows;
+  activeMode = active;
+  renderModes();
+}
+
+/* The MODE section is built ONCE and updated in place, which is the opposite of how the
+ * family heads above are handled -- and the difference is what the rows are.
+ *
+ * A family head is rebuilt on every render because Leaflet empties the overlays list it
+ * lives in, and decorateControl therefore has to carry keyboard focus across the wipe by
+ * hand. These rows are real form controls in a radio group: rebuilding them would drop the
+ * keyboard mid-arrow-walk and reset the group's roving tabindex on every switch, for four
+ * rows whose set never changes after the probes land. So they are put somewhere `_update`
+ * does not reach -- a child of the list ELEMENT, ahead of Leaflet's own base and overlay
+ * divs, which are the only two things it empties -- and only their state is written.
+ *
+ * Inside the list rather than beside it, so the page's one fold puts the modes away with
+ * everything else: a folded control is one strip, not one strip and four radios. */
+var modeBox: HTMLElement | null = null;
+var modeHead: HTMLElement | null = null;
+var modeRows: Record<string, HTMLElement> = {};
+var modeInputs: Record<string, HTMLInputElement> = {};
+var modeBuilt = "";
+
+function buildModes(list: HTMLElement): HTMLElement {
+  var box = L.DomUtil.create("div", "layer-modes");
+  // The rule under this box is what says "these four are one question" to a reader looking
+  // at it; the group and its name are the same sentence for a reader who is not.
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", "base map");
+  var head = L.DomUtil.create("div", "layer-section", box);
+  modeHead = L.DomUtil.create("span", "layer-fold", head);
+  onActivate(modeHead, function () {
+    state.panel.sections[MODE_SECTION] = !state.panel.sections[MODE_SECTION];
+    renderModes();
+  });
+  modeRows = {};
+  modeInputs = {};
+  choices.forEach(function (choice) {
+    // Leaflet's own row shape -- label > span > (input, span) -- so the radios line up in
+    // the same column as the checkboxes below them instead of reading as a second indent.
+    var row = L.DomUtil.create("label", "layer-mode", box);
+    var holder = L.DomUtil.create("span", "", row);
+    var input = L.DomUtil.create("input", "", holder) as HTMLInputElement;
+    input.type = "radio";
+    input.name = MODE_GROUP; // the whole of what makes the four exclusive
+    input.value = choice.key;
+    var text = L.DomUtil.create("span", "", holder);
+    text.innerHTML = " " + esc(choice.label);
+    // `change`, not `click`: inside a radio group an arrow key moves the selection, and
+    // that is a pick like any other. A disabled radio fires neither, which is exactly what
+    // greying a mode out is supposed to mean.
+    L.DomEvent.on(input, "change", function () {
+      if (input.checked) pickMode(choice.key);
+    });
+    modeRows[choice.key] = row;
+    modeInputs[choice.key] = input;
+  });
+  list.insertBefore(box, list.firstChild);
+  return box;
+}
+
+function modeContainer(): HTMLElement | null {
+  var container = control.getContainer();
+  if (!container) return null;
+  var list = container.querySelector<HTMLElement>(".leaflet-control-layers-list");
+  if (!list) return null;
+  var keys = choices
+    .map(function (choice) {
+      return choice.key;
+    })
+    .join(",");
+  if (modeBox && modeBox.parentNode === list && modeBuilt === keys) return modeBox;
+  if (modeBox && modeBox.parentNode) modeBox.parentNode.removeChild(modeBox);
+  modeBuilt = keys;
+  modeBox = buildModes(list);
+  return modeBox;
+}
+
+function renderModes(): void {
+  if (!choices.length) return; // nothing probed yet: no section, rather than four dead rows
+  var box = modeContainer();
+  if (!box || !modeHead) return;
+  var open = state.panel.sections[MODE_SECTION];
+  var active = "";
+  choices.forEach(function (choice) {
+    var row = modeRows[choice.key];
+    var input = modeInputs[choice.key];
+    if (!row || !input) return;
+    input.checked = choice.key === activeMode;
+    // Disabled, not hidden: the row is where the page says which tool would draw this
+    // picture, and a name that is simply absent asks nobody to go looking for it.
+    input.disabled = !choice.ready;
+    if (choice.ready) L.DomUtil.removeClass(row, "layer-mode-off");
+    else L.DomUtil.addClass(row, "layer-mode-off");
+    row.title = choice.note;
+    fold(row, !open);
+    if (choice.key === activeMode) active = choice.label;
+  });
+  foldHead(
+    modeHead,
+    open,
+    "base map",
+    active,
+    active ? "showing " + active : "no base map chosen yet"
+  );
 }
 
 /* Which half of which section head holds the keyboard, as a value that can outlive the
@@ -361,6 +536,7 @@ function decorateControl(): void {
     }
   });
   panelHead(rows);
+  renderModes();
   fold(container.querySelector<HTMLElement>(".leaflet-control-layers-list"), !state.panel.open);
 }
 

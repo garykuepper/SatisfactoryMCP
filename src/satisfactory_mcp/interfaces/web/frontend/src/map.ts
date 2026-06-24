@@ -136,11 +136,21 @@ map.getPane("regions")!.style.zIndex = "350";
 map.createPane("foundations");
 map.getPane("foundations")!.style.zIndex = "360";
 
+/* The fragment is the page's whole address: what is being looked at (world, save), what it
+ * is drawn on (mode), and where the eye is (z, c). A link pins all three, in that order --
+ * subject, then picture, then viewport -- so the two halves a human might edit by hand stay
+ * at the ends.
+ *
+ * `mode` is omitted while `state.mode` is "", which is the window between the page loading
+ * and tiles.ts' probes answering. A pan in that window must not pin a mode the page has not
+ * chosen yet: the fragment would then say `plain` on a machine whose artwork was about to
+ * load, and the next reload would honour it. */
 export function writeHash(): void {
   var parts: string[] = [];
   if (state.world) parts.push("world=" + encodeURIComponent(state.world));
   var pinned = pinnedFilename();
   if (pinned) parts.push("save=" + encodeURIComponent(pinned));
+  if (state.mode) parts.push("mode=" + state.mode);
   var c = map.getCenter();
   parts.push("z=" + map.getZoom());
   parts.push("c=" + Math.round(c.lng * 10) / 10 + "," + Math.round(-c.lat * 10) / 10);
