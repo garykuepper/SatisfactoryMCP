@@ -34,7 +34,9 @@ from ... import config
 from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.saveio import projection as proj
 from ...domain.collectibles.service import collect_view
+from ...domain.factories import floors as ffloors
 from ...domain.factories import identity as fidentity
+from ...domain.factories import select as fselect
 from ...domain.spatial import elevation as spatial_elevation
 from ...domain.spatial import geo
 from ...domain.spatial import heightfield as spatial_heightfield
@@ -1314,6 +1316,208 @@ def factories(request: Request, save: str | None = None, world: str | None = Non
             }
         )
     return {"labels": named, "proposals": proposals}
+
+
+# --------------------------------------------------------------------- floors
+
+
+def _band_json(band: ffloors.Band) -> dict:
+    """One floor: where its deck is, how big it is, and what stands on it -- by id.
+
+    ``machines`` and ``attachments`` are **instance ids, not geometry**, and that is the
+    whole shape of this payload. The page already holds every machine, splitter, belt and
+    pipe in the world from ``/api/machines``, ``/api/belts`` and ``/api/pipes``; what it
+    cannot work out for itself is which floor each one is on. Re-serialising the positions
+    here would ship the same 700 KB a second time so that a filter could be applied to it.
+
+    ``span_m`` is how much the band's own level is spread, which is 0.0 for every band on
+    the reference world -- a band is a level, not a cluster. It is not the storey height:
+    the distance to the floor above is the next band's ``top_m``, and a client that wants a
+    ceiling can subtract two numbers it already has.
+    """
+    return {
+        "ordinal": band.ordinal,
+        "top_m": _m(band.top_cm),
+        "low_m": _m(band.low_cm),
+        "high_m": _m(band.high_cm),
+        "span_m": _m(band.span_cm),
+        "pieces": band.pieces,
+        "cells": band.cells,
+        "area_m2": round(band.area_m2, 1),
+        # What keeps a six-cell mezzanine from being read in the same voice as a 218-cell
+        # deck. The share is against the platform's own largest band, so it is a statement
+        # about this platform rather than about the world.
+        "share": round(band.share, 3),
+        "minor": band.minor,
+        "machines": band.machines,
+        "attachments": band.attachments,
+        "machine_count": len(band.machines),
+        "attachment_count": len(band.attachments),
+    }
+
+
+def _platform_json(platform: ffloors.Platform) -> dict:
+    """One platform, and the provenance of the decomposition that produced it."""
+    return {
+        "index": platform.index,
+        "cells": platform.cells,
+        "pieces": platform.pieces,
+        "area_m2": round(platform.area_m2, 1),
+        "centre_m": [_m(platform.centre_cm[0]), _m(platform.centre_cm[1])],
+        "extent_m": [_m(platform.extent_cm[0]), _m(platform.extent_cm[1])],
+        # The premise, per platform rather than averaged: the share of this platform's
+        # foundation pieces that landed within epsilon of one of its own bands.
+        "clean": round(platform.clean, 4),
+        # Naming only. Neither took any part in deciding where the floors are.
+        "label": platform.label,
+        "slab": platform.slab,
+        "bands": [_band_json(b) for b in platform.bands],
+    }
+
+
+def _deck_json(deck: ffloors.Deck | None) -> dict | None:
+    if deck is None:
+        return None
+    return {"platform": deck.platform, "ordinal": deck.ordinal, "top_m": _m(deck.top_cm)}
+
+
+def _run_json(run: ffloors.Run) -> dict:
+    """One belt chain or one pipe, keyed by the join a client already has.
+
+    For a belt that is ``chain``, the field ``/api/belts`` puts on every piece. For a pipe
+    it is the row's position in ``/api/pipes``, which is the same positional key
+    ``domain.world.flow`` uses to attach a direction. Neither carries the polyline again.
+    """
+    return {
+        "kind": run.kind,
+        "key": run.key,
+        "pieces": run.pieces,
+        "lift": run.lift,
+        "rise_m": _m(run.rise_cm),
+        # Tall enough that it can only be a floor connector, which is a different claim
+        # from being a lift: a quarter of lift chains are belt-height jogs on one deck.
+        "riser": run.riser,
+        "ends": [_deck_json(d) for d in run.ends],
+    }
+
+
+def _placement_json(st: WorldState, placement: ffloors.Placement) -> dict:
+    """One thing that is NOT on a floor, and the reason it is not."""
+    building = st.game.buildings.get(placement.cls)
+    return {
+        "instance_leaf": placement.instance,
+        "cls": placement.cls,
+        "name": building.name if building else _pretty_cls(placement.cls),
+        "kind": placement.kind,
+        **_xyz(placement.pos_cm),
+        "above_terrain_m": (
+            None if placement.above_terrain_m is None else round(placement.above_terrain_m, 1)
+        ),
+    }
+
+
+@router.get("/floors")
+def floors_view(
+    request: Request,
+    factory: str | None = None,
+    platform: int | None = None,
+    save: str | None = None,
+    world: str | None = None,
+) -> Any:
+    """What is built, one storey at a time: the floor decomposition of a world.
+
+    Nothing in the save says "floor". ``domain.factories.floors`` recovers them from the
+    geometry -- 4-connected platforms of 8 m foundation cells, then a per-platform cluster
+    of deck heights -- and every constant it uses was measured before it was written. This
+    endpoint parses the query, calls it once, and rounds.
+
+    **It ships ids, not geometry, and that is the design.** A client already has every
+    machine, splitter, belt and pipe from the four endpoints above; the one thing it cannot
+    derive is which floor each of them is on. So a band lists ``machines`` and
+    ``attachments`` as instance leaves, and a run is keyed by its belt ``chain`` or its pipe
+    row position -- the joins those payloads already carry. Sending the coordinates again
+    would double 1.3 MB so that a filter could be applied to the copy.
+
+    **The runs are grouped by what they do to a floor**, not listed flat:
+
+    * ``same-deck`` -- both ends over one band. 84.8% of belt runs, and the set a floor
+      filter draws.
+    * ``connector`` -- the ends are on two different bands. This is how you leave a floor,
+      and it is where the lifts and risers are.
+    * ``terrain`` -- neither end is over a deck. 44.5% of pipes, because plumbing hugs the
+      ground.
+    * ``mixed`` -- one end on a deck, one on the ground.
+
+    **``placements`` is only what did NOT land on a floor.** Things that did are listed by
+    id inside their own band, so listing them here as well would be the same 1,252 rows
+    twice. What is here is the three honest ways of not being on a floor: ``exempt`` (a
+    miner stands on a resource node and a water extractor on water -- by native class, not
+    by a substring), ``terrain`` (measured against the heightfield) and ``off-deck``.
+
+    **``terrain_measured`` says whether the ground was consulted at all.** The 1 m
+    heightfield is derived from the reader's own game install and most machines have none,
+    in which case nothing can be in the ``terrain`` group and an empty one would otherwise
+    read as "nothing is on the ground here".
+
+    ``?factory=`` takes a label the player gave a factory, or any selector the MCP tools
+    take, and narrows the answer to the platforms that factory stands on. ``?platform=`` is
+    the index this endpoint hands out, which is stable across calls. Either narrows
+    placements and runs to that footprint -- including the ones underneath it, since "what
+    is under this deck" is part of the question.
+
+    A save too old to carry ``FGLightweightBuildableSubsystem`` is a **200 with a
+    ``note``**, not an error and not an empty list: the world has floors, this file cannot
+    show them, and those are different sentences.
+    """
+    try:
+        st = _state(request, save, world)
+    except Exception as exc:
+        return _fail(f"could not read save: {exc}", 404)
+
+    try:
+        report = ffloors.floor_decomposition(
+            st, platform=platform, label=factory, terrain_field=_terrain_field()
+        )
+    except fselect.SelectorError as exc:
+        return _fail(str(exc))
+
+    if report.note and (platform is not None or factory is not None) and not report.platforms:
+        # A selection that matched nothing is a bad request; a save that cannot carry the
+        # data at all is not, and falls through to the 200 with its note below.
+        return _fail(report.note, 404)
+
+    return {
+        "note": report.note,
+        "selection": report.selection,
+        "terrain_measured": report.terrain_measured,
+        "counts": report.counts(),
+        "platforms": [_platform_json(p) for p in report.platforms],
+        "runs": {
+            membership: [_run_json(r) for r in report.runs_of(membership)]
+            for membership in ffloors.MEMBERSHIPS
+        },
+        "placements": {
+            group: [_placement_json(st, p) for p in report.group(group)]
+            for group in ffloors.GROUPS
+            if group != "band"
+        },
+        # A riser that lands both ends on one band cannot happen -- 0 of 89 on the reference
+        # world, 0 of 75 on the oldest save that can carry the data -- so one here is a
+        # symptom of the decomposition drifting, and it is reported rather than swallowed.
+        "violations": [_run_json(r) for r in report.violations],
+        # The thresholds the answer was produced with, in the units the answer is in, so a
+        # reader never has to go and look up what "clean" was measured against.
+        "rules": {
+            "tile_m": _m(ffloors.CELL_CM),
+            "cluster_tol_m": _m(ffloors.CLUSTER_TOL_CM),
+            "band_eps_m": _m(ffloors.BAND_EPS_CM),
+            "min_band_pieces": ffloors.MIN_BAND_PIECES,
+            "belt_height_m": _m(ffloors.BELT_HEIGHT_CM),
+            "riser_m": _m(ffloors.RISER_CM),
+            "terrain_tol_m": ffloors.TERRAIN_TOL_M,
+            "minor_share": ffloors.MINOR_SHARE,
+        },
+    }
 
 
 # ---------------------------------------------------------------- collectibles
