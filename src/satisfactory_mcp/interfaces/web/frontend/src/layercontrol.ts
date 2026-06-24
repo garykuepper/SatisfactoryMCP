@@ -112,7 +112,11 @@ function fold(element: HTMLElement | null, folded: boolean): void {
 
 function foldHead(
   element: HTMLElement,
-  open: boolean,
+  // `boolean | undefined`, because a section key that is not in `state.panel.sections`
+  // yet is a section nobody has folded, and that reads as closed here exactly as `false`
+  // does. Narrowing this to `boolean` would push a `?? false` up to both callers to say
+  // the same thing twice.
+  open: boolean | undefined,
   title: string,
   count: number,
   total: number

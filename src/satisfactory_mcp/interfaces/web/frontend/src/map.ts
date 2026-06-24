@@ -75,7 +75,9 @@ state.map = map;
 
 (function () {
   // The viewport the page opens on: the URL's, if the fragment carries one.
-  var zoom = isFinite(+BOOT.z) ? +BOOT.z : HOME_VIEW.zoom;
+  // `+undefined` is NaN, which is precisely the "no z in the fragment" branch, so the
+  // assertions below are about the type and not about the value.
+  var zoom = isFinite(+BOOT.z!) ? +BOOT.z! : HOME_VIEW.zoom;
   var centre = HOME_VIEW.centre;
   if (BOOT.c) {
     var raw = BOOT.c.split(",");
@@ -173,12 +175,13 @@ export function footprintCorners(
   var a = ((yaw || 0) * Math.PI) / 180;
   var cos = Math.cos(a);
   var sin = Math.sin(a);
-  return [
+  var offsets: [number, number][] = [
     [-w, -l],
     [w, -l],
     [w, l],
     [-w, l],
-  ].map(function (d) {
+  ];
+  return offsets.map(function (d): L.LatLngTuple {
     return [-(y + d[0] * sin + d[1] * cos), x + d[0] * cos - d[1] * sin];
   });
 }

@@ -1,9 +1,11 @@
 {
-  /* Migration setting, and it is meant to be tightened.
-     Phase 1 is a 1:1 port of a 2,600-line `var`-and-callback file: turning `strict` on in
-     the same commit that moves it would bury a behaviour regression under 400 implicit-any
-     errors, and the point of the port is that its diff is a move. `noImplicitAny` comes on
-     with the typed fetch layer; see frontend/README.md. */
+  /* Everything on, and it got there in that order for a reason.
+     The port of the old 2,600-line script shipped with `strict` OFF, on purpose: turning it
+     on in the same commit as the move would have buried a behaviour regression under 400
+     implicit-any errors, and the point of that commit was that its diff was a move. Strict
+     came with the types, one commit later, and `noUncheckedIndexedAccess` one after that --
+     it cost five call sites, each of which was a real "this index can miss" that the old
+     code answered correctly by accident. See frontend/README.md. */
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -19,6 +21,7 @@
     "skipLibCheck": true,
 
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "noImplicitAny": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true

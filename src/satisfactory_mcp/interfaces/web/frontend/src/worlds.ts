@@ -24,7 +24,7 @@ function worldOption(w: WorldRow, dupes: Record<string, number>): HTMLOptionElem
   var label = w.session_name + " (" + w.saves.length + " saves, " + hours + " h)";
   // Two worlds can share a session name -- one id-keyed, one a legacy grouping of saves
   // too old to carry a world id. A save count alone cannot tell them apart.
-  if (dupes[w.session_name] > 1 && w.world_id.indexOf("session:") === 0) {
+  if ((dupes[w.session_name] ?? 0) > 1 && w.world_id.indexOf("session:") === 0) {
     label += " — old saves without a world id";
   }
   option.textContent = label;

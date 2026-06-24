@@ -99,8 +99,14 @@ it. If a dependency ever emits an `assets/` directory of its own, check what is 
 ## Types
 
 `npm run check` is `tsc --noEmit` and it is clean under **full `strict`**, plus
-`noUnusedLocals` and `noUnusedParameters`. It needs no running server: everything it reads is
-committed.
+`noUncheckedIndexedAccess`, `noUnusedLocals` and `noUnusedParameters`. It needs no running
+server: everything it reads is committed.
+
+`noUncheckedIndexedAccess` is the one worth calling out, because it is the setting most
+projects leave off. It cost five call sites here, and each was a real "this index can miss"
+that the old code happened to answer correctly: a fragment with no `z`, a section key nobody
+has folded yet, a session name seen once. They are now written down as answers rather than
+left as luck.
 
 Two files carry the API, and they are authoritative for different halves.
 
