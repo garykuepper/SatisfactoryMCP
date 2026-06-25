@@ -160,6 +160,16 @@ class Building:
     # logistics
     items_per_min: float = 0.0
     flow_m3_min: float = 0.0
+    #: How much fluid a buffer holds, in cubic metres, from ``mStorageCapacity`` -- 400 on the
+    #: Fluid Buffer and 2,400 on the Industrial one. 0.0 for everything that is not a
+    #: reservoir, which is every other building in the dump: the field is on
+    #: ``FGBuildablePipeReservoir`` alone.
+    #:
+    #: Here because a level is not a reading without one. The save records a buffer's contents
+    #: as a bare ``mFluidBox`` float, so "1,730.6 m3" is a number a player cannot act on and
+    #: "1,730.6 of 2,400, 72% full" is the same number as an answer. The solid containers need
+    #: no equivalent: their slot count comes off the save itself, per container.
+    storage_capacity_m3: float = 0.0
     #: Metres of head a pipeline pump lifts, from ``mDesignPressure``. 20 on Mk1, 50 on
     #: Mk2.
     #:

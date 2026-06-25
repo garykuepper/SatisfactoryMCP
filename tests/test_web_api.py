@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import types
 from pathlib import Path
 
@@ -1535,7 +1536,7 @@ def test_belts_are_the_network_as_it_was_actually_routed(client, state):
     assert 0 < body["chains"] < body["count"], "pieces group into fewer chains than pieces"
 
     row = body["belts"][0]
-    assert set(row) == {"chain", "cls", "name", "lift", "items_per_min", "points_m"}
+    assert set(row) == {"chain", "cls", "name", "lift", "items_per_min", "points_m", "curve_m"}
     # The class legend is resolved here, or the page would have to carry it.
     assert row["cls"] == raw["classes"][raw["segments"][0][1]]
     assert {r["cls"] for r in body["belts"]} <= set(raw["classes"])
@@ -1628,6 +1629,9 @@ def test_a_malformed_belt_segment_costs_one_piece_not_the_network(game):
         "lift": False,
         "items_per_min": 60.0,
         "points_m": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        # Three columns wide, so it predates the curve column or has no bend: either way the
+        # client draws the polyline it always drew.
+        "curve_m": None,
     }
     # A piece whose class the legend cannot name is still a piece on real ground: it keeps
     # its route and loses the two things the class would have told us. `lift` is null, not
@@ -1715,6 +1719,7 @@ def test_pipes_are_the_plumbing_as_it_was_actually_routed(client, state):
         "name",
         "flow_m3_min",
         "points_m",
+        "curve_m",
         "direction",
         "basis",
     }
@@ -1851,7 +1856,9 @@ def test_a_malformed_pipe_segment_costs_one_piece_not_the_plumbing(game):
         "flow_m3_min": 300.0,
         "points_m": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
         # No fourth column and no graph, so nothing to join and nothing to infer -- which is
-        # exactly the schema-13 projection's answer too, rather than a crash or a guess.
+        # exactly the schema-13 projection's answer too, rather than a crash or a guess. And
+        # no fifth column either, so no curve: the same degradation, one schema later.
+        "curve_m": None,
         "direction": "unknown",
         "basis": "unresolved",
     }
@@ -1877,6 +1884,315 @@ def test_a_save_that_cannot_be_read_has_no_plumbing_either(game):
 
 
 # --------------------------------------------------------------------- floors
+
+
+# ------------------------------------------------------------------ route curvature
+
+
+def test_a_route_sends_its_curve_alongside_its_points(client, state):
+    """``curve_m``: one entry per span, in step with ``points_m``, metres like everything else.
+
+    The pairing is the thing to pin. A span is drawn between ``points_m[i]`` and
+    ``points_m[i+1]``, and its entry is ``[leave, arrive]`` -- the tangent leaving the first
+    and the tangent arriving at the second. Off by one, or with the two swapped, every bend on
+    the map is still a bend and is the wrong one, which is precisely the kind of fault a
+    screenshot does not catch.
+    """
+    for path, key, at in (("/api/belts", "belts", 3), ("/api/pipes", "pipes", 4)):
+        body = client.get(path).json()
+        raw = state.projection[key]["segments"]
+        assert len(body[key]) == len(raw)
+        curved = 0
+        for row, seg in zip(body[key], raw, strict=True):
+            if len(seg) <= at:
+                assert row["curve_m"] is None, "a straight route claims a curve"
+                continue
+            curved += 1
+            assert len(row["curve_m"]) == len(row["points_m"]) - 1, "one entry per span"
+            for entry, stored in zip(row["curve_m"], seg[at], strict=True):
+                if stored == 0:
+                    assert entry is None, "a flat span is null, not a zero vector"
+                    continue
+                assert entry == [
+                    [pytest.approx(round(v / 100.0, 1)) for v in stored[:3]],
+                    [pytest.approx(round(v / 100.0, 1)) for v in stored[3:]],
+                ]
+        assert curved > 200, f"{key}: nothing in the reference world bends"
+
+
+def test_a_curve_is_the_metres_a_position_is_and_not_the_flip_a_client_applies(client):
+    """A tangent is a displacement in the same space as the points, so it takes the same
+    divide-by-100 and NOTHING else -- no y-flip, no re-origin. The flip belongs to the client
+    and is applied to both together, which is what makes the pair usable as it stands.
+
+    Checked by scale rather than by value: a tangent that had been through a coordinate
+    transform of its own would not land in the same order of magnitude as the span it bends.
+    """
+    body = client.get("/api/belts").json()
+    checked = 0
+    for r in body["belts"]:
+        if not r["curve_m"]:
+            continue
+        for i, entry in enumerate(r["curve_m"]):
+            if entry is None:
+                continue
+            span = math.dist(r["points_m"][i][:2], r["points_m"][i + 1][:2])
+            for vec in entry:
+                assert len(vec) == 3
+                # A tangent is metres of the same size as the span it bends: the game stores
+                # roughly half the chord and never more than a few times it.
+                assert math.hypot(vec[0], vec[1]) < max(20.0, span * 12), (span, vec)
+            checked += 1
+    assert checked > 500
+
+
+def test_a_world_whose_routes_predate_the_curve_column_still_draws_them(game):
+    """A schema-14 projection through a schema-15 server: polylines, and no error.
+
+    The degradation that matters, because the disk cache is keyed on the schema and a stale
+    pickle is refused rather than served -- but a save re-read by an older sidecar is not, and
+    a client that got a 500 here would show an empty map instead of the map it had yesterday.
+    """
+    projection = {
+        "belts": {
+            "classes": ["Build_ConveyorBeltMk1_C"],
+            "segments": [[0, 0, [[0, 0, 0], [400, 0, 0]]]],
+        },
+        "pipes": {
+            "classes": ["Build_Pipeline_C"],
+            "networks": [{"id": 1, "fluid": "Desc_Water_C"}],
+            "segments": [[0, 0, [[0, 0, 0], [400, 0, 0]], -1]],
+        },
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        assert c.get("/api/belts").json()["belts"][0]["curve_m"] is None
+        assert c.get("/api/pipes").json()["pipes"][0]["curve_m"] is None
+
+
+def test_a_malformed_curve_costs_the_curve_and_not_the_route(game):
+    """Read guarded entry by entry, the rule every other field on this surface follows.
+
+    A route whose curve column is the wrong length, or holds something that is not six
+    numbers, still has its points -- and the points are what put it on the map. Losing the
+    piece to save the bend would be the wrong trade in every case.
+    """
+    projection = {
+        "belts": {
+            "classes": ["Build_ConveyorBeltMk1_C"],
+            "segments": [
+                # Right length, one good span and three refusals of different kinds.
+                [
+                    0,
+                    0,
+                    [[0, 0, 0], [400, 0, 0], [800, 0, 0], [1200, 0, 0], [1600, 0, 0]],
+                    [[100, 200, 0, 300, 400, 0], 0, "not a span", [1, 2, 3]],
+                ],
+                # Column present and the wrong length for the points: unusable as a whole,
+                # because there is no way to tell which span each entry belongs to.
+                [1, 0, [[0, 0, 0], [400, 0, 0], [800, 0, 0]], [[1, 2, 3, 4, 5, 6]]],
+                # Column present and entirely unusable: null, not an empty list, so a client
+                # takes the same branch it takes for a straight run.
+                [2, 0, [[0, 0, 0], [400, 0, 0]], ["rubbish"]],
+                [3, 0, [[0, 0, 0], [400, 0, 0]], "not a column"],
+            ],
+        }
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        rows = c.get("/api/belts").json()["belts"]
+    assert len(rows) == 4, "every piece kept its geometry"
+    assert rows[0]["curve_m"] == [[[1.0, 2.0, 0.0], [3.0, 4.0, 0.0]], None, None, None]
+    assert rows[1]["curve_m"] is None
+    assert rows[2]["curve_m"] is None
+    assert rows[3]["curve_m"] is None
+
+
+# --------------------------------------------------------------------------- storage
+
+
+def test_storage_is_every_container_and_buffer_with_what_is_in_it(client, state):
+    """The shape, and the join that is the whole point of the endpoint.
+
+    A container's contents are ITS OWN -- the projection joins each ``StorageInventory``
+    component to the actor that owns it -- so this is the first payload able to answer "where
+    is the steel" rather than only "how much steel". Checked against the projection row by row
+    so that a re-ordering or an off-by-one join is visible here rather than on the map.
+    """
+    body = client.get("/api/storage").json()
+    raw = state.projection["storage"]
+    assert body["count"] == len(raw) == len(body["storage"]) == 151
+    assert body["filled"] == 125, "the containers the player has actually put something in"
+    assert body["items_total"] > 100_000
+
+    for row, source in zip(body["storage"], raw, strict=True):
+        assert row["cls"] == source["cls"]
+        assert row["instance_leaf"] == source["instance"].rsplit(".", 1)[-1]
+        assert row["kind"] in ("solid", "fluid")
+        assert row["x_m"] == pytest.approx(round(source["pos"][0] / 100.0, 1))
+        assert row["yaw"] == pytest.approx(round(source["yaw"], 1))
+        # No display name is ever an engine id, here or anywhere on this surface.
+        assert row["name"] and not row["name"].startswith("Build_")
+
+
+def test_a_solid_container_names_its_contents_and_says_what_it_left_out(client):
+    """Items resolved to display names, biggest first, truncated with a count.
+
+    The truncation is the part worth pinning: a popup that showed six of twelve kinds and
+    stopped would read as a container holding six things. ``more`` and ``item_kinds`` are what
+    let a client say so, and they have to agree with the list actually sent.
+    """
+    rows = [r for r in client.get("/api/storage").json()["storage"] if r["kind"] == "solid"]
+    assert len(rows) == 146
+    truncated = 0
+    for r in rows:
+        assert set(r) >= {"items", "more", "item_kinds", "total", "slots"}
+        assert "stored_m3" not in r and "fluid" not in r, "a box has no fluid level"
+        assert len(r["items"]) == min(r["item_kinds"], 6)
+        assert r["more"] == r["item_kinds"] - len(r["items"])
+        truncated += r["more"] > 0
+        counts = [i["count"] for i in r["items"]]
+        assert counts == sorted(counts, reverse=True), "biggest first"
+        for item in r["items"]:
+            assert item["cls"].startswith("Desc_")
+            assert item["name"] and not item["name"].startswith("Desc_")
+        assert r["total"] >= sum(counts)
+    assert truncated, "no container here holds more kinds than the popup shows"
+
+
+def test_a_fluid_buffer_reports_a_level_against_the_capacity_that_makes_it_a_reading(client):
+    """``stored_m3`` alone is a number; ``fill`` is the answer.
+
+    The capacity comes off the docs dump -- ``mStorageCapacity``, 400 on a Fluid Buffer and
+    2,400 on an Industrial one -- because the save records only the level. Without it a popup
+    saying "1,730.6 m3" leaves the reader to know how big the tank is.
+    """
+    rows = [r for r in client.get("/api/storage").json()["storage"] if r["kind"] == "fluid"]
+    assert len(rows) == 5
+    for r in rows:
+        assert set(r) >= {"fluid", "fluid_name", "stored_m3", "capacity_m3", "fill"}
+        assert "items" not in r and "slots" not in r, "a tank has no slots"
+        assert r["capacity_m3"] in (400.0, 2400.0)
+        assert r["fill"] == pytest.approx(r["stored_m3"] / r["capacity_m3"], abs=1e-4)
+        assert 0.0 <= r["fill"] <= 1.0
+        assert r["fluid_name"] and not r["fluid_name"].startswith("Desc_")
+    assert max(r["fill"] for r in rows) > 0.9, "one of them is nearly full"
+
+
+def test_a_storage_row_carries_the_footprint_it_is_drawn_at_or_says_it_cannot(client):
+    """Same contract as the machines: a measured footprint, or null and the client's fallback.
+
+    Three of the eight classes here are absent from the docs dump entirely -- the HUB's
+    built-in container, the Blueprint Designer's, and the Dimensional Depot uploader -- so they
+    get null rather than a number invented server-side, which would arrive indistinguishable
+    from a measurement.
+    """
+    rows = client.get("/api/storage").json()["storage"]
+    measured = {r["cls"] for r in rows if r["w_m"] is not None}
+    unmeasured = {r["cls"] for r in rows if r["w_m"] is None}
+    assert "Build_StorageContainerMk1_C" in measured
+    assert unmeasured == {
+        "Build_CentralStorage_C",
+        "Build_StorageBlueprint_C",
+        "Build_StorageIntegrated_C",
+    }
+    for r in rows:
+        assert (r["w_m"] is None) == (r["l_m"] is None), "half a footprint is not a footprint"
+        if r["w_m"] is not None:
+            assert 0 < r["w_m"] < 100 and 0 < r["l_m"] < 100
+
+
+def test_a_world_with_nothing_in_store_answers_with_an_empty_payload(game):
+    """A young save has built no container, and that is not an error -- the belts' rule."""
+    for projection in ({}, {"storage": []}, {"storage": None}):
+        app = create_app(
+            state_loader=lambda save=None, world=None, p=projection: WorldState(
+                projection=p, game=game
+            ),
+            game_loader=lambda: game,
+        )
+        with TestClient(app) as c:
+            assert c.get("/api/storage").json() == {
+                "storage": [],
+                "count": 0,
+                "filled": 0,
+                "items_total": 0,
+            }
+
+
+def test_a_malformed_storage_row_costs_that_row_and_not_the_warehouse(game):
+    """Raw projection data, read guarded field by field -- the structures rule, again."""
+    projection = {
+        "storage": [
+            {
+                "cls": "Build_StorageContainerMk1_C",
+                "instance": "x.Build_StorageContainerMk1_C_1",
+                "pos": [100, 200, 300],
+                "yaw": 90.0,
+                "items": [["Desc_IronPlate_C", 4800], "not an entry", ["Desc_Cement_C"]],
+                "slots": 24,
+            },
+            {"cls": "Build_StorageContainerMk1_C", "instance": "i", "pos": None, "yaw": None},
+            "not a row",
+            {
+                "cls": "Build_PipeStorageTank_C",
+                "instance": "t",
+                "pos": [0, 0, 0],
+                "yaw": 0.0,
+                "fluid": None,
+                "stored_m3": None,
+            },
+        ]
+    }
+    app = create_app(
+        state_loader=lambda save=None, world=None: WorldState(projection=projection, game=game),
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        body = c.get("/api/storage").json()
+    assert body["count"] == 3
+    first = body["storage"][0]
+    assert first["items"] == [{"cls": "Desc_IronPlate_C", "name": "Iron Plate", "count": 4800}]
+    assert (first["item_kinds"], first["more"], first["total"]) == (1, 0, 4800)
+    assert first["x_m"] == 1.0
+    # A row with no position at all is still sent: the projection knows the container exists,
+    # and a client that skips it on x is making that call for itself.
+    assert body["storage"][1]["x_m"] is None
+    assert body["storage"][1]["items"] == []
+    # An unreadable fluid level is null, and `fill` refuses rather than dividing by it.
+    assert body["storage"][2]["stored_m3"] is None
+    assert body["storage"][2]["fill"] is None
+    assert body["storage"][2]["capacity_m3"] == 400.0
+
+
+def test_storage_takes_the_save_and_world_parameters_and_404s_on_an_unreadable_one(game):
+    """The ``?save`` / ``?world`` contract every endpoint here shares.
+
+    Both halves matter: the parameters have to REACH the loader -- an endpoint that quietly
+    ignored ``?world`` would serve the default world under another world's name -- and a
+    loader that refuses has to come back as a 404 with a message rather than as a 500.
+    """
+    asked: list[tuple] = []
+
+    def loader(save=None, world=None):
+        asked.append((save, world))
+        if world == "nope":
+            raise RuntimeError("no world matching 'nope'")
+        return WorldState(projection={"storage": []}, game=game)
+
+    app = create_app(state_loader=loader, game_loader=lambda: game)
+    with TestClient(app) as c:
+        assert c.get("/api/storage?world=Han%20Solo&save=x.sav").status_code == 200
+        bad = c.get("/api/storage?world=nope")
+    assert asked[0] == ("x.sav", "Han Solo"), "the query never reached the loader"
+    assert bad.status_code == 404
+    assert "no world matching" in bad.json()["error"]
 
 
 @pytest.fixture
