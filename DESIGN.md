@@ -167,6 +167,8 @@ SatisfactoryMcp/
                        # exports, property tags and transform chain)
                        # provenance.py (which build an artifact was cut from, and the
                        # staged rename that stops one saying two things at once)
+                       # textures.py (a mip chain's length, BC1 -> RGBA) +
+                       # pyramid.py (tiles/{z}/{x}_{y}.png, cut and renamed into place)
       gamedata/        # loader.py (UTF-16 read, NativeClass grouping)
                        # uestruct.py (UE struct-string parser)
                        # normalize.py (-> items / recipes / buildings / schematics)

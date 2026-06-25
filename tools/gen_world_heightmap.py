@@ -178,6 +178,7 @@ from satisfactory_mcp.core.gameassets.provenance import (
     installed_build,
     read_str_path,
 )
+from satisfactory_mcp.core.gameassets.textures import raw_mip_sizes
 from satisfactory_mcp.domain.spatial import heightfield as hf
 from tools._common import base_parser, require_gen
 
@@ -194,7 +195,7 @@ BASELINE_PX = 2048
 #: The mip chain of that raster, largest-first, at two bytes per texel: 2048 down to 128.
 #: Derived so the length check below is arithmetic rather than a number typed in. A file of
 #: another length means the raster was re-cooked, i.e. the game changed, and the run stops.
-BASELINE_MIPS = tuple(((BASELINE_PX >> i), (BASELINE_PX >> i) ** 2 * 2) for i in range(5))
+BASELINE_MIPS = raw_mip_sizes(BASELINE_PX, 5, 2)
 BASELINE_BYTES = sum(size for _px, size in BASELINE_MIPS)
 
 #: The raster's own box, metres of world per texel column. The in-game map square.

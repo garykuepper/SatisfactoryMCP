@@ -870,7 +870,7 @@ def test_the_pyramid_is_renamed_into_place_so_a_reader_never_meets_half_of_one(t
     assert gen.pyramid_top_z(8192) == 5
     assert gen.pyramid_top_z(2048) == 3
     assert gen.pyramid_top_z(256) == 0
-    with pytest.raises(SystemExit):
+    with pytest.raises(gen.PyramidError):
         gen.pyramid_top_z(5000)
 
     tiles = tmp_path / gen.TILES_DIR_NAME
@@ -1000,7 +1000,7 @@ def test_the_enhanced_pyramid_is_two_levels_deeper_and_the_server_follows_it_the
     assert gen.enhanced_top_z(gen.SHEET_PX) == gen.pyramid_top_z(gen.SHEET_PX) + 2 == 7
     assert gen.enhanced_top_z(gen.SHEET_PX, 1) == 5
     assert gen.enhanced_top_z(2048, 4) == 5
-    with pytest.raises(SystemExit):
+    with pytest.raises(gen.PyramidError):
         gen.enhanced_top_z(gen.SHEET_PX, 3)
 
     # z7 is 128 tiles a side of the 32768 px sheet, and the whole tree is (4**8 - 1) / 3.

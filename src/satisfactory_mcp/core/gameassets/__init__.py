@@ -17,8 +17,10 @@ Two rules hold this package together, and both are enforced by reading the sourc
   test suite, and serves the map; it just cannot *generate*. Same posture ``interfaces/web``
   has towards fastapi.
 * **The decoders are injected, not found.** ``IoStore(paks, name, decompress)`` takes its
-  block decompressor as a callable, so the suite drives it with a stand-in and there is no
-  ``sys.path`` mutation, no ``importlib``, and no import of the extra anywhere but inside a
-  function body. ``iostore.oodle_decompress`` is the one such body, and it is a convenience
-  a caller may pass in -- not a dependency this package reaches for on its own.
+  block decompressor as a callable, ``textures.decode_bc1_rgba`` takes the BC1 decoder and
+  Pillow, and ``pyramid.install_pyramid`` takes the image module and the sheet -- so the
+  suite drives all three with stand-ins and there is no ``sys.path`` mutation, no
+  ``importlib``, and no import of the extra anywhere but inside a function body.
+  ``iostore.oodle_decompress`` is the one such body, and it is a convenience a caller may
+  pass in -- not a dependency this package reaches for on its own.
 """

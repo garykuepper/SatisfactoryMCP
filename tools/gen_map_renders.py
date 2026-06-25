@@ -1322,7 +1322,11 @@ def main() -> int:
             not args.quiet,
         )
         drew = time.time() - started
-        stats, cut = install_layer(sheet, image_mod, out_dir, layer)
+        try:
+            stats, cut = install_layer(sheet, image_mod, out_dir, layer)
+        except gmi.PyramidError as exc:
+            print(exc)
+            return 1
         del sheet
         stats["game_version_pinned"] = field_build
         render = {
