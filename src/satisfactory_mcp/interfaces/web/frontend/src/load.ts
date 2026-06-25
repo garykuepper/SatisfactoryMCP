@@ -16,7 +16,7 @@ import { clearPrefixed } from "./layers";
 import { L } from "./leaflet";
 import { map, writeHash } from "./map";
 import { drawCollectibles, drawNodes, drawPlayer } from "./markers";
-import { drawMachines, drawStructures } from "./placements";
+import { drawMachines, drawStorage, drawStructures } from "./placements";
 import { drawRegions } from "./regions";
 import { drawBelts, drawPipes } from "./routes";
 import { state } from "./state";
@@ -29,6 +29,7 @@ import type {
   MachinesResponse,
   NodesResponse,
   PipesResponse,
+  StorageResponse,
   StructuresResponse,
   SummaryResponse,
 } from "./api-types";
@@ -98,6 +99,15 @@ export function loadStatic() {
       if (!live()) return;
       clearPrefixed(["pipes"]);
       fail("pipes: " + friendly(e));
+    });
+  get<StorageResponse>("/api/storage")
+    .then(function (d) {
+      if (live()) drawStorage(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["storage"]);
+      fail("storage: " + friendly(e));
     });
   get<FactoriesResponse>("/api/factories")
     .then(function (d) {

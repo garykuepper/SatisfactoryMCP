@@ -35,6 +35,7 @@ var LAYER_ORDER = [
   "machines",
   "extractors",
   "generators",
+  "storage",
 ];
 
 type Rank = [number, number, string];

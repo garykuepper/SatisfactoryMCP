@@ -31,6 +31,12 @@ declare module "leaflet" {
   interface Path {
     /** A direction mark rather than a route: styled by opacity, never by weight. */
     _chevron?: boolean;
+    /** The route this polyline was tessellated FROM, kept so it can be tessellated again.
+     *
+     * A curved route is drawn at whatever subdivision the current scale earns, so the piece
+     * has to remember the curve it came from -- the drawn latlngs are an output and cannot be
+     * re-subdivided from themselves. See routeShape and styleRoutes in routes.ts. */
+    _route?: import("./api-types").RouteShape;
   }
 
   interface Marker {

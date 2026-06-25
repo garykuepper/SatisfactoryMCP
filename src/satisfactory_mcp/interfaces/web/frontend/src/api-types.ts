@@ -88,6 +88,35 @@ export interface PlacementRow {
   l_m: number | null;
 }
 
+
+/** The tangents that bend one span of a route, `[leave, arrive]` in game metres.
+ *
+ * `leave` is the tangent leaving the point behind the span and `arrive` the tangent arriving
+ * at the point ahead of it, which is the pair a cubic Hermite between those two points takes.
+ * They are displacements in the same space as `points_m`, so whatever transform a client
+ * applies to a point applies to these unchanged -- see hermite() in routes.ts. */
+export type SpanCurveM = [Point3M, Point3M];
+
+/** A route's curve, one entry per span, in step with `points_m`.
+ *
+ * `null` in a slot means that span is straight and is drawn as the line it already was.
+ * `null` for the whole field means the route has no bend anywhere in it, or the projection
+ * predates schema 15 -- both of which mean the same thing to a client, which is why they are
+ * spelled the same way. */
+export type RouteCurveM = (SpanCurveM | null)[] | null;
+
+/** What a drawn route was built from: enough to draw it again at a different scale.
+ *
+ * Hung on the polyline itself, because tessellation is not reversible -- the latlngs on a
+ * drawn curve are already subdivided, and subdividing those again would smooth the curve
+ * towards its own approximation rather than towards the spline. */
+export interface RouteShape {
+  points_m: Point3M[];
+  curve_m: RouteCurveM;
+  /** How many pieces each span was last cut into, so an unchanged zoom step does no work. */
+  steps: number[];
+}
+
 export interface BeltRow {
   chain: number;
   cls: string;
@@ -96,6 +125,7 @@ export interface BeltRow {
   lift: boolean;
   items_per_min: number | null;
   points_m: Point3M[];
+  curve_m: RouteCurveM;
 }
 
 /** A splitter or a merger: a piece of the belt network, drawn by the belt layer. */
@@ -125,6 +155,47 @@ export interface PipeRow {
   name: string | null;
   flow_m3_min: number | null;
   points_m: Point3M[];
+  curve_m: RouteCurveM;
+}
+
+/** One kind of thing in a container, resolved to a display name by the server. */
+export interface StoredItem {
+  cls: string;
+  name: string;
+  count: number;
+}
+
+/** A storage container or a fluid buffer. Two record shapes behind one row, keyed by `kind`.
+ *
+ * The fields of the other kind are ABSENT rather than null -- a box has no fluid level, it does
+ * not have an empty one -- so the optional markers below are the type saying which half of the
+ * union it is looking at, and `kind` is what a reader should branch on. */
+export interface StorageRow {
+  instance_leaf: string;
+  cls: string;
+  name: string;
+  x_m: number | null;
+  y_m: number | null;
+  z_m: number | null;
+  yaw: number | null;
+  /** Null for the classes the docs dump carries no clearance for -- the HUB's own container,
+   * the Blueprint Designer's, the Dimensional Depot uploader. The page falls back and says so,
+   * exactly as it does for a machine. */
+  w_m: number | null;
+  l_m: number | null;
+  kind: "solid" | "fluid";
+  /** Solid containers: the biggest few kinds, with `more` counting what was left off. */
+  items?: StoredItem[];
+  more?: number;
+  item_kinds?: number;
+  total?: number;
+  slots?: number | null;
+  /** Fluid buffers: what is in it, how much it holds, and the fraction those two make. */
+  fluid?: string | null;
+  fluid_name?: string | null;
+  stored_m3?: number | null;
+  capacity_m3?: number | null;
+  fill?: number | null;
 }
 
 export interface FactoryRow {
@@ -199,6 +270,10 @@ export interface BeltsResponse extends ApiError {
 
 export interface PipesResponse extends ApiError {
   pipes: PipeRow[];
+}
+
+export interface StorageResponse extends ApiError {
+  storage: StorageRow[];
 }
 
 export interface FactoriesResponse extends ApiError {

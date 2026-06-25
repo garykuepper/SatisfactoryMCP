@@ -4139,6 +4139,89 @@ recorded" reads as obtuseness rather than as honesty.
   the whole of the work; it stays false because 3,085 belt runs is a decision about the map
   that nobody asked for.
 
+### Schema 15: the curve was in the file, and so was the stock (2026-07-31)
+
+Two owner-reported gaps, one schema bump, and both of them the same shape of mistake as
+schemas 12 and 13: the parser had already decoded the data and the projection was throwing it
+away. "Belts aren't curved where they should be" and "a toggle to show storage — including
+what's in it".
+
+* **The curve. A spline point is three vectors, not one.** `pioneersav.trailers` has decoded a
+  chain segment's points as `location, arriveTangent, leaveTangent` since it could read a chain
+  at all, and `_belts` read `point[0]`. A pipe's `mSplineData` struct has carried
+  `ArriveTangent` and `LeaveTangent` beside its `Location` the whole time, and schema 13 dropped
+  them on the stated grounds that "the game builds pipes out of straight runs and elbows" —
+  which is true, and does not follow: the six points of an elbow are its corners, not its curve.
+* **What the tangents mean is measured, not assumed, and the save states the answer.** A chain
+  segment separately records where it starts and ends **in centimetres along the chain**, so
+  `end - start` minus the spline-less part is that segment's true arc length — a number the
+  geometry did not write. Reconstructing each segment as a cubic Hermite through these tangents
+  and integrating: **3,079 of 3,085 segments land within 1 cm** of the declared length, worst
+  case 2.4 cm. The chord polyline the projection used to emit manages 2,336, is out by 46.8 cm
+  at p95 and by **16.4 m** at its worst; over the 848 segments that actually bend the split is
+  **843 against 208**. One measurement settles both the Hermite basis and which stored vector is
+  the arrive and which the leave. Pinned as an integration test over the whole save folder.
+* **A fourth belt column and a fifth pipe column, per SPAN and only where it bends.** A span
+  needs the leave tangent behind it and the arrive tangent ahead, so the pair is the unit — which
+  also drops the two vectors nothing can use (the first point's arrive and the last's leave, the
+  only place the save stores a bare unit vector). A flat span stores `0`; a route with no bend
+  anywhere gets **no column at all**, so **2,119 of 3,085 belt pieces and 207 of 503 pipes are
+  byte-identical to what schema 14 emitted**.
+* **"Flat" is a bound, computed in 7.5 ms.** A span is dropped when the curve provably cannot
+  leave its chord by a whole centimetre — the control points' own rounding resolution, so what
+  is dropped is finer than the geometry it is drawn through records. `_bulge` bounds the
+  sideways offset by 4/27 of the tangents' perpendicular parts (both Hermite basis functions
+  peak there) and solves the along-chord overshoot **exactly**, as a quadratic, because bounding
+  that one crudely costs the whole optimisation: the game's commonest tangent is half the chord,
+  for which the loose bound reads 29 cm on a 4 m belt and the true overshoot is zero. Verified
+  against a 512-point tessellation over all 6,691 spans: **never smaller than the truth, never
+  more than 3.08x it**. Sampling instead would have cost 485 ms against a 2.19 s parse.
+* **Storage, a new `storage` key**: 151 rows — 61 Storage Containers, 44 Industrial, 6 Personal
+  Storage Boxes, 33 Dimensional Depot uploaders, the HUB's own container and the Blueprint
+  Designer's, and 5 fluid buffers. Solids join their own `StorageInventory` component to the
+  actor that owns it; buffers carry `mFluidBox` cubic metres and take the fluid off the
+  `FGPipeNetwork` that claims them — the same join `pipes` uses, so it is the game's answer
+  rather than an inference from what the buffer is plugged into.
+* **`inventories["storage"]` could say what the player owns and never where any of it was**, and
+  the new rows reconcile against it with a remainder that is itself a finding: the old bucket
+  rule names only `StorageContainer`, `CentralStorage` and `FreightWagon`, so the Personal
+  Storage Boxes, the HUB's container and the Designer's have never been in that sum. The excess
+  is **exactly** their contents, across 31 item classes.
+* **The splitters are excluded, and that is the trap this key exists to avoid.** Every one of
+  the world's 848 splitters and mergers owns a component literally named `StorageInventory`,
+  741 of them non-empty, holding the one to three items physically inside the junction. Matching
+  that name would report 848 phantom containers, draw them again over the belt layer that
+  already has them, and count items in transit as stock. Machine input/output/fuel buffers are
+  out for the same reason and are not lost — they are on their own machine's record.
+* **Cost, measured on the reference save:** the projection grew 1,414,894 → 1,492,138 bytes
+  (**+5.46%**) — `belts` +33,456 (+15.4%), `pipes` +11,205 (+21.8%), `storage` 32,572 — and the
+  **time did not move**: 3,200 ms against 3,202 ms, medians of three interleaved runs, because
+  `_bulge` is 7.5 ms and the storage join is a dictionary lookup per container. Carrying every
+  tangent unconditionally would have been +112 KB on the belts alone; the flat-span drop is what
+  makes it +33 KB.
+* **The parity ripple needed one line.** `storage` joins `POST_11_ADDITIONS["keys"]`; the
+  tangents need no entry at all, because they ride inside `belts` and `pipes`, which are already
+  dropped whole — the same case schema 14's fourth column made, and worth writing down rather
+  than leaving to be rederived. `vendor_parity.json` is untouched.
+
+**On the page.** Tessellation is **zoom-dependent**, which is the whole reason it is
+affordable: the map asks how far each curve is from its chord *in pixels right now*, so at
+zoom -6 to -1 the network is **the identical geometry it drew before this existed** — no extra
+points at the one zoom where all 3,085 pieces are on screen — and even at maxZoom the whole
+network grows from 6,691 line points to 8,712. Frame band unmoved: **16.7 ms median, 16.7 ms
+p95** at world and factory zoom with belts, pipes, machines and storage all on. A straight run
+at factory zoom renders **byte-for-byte identically** to the old code — 0 differing pixels over
+a 1080x840 crop — while the world's most curved belt differs across 16,350.
+
+**Storage is its own layer, off by default, and deliberately NOT in `FACTORY_LAYERS`.** The
+mechanics were checked first and do not block — `reveal()` builds "machines, belts, pipes and
+storage" correctly for four names — so the reason is what the layer means. Those three are what
+a factory is *made of*; containers are what is *standing in it*, and "where is my steel" is a
+question a player asks on purpose. The owner asked for a toggle, and a layer four other gestures
+turn on for you is not one. Colour picked by the method the pipe rust was: `#ad4f96` is dE 51.8
+in CIE Lab from its nearest filled footprint box (the generator red) and 48.5 from the nearest
+biome ground, with the fluid buffers one house-sized value step down at dE 16.7.
+
 ## 17. Two more base layers, drawn rather than found (2026-07-31)
 
 The page has had one base map since there was a base map: the game's own artwork, cut out of

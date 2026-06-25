@@ -22,7 +22,171 @@ import type {
   PipesResponse,
   Point3M,
   PointM,
+  RouteCurveM,
+  SpanCurveM,
 } from "./api-types";
+
+/* The curve, drawn: how a spline becomes a polyline, and how many pieces that is worth.
+ *
+ * The routes on this map were the shape the save records, joined by straight lines, and those
+ * two are not the same thing. A belt or pipe spline stores a tangent either side of every
+ * control point, so a run the player laid as an arc is an arc; the projection dropped the
+ * tangents until schema 15, so the map drew the chords between the corners -- out by up to
+ * 16.4 m of arc on a single belt piece, measured server-side against the length the save
+ * itself states for it. `curve_m` carries them now and this is where they become pixels.
+ *
+ * THE SUBDIVISION IS ZOOM-DEPENDENT, and that is the whole of why this is affordable.
+ * Tessellating to a fixed quality would put the maximum number of points on the canvas at the
+ * whole-world view, which is precisely the zoom where all 3,085 belt pieces are on screen at
+ * once and the frame budget is tightest. Asking instead "how far is this curve from its chord
+ * IN PIXELS, right now" collapses every one of them at world scale: measured over the
+ * reference world's 6,691 spans, zoom -6 to -1 add **no points at all** -- the layer is the
+ * identical geometry it was before this existed -- and even at maxZoom the whole network grows
+ * from 6,691 line points to 8,712, a third more.
+ *
+ * A SPAN WITH NO CURVE IS NEVER TOUCHED. The server sends null for a straight span and null
+ * for a route with no bend anywhere in it, so 2,119 of the 3,085 belt pieces and 207 of the 503
+ * pipes take exactly the code path they always took, and a straight run is the same two points
+ * it has always been at every zoom. That is a structural guarantee rather than a tolerance
+ * that happens to round the right way.
+ */
+
+/* Half a pixel: below this a bend and the line through it land on the same pixels, so
+ * subdividing further buys nothing that can be seen. Not a quarter pixel -- the canvas is not
+ * drawing sub-pixel geometry to that accuracy anyway, and the error halves the step count. */
+var CURVE_TOLERANCE_PX = 0.5;
+
+/* And a ceiling, because a bound on the work has to come from somewhere other than the data.
+ * Eight is generous rather than tight: at maxZoom, cutting the cap from 16 to 8 changes the
+ * whole world's line-point count by 58 out of 8,712, because the flatness that drives the step
+ * count is a median of 3.9 cm and only 5% of spans exceed 69 cm. It is here for the one
+ * pathological span rather than for the common case. */
+var CURVE_MAX_STEPS = 8;
+
+/* How far one span's curve can leave the straight line between its ends, in metres.
+ *
+ * The classic cubic flatness bound, via the Bezier form: a Hermite span's inner control points
+ * are `p0 + leave/3` and `p1 - arrive/3`, and the curve stays within three quarters of the
+ * further one's distance from the chord. An upper bound, so it can only ever over-subdivide.
+ *
+ * Measured IN THE PLAN, x and y only, because that is what this map draws -- a belt's climb is
+ * not something a top-down view has to resolve, and a conveyor lift is exactly the case where
+ * including z would demand eight subdivisions of a run that occupies one pixel. */
+function spanFlatnessM(p0: Point3M, p1: Point3M, span: SpanCurveM): number {
+  var ax = p0[0];
+  var ay = p0[1];
+  var vx = p1[0] - ax;
+  var vy = p1[1] - ay;
+  var chord = Math.sqrt(vx * vx + vy * vy);
+  var b1x = ax + span[0][0] / 3;
+  var b1y = ay + span[0][1] / 3;
+  var b2x = p1[0] - span[1][0] / 3;
+  var b2y = p1[1] - span[1][1] / 3;
+  if (!(chord > 0)) {
+    // Coincident ends -- the joint where a lift meets its belt. There is no chord to measure
+    // against, so the control points' own offset is the whole of the departure.
+    var d1 = Math.hypot(b1x - ax, b1y - ay);
+    var d2 = Math.hypot(b2x - ax, b2y - ay);
+    return 0.75 * Math.max(d1, d2);
+  }
+  var off1 = Math.abs((b1x - ax) * vy - (b1y - ay) * vx) / chord;
+  var off2 = Math.abs((b2x - ax) * vy - (b2y - ay) * vx) / chord;
+  return 0.75 * Math.max(off1, off2);
+}
+
+/* How many straight pieces one span is worth at this scale. 1 means "draw the chord".
+ *
+ * A cubic subdivided into n uniform pieces has an error of about `flatness / n^2`, so the n
+ * that puts that under the tolerance is the square root of the ratio -- which is why a curve
+ * ten times bigger costs three times the points and not ten. */
+function spanSteps(flat_m: number, ppm: number): number {
+  var px = flat_m * ppm;
+  if (!(px > CURVE_TOLERANCE_PX)) return 1;
+  return Math.min(CURVE_MAX_STEPS, Math.ceil(Math.sqrt(px / CURVE_TOLERANCE_PX)));
+}
+
+/* One point along a Hermite span, in game metres.
+ *
+ * The tangents arrive in the same space and the same units as the points, so this is the plain
+ * basis with nothing to correct -- which is exactly what `/api/belts` promises about `curve_m`,
+ * and the reason the y-flip below can be applied to the RESULT rather than to the inputs. */
+function hermite(p0: Point3M, p1: Point3M, span: SpanCurveM, t: number): PointM {
+  var t2 = t * t;
+  var t3 = t2 * t;
+  var h00 = 2 * t3 - 3 * t2 + 1;
+  var h10 = t3 - 2 * t2 + t;
+  var h01 = -2 * t3 + 3 * t2;
+  var h11 = t3 - t2;
+  return [
+    h00 * p0[0] + h10 * span[0][0] + h01 * p1[0] + h11 * span[1][0],
+    h00 * p0[1] + h10 * span[0][1] + h01 * p1[1] + h11 * span[1][1],
+  ];
+}
+
+/* A route as the latlngs Leaflet draws, tessellated for the scale given, plus the step counts.
+ *
+ * `[-y, x]` per point, which is this map's one coordinate convention and is applied here to
+ * the tessellated result rather than to the spline -- so the curve is computed in game metres
+ * and flipped once, in the same place a straight route's points are flipped. */
+function routeLatLngs(
+  points_m: Point3M[],
+  curve_m: RouteCurveM,
+  ppm: number
+): { latlngs: L.LatLngTuple[]; steps: number[] } {
+  var latlngs: L.LatLngTuple[] = [[-points_m[0]![1], points_m[0]![0]]];
+  var steps: number[] = [];
+  for (var i = 0; i < points_m.length - 1; i++) {
+    var a = points_m[i]!;
+    var b = points_m[i + 1]!;
+    var span = curve_m ? curve_m[i] : null;
+    var n = span ? spanSteps(spanFlatnessM(a, b, span), ppm) : 1;
+    steps.push(n);
+    for (var k = 1; k < n; k++) {
+      var q = hermite(a, b, span!, k / n);
+      latlngs.push([-q[1], q[0]]);
+    }
+    latlngs.push([-b[1], b[0]]);
+  }
+  return { latlngs: latlngs, steps: steps };
+}
+
+/* One route as a drawn polyline, carrying the spline it was tessellated from.
+ *
+ * The pair is the point: `setLatLngs` replaces a path's geometry, so re-tessellating at a new
+ * zoom needs the SOURCE, and the drawn latlngs are not it -- they are already an approximation,
+ * and subdividing them again would converge on that approximation rather than on the curve.
+ *
+ * A route with no curve at all still gets a `_route`, and it costs nothing: `steps` comes back
+ * all ones, so the zoom pass below finds nothing to change and never touches it again. */
+function routePolyline(
+  points_m: Point3M[],
+  curve_m: RouteCurveM,
+  ppm: number,
+  options: L.PolylineOptions
+): L.Polyline {
+  var shape = routeLatLngs(points_m, curve_m, ppm);
+  var piece = L.polyline(shape.latlngs, options);
+  piece._route = { points_m: points_m, curve_m: curve_m, steps: shape.steps };
+  return piece;
+}
+
+/* Redraw one route for a new scale, and say whether it actually moved.
+ *
+ * Guarded on the step counts rather than on the zoom, because most pieces do not change at
+ * most zoom steps: a run with no bend never changes at all, and a gentle one holds the same
+ * subdivision across several steps. On the reference world at world zoom that guard skips
+ * every one of the 3,588 routes, which is the pass this has to stay cheap for. */
+function retessellate(piece: L.Polyline, ppm: number): boolean {
+  var route = piece._route;
+  if (!route || !route.curve_m) return false;
+  var shape = routeLatLngs(route.points_m, route.curve_m, ppm);
+  var same = shape.steps.length === route.steps.length;
+  for (var i = 0; same && i < shape.steps.length; i++) same = shape.steps[i] === route.steps[i];
+  if (same) return false;
+  route.steps = shape.steps;
+  piece.setLatLngs(shape.latlngs);
+  return true;
+}
 
 /* The conveyor network, drawn as the routes it actually takes.
  *
@@ -147,24 +311,21 @@ export function drawBelts(data: BeltsResponse): void {
   var group = layer("belts", false, BELT_COLOUR);
   var ppm = pixelsPerMetre();
   data.belts.forEach(function (b) {
-    var points: L.LatLngTuple[] = b.points_m.map(function (p) {
-      return [-p[1], p[0]];
-    });
     var first = b.points_m[0]!;
     var last = b.points_m[b.points_m.length - 1]!;
     var piece: L.Path;
     if (b.lift) {
-      piece = L.circleMarker(points[0]!, {
+      piece = L.circleMarker([-first[1], first[0]], {
         radius: liftRadius(ppm),
         color: beltColour(b.items_per_min),
         weight: 1.5,
         fillColor: LIFT_FILL,
         fillOpacity: 0.9,
       });
-    } else if (points.length < 2) {
+    } else if (b.points_m.length < 2) {
       return; // a route with one point is not a route, and this is not a lift
     } else {
-      piece = L.polyline(points, {
+      piece = routePolyline(b.points_m, b.curve_m, ppm, {
         color: beltColour(b.items_per_min),
         weight: beltWeight(ppm),
         opacity: 0.85,
@@ -239,7 +400,15 @@ export function styleRoutes() {
       // a zoom BELOW which it is noise rather than information.
       if (piece._chevron) piece.setStyle({ opacity: alpha });
       else if (piece.setRadius) piece.setRadius(radius);
-      else if (!(piece instanceof L.Polygon)) piece.setStyle({ weight: weight });
+      else if (!(piece instanceof L.Polygon)) {
+        piece.setStyle({ weight: weight });
+        // And the geometry, not just the stroke: a curve is subdivided for the scale it is
+        // seen at, so the zoom that changes the width is the zoom that changes how many
+        // pieces the bend is worth. Skipped for everything straight and for everything whose
+        // subdivision has not moved, which at world zoom is the entire layer -- see
+        // retessellate.
+        retessellate(piece as L.Polyline, ppm);
+      }
     });
   });
 }
@@ -467,10 +636,7 @@ export function drawPipes(data: PipesResponse): void {
   var alpha = chevronOpacity(ppm);
   data.pipes.forEach(function (p) {
     if (p.points_m.length < 2) return; // a route with one point is not a route
-    var points: L.LatLngTuple[] = p.points_m.map(function (q) {
-      return [-q[1], q[0]];
-    });
-    L.polyline(points, {
+    routePolyline(p.points_m, p.curve_m, ppm, {
       color: pipeColour(p.flow_m3_min),
       weight: pipeWeight(ppm),
       opacity: 0.85,

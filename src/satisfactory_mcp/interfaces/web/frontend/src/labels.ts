@@ -55,10 +55,30 @@ export function reveal(names: string[]): void {
   );
 }
 
-// What "show me this factory" means, in layers. A factory at factory scale is its machines
-// and the routes between them -- belts AND pipes, because a refinery block is half plumbing
-// and a view that showed only the belts would read as a factory with pieces missing. All
-// three are unreadable at the zoom the click starts from.
+/* What "show me this factory" means, in layers. A factory at factory scale is its machines
+ * and the routes between them -- belts AND pipes, because a refinery block is half plumbing
+ * and a view that showed only the belts would read as a factory with pieces missing. All
+ * three are unreadable at the zoom the click starts from.
+ *
+ * STORAGE IS DELIBERATELY NOT THE FOURTH, and the reason is not the mechanics.
+ *
+ * The mechanics were checked first, because they were the obvious thing to be blocked by and
+ * they do not block: reveal() builds its list with `slice(0, -1).join(", ") + " and " + last`,
+ * so four names come out as "machines, belts, pipes and storage" -- a correct list, not the
+ * "a and b and c" a plain join would give -- and the sentence after it already says "those
+ * layers" for any count above one. The grammar scales.
+ *
+ * The reason is what the layer MEANS. These three are what a factory is made of: take the
+ * belts away and the machines are a scatter of rectangles, take the pipes away and a refinery
+ * block is half missing. Containers are not what a factory is made of -- they are what is
+ * standing in it, and "where is my steel" is a question a player asks on purpose rather than
+ * one implied by "show me this factory". The owner asked for this as a TOGGLE, and a layer
+ * that four other gestures turn on for you is not one.
+ *
+ * There is a cost argument too and it is the weaker one, so it is second: revealing a fourth
+ * layer means a click the reader did not make changes four things, and the toast that has to
+ * list them gets longer than the note it is trying to be.
+ */
 var FACTORY_LAYERS = ["machines", "belts", "pipes"];
 
 /* Factory labels, and the two things they used to get wrong.

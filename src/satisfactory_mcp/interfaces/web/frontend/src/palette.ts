@@ -34,6 +34,38 @@ export var PURITY_RADIUS: Record<string, number> = { impure: 3, normal: 4.5, pur
 
 export var KIND_COLOUR: Record<string, string> = { machines: "#4aa3df", extractors: "#e0a33f", generators: "#d9534f" };
 
+/* Storage, and picked the way the pipe rust was: by measuring, not by taste.
+ *
+ * A container is drawn as a filled footprint box, so the colours it has to separate from are
+ * the other filled boxes -- the three machine kinds, the belt attachments, and the concrete it
+ * stands on -- and then, more weakly, everything else on the page. Magenta is what is left: the
+ * page already spends blue on machines, amber on extractors, red on generators, steel on belts
+ * and rust on pipes, and the whole warm half is taken.
+ *
+ * In CIE Lab, #ad4f96 is dE 51.8 from its nearest filled box (the generator red) and 48.5 from
+ * the nearest biome ground, which are the two comparisons that decide whether a box reads. Its
+ * nearest neighbour ANYWHERE on the page is the raw-quartz node dot at dE 27.4 -- a small disc
+ * on open terrain rather than a rectangle inside a factory, so the two are never asked to be
+ * told apart in the same square metre. The alternatives measured beside it were all worse on
+ * one of the two: a lighter magenta (#c76bb0) lands dE 17.7 from that same quartz dot, a violet
+ * (#8c72c4) dE 19.1 from the crude-oil dot and only 37.3 from the machine blue, and a sea green
+ * dE 10.5 from the pickup teal.
+ */
+export var STORAGE_COLOUR = "#ad4f96";
+
+/* The fluid buffers, one value step down the same hue -- the grammar the belts and pipes use
+ * for their tiers, borrowed for a distinction that is not a tier: a tank and a box are two
+ * kinds of container rather than two grades of one, and one family with a step inside it says
+ * "same layer, different thing" without spending a second hue on it.
+ *
+ * The step is the house step: dE 16.7, against the belts' 15.6 between their slowest and
+ * fastest and the pipes' 15.7 between Mk1 and Mk2. Re-measured rather than assumed safe,
+ * because a ramp can walk a colour into a neighbour -- this one moves AWAY from everything,
+ * ending dE 34.0 from its nearest colour on the page (the crude-oil dot) and 37.6 from the
+ * nearest ground, both further off than the box tone above.
+ */
+export var STORAGE_FLUID_COLOUR = "#7f3169";
+
 // One colour per pickup category, so ten separate checkboxes stop drawing one
 // indistinguishable teal dot. Unlisted categories share the old teal as the fallback.
 export var PICKUP_COLOUR: Record<string, string> = {

@@ -1,19 +1,30 @@
-/* What the player built and where it stands: the floor plan, and the machines on it.
+/* What the player built and where it stands: the floor plan, the machines on it, and the
+ * containers among them.
  *
  * Together because they are the same drawing problem -- a rotated footprint at a measured
- * size -- and because both fall back to a stated stand-in when the docs dump carries no
+ * size -- and because all three fall back to a stated stand-in when the docs dump carries no
  * clearance for a class. The difference is only where the size comes from: a foundation
- * takes the grid's own tile, a machine takes its own w_m and l_m.
+ * takes the grid's own tile, a machine and a container take their own w_m and l_m.
+ *
+ * The storage layer at the bottom is the one that is not only a placement: a container's
+ * CONTENTS are the point of drawing it, so it is the one thing here with a popup built from
+ * data rather than from a fixed set of rows.
  */
 
 import { code, popup } from "./dom";
+import type { Row } from "./dom";
 import { L } from "./leaflet";
 import { layer } from "./layers";
 import { footprintCorners } from "./map";
 import { raiseNodeDots } from "./markers";
-import { KIND_COLOUR } from "./palette";
+import { KIND_COLOUR, STORAGE_COLOUR, STORAGE_FLUID_COLOUR } from "./palette";
 
-import type { MachinesResponse, StructuresResponse } from "./api-types";
+import type {
+  MachinesResponse,
+  StorageResponse,
+  StorageRow,
+  StructuresResponse,
+} from "./api-types";
 
 /* The player's floor plan: one 8 m tile per placed foundation, ramp, wall or catwalk.
  *
@@ -101,6 +112,120 @@ export function drawMachines(data: MachinesResponse): void {
         )
         .addTo(group);
     });
+  });
+  raiseNodeDots();
+}
+
+
+/* Storage: the boxes, and what is in them.
+ *
+ * Here rather than in a file of its own because it is the same drawing problem this module
+ * already solves twice -- a rotated footprint at a measured size, with a stated stand-in where
+ * the dump has no clearance -- and a third copy of `footprintCorners` plus a third fallback
+ * constant would be three places to keep in step instead of one. What is genuinely new is the
+ * popup, because a container is the first thing on this map whose CONTENTS are the point.
+ *
+ * The map could already say what the player owns -- the header's totals come from the same
+ * stacks -- and could never say where any of it was. That is the gap: "have I got enough
+ * steel" and "where did I put the steel" are different questions, and a base with 105
+ * containers spread over 7 km only ever raises the second one.
+ *
+ * ONE LAYER, TWO KINDS, told apart by a value step in one hue -- see STORAGE_COLOUR. A fluid
+ * buffer and a storage container are both boxes the player put things in, so they belong to one
+ * checkbox; they hold different sorts of thing and read differently in a popup, so they are not
+ * the same tone. That is the belts' and pipes' grammar borrowed for a distinction that is not a
+ * tier, and it is deliberate: a second hue would make the legend claim these are two networks.
+ *
+ * OFF BY DEFAULT, and NOT part of the reveal a factory label triggers -- see FACTORY_LAYERS in
+ * labels.ts for that decision and its reasoning.
+ */
+
+/* A container the docs dump carries no clearance for: the HUB's own box, the Blueprint
+ * Designer's, and the Dimensional Depot uploader. The same arrangement, and the same reason, as
+ * MACHINE_FALLBACK_M above -- the server sends null rather than a number invented there, because
+ * an invented one would arrive indistinguishable from a measurement. Four metres is half a
+ * foundation tile, which is small enough not to overstate an uploader and big enough to be
+ * clickable at the zoom the layer is meant to be read at. */
+var STORAGE_FALLBACK_M = 4;
+
+/* Thousands separators, because these are counts of things and they get large: a full
+ * Industrial Storage Container holds 24,000 Wire, and "24000" in a table cell is a number a
+ * reader has to count the digits of. */
+function count(n: number): string {
+  return n.toLocaleString("en-GB");
+}
+
+/* What is in one container, as popup rows.
+ *
+ * The server has already picked the biggest few and counted what it left off, so this only has
+ * to render them -- and to say so. "and 6 more" is a row rather than an ellipsis because a list
+ * that simply stops reads as a container holding six things, which is a different claim from
+ * the truth and one the reader has no way to notice.
+ */
+function storageContents(s: StorageRow): Row[] {
+  if (s.kind === "fluid") {
+    var stored = s.stored_m3;
+    if (stored === null || stored === undefined) return [["contents", "not recorded"]];
+    var level = count(Math.round(stored * 10) / 10) + " m³";
+    // The capacity is what turns a level into a reading, and it comes from the docs dump
+    // rather than the save -- so where the dump is silent the row says the level alone
+    // instead of inventing a denominator.
+    if (s.capacity_m3) {
+      level += " of " + count(s.capacity_m3) + " — " + Math.round((s.fill || 0) * 100) + "% full";
+    }
+    return [
+      ["fluid", s.fluid_name || (s.fluid ? null : "empty")],
+      ["level", level],
+    ];
+  }
+  var items = s.items || [];
+  if (!items.length) return [["contents", "empty"]];
+  var rows: Row[] = items.map(function (item): Row {
+    return [item.name, count(item.count)];
+  });
+  if (s.more) rows.push(["", "and " + s.more + " more"]);
+  return rows;
+}
+
+/* One container's whole card: what it is, what is in it, and where it stands.
+ *
+ * The contents come FIRST, above the placement rows every other popup on this page leads with,
+ * because they are the reason this layer exists -- a reader who clicks a box is asking what is
+ * in it, not where it is, and where it is was answered by the click.
+ */
+function storagePopup(s: StorageRow): Row[] {
+  var rows: Row[] = [["storage", s.name]];
+  storageContents(s).forEach(function (row) {
+    rows.push(row);
+  });
+  rows.push(["slots", s.slots ? s.slots + " slots" : null]);
+  rows.push(["footprint", s.w_m && s.l_m ? s.w_m + " x " + s.l_m + " m" : null]);
+  rows.push(["facing", s.yaw === null || s.yaw === undefined ? null : Math.round(s.yaw) + "°"]);
+  rows.push(["at", s.x_m + ", " + s.y_m + " m"]);
+  rows.push(["instance", code(s.instance_leaf)]);
+  return rows;
+}
+
+export function drawStorage(data: StorageResponse): void {
+  // Off at the whole-world zoom, exactly like the machines and the routes: 151 boxes across
+  // 7 km is a scatter of specks, and the owner asked for a toggle.
+  var group = layer("storage", false, STORAGE_COLOUR);
+  data.storage.forEach(function (s) {
+    if (s.x_m === null || s.y_m === null) return;
+    var colour = s.kind === "fluid" ? STORAGE_FLUID_COLOUR : STORAGE_COLOUR;
+    var w = (s.w_m || STORAGE_FALLBACK_M) / 2;
+    var l = (s.l_m || STORAGE_FALLBACK_M) / 2;
+    L.polygon(footprintCorners(s.x_m, s.y_m, w, l, s.yaw), {
+      color: colour,
+      weight: 1,
+      fillColor: colour,
+      // A container the player has not filled is drawn hollow, which is the one thing about a
+      // warehouse a reader wants at a glance and the map can say without being asked: an empty
+      // box is a place with room in it. Same device the machines use for `paused`.
+      fillOpacity: s.kind === "fluid" ? (s.fill ? 0.7 : 0.15) : s.total ? 0.7 : 0.15,
+    })
+      .bindPopup(popup(storagePopup(s)))
+      .addTo(group);
   });
   raiseNodeDots();
 }
