@@ -34,6 +34,16 @@ and no Python may reach into the sources next door -- the seam is the built dire
 are read off the filesystem here, with no Node executed: pytest must keep running on a
 machine that has none.
 
+The fifth is the ``gen`` extra, and it is the ``_SDK_ROOTS`` rule again with different
+names. ``ooz``, ``texture2ddecoder`` and Pillow are what ``core/gameassets`` needs to read
+the installed game's container, they are an optional extra, and optional has to mean
+optional *at import time*: a clone with none of them installed imports every module, runs
+this suite and serves the map, and only ``tools/gen_*.py`` ever finds out they are missing.
+That is checkable by AST only while nothing reaches for them dynamically, which is why the
+second half of the rule -- no ``importlib``, no ``__import__``, no ``sys.path`` mutation
+inside that package -- is not a separate preference but the thing that makes the first half
+mean anything.
+
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
 load-bearing for reasons that have nothing to do with layering -- crash isolation,
@@ -46,6 +56,7 @@ the parser, because everything else reaches it through the subprocess.
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -76,6 +87,19 @@ _LAYERS: tuple[tuple[str, str], ...] = (
 #: so the rule "only the interface layer may see the SDK" is checkable the same way
 #: as every other rule.
 _SDK_ROOTS = frozenset({"mcp", "pydantic", "fastapi", "uvicorn", "starlette"})
+
+#: The ``gen`` extra: what the ``tools/gen_*.py`` generators need to read the installed
+#: game's own container, pinned exactly in ``pyproject.toml`` because these decide the BYTES
+#: an artifact is cut with. ``ooz`` (from pyooz) decompresses a container block,
+#: ``texture2ddecoder`` unpacks a BC1 block and Pillow writes the PNG.
+#:
+#: The property below is that ``optional`` means optional AT IMPORT TIME -- the same posture
+#: ``_SDK_ROOTS`` has, and checked the same way, because a machine with none of these
+#: installed still has to import the whole package, run this suite and serve the map.
+_GEN_EXTRA_ROOTS = frozenset({"ooz", "pyooz", "texture2ddecoder", "PIL"})
+
+#: The one package allowed to name them at all, and only inside a function body.
+GAMEASSETS = "satisfactory_mcp.core.gameassets"
 
 #: Who may import whom. A layer always may import itself.
 ALLOWED: dict[str, frozenset[str]] = {
@@ -119,6 +143,7 @@ FORBIDDEN_PATHS: dict[str, str] = {
 #: are the only formatting helpers the domain layer is allowed to reach.
 LAYERED_HOMES: tuple[str, ...] = (
     "satisfactory_mcp.core.gamedata",
+    "satisfactory_mcp.core.gameassets",
     "satisfactory_mcp.core.saveio",
     "satisfactory_mcp.core.text",
     "satisfactory_mcp.domain.world",
@@ -419,6 +444,138 @@ def test_the_old_paths_stay_deleted():
                 f"satisfactory_mcp.{name} is back -- it moved to {moved_to} and the old "
                 "path is not a place code may live again; fix the caller's import instead"
             )
+
+
+def _gameassets_sources() -> list[Path]:
+    """Every module of the one package allowed to name the ``gen`` extra."""
+    return _sources(PKG / "core" / "gameassets")
+
+
+def _import_nodes(node: ast.AST, in_function: bool = False):
+    """Every import in the tree, paired with whether a function body encloses it.
+
+    ``ast.walk`` cannot answer that -- it flattens the tree -- and the whole distinction
+    this file draws about the ``gen`` extra is between an import that runs at import time
+    and one that runs when a generator calls the function.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            yield child, in_function
+        deeper = in_function or isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        yield from _import_nodes(child, deeper)
+
+
+def _root(dotted: str) -> str:
+    return dotted.split(".", 1)[0]
+
+
+def test_the_gen_extra_is_optional_at_import_time():
+    """``ooz``, ``texture2ddecoder`` and Pillow: named in one package, and only lazily.
+
+    Two halves of one rule. Outside ``core/gameassets`` nothing in the application or the
+    parser may name them at all -- that is what makes ``uv run satisfactory-mcp`` work on a
+    machine that has never installed the extra. Inside it, they may be named only from a
+    function body, because a module-scope ``import ooz`` turns a missing OPTIONAL dependency
+    into an ``ImportError`` at collection time for every test that so much as touches the
+    package, which is the failure this exists to prevent and not a theoretical one.
+    """
+    outside = {
+        (importer, target)
+        for importer, target in _edges() | _edges(PARSER_PKG)
+        if _root(target) in _GEN_EXTRA_ROOTS
+        and importer != GAMEASSETS
+        and not importer.startswith(GAMEASSETS + ".")
+    }
+    assert not outside, (
+        "the `gen` extra is generation-time only -- these modules would stop importing on a "
+        f"machine that has not installed it, and only {GAMEASSETS} may name it:\n"
+        + _describe(outside)
+    )
+
+    eager = []
+    for path in _gameassets_sources():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node, in_function in _import_nodes(tree):
+            if in_function:
+                continue
+            for target in _targets(node, _package_of(path)):
+                if _root(target) in _GEN_EXTRA_ROOTS:
+                    eager.append(f"  {_module_name(path)}:{node.lineno} imports {target}")
+    assert not eager, (
+        "these imports of the `gen` extra run at import time -- move them inside the "
+        "function that needs them, the way `iostore.oodle_decompress` does:\n"
+        + "\n".join(sorted(eager))
+    )
+
+
+def test_gameassets_never_imports_dynamically():
+    """No ``importlib``, no ``__import__``, no ``sys.path`` -- so the rule above is readable.
+
+    This is not a second preference dressed up as a test. ``test_the_gen_extra_is_optional``
+    proves its point by parsing import statements, and every dynamic import is a hole in
+    that proof: ``importlib.import_module("ooz")`` is invisible to it, and a ``sys.path``
+    insert is how the decoders used to be reached -- out of a throwaway venv, at runtime,
+    with the import graph saying nothing about it. Keeping all three out is what lets the
+    AST be believed.
+    """
+    found = []
+    for path in _gameassets_sources():
+        name = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node, _in_function in _import_nodes(tree):
+            for target in _targets(node, _package_of(path)):
+                if _root(target) == "importlib":
+                    found.append(f"  {name}:{node.lineno} imports {target}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == "__import__":
+                found.append(f"  {name}:{node.lineno} calls __import__")
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "path"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "sys"
+            ):
+                found.append(f"  {name}:{node.lineno} touches sys.path")
+    assert not found, (
+        "this package reaches its decoders through a parameter and its own imports, and "
+        "nothing else -- a dynamic import here makes the layering unreadable rather than "
+        "merely unusual:\n" + "\n".join(sorted(found))
+    )
+
+
+def test_gameassets_imports_nothing_but_the_stdlib_and_core():
+    """The allowlist, stated positively: stdlib, ``core``/``config``, and the extra lazily.
+
+    ``core`` may already import only ``core``, so most of this is implied -- but only most.
+    The package exists to be read by ``tools/gen_*.py``, and the tempting import is the one
+    that goes the other way: a generator's helper, a numpy convenience, a third-party format
+    library pulled in because it is already installed for something else. Any of those would
+    quietly make a *generation-time* dependency into a dependency of the server, which is
+    exactly the shape of thing the ``gen`` extra was created to stop.
+    """
+    stray = []
+    for path in _gameassets_sources():
+        name = _module_name(path)
+        for node, _in_function in _import_nodes(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        ):
+            for target in _targets(node, _package_of(path)):
+                root = _root(target)
+                allowed = (
+                    root in sys.stdlib_module_names
+                    or root in _GEN_EXTRA_ROOTS
+                    or target == "satisfactory_mcp.config"
+                    or target == "satisfactory_mcp.core"
+                    or target.startswith("satisfactory_mcp.core.")
+                )
+                if not allowed:
+                    stray.append(f"  {name}:{node.lineno} imports {target}")
+    assert not stray, (
+        "core/gameassets may import the standard library, satisfactory_mcp.core (and "
+        "config), and the `gen` extra from inside a function -- nothing else, or reading "
+        "the game's assets stops being something the server can be built without:\n"
+        + "\n".join(sorted(stray))
+    )
 
 
 def test_the_served_page_is_build_output_and_nothing_else():

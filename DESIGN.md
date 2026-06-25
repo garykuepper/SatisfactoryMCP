@@ -161,6 +161,10 @@ SatisfactoryMcp/
     server.py          # thin: imports the tool modules, re-exports, main()
     config.py          # env: SATISFACTORY_DOCS, SATISFACTORY_SAVES, cache dir
     core/              # knows nothing about anything above it
+      gameassets/      # GENERATION-TIME only, used by tools/gen_*.py and nothing else:
+                       # iostore.py (the game's own .utoc/.ucas container, Oodle
+                       # decompressor injected) + packages.py (a cooked package's
+                       # exports, property tags and transform chain)
       gamedata/        # loader.py (UTF-16 read, NativeClass grouping)
                        # uestruct.py (UE struct-string parser)
                        # normalize.py (-> items / recipes / buildings / schematics)
