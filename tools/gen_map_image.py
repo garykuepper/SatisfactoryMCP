@@ -1,6 +1,6 @@
 """Cut data/local/map.png -- the web map's base image -- out of the installed game.
 
-    uv run python tools/gen_map_image.py --pyooz-path <dir containing ooz>
+    uv run --extra gen python tools/gen_map_image.py
 
 The web page has always been able to show a base map at ``data/local/map.png``, and the
 repository has always shipped none: a rendered map of this world is Coffee Stain's
@@ -70,17 +70,14 @@ build -- or from somewhere else entirely, with no sidecar at all -- is not ours 
 replace on a whim, and the repository's own tables are pinned to a build the new artwork
 might no longer agree with. ``--force`` says it anyway.
 
-**The side venv, and why there is one.** Oodle-compressed container blocks are opened by
-``pyooz``, which is GPL-3.0, and the BC1 blocks by ``texture2ddecoder``. Neither is a
-dependency of this project: both are offline generation-time tools, never imported from
-``src/`` or ``sidecar/``, and no part of either is in the output. Pillow is only wanted
-here as well. All three come off ``--pyooz-path``, which is a throwaway venv's
-site-packages -- the same argument, and the same posture, as
-``tools/gen_world_collectibles.py``. The recipe, run and proven:
+**What opens the container, and where it comes from.** Oodle-compressed container blocks
+are opened by ``pyooz`` and the BC1 blocks by ``texture2ddecoder``; Pillow writes the PNG.
+All three are the project's ``gen`` extra: generation-time tools, imported at module scope
+by nothing here and by nothing under ``src/``, pinned exactly because they decide the bytes
+this file writes, and asked for by name when a generator runs -- the same posture as
+``tools/gen_world_collectibles.py``:
 
-    uv venv <tmp>/mapvenv
-    uv pip install --python <tmp>/mapvenv pyooz texture2ddecoder pillow
-    uv run python tools/gen_map_image.py --pyooz-path <tmp>/mapvenv/Lib/site-packages
+    uv run --extra gen python tools/gen_map_image.py
 
 The container reader itself is not reimplemented: ``tools/gen_world_collectibles.py``
 already has one, and it is imported from there by path so this file stays runnable and
@@ -94,9 +91,9 @@ a read-only bake-off picked over Lanczos, vtracer+resvg and two other models by 
 stroke depth and edge gradient on four sampled regions. It is **off by default**: it needs
 a 45 MB binary this repository will not vendor and a Vulkan device, and a tool whose
 default path silently depends on either is a tool that fails on somebody else's machine.
-The same recipe, with the flag on the end:
+The same command, with the flag on the end:
 
-    uv run python tools/gen_map_image.py --pyooz-path <tmp>/mapvenv/Lib/site-packages --enhance
+    uv run --extra gen python tools/gen_map_image.py --enhance
 
 The stage is four passes and the model is only the second, because a second read-only
 bake-off round measured the model's two remaining defects and found both of them fixable
@@ -173,10 +170,10 @@ when its own recipe is behind what is already on disk. So re-cutting recipe 1's 
 recipe 2 is the upgrade it plainly is and runs without a flag, while a reader can still
 read off which pipeline drew the pixels they are looking at.
 
-The stage needs ``numpy`` and ``scipy``, which unlike Pillow ARE dependencies of this
-project, so they come from the project environment that ``uv run`` provides -- which is
-also why they must not be installed into the side venv, where a second numpy would be
-first on ``sys.path`` and leave scipy compiled against the other one.
+The stage needs ``numpy`` and ``scipy``, which unlike Pillow are dependencies of this
+project outright, so they come from the environment ``uv run`` provides -- the same one
+``--extra gen`` adds the decoders to, which is what makes the two halves of the stage
+provably the same numpy.
 
 **Licence.** The bytes this writes are Coffee Stain's artwork, read out of the reader's
 own installed copy of the game and left in a gitignored directory. Nothing here is
@@ -185,7 +182,6 @@ committed, uploaded or redistributed, and ``/api/mapimage`` serves it to localho
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import shutil
@@ -199,9 +195,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-#: Where Steam puts the game. Overridable; the container is the only thing read from it.
-DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")
+from tools._common import base_parser, require_gen
 
 #: The mount-relative directory holding the four slices, inside FactoryGame-Windows.utoc.
 SLICE_DIR = "../../../FactoryGame/Content/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/"
@@ -396,10 +392,6 @@ CONTROL_NEAR = (2000, 2001)
 CONTROL_FAR = (2000, 2100)
 
 
-class MissingImaging(RuntimeError):
-    """No BC1 decoder or no Pillow: a setup problem, not a bug."""
-
-
 class MissingUpscaler(RuntimeError):
     """The GPU stage cannot run, and says what to do about it.
 
@@ -422,38 +414,6 @@ def load_container_reader():
     import gen_world_collectibles
 
     return gen_world_collectibles
-
-
-def load_imaging(extra_path: Path | None) -> tuple[object, object, dict[str, str]]:
-    """Import the BC1 decoder and Pillow out of the same throwaway venv as ``ooz``.
-
-    Same posture as the Oodle import next door: neither is a dependency of this project,
-    so neither is imported from the project environment.
-    """
-    if extra_path is not None:
-        sys.path.insert(0, str(extra_path))
-    try:
-        import texture2ddecoder
-        from PIL import Image
-    except ImportError as exc:
-        raise MissingImaging(
-            "no `texture2ddecoder` or no Pillow importable, so the map's BC1 blocks cannot "
-            "be decoded. This is deliberate: both are offline tools here, never "
-            "dependencies of this project. Do:\n"
-            "    uv venv <tmp>/mapvenv\n"
-            "    uv pip install --python <tmp>/mapvenv pyooz texture2ddecoder pillow\n"
-            "    uv run python tools/gen_map_image.py "
-            "--pyooz-path <tmp>/mapvenv/Lib/site-packages"
-        ) from exc
-    versions = {}
-    for dist in ("texture2ddecoder", "pillow"):
-        try:
-            from importlib.metadata import version
-
-            versions[dist] = version(dist)
-        except Exception:
-            versions[dist] = "unknown"
-    return texture2ddecoder, Image, versions
 
 
 def read_game_build(game: Path) -> tuple[str, dict]:
@@ -994,31 +954,29 @@ def ensure_upscaler(cache: Path | None = None, *, smoke: bool = True) -> dict:
 def check_array_stack() -> tuple[str, str]:
     """numpy and scipy, and the check that they came out of the same environment.
 
-    These two are dependencies of this project, unlike Pillow, so they come from what
-    ``uv run`` provides rather than from ``--pyooz-path``. But that path is inserted at the
-    FRONT of ``sys.path``, so a side venv that happened to carry its own numpy would win
-    the import while scipy still came from the project -- a scipy compiled against a
-    different numpy, which fails as a segfault or a wrong answer rather than an ImportError.
-    Cheaper to state and check than to debug.
+    A scipy compiled against a different numpy than the one that wins the import fails as
+    a segfault or a wrong answer rather than an ImportError, so it is cheaper to state and
+    check than to debug. One environment holds both now -- the one ``uv run`` provides,
+    which is also where ``--extra gen`` puts the decoders -- so this should never fire;
+    a check that never fires is what a satisfied invariant looks like.
     """
     try:
         import numpy
         import scipy
     except ImportError as exc:
         raise MissingUpscaler(
-            "--enhance needs numpy and scipy, which ARE dependencies of this project: run "
-            "this through `uv run` rather than a bare python, and do not install them into "
-            "the --pyooz-path venv."
+            "--enhance needs numpy and scipy, which are dependencies of this project "
+            "outright: run this through `uv run` rather than a bare python."
         ) from exc
     homes = {Path(module.__file__).resolve().parents[1] for module in (numpy, scipy)}
     if len(homes) != 1:
         raise MissingUpscaler(
             "numpy and scipy are imported from different environments -- "
             + " and ".join(sorted(str(home) for home in homes))
-            + ".\nThat is what happens when the --pyooz-path venv carries its own numpy: it "
-            "goes to the front of sys.path and scipy is left compiled against another one. "
-            "Uninstall numpy and scipy from that venv; it only needs pyooz, "
-            "texture2ddecoder and pillow."
+            + ".\nThat happens when something ahead of the project environment on sys.path "
+            "carries its own numpy: it wins the import and scipy is left compiled against "
+            "another one. Run this as `uv run --extra gen python tools/gen_map_image.py`, "
+            "out of one environment."
         )
     return numpy.__version__, scipy.__version__
 
@@ -1794,22 +1752,7 @@ def build_sidecar(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` -- a throwaway venv's site-packages. "
-            "The same venv must carry texture2ddecoder and Pillow; see the module docstring"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "--size",
         type=int,
@@ -1855,18 +1798,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    versions = require_gen("ooz", "texture2ddecoder", "PIL.Image")
+    pyooz_version = versions["pyooz"]
+    import ooz
+    import texture2ddecoder as decoder
+    from PIL import Image as image_mod
+
     gwc = load_container_reader()
-    try:
-        ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-    except gwc.MissingOodle as exc:
-        print(exc)
-        return 2
-    try:
-        decoder, image_mod, versions = load_imaging(args.pyooz_path)
-    except MissingImaging as exc:
-        print(exc)
-        return 2
-    versions["pyooz"] = pyooz_version
 
     build_pin, build_raw = read_game_build(args.game)
     print(f"installed build: {build_pin}")

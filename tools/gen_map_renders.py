@@ -1,6 +1,6 @@
 """Draw two base-map layers of this world out of the 1 m heightfield and the game's biomes.
 
-    uv run python tools/gen_map_renders.py --pyooz-path <dir containing ooz and PIL>
+    uv run --extra gen python tools/gen_map_renders.py
 
 ``tools/gen_map_image.py`` cuts the game's own drawn map into ``data/local/tiles/``. That
 picture is Coffee Stain's artwork and it is the only base layer the page has ever had. This
@@ -88,20 +88,17 @@ sidecar names a different field build stops. And a field that is not there at al
 error to work around -- it is the one input this file cannot invent, so the run says which
 tool writes it and exits. ``--force`` says it anyway.
 
-The side venv
--------------
-``pyooz`` (GPL-3.0) opens the container's Oodle blocks and Pillow writes the PNGs. Neither is
-a dependency of this project -- both are offline generation-time tools, never imported from
-``src/`` or ``sidecar/``, and no part of either is in the output -- so both come off
-``--pyooz-path``, the same argument and the same posture as ``tools/gen_map_image.py``::
+What opens the container
+------------------------
+``pyooz`` opens the container's Oodle blocks and Pillow writes the PNGs. Both are the
+project's ``gen`` extra -- generation-time tools, imported at module scope by nothing here
+and by nothing under ``src/`` -- and both are asked for by name when a generator runs, the
+same posture as ``tools/gen_map_image.py``::
 
-    uv venv <tmp>/renderenv
-    uv pip install --python <tmp>/renderenv pyooz pillow
-    uv run python tools/gen_map_renders.py --pyooz-path <tmp>/renderenv/Lib/site-packages
+    uv run --extra gen python tools/gen_map_renders.py
 
-numpy and scipy ARE dependencies of this project and are imported at the top of this file,
-before ``--pyooz-path`` touches ``sys.path``, so a side venv that happened to carry its own
-numpy cannot win the import and leave scipy compiled against the other one.
+numpy and scipy are dependencies of this project outright and are imported at the top of
+this file.
 
 Licence
 -------
@@ -112,7 +109,6 @@ committed, uploaded or redistributed, and the server serves it to localhost only
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
 import json
 import struct
@@ -121,18 +117,19 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Imported before --pyooz-path touches sys.path: see the module docstring.
 import numpy as np
 from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.domain.spatial import heightfield as hf
+from tools._common import base_parser, require_gen
 
 
 def load_pyramid_cutter():
-    """``tools/gen_map_image.py``, imported by path -- ``tools/`` is not a package.
+    """``tools/gen_map_image.py``, imported by path rather than by name.
 
     The pyramid layout, the staging rename and the level arithmetic all live there already.
     A second copy of any of them is a second thing that can disagree with the endpoint that
@@ -150,9 +147,6 @@ def load_pyramid_cutter():
 
 
 gmi = load_pyramid_cutter()
-
-#: Where Steam puts the game. Overridable; the biome texture is the only thing read from it.
-DEFAULT_GAME = gmi.DEFAULT_GAME
 
 #: The corners every layer is drawn on: the in-game map square, taken from the tool that
 #: measured it rather than typed again, so the three pyramids cannot drift apart.
@@ -407,37 +401,21 @@ BAND_ROWS = 256
 BAND_HALO = 4
 
 
-class MissingImaging(RuntimeError):
-    """No Pillow: a setup problem, not a bug."""
-
-
 class MissingField(RuntimeError):
     """No heightfield. The one input this file cannot invent, and it says who writes it."""
 
 
-def load_imaging(extra_path: Path | None):
-    """Pillow, out of the same throwaway venv as ``ooz``. Same posture as next door."""
-    if extra_path is not None:
-        sys.path.insert(0, str(extra_path))
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise MissingImaging(
-            "no Pillow importable, so the renders cannot be written. This is deliberate: it "
-            "is an offline tool here, never a dependency of this project. Do:\n"
-            "    uv venv <tmp>/renderenv\n"
-            "    uv pip install --python <tmp>/renderenv pyooz pillow\n"
-            "    uv run python tools/gen_map_renders.py "
-            "--pyooz-path <tmp>/renderenv/Lib/site-packages"
-        ) from exc
-    Image.MAX_IMAGE_PIXELS = None
-    try:
-        from importlib.metadata import version
+def load_imaging():
+    """Pillow, once ``require_gen`` has shown it is there. Same posture as next door.
 
-        pillow = version("pillow")
-    except Exception:
-        pillow = "unknown"
-    return Image, pillow
+    The size limit goes off because Pillow's default guard is a decompression-bomb rule
+    for images off the internet, and every image here is one this repository's own tools
+    cut from the reader's own game -- an 8192 px sheet is the point, not an attack.
+    """
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    return Image
 
 
 # --------------------------------------------------------------------------------------
@@ -1169,22 +1147,7 @@ def install_layer(sheet_rgb, image_mod, out_dir: Path, layer: str) -> tuple[dict
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` and Pillow -- a throwaway venv's "
-            "site-packages. See the module docstring for the recipe"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "--field",
         type=Path,
@@ -1221,11 +1184,8 @@ def main() -> int:
 
     layers = tuple(dict.fromkeys(args.layer)) if args.layer else LAYERS
 
-    try:
-        image_mod, pillow_version = load_imaging(args.pyooz_path)
-    except MissingImaging as exc:
-        print(exc)
-        return 2
+    pillow_version = require_gen("PIL.Image")["pillow"]
+    image_mod = load_imaging()
 
     field = hf.load_field(args.field)
     if field is None:
@@ -1233,8 +1193,7 @@ def main() -> int:
             f"no heightfield at {args.field}. That field is the one input this file cannot "
             "invent -- every pixel of both layers is a height off it -- so there is nothing "
             "to draw. Write it first:\n"
-            "    uv run python tools/gen_world_heightmap.py --pyooz-path <venv>/Lib/"
-            "site-packages\n"
+            "    uv run --extra gen python tools/gen_world_heightmap.py\n"
             "It reads your own installed game and writes to the same gitignored directory."
         )
         return 4
@@ -1270,12 +1229,10 @@ def main() -> int:
     # ---- the biome raster ------------------------------------------------------------
     biome = None
     if "satellite" in layers:
+        pyooz_version = require_gen("ooz")["pyooz"]
+        import ooz
+
         gwc = gmi.load_container_reader()
-        try:
-            ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-        except gwc.MissingOodle as exc:
-            print(exc)
-            return 2
         paks = args.game / "FactoryGame" / "Content" / "Paks"
         if not (paks / "FactoryGame-Windows.utoc").exists():
             print(f"no FactoryGame-Windows.utoc under {paks}")

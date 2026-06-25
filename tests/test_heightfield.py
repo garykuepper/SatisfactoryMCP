@@ -92,7 +92,7 @@ def build_field(tmp_path: Path, *, water: bool = True) -> Path:
 
 
 def gen_module():
-    """``tools/gen_world_heightmap.py``, imported by path -- ``tools/`` is not a package."""
+    """``tools/gen_world_heightmap.py``, imported by path rather than by name."""
     path = Path(__file__).resolve().parents[1] / "tools" / "gen_world_heightmap.py"
     spec = importlib.util.spec_from_file_location("gen_world_heightmap", path)
     module = importlib.util.module_from_spec(spec)

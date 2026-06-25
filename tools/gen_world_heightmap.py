@@ -1,6 +1,6 @@
 """Cut a real 1 m heightmap of this world out of the installed game.
 
-    uv run python tools/gen_world_heightmap.py --pyooz-path <dir containing ooz>
+    uv run --extra gen python tools/gen_world_heightmap.py
 
 ``src/satisfactory_mcp/domain/spatial/elevation.py`` used to open with "there is no
 heightmap", and for as long as the project's only terrain evidence was scattered resource
@@ -132,21 +132,15 @@ installed. ``--force`` says it anyway. The whole directory is written to
 from one build and one from another; an interrupted run leaves a staging directory nothing
 loads.
 
-**The side venv, and why there is one.** Oodle-compressed container blocks are opened by
-``pyooz``, which is GPL-3.0. It is not a dependency of this project: it is an offline
-generation-time tool, never imported from ``src/`` or ``sidecar/``, and no part of it is in
-the output. It comes off ``--pyooz-path``, which is a throwaway venv's site-packages -- the
-same argument and the same posture as ``tools/gen_map_image.py`` and
-``tools/gen_world_collectibles.py``. The recipe, run and proven::
+**What opens the container.** Oodle-compressed container blocks are opened by ``pyooz``,
+which is the project's ``gen`` extra: a generation-time tool, imported at module scope by
+nothing here and by nothing under ``src/``, and asked for by name when a generator runs --
+the same posture as ``tools/gen_map_image.py`` and ``tools/gen_world_collectibles.py``::
 
-    uv venv <tmp>/hmapvenv
-    uv pip install --python <tmp>/hmapvenv pyooz
-    uv run python tools/gen_world_heightmap.py --pyooz-path <tmp>/hmapvenv/Lib/site-packages
+    uv run --extra gen python tools/gen_world_heightmap.py
 
-numpy and scipy, unlike pyooz, ARE dependencies of this project, so they come from the
-environment ``uv run`` provides -- and they are imported at the top of this file, before
-``--pyooz-path`` is ever put on ``sys.path``, so a side venv that happened to carry its own
-numpy cannot win the import and leave scipy compiled against the other one.
+numpy and scipy, unlike pyooz, are dependencies of this project outright and are imported
+at the top of this file.
 
 **Licence.** Everything this writes is derived from Coffee Stain's cooked assets, read out
 of the reader's own installed copy of the game and left in a gitignored directory. Nothing
@@ -155,7 +149,6 @@ here is committed, uploaded or redistributed, and the server serves it to localh
 
 from __future__ import annotations
 
-import argparse
 import json
 import shutil
 import struct
@@ -164,17 +157,15 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Imported before --pyooz-path touches sys.path: see the module docstring.
 import numpy as np
 from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.domain.spatial import heightfield as hf
-
-#: Where Steam puts the game. Overridable; the container is the only thing read from it.
-DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")
+from tools._common import base_parser, require_gen
 
 #: Which packages are swept. Everything terrain lives under one world.
 LEVEL_DIR = "/GameLevel01/"
@@ -1484,22 +1475,7 @@ def install(out_dir: Path, payload: dict[str, bytes]) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` -- a throwaway venv's site-packages. "
-            "See the module docstring for the recipe"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "-o",
         "--out-dir",
@@ -1515,12 +1491,10 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="no per-stage progress lines")
     args = parser.parse_args()
 
+    pyooz_version = require_gen("ooz")["pyooz"]
+    import ooz
+
     gwc = load_container_reader()
-    try:
-        ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-    except gwc.MissingOodle as exc:
-        print(exc)
-        return 2
 
     build_pin, build_raw = read_game_build(args.game)
     print(f"installed build: {build_pin}")

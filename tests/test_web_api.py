@@ -821,7 +821,7 @@ def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():
 
 
 def _gen_map_renders():
-    """``tools/gen_map_renders.py``, imported by path -- ``tools/`` is not a package."""
+    """``tools/gen_map_renders.py``, imported by path rather than by name."""
     import importlib.util
 
     path = Path(__file__).resolve().parents[1] / "tools" / "gen_map_renders.py"
@@ -834,9 +834,10 @@ def _gen_map_renders():
 class _FakeSheet:
     """The three things ``cut_pyramid`` asks of a Pillow image, and nothing else.
 
-    Pillow is the generator's dependency, deliberately not this project's, so the cutting
-    is exercised against a stand-in: what is under test here is the tree that comes out --
-    the levels, the names, the count -- not anybody's Lanczos filter.
+    Pillow is the generators' dependency -- the optional ``gen`` extra -- and this suite
+    runs whether or not it is installed, so the cutting is exercised against a stand-in:
+    what is under test here is the tree that comes out -- the levels, the names, the
+    count -- not anybody's Lanczos filter.
     """
 
     def __init__(self, width: int):
@@ -891,7 +892,7 @@ def test_the_pyramid_is_renamed_into_place_so_a_reader_never_meets_half_of_one(t
 
 
 def _gen_map_image():
-    """``tools/gen_map_image.py``, imported by path -- ``tools/`` is not a package."""
+    """``tools/gen_map_image.py``, imported by path rather than by name."""
     import importlib.util
 
     path = Path(__file__).resolve().parents[1] / "tools" / "gen_map_image.py"

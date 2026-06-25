@@ -1,6 +1,6 @@
 """Generate data/world_collectibles.json from the game's own map assets plus the saves.
 
-    uv run python tools/gen_world_collectibles.py --pyooz-path <dir containing ooz>
+    uv run --extra gen python tools/gen_world_collectibles.py <saves dir>
 
 Power slugs, somersloops, Mercer spheres, crashed drop pods and the loot caches strewn
 around the crash sites are placed by the map, not by the player, so a save cannot record
@@ -130,12 +130,12 @@ face. ``z`` is in every row; height above local ground is not, because it invert
 ``_meta.not_derived``).
 
 **Licence.** The coordinates here are facts about Coffee Stain's map, read from the
-installed game. Oodle-compressed blocks are opened by ``pyooz``, which is GPL-3.0 and is
-used strictly as an offline generation-time tool: it is not a dependency of this project,
-is never imported from ``src/`` or ``sidecar/``, and no part of it is in the output. Install
-it into a throwaway venv and point ``--pyooz-path`` at that venv's ``site-packages``. With
-no ``ooz`` importable this script says so and exits rather than being a hard dependency.
-No third-party world table contributed to this file, in any form.
+installed game. No third-party world table contributed to this file, in any form.
+
+**What opens the container.** Oodle-compressed blocks are opened by ``pyooz``, which is
+the project's ``gen`` extra -- a generation-time tool, imported at module scope by nothing
+here, and asked for by name when a generator runs: ``uv run --extra gen``. With no ``ooz``
+importable this script says which line installs it and exits.
 
 **Excluded on purpose**, each for a measured reason and each with the map's own count so a
 reader can see the whole accounting -- see ``_meta.excluded``. Every actor class the map
@@ -146,7 +146,6 @@ run prints so a class cannot go missing without the total saying so.
 
 from __future__ import annotations
 
-import argparse
 import collections
 import itertools
 import json
@@ -170,9 +169,9 @@ from pioneersav import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-#: Where Steam puts the game. Overridable; the container is the only thing read from it.
-DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")
+from tools._common import base_parser, require_gen
 
 #: Cooked map packages live under this prefix inside the container. That this prefix is the
 #: whole world used to be asserted here; it is now measured instead. Every other ``.umap``
@@ -435,10 +434,6 @@ _MASK62 = (1 << 62) - 1
 # --------------------------------------------------------------------------------------
 # The container: a read-only UE5 IoStore reader, enough of one to get .umap bytes out.
 # --------------------------------------------------------------------------------------
-
-
-class MissingOodle(RuntimeError):
-    """Raised when no ``ooz`` module is importable, which is a setup problem, not a bug."""
 
 
 class _Cursor:
@@ -3419,36 +3414,6 @@ def build(
 # --------------------------------------------------------------------------------------
 
 
-def load_oodle(extra_path: Path | None) -> tuple[object, str]:
-    """Import ``ooz``, or explain how to get one and give up.
-
-    pyooz is GPL-3.0 and must never become a dependency of this project, so it is not
-    imported from the project environment: point ``--pyooz-path`` at a throwaway venv's
-    site-packages, or run this script with that venv's interpreter.
-    """
-    if extra_path is not None:
-        sys.path.insert(0, str(extra_path))
-    try:
-        import ooz
-    except ImportError as exc:
-        raise MissingOodle(
-            "no `ooz` module importable, so the map's Oodle-compressed packages cannot be "
-            "opened. This is deliberate: pyooz is GPL-3.0 and is an offline tool here, "
-            "never a dependency of this project. Do:\n"
-            "    python -m venv <tmp>/oovenv\n"
-            "    <tmp>/oovenv/Scripts/pip install pyooz\n"
-            "    uv run python tools/gen_world_collectibles.py "
-            "--pyooz-path <tmp>/oovenv/Lib/site-packages"
-        ) from exc
-    try:
-        from importlib.metadata import version
-
-        found = version("pyooz")
-    except Exception:
-        found = "unknown"
-    return ooz, found
-
-
 def read_game_build(game: Path) -> str | None:
     """The engine's own build string, out of the shipping executable's version resource.
 
@@ -3468,25 +3433,13 @@ def read_game_build(game: Path) -> str | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "saves",
         nargs="?",
         default=Path.home() / "AppData/Local/FactoryGame/Saved/SaveGames",
         type=Path,
         help="directory of .sav files; a per-account subdirectory is searched too",
-    )
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help="directory holding an importable `ooz` -- a throwaway venv's site-packages",
     )
     parser.add_argument(
         "-o",
@@ -3497,11 +3450,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    try:
-        ooz, pyooz_version = load_oodle(args.pyooz_path)
-    except MissingOodle as exc:
-        print(exc)
-        return 2
+    pyooz_version = require_gen("ooz")["pyooz"]
+    import ooz
 
     paks = args.game / "FactoryGame" / "Content" / "Paks"
     if not (paks / "FactoryGame-Windows.utoc").exists():
