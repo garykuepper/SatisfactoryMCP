@@ -27,12 +27,14 @@ survive that; the repository does not carry someone's account number.
 
 from __future__ import annotations
 
+import math
+import os
 import struct
 from pathlib import Path
 
 import pytest
 
-from pioneersav import ParsedObject, ParseError, Reader, read_trailer
+from pioneersav import ParsedObject, ParseError, Reader, read_full_save, read_trailer
 from pioneersav.trailers import (
     CIRCUIT_SUBSYSTEM,
     CONVEYOR_CHAIN,
@@ -253,3 +255,132 @@ def test_a_player_id_that_lies_about_its_length_is_refused(blobs):
     broken[6:10] = struct.pack("<i", 64)
     with pytest.raises(ParseError, match="player id declares 64 bytes"):
         read_trailer(cls, bytes(broken), 0, len(broken))
+
+
+# ---------------------------------------------- what the two tangent vectors actually mean
+
+
+def _saves_root() -> Path:
+    """Where the player's saves are, or a skip. Same discovery as ``test_savparse_parity``."""
+    env = os.environ.get("SATISFACTORY_SAVES")
+    candidates = [Path(env)] if env else []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "FactoryGame" / "Saved" / "SaveGames")
+    for root in candidates:
+        if root.is_dir():
+            return root
+    pytest.skip("no save directory on this machine")
+    raise AssertionError("unreachable")
+
+
+def _hermite_length(points, steps=64):
+    """Arc length of the cubic Hermite curve through ``[location, arrive, leave]`` triples."""
+    total = 0.0
+    for i in range(len(points) - 1):
+        p0, m0 = points[i][0], points[i][2]  # leave tangent of the point behind
+        p1, m1 = points[i + 1][0], points[i + 1][1]  # arrive tangent of the point ahead
+        prev = p0
+        for s in range(1, steps + 1):
+            t = s / steps
+            t2, t3 = t * t, t * t * t
+            cur = [
+                (2 * t3 - 3 * t2 + 1) * p0[k]
+                + (t3 - 2 * t2 + t) * m0[k]
+                + (-2 * t3 + 3 * t2) * p1[k]
+                + (t3 - t2) * m1[k]
+                for k in range(3)
+            ]
+            total += math.dist(prev, cur)
+            prev = cur
+    return total
+
+
+def _chord_length(points):
+    return sum(math.dist(points[i][0], points[i + 1][0]) for i in range(len(points) - 1))
+
+
+def test_the_two_tangents_are_the_hermite_tangents_and_the_save_says_so(chains):
+    """What the second and third vector of a spline point MEAN, checked against arc length.
+
+    The trailer stores three vectors per point and the projection read only the first for two
+    schema versions, drawing every belt as the chords between its corners. Calling the other
+    two "the arrive and leave tangents of a cubic Hermite" is a claim, and the save settles it
+    without being asked: a segment separately records where it starts and ends **in centimetres
+    along the chain**, so ``end - start`` minus the spline-less part is that segment's true arc
+    length -- a number written by the game, derived from nothing here.
+
+    Reconstruct the segment as a Hermite curve through these tangents, integrate, and compare.
+    On the two committed chains this is a weak check by construction -- both are straight, so
+    the chord agrees too -- and it still pins the pairing and the basis, because getting either
+    wrong (swapping arrive for leave, or treating the tangents as control POINTS in a Bezier
+    sense) changes the length even on a straight run. The bends are checked over the whole save
+    folder below, which is where the chord stops agreeing.
+    """
+    for _f, _l, segments, _c, _i in chains:
+        for _owner, _belt, points, no_spline, start, end, *_rest in segments:
+            declared = (end - start) - no_spline
+            assert _hermite_length(points) == pytest.approx(declared, abs=1.0)
+
+
+@pytest.mark.integration
+def test_the_hermite_curve_is_the_length_the_save_declares_and_the_chords_are_not():
+    """The measurement schema 15 rests on, over every chain on the machine.
+
+    The committed fixture holds only straight segments, so the discriminating half of the check
+    -- that the curve is right *where the polyline is wrong* -- needs real saves. On the
+    reference world's 3,085 belt segments the Hermite reconstruction lands within 1 cm of the
+    declared arc length on 3,079 and is never out by more than 2.5 cm, while the chord polyline
+    manages 2,336, is out by 46.8 cm at the 95th percentile and by 16.4 m at its worst. Over the
+    848 segments that actually bend the split is 843 against 208.
+
+    Asserted as a comparison rather than as those totals: the numbers move every time the
+    player builds, and a test that pinned them would fail for the wrong reason. What cannot
+    move is which of the two readings agrees with the game.
+    """
+    root = _saves_root()
+    chord_wrong = rescued = chords = curves = segments = 0
+    worst_curve = 0.0
+    for path in sorted(root.rglob("*.sav")):
+        try:
+            save = read_full_save(str(path))
+        except ParseError:
+            continue  # pre-1.0 saves and the dedicated-server file; not this test's business
+        for level in save.levels:
+            headers = getattr(level, "actorAndComponentObjectHeaders", None) or []
+            for header, obj in zip(headers, getattr(level, "objects", None) or []):
+                type_path = getattr(header, "typePath", "") or ""
+                if not type_path.startswith(CONVEYOR_CHAIN):
+                    continue
+                try:
+                    info = obj.actorSpecificInfo
+                except ParseError:
+                    continue
+                for seg in info[2]:
+                    points, no_spline, start, end = seg[2], seg[3], seg[4], seg[5]
+                    if len(points) < 2:
+                        continue
+                    declared = (end - start) - no_spline
+                    curve = abs(_hermite_length(points) - declared)
+                    chord = abs(_chord_length(points) - declared)
+                    segments += 1
+                    curves += curve < 1.0
+                    chords += chord < 1.0
+                    # The discriminating population: the segments where reading the points as
+                    # a polyline gives the wrong length. Every one of them has to be a segment
+                    # the curve gets right, or the tangents are not what this claims.
+                    if chord >= 1.0:
+                        chord_wrong += 1
+                        rescued += curve < 1.0
+                    worst_curve = max(worst_curve, curve)
+        if segments > 20_000:
+            break  # enough evidence; the whole folder is 83,389 segments and minutes of parsing
+    if not segments:
+        pytest.skip("no readable save with a conveyor chain on this machine")
+    assert curves > chords, (curves, chords, segments)
+    assert curves / segments > 0.99, f"only {curves} of {segments} segments reconstruct"
+    assert worst_curve < 25.0, f"a segment reconstructs {worst_curve:.1f} cm off its own length"
+    assert chord_wrong > 100, "no segment here is drawn wrongly as a polyline, so nothing is shown"
+    assert rescued / chord_wrong > 0.99, (
+        f"the curve rescues only {rescued} of the {chord_wrong} segments the chords get wrong"
+    )

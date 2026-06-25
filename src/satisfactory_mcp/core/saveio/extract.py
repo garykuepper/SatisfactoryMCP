@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-13 projection is this project's shape, versioned with this project's cache,
+the schema-15 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -62,7 +62,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 #: The four pipeline classes that carry an ``mSplineData`` -- the fluid pipes, Mk1 and Mk2,
 #: each in the ordinary and the ``NoIndicator`` variant a player gets when the flow indicator
@@ -118,6 +118,65 @@ _ATTACHMENT_HINTS = (
     "ConveyorAttachmentSplitter",
     "ConveyorAttachmentMerger",
 )
+
+#: The classes whose whole point is to hold items, keyed by the component they hold them in
+#: (``StorageInventory``, always). Schema 15; see `_storage`.
+#:
+#: **Listed, not matched on the word "Storage", and the reason is the same one PIPE_CLASSES
+#: gives.** Every splitter and merger in the world owns a component literally named
+#: ``StorageInventory`` -- 848 of them on the reference save, 741 of them non-empty -- and
+#: what sits in it is the one to three items physically inside the junction at the moment of
+#: the save. Those are items in TRANSIT on a belt, not stock; the belts layer already draws
+#: every one of those pieces; and a "what have I got in storage" answer that counted them
+#: would be reporting the conveyor network twice, once as a route and once as a warehouse.
+#:
+#: Machine buffers are excluded for the same kind of reason and are not lost: an
+#: ``InputInventory`` / ``OutputInventory`` / ``FuelInventory`` is already on its own
+#: machine's record under ``buffers``, where it means "this smelter is starved" rather than
+#: "the player owns this". So is the AWESOME Shop's ``ShopInventory``, which is a catalogue,
+#: and the Space Elevator's intake, which ``progression`` already reports against the phase.
+STORAGE_CLASSES = (
+    # The two the player means by "a container": 5 x 11 m either way, 24 and 48 slots.
+    "Build_StorageContainerMk1_C",
+    "Build_StorageContainerMk2_C",
+    # The Personal Storage Box, and the two boxes that come attached to something else --
+    # the HUB's built-in container and the Blueprint Designer's. All three hold stock the
+    # player put there, which is the only test that matters here.
+    "Build_StoragePlayer_C",
+    "Build_StorageIntegrated_C",
+    "Build_StorageBlueprint_C",
+    # The Dimensional Depot UPLOADER: the physical box that feeds the depot. Its contents are
+    # what is waiting to be uploaded and are not the same number as ``depot``, which is the
+    # FGCentralStorageSubsystem's central total -- 33 uploaders here against one subsystem.
+    "Build_CentralStorage_C",
+)
+
+#: The fluid half. A different record, not a different key: these hold a single fluid in an
+#: ``mFluidBox`` float rather than a stack list, and the fluid's identity is not on the actor
+#: at all -- it comes off the ``FGPipeNetwork`` that claims it, exactly as a pipe's does.
+#:
+#: ``mFluidBox`` is NOT a membership test, and that is why this is a list too: every pipe,
+#: junction, pump and valve in the world carries one, holding the few m3 standing in the line.
+#: A buffer is a class, not a property.
+FLUID_BUFFER_CLASSES = (
+    "Build_PipeStorageTank_C",  # Fluid Buffer, 400 m3
+    "Build_IndustrialTank_C",  # Industrial Fluid Buffer, 2,400 m3
+)
+
+#: How far a span's curve is allowed to leave the straight line between its two control
+#: points before the projection bothers to carry the tangents that bend it, in centimetres.
+#:
+#: One centimetre, and it is the control points' OWN resolution rather than a taste: they are
+#: rounded to whole centimetres by the lines above, so a curve that cannot depart its chord by
+#: a whole centimetre is describing something finer than the geometry it is drawn through
+#: records. Dropping it costs nothing that survived the rounding, and it drops a great deal --
+#: 5,011 of the reference save's 6,691 spans, which is what keeps schema 15 a 15% payload
+#: growth instead of a 54% one.
+TANGENT_EPS_CM = 1.0
+
+#: The peak of both cubic Hermite tangent basis functions on ``[0, 1]``: ``h10 = t^3-2t^2+t``
+#: at ``t = 1/3`` and ``h11 = t^3-t^2`` at ``t = 2/3`` are each 4/27 in magnitude. See `_bulge`.
+_HERMITE_PEAK = 4.0 / 27.0
 
 
 def truthy(value) -> bool:
@@ -314,6 +373,12 @@ def extract(path: str) -> dict:
         # run no recipe, draw no power and belong to the belt network, which is also the
         # layer that draws them.
         "attachments": [],
+        # The containers and fluid buffers, and what is in each one. Schema 15; see `_storage`.
+        # Their own list rather than a fourth kind of machine for the same reason
+        # ``attachments`` is: a container runs no recipe and draws no power, and what it IS is
+        # its contents. ``inventories["storage"]`` next door is the same stacks summed over the
+        # whole world, which answers "have I got enough steel" and cannot answer "where is it".
+        "storage": [],
         "pipe_networks": [],
         "depot": {},
         # Split by owner: lumping machine buffers in with carried stock overstates
@@ -340,6 +405,13 @@ def extract(path: str) -> dict:
     #: actor can be written after the pipes it owns -- see `_pipes`.
     pipe_actors: list[tuple] = []
     pipe_nets: list[tuple] = []
+    #: (class, instanceName, pos, yaw, mFluidBox) per container and fluid buffer, and
+    #: owner instanceName -> (totals, slotCount) for every ``StorageInventory`` in the world.
+    #: Held rather than joined in the walk for the two reasons the walk cannot do it: a
+    #: container's inventory is a COMPONENT, written after the actor that owns it, and a fluid
+    #: buffer's fluid comes off its pipe NETWORK, which may be written after either.
+    storage_actors: list[tuple] = []
+    held: dict[str, tuple] = {}
 
     # --- connectivity interning -------------------------------------------
     actor_ix: dict[str, int] = {}
@@ -392,6 +464,18 @@ def extract(path: str) -> dict:
                     "items": totals,
                     "slots": len(p["mInventoryStacks"] or []),
                 }
+            elif role == "StorageInventory":
+                # Every one of them, including the 848 splitters and mergers that also own a
+                # component by this name: filtering here would mean knowing the owner's class,
+                # which a component header does not carry. `_storage` looks up only the owners
+                # it has an actor for, so the splitters simply go unclaimed -- see
+                # STORAGE_CLASSES for why they must.
+                totals = {}
+                _accumulate_inventory(p["mInventoryStacks"], totals)
+                held[str(instance).rpartition(".")[0]] = (
+                    totals,
+                    len(p["mInventoryStacks"] or []),
+                )
             elif role == "InventoryPotential":
                 # The overclock slot inventory: what is physically plugged into the
                 # building. This is the ONLY record of a committed Power Shard, and it
@@ -562,6 +646,19 @@ def extract(path: str) -> dict:
                 (cls, instance, getattr(header, "position", None), p.get("mSplineData"))
             )
 
+        # Held, not `continue`d past, for the reason the pipes above are: a container is a
+        # Build_ actor and still owes `building_counts` its tally.
+        if cls in STORAGE_CLASSES or cls in FLUID_BUFFER_CLASSES:
+            storage_actors.append(
+                (
+                    cls,
+                    instance,
+                    pos_of(header),
+                    yaw_of(getattr(header, "rotation", None)),
+                    p.get("mFluidBox"),
+                )
+            )
+
         record = {
             "cls": cls,
             "instance": instance,
@@ -639,6 +736,7 @@ def extract(path: str) -> dict:
     # list was snapshotted three lines up, so interning a new name here would mint an
     # index past the end of it. A pipe with no connection at all gets -1 instead.
     out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix)
+    out["storage"] = _storage(storage_actors, held, pipe_nets)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
@@ -925,6 +1023,113 @@ def _structures(obj) -> dict:
     return {"classes": classes, "instances": instances}
 
 
+def _length(x: float, y: float, z: float) -> float:
+    """Length of a 3-vector, in whatever unit its components are.
+
+    Spelled out rather than reached for as the stdlib's point-to-point distance, which
+    `test_geo_centroid` reserves package-wide for the one module that works in centimetres
+    throughout: the difference between a 2D and a 3D distance is a modelling decision that has
+    to be named rather than implied by how long a tuple happens to be. Here there is no
+    decision to make and none to hide -- a spline tangent has three components and all three of
+    them are the tangent -- so this takes three scalars and says so, rather than `_bulge`
+    handing 3-tuples to something that would silently accept 2-tuples too.
+    """
+    return math.sqrt(x * x + y * y + z * z)
+
+
+def _bulge(p0: list, m0: list, p1: list, m1: list) -> float:
+    """An UPPER BOUND, in centimetres, on how far a cubic Hermite span leaves its own chord.
+
+    The whole of `_spans`' decision, and it is a bound rather than a measurement on purpose:
+    it may only ever OVERSTATE the curve, because overstating costs bytes and understating
+    would silently flatten a bend that the save does record.
+
+    A Hermite span is ``Q(t) = h00 p0 + h10 m0 + h01 p1 + h11 m1``. Split both tangents into
+    the part along the chord ``v = p1 - p0`` and the part across it, and the two halves can be
+    bounded separately, because the curve's distance from the chord SEGMENT is at most its
+    sideways offset plus however far it runs off either end:
+
+    * **Sideways** is ``h10 m0_perp + h11 m1_perp``, and both basis functions peak at 4/27, so
+      it never exceeds ``(4/27)(|m0_perp| + |m1_perp|)``. A bound, not an equality -- the two
+      peak at different ``t`` (1/3 and 2/3) and partly cancel.
+    * **Along** is the cubic ``u(t) = (s0+s1-2) t^3 + (3-2 s0-s1) t^2 + s0 t``, where ``s`` is
+      a tangent's chord-relative length, and it is solved EXACTLY: ``u`` runs 0 to 1, and any
+      excursion outside that is a real overshoot past an endpoint. Exactly, because bounding
+      this one the same crude way costs the whole optimisation -- the game's commonest tangent
+      is half the chord, for which the loose bound reads 7% of the chord (29 cm on a 4 m belt)
+      while the true overshoot is zero. Two roots of a quadratic buy back 5,011 spans.
+
+    **Verified against sampling on the reference save.** Over all 6,691 belt and pipe spans,
+    against the maximum distance from a 512-point tessellation to the chord segment: the bound
+    is never smaller than the sampled truth (that is the property that matters) and never more
+    than 3.08x it. It calls 5,011 spans flat where an exact test would call 5,147 -- 136 spans
+    keep tangents they did not need, which is the side to err on.
+
+    **And it is why this is affordable at all.** 7.5 ms over those 6,691 spans, against 485 ms
+    to sample them and a 2.19 s parse. Sampling would have made curve fidelity cost more than
+    reading the belt trailers does.
+    """
+    vx, vy, vz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+    n2 = vx * vx + vy * vy + vz * vz
+    if n2 <= 0:
+        # Coincident control points: there is no chord to be along, so all of both tangents
+        # is sideways. 116 of the reference save's spans are this, all of them the zero-length
+        # joint where a conveyor lift meets its belt.
+        return _HERMITE_PEAK * (_length(*m0) + _length(*m1))
+    s0 = (m0[0] * vx + m0[1] * vy + m0[2] * vz) / n2
+    s1 = (m1[0] * vx + m1[1] * vy + m1[2] * vz) / n2
+    across = _length(m0[0] - s0 * vx, m0[1] - s0 * vy, m0[2] - s0 * vz) + _length(
+        m1[0] - s1 * vx, m1[1] - s1 * vy, m1[2] - s1 * vz
+    )
+
+    a, b, c = s0 + s1 - 2.0, 3.0 - 2.0 * s0 - s1, s0
+    low, high = 0.0, 1.0
+    if a:
+        disc = 4.0 * b * b - 12.0 * a * c
+        roots = (
+            ((-2.0 * b + math.sqrt(disc)) / (6.0 * a), (-2.0 * b - math.sqrt(disc)) / (6.0 * a))
+            if disc >= 0.0
+            else ()
+        )
+    else:
+        roots = (-c / (2.0 * b),) if b else ()
+    for t in roots:
+        if 0.0 < t < 1.0:
+            u = ((a * t + b) * t + c) * t
+            low, high = min(low, u), max(high, u)
+    beyond = (max(0.0, -low) + max(0.0, high - 1.0)) * _length(vx, vy, vz)
+    return _HERMITE_PEAK * across + beyond
+
+
+def _spans(points: list, tangents: list) -> list:
+    """The curve column for one route: ``[[...]]`` to append, or ``[]`` when it is all straight.
+
+    Returned as a list to splat onto the row rather than as a value, because a route with no
+    bend in it gets **no column at all** -- 2,198 of the reference save's 3,085 belt pieces and
+    222 of its 503 pipes. That is the shape that keeps the addition free for everything that
+    was already right: a straight run's row is byte-identical to the one schema 14 emitted.
+
+    Within a route that does bend, one entry per SPAN rather than per point, because a span is
+    the unit a curve is drawn in -- it needs the leave tangent of the point behind it and the
+    arrive tangent of the point ahead, and nothing needs the arrive tangent of the first point
+    or the leave tangent of the last. (Which is also the only place the save stores a bare unit
+    vector instead of a real tangent, so dropping them removes the one shape a consumer would
+    have had to special-case.)
+
+    A flat span stores ``0``, not its tangents. See `_bulge` for what "flat" is measured as.
+    """
+    spans: list = []
+    curved = False
+    for i in range(len(points) - 1):
+        leave, arrive = tangents[i][1], tangents[i + 1][0]
+        if _bulge(points[i], leave, points[i + 1], arrive) < TANGENT_EPS_CM:
+            spans.append(0)
+        else:
+            spans.append(leave + arrive)
+            curved = True
+    return [spans] if curved else []
+
+
 def _belts(chains: list) -> dict:
     """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``.
 
@@ -933,7 +1138,8 @@ def _belts(chains: list) -> dict:
     property: it lives in ``FGConveyorChainActor``'s trailing bytes, which
     ``pioneersav.trailers`` decodes and which nothing read until schema 12.
 
-    Rows are ``[chainIndex, classIndex, [[x, y, z], ...]]``:
+    Rows are ``[chainIndex, classIndex, [[x, y, z], ...]]``, and ``[..., tangents]`` where the
+    run bends -- see `_spans` for the fourth column and the note below for what it fixes:
 
     * **chainIndex** groups segments into the run the game itself groups them into -- one
       chain is one continuous flow of items, 1,909 chains over 3,085 belt pieces on the
@@ -947,6 +1153,24 @@ def _belts(chains: list) -> dict:
       ``_structures`` uses, and there is nothing to thin: a straight belt is
       2 points and the reference save's 3,085 segments carry 8,292 points between them,
       2.7 apiece. They are already the bends and nothing else.
+
+    **The points are the bends, and until schema 15 they were ALSO the whole curve, which is
+    why a curved belt drew as a fan of chords.** A chain's trailer stores three vectors per
+    point, not one -- ``pioneersav.trailers`` has decoded ``location, arrive tangent, leave
+    tangent`` since it could read a chain at all -- and this function read ``point[0]`` and
+    threw the other two away. So a bend the player laid as a smooth arc arrived as its four or
+    six corners joined by straight lines.
+
+    **That the tangents mean what UE says they mean is measured, not assumed, and the check is
+    a good one because the save states the answer independently.** Every chain segment records
+    where it starts and ends in centimetres ALONG THE CHAIN, so the difference is that
+    segment's true arc length -- a number the geometry did not write. Reconstructing each
+    segment as a cubic Hermite through these tangents and integrating: **3,079 of 3,085
+    segments land within 1 cm of the length the save declares**, worst case 2.4 cm. The chord
+    polyline the projection used to emit manages 2,336, is out by 46.8 cm at the 95th
+    percentile and by **16.4 m** at its worst. On the 848 segments that actually bend the split
+    is 843 against 208. Two independent claims -- the Hermite basis, and which of the three
+    stored vectors is the arrive and which the leave -- both fall out of one measurement.
 
     **Two facts about the source that this function is entirely about, both measured.**
 
@@ -995,15 +1219,30 @@ def _belts(chains: list) -> dict:
             if not cls:
                 continue
             points = []
+            tangents = []
             for point in seg[2] if isinstance(seg[2], list) else ():
                 try:
-                    at = point[0]
+                    at, arrive, leave = point[0], point[1], point[2]
                     # Rounded, not truncated as `_structures` does. That field's truncation
                     # is in the banked parity digests and cannot move now; a belt point is
                     # new, and rounding is both unbiased and exactly commutative with the
                     # whole-centimetre translation above, which is what lets a test check
                     # the frame correction by moving the chain and subtracting.
-                    points.append([round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)])
+                    # Every one of the three read and rounded BEFORE anything is appended, so
+                    # that a point the decoder cannot make sense of costs its whole triple.
+                    # Appending as they are computed is the bug this shape exists to prevent:
+                    # a tangent that raises after its point is already stored leaves the two
+                    # lists one apart, and every span after the fault then bends around the
+                    # wrong control point -- which still draws a curve, just not this one.
+                    #
+                    # The tangents get the rounding and NOT the translation. They are
+                    # displacement vectors, so moving the chain's origin moves the points they
+                    # hang off and leaves them alone -- the same reason `_pipes` and this
+                    # function both translate without rotating.
+                    at = [round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)]
+                    pair = ([round(v) for v in arrive], [round(v) for v in leave])
+                    points.append(at)
+                    tangents.append(pair)
                 except (TypeError, ValueError, IndexError):
                     continue
             # A single point is not a route. 2 is the commonest case by far -- a straight
@@ -1014,7 +1253,7 @@ def _belts(chains: list) -> dict:
             if ci is None:
                 ci = index[cls] = len(classes)
                 classes.append(cls)
-            rows.append([chain_ix, ci, points])
+            rows.append([chain_ix, ci, points, *_spans(points, tangents)])
         if rows:
             segments.extend(rows)
             chain_ix += 1
@@ -1051,12 +1290,19 @@ def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
 
     The other half of "draw what the player built". Belts came out of a trailer; a pipe is
     simpler and was in reach the whole time -- **the spline is a PROPERTY**, ``mSplineData``,
-    an array of structs whose ``Location`` is one control point. (Its ``ArriveTangent`` and
-    ``LeaveTangent`` are the curve's shape between the points and are dropped: the game
-    builds pipes out of straight runs and elbows, and the reference save's 503 pipes are 224
-    two-point straights and 195 six-point elbows.)
+    an array of structs whose ``Location`` is one control point.
 
-    Rows are ``[networkIndex, classIndex, [[x, y, z], ...], actorIndex]``:
+    **Its ``ArriveTangent`` and ``LeaveTangent`` used to be dropped here, on the grounds that
+    "the game builds pipes out of straight runs and elbows", and that was wrong.** It is true
+    that the reference save's 503 pipes are 224 two-point straights and 195 six-point elbows,
+    and false that an elbow's six points describe it: they are the corners of the elbow, and
+    the tangents are the curve through them. Measured on those 1,484 spans, the curve leaves
+    the chord by more than 10 cm on 166 of them and by up to 6.6 m -- so a six-point elbow drew
+    as a five-segment polygon cutting the corner it was built to round. Schema 15 carries them,
+    on the same terms the belts do; see `_spans` and `_bulge`.
+
+    Rows are ``[networkIndex, classIndex, [[x, y, z], ...], actorIndex]``, and
+    ``[..., tangents]`` where the pipe bends:
 
     * **networkIndex** points into ``networks``, ``[{"id": ..., "fluid": ...}, ...]`` -- the
       game's own ``FGPipeNetwork`` grouping, 19 of them here, and the reason this key can say
@@ -1137,10 +1383,19 @@ def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
         except (TypeError, ValueError):
             continue
         points = []
+        tangents = []
         for entry in spline:
-            at = struct_fields(entry).get("Location")
+            fields = struct_fields(entry)
+            at = fields.get("Location")
             try:
-                points.append([round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)])
+                # Computed in full before either list grows, and only the points translated --
+                # the same two rules `_belts` states, for the same two reasons.
+                at = [round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)]
+                arrive = fields.get("ArriveTangent") or (0, 0, 0)
+                leave = fields.get("LeaveTangent") or (0, 0, 0)
+                pair = ([round(v) for v in arrive], [round(v) for v in leave])
+                points.append(at)
+                tangents.append(pair)
             except (TypeError, ValueError, IndexError):
                 continue
         # A single point is not a route, the same bar `_belts` sets -- and unlike a belt
@@ -1158,10 +1413,83 @@ def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
                 ci,
                 points,
                 actor_ix.get(str(instance).rsplit(".", 1)[-1], -1),
+                *_spans(points, tangents),
             ]
         )
 
     return {"classes": classes, "networks": nets, "segments": segments}
+
+
+def _storage(actors: list, held: dict, networks: list) -> list:
+    """Every container and fluid buffer, where it stands, and what is inside it.
+
+    ``actors`` is ``[(class, instanceName, pos, yaw, mFluidBox), ...]``, ``held`` is
+    ``{ownerInstanceName: ({itemClass: count}, slotCount)}`` for every ``StorageInventory``
+    component in the world, and ``networks`` is `_pipes`' ``[(id, fluid, [member, ...]), ...]``.
+
+    **The projection could already say what the player owns and never where any of it was.**
+    ``inventories["storage"]`` has summed these same stacks since schema 11, which answers "have
+    I got enough steel to build that" and is exactly the wrong shape for "where did I put the
+    steel" -- a question a base with 105 containers over 7 km cannot be walked to answer.
+    Nothing else in the projection carried a container at all: they run no recipe, so they were
+    never machines; they draw no power, so they are not in the power graph; they are ordinary
+    actors, so they are not lightweight buildables either. A container was a number in
+    ``building_counts`` and nothing more.
+
+    Rows are one dict apiece, not an interned table, and that is a size argument rather than a
+    style one: there are 151 of these against 3,085 belt pieces, and the whole key is 26 KB.
+
+    Solids come from the owning actor's ``StorageInventory`` component, joined by instance
+    name. **Verified on real data rather than on the shape**: the reference world's fullest
+    containers read 12,000 Concrete, 9,500 Wire with 950 Copper Sheet beside it, 4,800 Iron
+    Plate, 4,800 Iron Rod -- all of them plausible multiples of a stack against the slot count
+    the same component reports (24 on a Mk1, 48 on a Mk2), which a mis-joined or double-counted
+    inventory would not be. 92 of the 118 solid containers hold something.
+
+    Fluids are the other record entirely. A buffer keeps one ``mFluidBox`` float of cubic
+    metres and does not name the fluid at all -- so the name comes off the ``FGPipeNetwork``
+    that claims the buffer, which is the same source and the same join a pipe's ``fluid`` uses,
+    and it is the game's own answer rather than an inference from what the buffer is plugged
+    into. All five buffers here are claimed: 1,730.6 and two smaller of Fuel, 379.1 of Fuel,
+    and one of Crude Oil. A buffer no network claims keeps its level and gets a null fluid, for
+    the reason `_pipes` gives: "drawn, contents unknown" beats "not drawn".
+
+    Sorted by class then instance so the key is stable between runs, which is what lets it be
+    diffed between two saves of one world -- the projection's own posture everywhere else.
+    """
+    fluid_of: dict[str, str | None] = {}
+    for _net_id, fluid, members in networks:
+        for member in members:
+            if member:
+                fluid_of[str(member)] = fluid
+
+    rows: list[dict] = []
+    for cls, instance, pos, yaw, fluid_box in sorted(actors, key=lambda a: (a[0], str(a[1]))):
+        row: dict = {"cls": cls, "instance": instance, "pos": pos, "yaw": yaw}
+        if cls in FLUID_BUFFER_CLASSES:
+            row["fluid"] = fluid_of.get(str(instance))
+            # Cubic metres, and NOT the litres ``inventories`` reports: a fluid stack in an
+            # inventory is stored 1000x, and this is a fluid box, which is not. Checked
+            # against the capacities the docs dump states for these two classes -- 400 and
+            # 2,400 m3 -- which every reading here is inside and none is inside at 1/1000th.
+            try:
+                row["stored_m3"] = round(float(fluid_box), 2)
+            except (TypeError, ValueError):
+                row["stored_m3"] = None
+        else:
+            totals, slots = held.get(str(instance), ({}, 0))
+            # Biggest first: a popup shows the top few and says how many it did not show, and
+            # the useful few are the big ones. Ties by class so the order is total.
+            row["items"] = [
+                [item, amount]
+                for item, amount in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+            ]
+            # The container's real slot count, straight off the component -- 24 on a Mk1, 48 on
+            # a Mk2. Read here rather than looked up per class because it is a fact about this
+            # container, and because the docs dump spells it as two numbers to multiply.
+            row["slots"] = slots
+        rows.append(row)
+    return rows
 
 
 def inventory_bucket(instance: str) -> str:

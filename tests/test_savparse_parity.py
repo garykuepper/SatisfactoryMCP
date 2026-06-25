@@ -21,7 +21,8 @@ on committed fixtures with no game install, and this one is the exception, becau
 projection is only meaningful against the save it came from.
 
 **Why the bank is not re-banked, ever.** The projection has since grown a placement yaw and a
-``belts`` key (schema 12) and a ``pipes`` key (schema 13). None of those fields existed while
+``belts`` key (schema 12), a ``pipes`` key (schema 13) and a ``storage`` key (schema 15). None
+of those fields existed while
 the oracle did, so it never had an opinion about them, and re-recording the bank against this
 parser would replace an independent measurement with this parser's own output -- the one thing
 that would make every test here vacuous. So the comparison runs on a projection FILTERED BACK
@@ -57,8 +58,9 @@ VOLATILE = {"path", "filename", "mtime_ns", "size"}
 #: the class of regression the bank exists to catch. Written out, adding to this list is a
 #: decision somebody has to make and a reviewer can see.
 POST_11_ADDITIONS = {
-    #: Whole new top-level keys: per-belt spline polylines (12), per-pipe ones (13), and the
-    #: splitters and mergers those belt runs pass through (13).
+    #: Whole new top-level keys: per-belt spline polylines (12), per-pipe ones (13), the
+    #: splitters and mergers those belt runs pass through (13), and the containers and fluid
+    #: buffers with their contents (15).
     #:
     #: Schema 14 added a FOURTH COLUMN to a pipe segment -- the index of its own actor in
     #: ``graph["actors"]``, which joins a drawn pipe to the connection graph -- and needs no
@@ -66,7 +68,15 @@ POST_11_ADDITIONS = {
     #: the change is confined inside ``pipes``, and ``pipes`` is already dropped whole. Had it
     #: widened a schema-11 row instead, it would have owed ``row_width`` an entry, exactly as
     #: ``structures`` does below.
-    "keys": ("belts", "pipes", "attachments"),
+    #:
+    #: **Schema 15's spline tangents are the same case, and it is worth saying so out loud
+    #: because they land in two keys rather than one.** A belt segment gained a fourth column
+    #: and a pipe segment a fifth -- the curve through the points either side of each span --
+    #: and both are inside ``belts`` and ``pipes``, which are dropped whole here. So the
+    #: tangents need no entry, and the reason is not "they are new" (everything in this list is
+    #: new) but "the key that carries them was already outside the oracle's scope". The
+    #: ``storage`` key beside them is a genuinely new top-level name and IS listed.
+    "keys": ("belts", "pipes", "attachments", "storage"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
     #: schema-11 number; leaving the current number here would report drift on every save on
@@ -181,8 +191,8 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [[0, 10, 20, 30]]},
         "warnings": [],
     }
-    thirteen = {
-        "schema_version": 13,
+    fifteen = {
+        "schema_version": 15,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -190,25 +200,41 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
             "classes": ["Build_Foundation_8x1_01_C"],
             "instances": [[0, 10, 20, 30, -20.0]],
         },
-        "belts": {"classes": ["Build_ConveyorBeltMk3_C"], "segments": [[0, 0, [[1, 2, 3]]]]},
+        # A curved belt, so the schema-15 tangent column is actually present and not just
+        # declared absent: a filter that only ever saw three-column rows would pass this test
+        # while dropping nothing.
+        "belts": {
+            "classes": ["Build_ConveyorBeltMk3_C"],
+            "segments": [[0, 0, [[1, 2, 3]]], [0, 0, [[1, 2, 3], [4, 5, 6]], [[7, 8, 9, 1, 2, 3]]]],
+        },
         "attachments": [
             {"cls": "Build_ConveyorAttachmentSplitter_C", "pos": [1.0, 2.0, 3.0], "yaw": 90.0}
         ],
         "pipes": {
             "classes": ["Build_Pipeline_C"],
             "networks": [{"id": 3, "fluid": "Desc_Water_C"}],
-            "segments": [[0, 0, [[1, 2, 3], [4, 5, 6]]]],
+            "segments": [[0, 0, [[1, 2, 3], [4, 5, 6]], 4, [[7, 8, 9, 1, 2, 3]]]],
         },
+        "storage": [
+            {
+                "cls": "Build_StorageContainerMk1_C",
+                "instance": "x.Build_StorageContainerMk1_C_1",
+                "pos": [1.0, 2.0, 3.0],
+                "yaw": 90.0,
+                "items": [["Desc_IronPlate_C", 4800]],
+                "slots": 24,
+            }
+        ],
         "warnings": [],
     }
-    filtered = as_schema_11(thirteen)
+    filtered = as_schema_11(fifteen)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(thirteen)
-    moved["machines"] = [{**thirteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(fifteen)
+    moved["machines"] = [{**fifteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
     )
@@ -234,7 +260,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             continue
         proj = _projection(path)
         assert "error" not in proj, (name, proj.get("detail"))
-        assert proj["schema_version"] == 14, (name, "unexpected schema for the filter")
+        assert proj["schema_version"] == 15, (name, "unexpected schema for the filter")
         proj = as_schema_11(proj)
         for key, want in entry.items():
             if key == "n_objects_value":

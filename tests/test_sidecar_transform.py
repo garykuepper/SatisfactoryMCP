@@ -1,10 +1,11 @@
-"""Schemas 12 and 13: the placement yaw, the belt splines, the pipe splines, and the splitters
-and mergers those belts pass through.
+"""Schemas 12 to 15: the placement yaw, the belt and pipe splines, the splitters and mergers
+those belts pass through, the CURVE through the spline points, and the containers.
 
-All four are geometry the parser already decoded and the projection threw away, and all four
-are here for the same reason -- a client could only draw the world axis-aligned, beltless and
-unplumbed, so an angled platform came out as a staircase and a factory came out as a scatter of
-rectangles.
+All of it is data the parser already decoded and the projection threw away, and all of it is
+here for the same reason -- a client could only draw the world axis-aligned, beltless,
+unplumbed, cornered and empty, so an angled platform came out as a staircase, a factory came out
+as a scatter of rectangles, a curved belt came out as a fan of chords, and 151 containers
+holding 52 kinds of thing came out as nothing at all.
 
 **What is actually worth testing about a coordinate.** That a number is present says nothing;
 the failure modes are all silent and all about convention. A yaw with the wrong sign, or read
@@ -26,14 +27,19 @@ from pathlib import Path
 
 import pytest
 
-from pioneersav import ParseError, Reader, read_trailer
+from pioneersav import ObjectReference, ParseError, Reader, read_trailer
 from pioneersav.trailers import CONVEYOR_CHAIN
 from satisfactory_mcp.core.saveio.extract import (
     _ATTACHMENT_HINTS,
+    FLUID_BUFFER_CLASSES,
     PIPE_CLASSES,
+    STORAGE_CLASSES,
+    TANGENT_EPS_CM,
     _belts,
+    _bulge,
     _conveyor_class,
     _pipes,
+    _storage,
     yaw_of,
 )
 
@@ -190,7 +196,13 @@ def test_a_rotation_that_is_not_one_costs_a_yaw_and_not_the_projection():
 
 
 def test_the_belts_key_is_interned_polylines_in_whole_centimetres(projection):
-    """The shape, field by field: ``[chainIndex, classIndex, [[x, y, z], ...]]``."""
+    """The shape, field by field: ``[chainIndex, classIndex, [[x, y, z], ...]]``.
+
+    Read POSITIONALLY, with a width guard, rather than destructured -- which is the posture
+    every consumer of these rows takes and the reason schema 15 could add a fourth column
+    without touching one of them. A row that bends carries its tangents there; a straight one
+    is three columns wide and identical to what schema 12 emitted.
+    """
     belts = projection["belts"]
     classes = belts["classes"]
     rows = belts["segments"]
@@ -198,7 +210,9 @@ def test_the_belts_key_is_interned_polylines_in_whole_centimetres(projection):
     assert rows, "the reference world has 3,085 belt pieces"
 
     seen_chains = set()
-    for chain, ci, points in rows:
+    for row in rows:
+        assert 3 <= len(row) <= 4, row[:2]
+        chain, ci, points = row[0], row[1], row[2]
         seen_chains.add(chain)
         assert 0 <= ci < len(classes)
         assert len(points) >= 2, "a polyline needs two points"
@@ -216,7 +230,7 @@ def test_belts_are_placed_in_the_world_and_not_in_the_chains_own_frame(projectio
     kilometre or more from the factory. Checking them against the foundations is what catches
     it: belts run over floor.
     """
-    points = [p for _, _, pts in projection["belts"]["segments"] for p in pts]
+    points = [p for row in projection["belts"]["segments"] for p in row[2]]
     rows = projection["structures"]["instances"]
     for axis in (0, 1, 2):
         lo = min(r[axis + 1] for r in rows) - 20_000
@@ -236,8 +250,8 @@ def test_belts_come_out_in_travel_order(projection):
     200/300/400 cm of offset range with no spline behind it.
     """
     by_chain: dict[int, list] = defaultdict(list)
-    for chain, ci, points in projection["belts"]["segments"]:
-        by_chain[chain].append(points)
+    for row in projection["belts"]["segments"]:
+        by_chain[row[0]].append(row[2])
 
     joins = [math.dist(a[-1], b[0]) for segs in by_chain.values() for a, b in pairwise(segs)]
     assert len(joins) > 1000
@@ -274,9 +288,9 @@ def test_belts_out_of_real_trailing_bytes(projection):
     out = _belts([([1000.0, 2000.0, 3000.0], Chain(info)) for info in chains])
     assert out["classes"] and out["segments"]
     assert {r[0] for r in out["segments"]} == set(range(len(chains)))
-    for chain, ci, points in out["segments"]:
-        assert out["classes"][ci].startswith("Build_Conveyor")
-        assert len(points) >= 2
+    for row in out["segments"]:
+        assert out["classes"][row[1]].startswith("Build_Conveyor")
+        assert len(row[2]) >= 2
 
     # The same records with the actor at the origin: every point moves by exactly the offset,
     # which is the whole of what the frame correction does.
@@ -415,7 +429,11 @@ def test_the_pipes_key_is_interned_polylines_in_whole_centimetres(projection):
     assert rows, "the reference world has 503 pipes"
     assert networks, "and 19 pipe networks"
 
-    for net, ci, points, actor in rows:
+    for row in rows:
+        # Positional with a width guard, like the belts next door: schema 15 puts the tangents
+        # in a fifth column on the pipes that bend, and a straight pipe still has four.
+        assert 4 <= len(row) <= 5, row[:2]
+        net, ci, points, actor = row[0], row[1], row[2], row[3]
         assert 0 <= ci < len(classes)
         assert -1 <= net < len(networks)
         assert len(points) >= 2, "a polyline needs two points"
@@ -438,7 +456,8 @@ def test_a_pipes_actor_index_names_that_very_pipe_in_the_connection_graph(projec
     classes = pipes["classes"]
     actors = projection["graph"]["actors"]
     unclaimed = 0
-    for _net, ci, _points, actor in pipes["segments"]:
+    for row in pipes["segments"]:
+        ci, actor = row[1], row[3]
         if actor < 0:
             unclaimed += 1  # a pipe connected to nothing at all: legal, and none here
             continue
@@ -476,7 +495,7 @@ def test_pipes_are_placed_in_the_world_and_not_in_the_actors_own_frame(projectio
     piled on the map origin, out at sea. Checking them against the foundations is what catches
     it, the same way the belts above are checked.
     """
-    points = [p for _, _, pts, _ in projection["pipes"]["segments"] for p in pts]
+    points = [p for row in projection["pipes"]["segments"] for p in row[2]]
     rows = projection["structures"]["instances"]
     for axis in (0, 1, 2):
         lo = min(r[axis + 1] for r in rows) - 20_000
@@ -492,8 +511,8 @@ def test_every_pipe_belongs_to_a_network_that_names_a_fluid(projection):
     rows = projection["pipes"]["segments"]
     assert all(n["fluid"] for n in networks), "a network with no fluid on this world"
     assert all(isinstance(n["id"], int) for n in networks)
-    assert all(net >= 0 for net, _, _, _ in rows), "every pipe here is claimed by a network"
-    fluids = {networks[net]["fluid"] for net, _, _, _ in rows}
+    assert all(r[0] >= 0 for r in rows), "every pipe here is claimed by a network"
+    fluids = {networks[r[0]]["fluid"] for r in rows}
     assert len(fluids) > 1 and all(f.startswith("Desc_") for f in fluids)
 
 
@@ -509,7 +528,7 @@ def test_no_pipe_is_vertical_so_none_needs_a_glyph(projection):
             (min(p[0] for p in pts), min(p[1] for p in pts)),
             (max(p[0] for p in pts), max(p[1] for p in pts)),
         )
-        for _, _, pts, _ in projection["pipes"]["segments"]
+        for pts in (row[2] for row in projection["pipes"]["segments"])
     ]
     assert min(spans) > 10.0, "a pipe with no horizontal extent would draw as nothing"
 
@@ -602,3 +621,371 @@ def test_a_pipe_of_nothing_recognisable_is_dropped_rather_than_raising():
     assert _pipes([], [(None, "Desc_Water_C", [])], {})["networks"] == [
         {"id": None, "fluid": "Desc_Water_C"}
     ]
+
+
+# --------------------------------------------------------------------- spline curvature
+
+
+def _hermite(p0, m0, p1, m1, t):
+    """One point on the cubic Hermite span, the way a client is expected to draw it."""
+    t2, t3 = t * t, t * t * t
+    return [
+        (2 * t3 - 3 * t2 + 1) * p0[k]
+        + (t3 - 2 * t2 + t) * m0[k]
+        + (-2 * t3 + 3 * t2) * p1[k]
+        + (t3 - t2) * m1[k]
+        for k in range(3)
+    ]
+
+
+def _departure(p0, m0, p1, m1, n=128):
+    """How far the span's curve actually gets from the straight line between its ends.
+
+    Sampled, deliberately: this is the quantity ``_bulge`` claims to bound, and bounding it
+    with the same arithmetic that computes it would test nothing at all.
+    """
+    v = [p1[k] - p0[k] for k in range(3)]
+    span2 = sum(x * x for x in v)
+    worst = 0.0
+    for step in range(1, n):
+        q = _hermite(p0, m0, p1, m1, step / n)
+        if span2 < 1e-12:
+            worst = max(worst, math.dist(q, p0))
+            continue
+        u = min(1.0, max(0.0, sum((q[k] - p0[k]) * v[k] for k in range(3)) / span2))
+        worst = max(worst, math.dist(q, [p0[k] + u * v[k] for k in range(3)]))
+    return worst
+
+
+def _routes(projection):
+    """``(key, points, spans)`` for every belt piece and pipe; ``spans`` is ``[]`` if straight.
+
+    One walk over both keys, because the column means the same thing in both and the only
+    difference is where it sits -- fourth on a belt, fifth on a pipe, because a pipe already
+    had a fourth.
+    """
+    for key, at in (("belts", 3), ("pipes", 4)):
+        for row in projection[key]["segments"]:
+            yield key, row[2], (row[at] if len(row) > at else [])
+
+
+def test_a_route_carries_one_curve_entry_per_span_and_nothing_more(projection):
+    """The shape of the schema-15 column: per SPAN, not per point, and ints throughout.
+
+    Per span is the claim worth pinning. A per-point column would be the obvious shape and is
+    the wrong one: a span needs the LEAVE tangent of the point behind it and the ARRIVE
+    tangent of the point ahead, so the pairing is what a consumer needs and the pairing is
+    what is stored -- which also drops the two vectors nothing can use, the arrive of the
+    first point and the leave of the last.
+    """
+    seen = {"belts": 0, "pipes": 0}
+    for key, points, spans in _routes(projection):
+        if not spans:
+            continue
+        seen[key] += 1
+        assert len(spans) == len(points) - 1, "one entry per span, not per point"
+        assert any(spans), "a curve column with no curve in it is a column nobody needed"
+        for entry in spans:
+            if entry == 0:
+                continue
+            assert len(entry) == 6, entry
+            assert all(isinstance(c, int) for c in entry), entry
+    assert seen == {"belts": 966, "pipes": 296}, "the routes of the reference world that bend"
+
+
+def test_a_straight_run_is_the_row_schema_14_already_emitted(projection):
+    """The promise that made this addition free for everything that was already right.
+
+    A belt with no bend in it is three columns wide and a pipe with none is four -- exactly
+    what schema 14 wrote -- so a straight run is drawn today from the same numbers it was
+    drawn from yesterday, with no client-side tolerance deciding so. 2,119 of the world's
+    3,085 belt pieces and 207 of its 503 pipes are in that state.
+    """
+    plain = {"belts": 0, "pipes": 0}
+    for key, at in (("belts", 3), ("pipes", 4)):
+        for row in projection[key]["segments"]:
+            assert len(row) in (at, at + 1), (key, len(row))
+            if len(row) == at:
+                plain[key] += 1
+    assert plain == {"belts": 2119, "pipes": 207}
+    # And a two-point route -- the commonest thing in the world -- is overwhelmingly one of
+    # them: a straight belt is where "no tangents at all" has to hold if it holds anywhere.
+    two_point = [(p, s) for _k, p, s in _routes(projection) if len(p) == 2]
+    assert len(two_point) == 2461
+    assert sum(1 for _p, s in two_point if not s) == 2259
+
+
+def test_a_flat_span_inside_a_bending_route_stores_zero_rather_than_its_tangents(projection):
+    """The saving is per SPAN, not per route, which is what keeps an elbow cheap.
+
+    A six-point pipe elbow is one bend and five spans, and most of those spans are straight.
+    Storing them as ``0`` rather than as six integers apiece is a large part of the difference
+    between the measured +5.5% projection and a +12% one, and it is also what lets a client
+    take the plain two-point path through the straight parts of a route that is not straight.
+    """
+    inner = [s for _k, _p, spans in _routes(projection) for s in spans]
+    assert len(inner) == 2998 + 1143, "spans belonging to a route that bends somewhere"
+    assert sum(1 for s in inner if s == 0) == 1740 + 721, "and most of them are still straight"
+
+
+def test_the_bulge_bound_never_understates_how_far_a_curve_leaves_its_chord(projection):
+    """The one property ``_bulge`` must have, checked against a 128-point tessellation.
+
+    It is a bound and not a measurement on purpose: overstating costs bytes, understating
+    silently flattens a bend the save does record. So the test is one-sided -- the bound has
+    to be at least the sampled truth on every span the fixture carries -- plus a looseness
+    ceiling, because a bound that simply returned infinity would pass the first half and would
+    carry every span in the world.
+    """
+    ratios = []
+    worst = 0.0
+    for _key, points, spans in _routes(projection):
+        for i, entry in enumerate(spans):
+            if entry == 0:
+                continue
+            leave, arrive = entry[:3], entry[3:]
+            truth = _departure(points[i], leave, points[i + 1], arrive)
+            bound = _bulge(points[i], leave, points[i + 1], arrive)
+            assert bound >= truth - 1e-6, (bound, truth, points[i], points[i + 1])
+            worst = max(worst, truth)
+            if truth > 0.01:
+                ratios.append(bound / truth)
+    assert ratios
+    assert max(ratios) < 4.0, f"the bound is {max(ratios):.1f}x the truth and carries dead weight"
+    # And the kept spans are worth keeping: the biggest departs its chord by ten metres, which
+    # is the belt bend that used to be drawn as a straight line ten metres away from itself.
+    assert worst > 1000.0, worst
+
+
+def test_a_zero_length_span_is_bounded_by_its_tangents_alone():
+    """Coincident control points: there is no chord, so all of both tangents is sideways.
+
+    116 of the reference save's spans are exactly this -- the zero-length joint where a
+    conveyor lift meets the belt it feeds -- and dividing by the chord there is the division
+    by zero a bound written only for the general case walks into.
+    """
+    assert _bulge([0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]) == 0.0
+    quiet = _bulge([5, 5, 5], [0, 1, 0], [5, 5, 5], [0, 1, 0])
+    assert 0 < quiet < TANGENT_EPS_CM, quiet
+    assert _bulge([5, 5, 5], [0, 500, 0], [5, 5, 5], [0, 500, 0]) > TANGENT_EPS_CM
+
+
+def test_a_straight_span_carries_nothing_however_long_its_tangents_are():
+    """Tangents ALONG the chord do not bend the curve, and the bound has to know that.
+
+    This is the case that decides whether the feature is affordable at all, because it is the
+    game's commonest: the save stores half the chord as both tangents on every straight run,
+    which a test comparing tangent length against chord length would call curved and carry. It
+    puts the curve on the line at a non-uniform speed, and a drawn line has no speed.
+    """
+    for scale in (0.25, 0.5, 1.0):
+        m = [0, int(800 * scale), 0]
+        assert _bulge([0, 0, 0], m, [0, 800, 0], m) < TANGENT_EPS_CM, scale
+    # Sideways by a hair is still nothing; sideways by two metres is not.
+    assert _bulge([0, 0, 0], [1, 400, 0], [0, 800, 0], [1, 400, 0]) < TANGENT_EPS_CM
+    assert _bulge([0, 0, 0], [200, 400, 0], [0, 800, 0], [-200, 400, 0]) > TANGENT_EPS_CM
+    # And a tangent long enough to overshoot the far end IS a departure, even though it is
+    # exactly parallel to the chord: the curve runs past p1 and comes back.
+    assert _bulge([0, 0, 0], [0, 4000, 0], [0, 800, 0], [0, 400, 0]) > TANGENT_EPS_CM
+
+
+def test_tangents_are_rounded_with_the_points_but_never_translated_with_them():
+    """A point is a place and a tangent is a displacement, so only one of the two moves.
+
+    Getting this wrong is invisible in a unit test at the origin and catastrophic on the real
+    world: the chain origins are kilometres out, so a translated tangent would be kilometres
+    long and the curve between two adjacent control points would leave the map entirely.
+    Checked by moving the chain, which is the falsifier the points' own frame test uses.
+    """
+    bend = [
+        [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 300.0, 0.0]],
+        [[0.0, 400.0, 0.0], [0.0, 300.0, 0.0], [300.0, 0.0, 0.0]],
+        [[400.0, 800.0, 0.0], [300.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+    ]
+    belt = ObjectReference("Persistent_Level", "x.Build_ConveyorBeltMk3_C_7")
+    info = [belt, belt, [[belt, belt, bend, 0.0, 0.0, 900.0, -1, -1, 0]], [900.0, 9, -1, -1], []]
+
+    here = _belts([([0.0, 0.0, 0.0], Chain(info))])["segments"]
+    there = _belts([([120_000.0, -80_000.0, 500.0], Chain(info))])["segments"]
+    assert len(here) == len(there) == 1
+    assert len(here[0]) == 4, "this run bends, so it carries tangents"
+    assert [[p[0] + 120_000, p[1] - 80_000, p[2] + 500] for p in here[0][2]] == there[0][2]
+    assert here[0][3] == there[0][3], "a tangent moved with the chain"
+    # And the pairing, span by span: the first takes point 0's LEAVE and point 1's ARRIVE,
+    # which are both three quarters of the chord between them and so bend nothing; the second
+    # takes point 1's leave and point 2's arrive, which turn the corner and are carried.
+    assert here[0][3] == [0, [300, 0, 0, 300, 0, 0]]
+
+
+def test_a_point_that_will_not_decode_takes_its_own_tangents_with_it():
+    """The two lists are indexed against each other, so they must not be able to slip.
+
+    A point appended without its tangents -- or the reverse -- would not raise: it would shift
+    every span after the fault by one and bend the route around the wrong control point, which
+    looks like a curve and is a different curve. So a malformed point costs the whole triple.
+    """
+    good = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 300.0, 0.0]]
+    far = [[0.0, 400.0, 0.0], [0.0, 300.0, 0.0], [300.0, 0.0, 0.0]]
+    end = [[400.0, 800.0, 0.0], [300.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    broken = [[0.0, 200.0, 0.0], "not a vector", [0.0, 300.0, 0.0]]
+    belt = ObjectReference("Persistent_Level", "x.Build_ConveyorBeltMk3_C_7")
+
+    def run(points):
+        info = [
+            belt,
+            belt,
+            [[belt, belt, points, 0.0, 0.0, 900.0, -1, -1, 0]],
+            [900.0, 9, -1, -1],
+            [],
+        ]
+        return _belts([([0.0, 0.0, 0.0], Chain(info))])["segments"]
+
+    assert run([good, broken, far, end]) == run([good, far, end])
+
+
+# ------------------------------------------------------------------------------ storage
+
+
+def test_storage_is_every_container_and_buffer_and_nothing_else(projection):
+    """The class list, held against the census the way the attachments' is.
+
+    Every row's class has to be one the projection also counted as built, and the count has to
+    match exactly: a container in ``building_counts`` and missing here is a box the map would
+    not draw, and the reverse would be a box that is not there.
+    """
+    counts = projection["building_counts"]
+    rows = projection["storage"]
+    assert len(rows) == 151, "the reference world's containers and buffers"
+    assert {r["cls"] for r in rows} <= set(STORAGE_CLASSES + FLUID_BUFFER_CLASSES)
+    for cls in {r["cls"] for r in rows}:
+        assert sum(1 for r in rows if r["cls"] == cls) == counts[cls], cls
+
+
+def test_a_splitter_is_not_storage_even_though_it_owns_a_storage_inventory(projection):
+    """The trap this key's class list exists to avoid, stated as a test.
+
+    Every splitter and merger in the world owns a component literally named
+    ``StorageInventory``, holding the one to three items physically inside the junction. A key
+    built by matching that component name would report 848 more "containers" than exist, draw
+    every one of them a second time over the belt layer that already has them, and count items
+    in transit as stock.
+    """
+    attached = {r["instance"] for r in projection["attachments"]}
+    stored = {r["instance"] for r in projection["storage"]}
+    assert attached and stored
+    assert not attached & stored
+    assert len(stored) * 5 < len(attached), "the splitters outnumber the containers five to one"
+
+
+def test_a_container_row_is_a_placement_and_its_contents(projection):
+    """What a container IS, is where it stands and what is in it -- and nothing borrowed.
+
+    Same posture as the attachment row next door: no recipe and no clock, because a container
+    runs neither, and a null column claiming otherwise would be an invention.
+    """
+    solids = [r for r in projection["storage"] if "items" in r]
+    assert len(solids) == 146
+    for r in solids:
+        assert set(r) == {"cls", "instance", "pos", "yaw", "items", "slots"}
+        assert len(r["pos"]) == 3
+        assert -180.0 <= r["yaw"] <= 180.0
+        assert r["slots"] > 0, "a container with no slots at all is not a container"
+        for item, amount in r["items"]:
+            assert item.startswith("Desc_")
+            assert isinstance(amount, (int, float)) and amount > 0
+        # Biggest first, so a popup showing the top few shows the few worth showing.
+        assert [n for _i, n in r["items"]] == sorted((n for _i, n in r["items"]), reverse=True)
+    assert sum(1 for r in solids if r["items"]) == 125, "the ones the player has actually filled"
+
+
+def test_a_containers_contents_are_its_own_and_they_add_up(projection):
+    """The join, checked against a total the projection reached a different way.
+
+    ``inventories["storage"]`` has summed these same stacks since schema 11 -- by bucketing
+    component NAMES, with no idea which actor owns which -- so it is an independent count of
+    the same items, and a mis-joined or double-counted inventory would not match it.
+
+    It matches with a stated remainder, and the remainder is itself the finding: the old bucket
+    rule names only ``StorageContainer``, ``CentralStorage`` and ``FreightWagon``, so the
+    Personal Storage Boxes, the HUB's built-in container and the Blueprint Designer's have
+    never been in it. These rows cover those too, and the excess is EXACTLY their contents --
+    which is both the check and the reason that older sum was quietly short.
+    """
+    per_row: dict[str, float] = {}
+    outside: dict[str, float] = {}
+    named = ("StorageContainer", "CentralStorage", "FreightWagon")
+    for r in projection["storage"]:
+        for item, amount in r.get("items", ()):
+            per_row[item] = per_row.get(item, 0) + amount
+            if not any(tag in r["cls"] for tag in named):
+                outside[item] = outside.get(item, 0) + amount
+    bucketed = projection["inventories"]["storage"]
+    assert per_row and bucketed and outside
+    assert set(bucketed) <= set(per_row), "an item the bucket found in no container at all"
+    excess = {i: n - bucketed.get(i, 0) for i, n in per_row.items() if n != bucketed.get(i)}
+    assert excess == outside
+
+
+def test_a_fluid_buffer_takes_its_fluid_from_the_network_that_claims_it(projection):
+    """A buffer stores a level and never names the fluid; the plumbing around it does.
+
+    Exactly the join a pipe's ``fluid`` uses, and for the same reason -- it is the game's own
+    ``FGPipeNetwork`` answer rather than an inference from what the buffer is plugged into.
+    """
+    buffers = [r for r in projection["storage"] if "stored_m3" in r]
+    assert len(buffers) == 5
+    fluids = {r["fluid"] for r in projection["pipe_networks"]}
+    for r in buffers:
+        assert set(r) == {"cls", "instance", "pos", "yaw", "fluid", "stored_m3"}
+        assert r["fluid"] in fluids, r["fluid"]
+        assert "items" not in r and "slots" not in r
+        # Cubic metres, and inside the capacity the dump states for the class -- 400 on a
+        # Fluid Buffer, 2,400 on an Industrial one. A litres reading would be 1000x over.
+        cap = 2400.0 if r["cls"] == "Build_IndustrialTank_C" else 400.0
+        assert 0.0 <= r["stored_m3"] <= cap, (r["cls"], r["stored_m3"])
+    assert any(r["stored_m3"] > 300 for r in buffers), "one of them is nearly full"
+
+
+def test_storage_is_ordered_so_two_saves_of_one_world_can_be_diffed(projection):
+    """Stable between runs, which is the projection's posture wherever it emits a list."""
+    rows = projection["storage"]
+    assert [(r["cls"], r["instance"]) for r in rows] == sorted(
+        (r["cls"], r["instance"]) for r in rows
+    )
+
+
+def test_a_storage_actor_with_no_inventory_component_is_still_a_container():
+    """An empty box is a box. The join is a lookup, and a miss has to mean "nothing in it".
+
+    A container the player has never touched may have no ``StorageInventory`` written at all --
+    UE omits a SaveGame property still at its default -- and dropping the row would take the
+    box off the map for the crime of being empty.
+    """
+    rows = _storage(
+        [("Build_StorageContainerMk1_C", "x.Build_StorageContainerMk1_C_1", [1, 2, 3], 90.0, None)],
+        {},
+        [],
+    )
+    assert rows == [
+        {
+            "cls": "Build_StorageContainerMk1_C",
+            "instance": "x.Build_StorageContainerMk1_C_1",
+            "pos": [1, 2, 3],
+            "yaw": 90.0,
+            "items": [],
+            "slots": 0,
+        }
+    ]
+
+
+def test_a_buffer_no_network_claims_keeps_its_level_and_loses_its_fluid():
+    """Drawn with contents unknown beats not drawn -- the refusal ``_pipes`` already makes."""
+    rows = _storage(
+        [("Build_PipeStorageTank_C", "x.Build_PipeStorageTank_C_1", [0, 0, 0], 0.0, 12.5)], {}, []
+    )
+    assert rows[0]["fluid"] is None
+    assert rows[0]["stored_m3"] == 12.5
+    # And a level that will not read as a number is null rather than zero: an unreadable
+    # buffer is not an empty one.
+    unreadable = _storage([("Build_IndustrialTank_C", "i", [0, 0, 0], 0.0, "brimming")], {}, [])
+    assert unreadable[0]["stored_m3"] is None

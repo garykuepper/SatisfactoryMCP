@@ -24,8 +24,10 @@ from ... import config
 #: attachments -- the splitters and mergers a run passes through; 14 added a fourth column to
 #: a pipe segment, the index of its own actor, which joins the drawn pipe to the connection
 #: graph that has been in ``graph["material"]`` since schema 11 and is what lets flow
-#: direction be inferred.
-SCHEMA_VERSION = 14
+#: direction be inferred; 15 added the SPLINE TANGENTS to both route keys, so a curved belt or
+#: a pipe elbow can be drawn as the curve it was built as rather than as the chords between its
+#: corners, and a ``storage`` key -- the containers and fluid buffers, with what is in each one.
+SCHEMA_VERSION = 15
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

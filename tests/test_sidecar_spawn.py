@@ -119,20 +119,21 @@ def test_a_schema_bump_makes_every_cached_projection_miss(monkeypatch):
     """The cache is keyed on the schema, so old pickles are never served to new code.
 
     A projection is cached on disk under a hash of the save's identity, and the identity has
-    to include the shape it was written in. Without that, schema 14 would hand out a schema-13
-    pickle -- pipe segments three columns wide, with no join to the connection graph, so every
-    pipe would read as having no inferable flow direction -- as 13 would have handed out a 12
-    with no ``pipes`` key at all. The stale answer is the dangerous one precisely because it
-    is well-formed: it looks like a world nobody plumbed. Every field of the key is asserted
-    so that dropping one is a failure here rather than a stale answer months later.
+    to include the shape it was written in. Without that, schema 15 would hand out a schema-14
+    pickle -- every route segment carrying its corners and no tangents, and no ``storage`` key
+    at all -- as 14 would have handed out a 13 with pipe segments three columns wide and no
+    join to the connection graph, and 13 a 12 with no ``pipes`` key at all. The stale answer is
+    the dangerous one precisely because it is well-formed: it looks like a world whose belts
+    are all straight and which holds nothing in store. Every field of the key is asserted so
+    that dropping one is a failure here rather than a stale answer months later.
     """
     header = {"path": "C:/saves/Han Solo.sav", "mtime_ns": 1785272928137058500, "size": 2935845}
     now = proj._cache_key(header)
 
-    monkeypatch.setattr(proj, "SCHEMA_VERSION", 13)
-    assert proj._cache_key(header) != now, "a schema 13 pickle would be served to schema 14"
-
     monkeypatch.setattr(proj, "SCHEMA_VERSION", 14)
+    assert proj._cache_key(header) != now, "a schema 14 pickle would be served to schema 15"
+
+    monkeypatch.setattr(proj, "SCHEMA_VERSION", 15)
     assert proj._cache_key(header) == now
     for field, other in (("path", "C:/saves/Other.sav"), ("mtime_ns", 1), ("size", 1)):
         assert proj._cache_key({**header, field: other}) != now, field
