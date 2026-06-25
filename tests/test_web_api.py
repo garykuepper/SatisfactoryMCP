@@ -24,6 +24,7 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 
 from satisfactory_mcp import config
+from satisfactory_mcp.core.gameassets.pyramid import pyramid_top_z
 from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M
 from satisfactory_mcp.core.saveio.projection import World
 from satisfactory_mcp.domain.world.state import WorldState
@@ -702,7 +703,9 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     assert gen.BOUNDS_M == web_api.DEFAULT_MAP_BOUNDS_M
     assert gen.PYRAMID_TILE_PX == web_api.MAP_TILE_PX
     # z5 and no further: these layers' truth ends at the 1 m field they are sampled from.
-    assert gen.gmi.pyramid_top_z(gen.SHEET_PX) == web_api.MAP_TILE_MAX_Z == 5
+    # Asked of the cutter itself now that the generator imports it by name rather than
+    # holding a module object it borrowed one from.
+    assert pyramid_top_z(gen.SHEET_PX) == web_api.MAP_TILE_MAX_Z == 5
 
     pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
     sidecar = gen.build_sidecar(

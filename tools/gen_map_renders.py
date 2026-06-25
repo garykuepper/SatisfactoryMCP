@@ -26,9 +26,13 @@ a second input the heightmap generator has never heard of, and writes pictures. 
 share an input and nothing else -- no stage, no constant, no intermediate array -- so
 bolting this on would have coupled a six-minute extraction to a four-minute render and given
 one ``--force`` two meanings. What IS shared is shared by import: the codec comes from
-``satisfactory_mcp.domain.spatial.heightfield`` and the pyramid cutter, its staging dance and
-its refusals come from ``tools/gen_map_image.py``, because a tile layout with two
-implementations is a tile layout with two opinions.
+``satisfactory_mcp.domain.spatial.heightfield``, the pyramid cutter with its staging dance
+and its refusals from ``satisfactory_mcp.core.gameassets.pyramid``, and the container reader
+from ``satisfactory_mcp.core.gameassets`` beside it -- because a tile layout with two
+implementations is a tile layout with two opinions, and so is a container reader. The frame
+itself still comes from ``tools/gen_map_image.py``: those corners were measured by that tool
+against the artwork, and re-typing them here is exactly how three pyramids come to disagree
+about where the world is.
 
 The biome raster, and how its corners were found
 ------------------------------------------------
@@ -109,7 +113,6 @@ committed, uploaded or redistributed, and the server serves it to localhost only
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import struct
 import sys
@@ -124,38 +127,29 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
+from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
+from satisfactory_mcp.core.gameassets.pyramid import (
+    # PYRAMID_TILE_PX is unused HERE -- the cutter's own default is the tile size, and
+    # this file never passes one -- and imported anyway, because tests/test_web_api.py
+    # loads this file by path and asserts the served tile size against it, as it did when
+    # the constant was borrowed from gen_map_image. The test migration onto
+    # core.gameassets drops this line.
+    PYRAMID_TILE_PX,  # noqa: F401
+    TILES_DIR_NAME,
+    PyramidError,
+    install_pyramid,
+)
 from satisfactory_mcp.domain.spatial import heightfield as hf
 from tools._common import base_parser, require_gen
 
-
-def load_pyramid_cutter():
-    """``tools/gen_map_image.py``, imported by path rather than by name.
-
-    The pyramid layout, the staging rename and the level arithmetic all live there already.
-    A second copy of any of them is a second thing that can disagree with the endpoint that
-    serves the tree, so this file borrows rather than repeats. That module imports nothing
-    heavier than the standard library at module scope, which is why this can be a plain
-    module-level call rather than the deferred one ``gen_map_image`` itself uses for the
-    container reader.
-    """
-    path = Path(__file__).resolve().parent / "gen_map_image.py"
-    spec = importlib.util.spec_from_file_location("gen_map_image", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("gen_map_image", module)
-    spec.loader.exec_module(module)
-    return module
-
-
-gmi = load_pyramid_cutter()
-
-#: The corners every layer is drawn on: the in-game map square, taken from the tool that
-#: measured it rather than typed again, so the three pyramids cannot drift apart.
-BOUNDS_M = gmi.BOUNDS_M
-
-#: One layer's sheet, and the pyramid cut from it. Both the artwork's, for the same reason:
-#: a page that can switch base layers must not have to reconfigure its tile grid to do it.
-SHEET_PX = gmi.SHEET_PX
-PYRAMID_TILE_PX = gmi.PYRAMID_TILE_PX
+# The corners every layer is drawn on, the sheet they are drawn at, and the name of the
+# artwork the biome pin is scored against: all three from the tool that MEASURED them
+# rather than typed again here, so the three pyramids cannot drift apart. A plain import
+# of a sibling generator, which is possible now that the sibling holds nothing but its own
+# constants and its own stages -- the cutter and the reader it used to be borrowed for are
+# both in core.
+from tools.gen_map_image import BOUNDS_M, IMAGE_NAME, SHEET_PX
 
 #: Where the layers go, and what each one's sidecar is called. ``renders/<layer>/`` holds a
 #: ``tiles/`` tree of exactly the shape ``data/local/tiles/`` has, so the endpoint that
@@ -423,7 +417,7 @@ def load_imaging():
 # --------------------------------------------------------------------------------------
 
 
-def read_biome(gwc, store, scripts) -> dict:
+def read_biome(store, scripts) -> dict:
     """The 4096x4096 biome raster, its palette, and what each index is called.
 
     Every check here is the same kind of check ``gen_map_image`` makes on the map slices'
@@ -437,7 +431,7 @@ def read_biome(gwc, store, scripts) -> dict:
             "which means the game changed; the satellite layer has no other source for what "
             "grows where, and nothing here can be trusted until that is looked at."
         )
-    view = gwc.PackageView(store.read_path(BIOME_PATH), scripts)
+    view = PackageView(store.read_path(BIOME_PATH), scripts)
     export = next(
         (e for e in view.exports if (view.class_of[e["slot"]] or "") == BIOME_CLASS), None
     )
@@ -478,7 +472,7 @@ def read_biome(gwc, store, scripts) -> dict:
         tuple(palette_raw[4 + i * 4 : 8 + i * 4]) for i in range(entries)
     ]  # RGBA, the game's UI legend -- decoded for the record, never drawn
 
-    names = decode_colour_to_area(gwc, view, props["mColorToArea"])
+    names = decode_colour_to_area(view, props["mColorToArea"])
     if len(names) != entries:
         raise SystemExit(
             f"mColorPalette has {entries} entries and mColorToArea {len(names)}. The two "
@@ -499,7 +493,7 @@ def read_biome(gwc, store, scripts) -> dict:
     }
 
 
-def decode_colour_to_area(gwc, view, blob: bytes) -> list[str | None]:
+def decode_colour_to_area(view, blob: bytes) -> list[str | None]:
     """``mColorToArea`` -> the ``Area_*`` leaf name of each palette index.
 
     A ``TArray<FStruct>`` in Zen's tagged form is the count and then one property stream per
@@ -511,7 +505,7 @@ def decode_colour_to_area(gwc, view, blob: bytes) -> list[str | None]:
     out: list[str | None] = []
     pos = 4
     for _ in range(count):
-        tags, end = gwc.property_tags(blob, view.pkg.names, pos)
+        tags, end = property_tags(blob, view.pkg.names, pos)
         fields = {name: payload for name, _kind, payload, _value in tags}
         if "MapArea" not in fields:
             raise SystemExit(
@@ -1134,7 +1128,7 @@ def install_layer(sheet_rgb, image_mod, out_dir: Path, layer: str) -> tuple[dict
     directory = layer_dir(out_dir, layer)
     directory.mkdir(parents=True, exist_ok=True)
     started = time.time()
-    stats = gmi.install_pyramid(
+    stats = install_pyramid(
         image_mod.fromarray(sheet_rgb),
         image_mod,
         directory,
@@ -1207,7 +1201,7 @@ def main() -> int:
     if not args.force:
         for layer in layers:
             sidecar_path = layer_dir(out_dir, layer) / RENDER_SIDECAR_NAME
-            if not (layer_dir(out_dir, layer) / gmi.TILES_DIR_NAME).is_dir():
+            if not (layer_dir(out_dir, layer) / TILES_DIR_NAME).is_dir():
                 continue
             try:
                 existing = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -1230,22 +1224,19 @@ def main() -> int:
     biome = None
     if "satellite" in layers:
         pyooz_version = require_gen("ooz")["pyooz"]
-        import ooz
-
-        gwc = gmi.load_container_reader()
         paks = args.game / "FactoryGame" / "Content" / "Paks"
         if not (paks / "FactoryGame-Windows.utoc").exists():
             print(f"no FactoryGame-Windows.utoc under {paks}")
             return 1
         print(f"reading the biome raster from {paks} with pyooz {pyooz_version}")
-        store = gwc.IoStore(paks, "FactoryGame-Windows", ooz.decompress)
-        scripts = gwc.ScriptObjects(paks, ooz.decompress)
-        biome = read_biome(gwc, store, scripts)
+        store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
+        scripts = ScriptObjects(paks, oodle_decompress)
+        biome = read_biome(store, scripts)
         print(
             f"  {biome['width']}x{biome['width']} palette indices, "
             f"{len(biome['palette'])} entries, {len(biome['distinct_areas'])} named areas"
         )
-        calibration = calibrate_biome(biome, out_dir / gmi.IMAGE_NAME, image_mod)
+        calibration = calibrate_biome(biome, out_dir / IMAGE_NAME, image_mod)
         if "skipped" in calibration:
             print(f"  calibration skipped: {calibration['skipped']}")
         else:
@@ -1324,7 +1315,7 @@ def main() -> int:
         drew = time.time() - started
         try:
             stats, cut = install_layer(sheet, image_mod, out_dir, layer)
-        except gmi.PyramidError as exc:
+        except PyramidError as exc:
             print(exc)
             return 1
         del sheet

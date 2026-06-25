@@ -182,13 +182,10 @@ from satisfactory_mcp.core.gameassets.packages import (
     _float,
     _vector_array,
     class_name_of,
-    # Unused HERE, and imported anyway: gen_map_renders.py still reaches the container
-    # reader through this module's namespace -- ``gwc.property_tags`` -- as it did when this
-    # file WAS the reader. Its own re-point onto ``core.gameassets`` drops this line.
-    property_tags,  # noqa: F401
     root_component,
     world_transform,
 )
+from satisfactory_mcp.core.gameassets.provenance import installed_build_from_exe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -2615,24 +2612,6 @@ def build(
 # --------------------------------------------------------------------------------------
 
 
-def read_game_build(game: Path) -> str | None:
-    """The engine's own build string, out of the shipping executable's version resource.
-
-    Scanned as UTF-16 rather than parsed as a PE resource: the launcher is 270 KB, the
-    string is a fixed literal, and a version number is not worth a resource walker.
-    """
-    needle = "++FactoryGame+rel-".encode("utf-16-le")
-    for candidate in sorted(game.glob("*/Binaries/Win64/*Shipping.exe")):
-        blob = candidate.read_bytes()
-        at = blob.find(needle)
-        if at < 0:
-            continue
-        end = blob.find(b"\0\0", at)
-        stop = end + 1 if at < end < at + 200 else at + 200
-        return blob[at:stop].decode("utf-16-le", "replace")
-    return None
-
-
 def main() -> int:
     parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
@@ -2759,7 +2738,7 @@ def main() -> int:
         facts,
         store,
         scripts,
-        read_game_build(args.game),
+        installed_build_from_exe(args.game),
         pyooz_version,
         on_disk,
         len(paths),

@@ -417,20 +417,6 @@ class MissingUpscaler(RuntimeError):
     """
 
 
-def load_container_reader():
-    """``tools/gen_world_collectibles.py``, imported by path.
-
-    Unused HERE -- this file reads the container through ``core.gameassets.iostore`` by
-    name now -- and kept because ``tools/gen_map_renders.py`` still calls it through this
-    module to reach the same reader, as it did when this was the only way in. Its own
-    re-point deletes this function.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import gen_world_collectibles
-
-    return gen_world_collectibles
-
-
 # --------------------------------------------------------------------------------------
 # Decoding and stitching.
 # --------------------------------------------------------------------------------------

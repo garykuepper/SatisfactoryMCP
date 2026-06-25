@@ -4216,8 +4216,10 @@ heightmap generator has never heard of, and writes pictures. They share an input
 else: no stage, no constant, no intermediate array. Bolting them together would have coupled
 a six-minute extraction to a ninety-second render and given one `--force` two meanings. What
 *is* shared is shared by import — the codec from `domain.spatial.heightfield`, and the
-pyramid cutter, its staging rename and its refusals from `gen_map_image.py`, which grew one
-optional `source=` so a level record can say what actually drew it.
+pyramid cutter, its staging rename and its refusals from `core.gameassets.pyramid`, which
+grew one optional `source=` so a level record can say what actually drew it. The frame
+itself — the corners, the sheet size, the artwork the biome pin is scored against — still
+comes from `gen_map_image.py`, because that is the tool that *measured* it.
 
 Measured on the reference machine: 12 s to draw terrain and 15 s satellite at 8192², 32 s
 each to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyramid over 1,365
