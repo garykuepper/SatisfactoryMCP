@@ -180,14 +180,11 @@ from satisfactory_mcp.core.gameassets.packages import (
     PackageView,
     ScriptObjects,
     _float,
-    # Unused HERE, and imported anyway: gen_world_heightmap.py and gen_map_renders.py still
-    # reach the container reader through this module's namespace -- ``gwc._int32``,
-    # ``gwc.property_tags`` -- as they did when this file WAS the reader. Each one's own
-    # re-point onto ``core.gameassets`` drops its line here, and the last one takes the
-    # comment with it.
-    _int32,  # noqa: F401
     _vector_array,
     class_name_of,
+    # Unused HERE, and imported anyway: gen_map_renders.py still reaches the container
+    # reader through this module's namespace -- ``gwc.property_tags`` -- as it did when this
+    # file WAS the reader. Its own re-point onto ``core.gameassets`` drops this line.
     property_tags,  # noqa: F401
     root_component,
     world_transform,
