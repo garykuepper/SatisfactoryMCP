@@ -94,15 +94,19 @@ tool writes it and exits. ``--force`` says it anyway.
 
 What opens the container
 ------------------------
-``pyooz`` opens the container's Oodle blocks and Pillow writes the PNGs. Both are the
-project's ``gen`` extra -- generation-time tools, imported at module scope by nothing here
-and by nothing under ``src/`` -- and both are asked for by name when a generator runs, the
-same posture as ``tools/gen_map_image.py``::
+``ooz``, from ``pyooz``, opens the container's Oodle blocks and Pillow writes the PNGs.
+Both are the project's ``gen`` extra: optional dependencies, pinned exactly because they
+decide the bytes this file writes, and asked for on the command line, the same posture as
+``tools/gen_map_image.py``::
 
     uv run --extra gen python tools/gen_map_renders.py
 
-numpy and scipy are dependencies of this project outright and are imported at the top of
-this file.
+Optional means optional **at import time**: neither is imported at module scope anywhere in
+this repository -- the one ``import ooz`` sits inside
+``core.gameassets.iostore.oodle_decompress`` and Pillow is imported by the one function
+below that needs it -- so a machine without the extra still imports every module and runs
+the whole test suite; it just cannot generate. numpy and scipy are dependencies of this
+project outright and are imported at the top of this file.
 
 Licence
 -------

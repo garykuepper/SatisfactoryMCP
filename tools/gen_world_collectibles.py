@@ -132,10 +132,15 @@ face. ``z`` is in every row; height above local ground is not, because it invert
 **Licence.** The coordinates here are facts about Coffee Stain's map, read from the
 installed game. No third-party world table contributed to this file, in any form.
 
-**What opens the container.** Oodle-compressed blocks are opened by ``pyooz``, which is
-the project's ``gen`` extra -- a generation-time tool, imported at module scope by nothing
-here, and asked for by name when a generator runs: ``uv run --extra gen``. With no ``ooz``
-importable this script says which line installs it and exits.
+**What opens the container.** Oodle-compressed blocks are opened by ``ooz``, from ``pyooz``,
+which is the project's ``gen`` extra: an optional dependency, pinned exactly because it
+decides the bytes this file writes, and asked for on the command line -- ``uv run --extra
+gen python tools/gen_world_collectibles.py``. Optional means optional **at import time**:
+the one ``import ooz`` in the repository sits inside
+``core.gameassets.iostore.oodle_decompress``, so a machine with the extra absent still
+imports every module and runs the whole test suite; it just cannot generate. This script
+proves the import before it starts, and with no ``ooz`` importable it says which line
+installs it and exits.
 
 **Where the reader lives.** ``satisfactory_mcp.core.gameassets.iostore`` opens the ``.utoc``
 and ``...gameassets.packages`` decodes a cooked package's exports, names and property tags.
@@ -1881,9 +1886,15 @@ def build(
                     "import_name": "ooz",
                     "licence": "GPL-3.0",
                     "role": (
-                        "Oodle block decompression, offline, at generation time only. It is "
-                        "not a dependency of this project, is never imported from src/ or "
-                        "sidecar/, and no part of it is present in this file."
+                        "Oodle block decompression, offline, at generation time only. An "
+                        "OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned "
+                        "exactly because it decides these bytes, and asked for on the "
+                        "command line -- `uv run --extra gen python "
+                        "tools/gen_world_collectibles.py`. It is imported at module scope "
+                        "nowhere, and lazily inside one function of "
+                        "satisfactory_mcp.core.gameassets.iostore, so the server and the "
+                        "test suite run with it absent. No part of it is present in this "
+                        "file."
                     ),
                 },
                 "licence": (

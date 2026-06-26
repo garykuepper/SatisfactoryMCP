@@ -132,15 +132,26 @@ installed. ``--force`` says it anyway. The whole directory is written to
 from one build and one from another; an interrupted run leaves a staging directory nothing
 loads.
 
-**What opens the container.** Oodle-compressed container blocks are opened by ``pyooz``,
-which is the project's ``gen`` extra: a generation-time tool, imported at module scope by
-nothing here and by nothing under ``src/``, and asked for by name when a generator runs --
-the same posture as ``tools/gen_map_image.py`` and ``tools/gen_world_collectibles.py``::
+**What opens the container.** Oodle-compressed container blocks are opened by ``ooz``, from
+``pyooz``, which is the project's ``gen`` extra: an optional dependency, pinned exactly
+because it decides the bytes this file writes, and asked for on the command line -- the
+same posture as ``tools/gen_map_image.py`` and ``tools/gen_world_collectibles.py``::
 
     uv run --extra gen python tools/gen_world_heightmap.py
 
-numpy and scipy, unlike pyooz, are dependencies of this project outright and are imported
-at the top of this file.
+Optional means optional **at import time**: nothing imports it at module scope, the one
+``import ooz`` in the repository sits inside ``core.gameassets.iostore.oodle_decompress``,
+and a machine with none of the extra installed still imports every module, runs the whole
+test suite and serves the map -- it just cannot generate. numpy and scipy, unlike ``ooz``,
+are dependencies of this project outright and are imported at the top of this file.
+
+**Where the reader lives.** None of the reading is reimplemented here, and none of it is
+imported by file path any more: the container is
+``satisfactory_mcp.core.gameassets.iostore``, a cooked package's exports, names and
+property tags are ``.packages``, the mip arithmetic is ``.textures``, and the build pin and
+the staged rename that keeps this directory from saying two things at once are
+``.provenance``. Each takes its decoder as an argument rather than importing one, which is
+what keeps the extra optional everywhere but at the point of use.
 
 **Licence.** Everything this writes is derived from Coffee Stain's cooked assets, read out
 of the reader's own installed copy of the game and left in a gitignored directory. Nothing
@@ -1374,12 +1385,21 @@ def build_meta(
                 "import_name": "ooz",
                 "licence": "GPL-3.0",
                 "role": (
-                    "container block decompression, offline, at generation time only. Not a "
-                    "dependency of this project, never imported from src/ or sidecar/, and "
-                    "no part of it is in the output."
+                    "container block decompression, offline, at generation time only. An "
+                    "OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned exactly "
+                    "because it decides these bytes, and asked for on the command line -- "
+                    "`uv run --extra gen python tools/gen_world_heightmap.py`. It is "
+                    "imported at module scope nowhere, and lazily inside one function of "
+                    "satisfactory_mcp.core.gameassets.iostore, so the server and the test "
+                    "suite run with it absent. No part of it is in the output."
                 ),
             },
-            "container": "tools/gen_world_collectibles.py's IoStore reader, imported by path",
+            "container": (
+                "satisfactory_mcp.core.gameassets.iostore's IoStore reader, imported by "
+                "name. It was tools/gen_world_collectibles.py's, imported by file path, "
+                "until the four generators that read the same container came to share one "
+                "copy of it."
+            ),
             "codec": "satisfactory_mcp.domain.spatial.heightfield, imported so there is one",
         },
         "timings_s": timings,

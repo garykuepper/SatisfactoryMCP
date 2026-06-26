@@ -71,20 +71,26 @@ replace on a whim, and the repository's own tables are pinned to a build the new
 might no longer agree with. ``--force`` says it anyway.
 
 **What opens the container, and where it comes from.** Oodle-compressed container blocks
-are opened by ``pyooz`` and the BC1 blocks by ``texture2ddecoder``; Pillow writes the PNG.
-All three are the project's ``gen`` extra: generation-time tools, imported at module scope
-by nothing here and by nothing under ``src/``, pinned exactly because they decide the bytes
-this file writes, and asked for by name when a generator runs -- the same posture as
-``tools/gen_world_collectibles.py``:
+are opened by ``ooz``, from ``pyooz``, the BC1 blocks by ``texture2ddecoder``, and Pillow
+writes the PNG. All three are the project's ``gen`` extra: optional dependencies, pinned
+exactly because they decide the bytes this file writes, and asked for on the command line
+-- the same posture as ``tools/gen_world_collectibles.py``:
 
     uv run --extra gen python tools/gen_map_image.py
+
+Optional means optional **at import time**: none of the three is imported at module scope
+anywhere in this repository, so a machine with none of them installed still imports every
+module, runs the whole test suite and serves the map -- it just cannot generate. The one
+``import ooz`` lives inside ``core.gameassets.iostore.oodle_decompress``, and the BC1
+decoder and Pillow are imported inside ``main`` and handed on to ``.textures`` and
+``.pyramid`` as arguments.
 
 None of the reading is reimplemented here, and none of it is imported by file path any
 more: the container is ``satisfactory_mcp.core.gameassets.iostore``, the mip arithmetic and
 the BC1 decode are ``.textures``, the build pin is ``.provenance``, and the pyramid --
 which two other layers are now cut with -- is ``.pyramid``. Each takes its decoder as an
 argument rather than importing one, which is what keeps the ``gen`` extra optional
-everywhere but here.
+everywhere but at the point of use.
 
 **``--enhance``: two more zoom levels than the artwork has pixels.** The sheet runs out at
 8192 px -- about 0.9 m to the pixel -- and a factory is machines eight metres across, so
@@ -1485,8 +1491,13 @@ def build_sidecar(
                     "licence": "GPL-3.0",
                     "role": (
                         "container block decompression, offline, at generation time only. "
-                        "Not a dependency of this project, never imported from src/ or "
-                        "sidecar/, and no part of it is in the output."
+                        "An OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned "
+                        "exactly because it decides these bytes, and asked for on the "
+                        "command line -- `uv run --extra gen python tools/gen_map_image.py`. "
+                        "It is imported at module scope nowhere, and lazily inside one "
+                        "function of satisfactory_mcp.core.gameassets.iostore, so the "
+                        "server and the test suite run with it absent. No part of it is in "
+                        "the output."
                     ),
                 },
                 "block_compression": {
