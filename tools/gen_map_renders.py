@@ -130,12 +130,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
 from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
 from satisfactory_mcp.core.gameassets.pyramid import (
-    # PYRAMID_TILE_PX is unused HERE -- the cutter's own default is the tile size, and
-    # this file never passes one -- and imported anyway, because tests/test_web_api.py
-    # loads this file by path and asserts the served tile size against it, as it did when
-    # the constant was borrowed from gen_map_image. The test migration onto
-    # core.gameassets drops this line.
-    PYRAMID_TILE_PX,  # noqa: F401
     TILES_DIR_NAME,
     PyramidError,
     install_pyramid,

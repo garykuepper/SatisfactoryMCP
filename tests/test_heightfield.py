@@ -18,7 +18,6 @@ Five things are pinned, and each is a place a plausible-looking mistake would sh
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
@@ -27,6 +26,7 @@ import pytest
 
 from satisfactory_mcp.domain.spatial import elevation
 from satisfactory_mcp.domain.spatial import heightfield as hf
+from tools import gen_world_heightmap
 
 # --------------------------------------------------------------------------------------
 # A field small enough to build in a test, in exactly the format the generator writes.
@@ -89,15 +89,6 @@ def build_field(tmp_path: Path, *, water: bool = True) -> Path:
         encoding="utf-8",
     )
     return directory
-
-
-def gen_module():
-    """``tools/gen_world_heightmap.py``, imported by path rather than by name."""
-    path = Path(__file__).resolve().parents[1] / "tools" / "gen_world_heightmap.py"
-    spec = importlib.util.spec_from_file_location("gen_world_heightmap", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 # --------------------------------------------------------------------------------------
@@ -184,9 +175,8 @@ def test_the_fill_layers_no_data_test_is_on_the_decoded_height_not_the_raw_value
     rejects it. A test that only checked the first would pass on a rule that rejected
     everything.
     """
-    gen = gen_module()
     blank = np.zeros((2, 2), np.float32)
-    z_cm, valid = gen.decode_baseline(blank)
+    z_cm, valid = gen_world_heightmap.decode_baseline(blank)
     assert z_cm[0, 0] / 100.0 == pytest.approx(-522.8, abs=0.5), "the blank is not near -522 m"
     assert not valid.any(), "the blank value was admitted into the fill"
     assert (blank > 0).sum() == valid.sum() == 0
@@ -195,14 +185,16 @@ def test_the_fill_layers_no_data_test_is_on_the_decoded_height_not_the_raw_value
     # is exactly what the naive `raw > 0` test and the right one disagree about keeping.
     shelf = np.full(
         (2, 2),
-        (gen.FILL_FLOOR_CM - gen.BASELINE_OFFSET_CM) / gen.BASELINE_SCALE_CM_PER_RAW + 0.01,
+        (gen_world_heightmap.FILL_FLOOR_CM - gen_world_heightmap.BASELINE_OFFSET_CM)
+        / gen_world_heightmap.BASELINE_SCALE_CM_PER_RAW
+        + 0.01,
         np.float32,
     )
-    _z, shelf_valid = gen.decode_baseline(shelf)
+    _z, shelf_valid = gen_world_heightmap.decode_baseline(shelf)
     assert shelf_valid.all(), "real low ground was rejected along with the blank"
 
     # And the world's own floor is above the cut, so nothing real is ever near it.
-    assert gen.FILL_FLOOR_CM < -25500.0 < 0.0
+    assert gen_world_heightmap.FILL_FLOOR_CM < -25500.0 < 0.0
 
 
 # --------------------------------------------------------------------------------------
@@ -428,19 +420,20 @@ def test_the_generator_and_the_loader_agree_on_the_file_names_and_the_grid():
     copy, which is what makes that true; this asserts the rest of the agreement -- the
     georeference the sidecar promises and the constants the generator writes it from.
     """
-    gen = gen_module()
-    assert gen.GRID_PX == 7500
-    assert (gen.ORIGIN_X_CM, gen.ORIGIN_Y_CM, gen.SPACING_CM) == (-324700.0, -375000.0, 100.0)
-    assert gen.hf is hf, "the generator must use the shipped codec, not a copy"
+    grid_px = gen_world_heightmap.GRID_PX
+    origin_x, origin_y = gen_world_heightmap.ORIGIN_X_CM, gen_world_heightmap.ORIGIN_Y_CM
+    assert grid_px == 7500
+    assert (origin_x, origin_y, gen_world_heightmap.SPACING_CM) == (-324700.0, -375000.0, 100.0)
+    assert gen_world_heightmap.hf is hf, "the generator must use the shipped codec, not a copy"
 
     # The sampler the run validates on has to be the sampler the server reads with, or the
     # validation measures something nobody ships.
     height = np.array([[10, 20, hf.NODATA]], np.int16)
-    big = np.full((gen.GRID_PX, gen.GRID_PX), hf.NODATA, np.int16)
+    big = np.full((grid_px, grid_px), hf.NODATA, np.int16)
     big[0, 0:3] = height
-    got = gen.sample_grid(
+    got = gen_world_heightmap.sample_grid(
         big,
-        np.array([gen.ORIGIN_X_CM, gen.ORIGIN_X_CM + 100.0, gen.ORIGIN_X_CM + 200.0]),
-        np.array([gen.ORIGIN_Y_CM] * 3),
+        np.array([origin_x, origin_x + 100.0, origin_x + 200.0]),
+        np.array([origin_y] * 3),
     )
     assert got[0] == 1.0 and got[1] == 2.0 and np.isnan(got[2])

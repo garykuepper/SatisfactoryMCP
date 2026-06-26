@@ -206,17 +206,10 @@ from satisfactory_mcp.core.gameassets.provenance import InstallNotFound, install
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_PX,
     TILES_DIR_NAME,
-    # TILES_RETIRED, TILES_STAGING and merge_enhanced are unused HERE and imported
-    # anyway: tests/test_web_api.py loads this file by path and asserts the pyramid's
-    # shape through its namespace, as it did when this file WAS the cutter. The test
-    # migration onto core.gameassets drops these three.
-    TILES_RETIRED,  # noqa: F401
-    TILES_STAGING,  # noqa: F401
     PyramidError,
     cut_square,
     enhanced_top_z,
     install_pyramid,
-    merge_enhanced,  # noqa: F401
     pyramid_top_z,
     tile_relpath,
 )
