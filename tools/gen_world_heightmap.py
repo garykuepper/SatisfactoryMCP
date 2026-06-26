@@ -1,6 +1,6 @@
 """Cut a real 1 m heightmap of this world out of the installed game.
 
-    uv run python tools/gen_world_heightmap.py --pyooz-path <dir containing ooz>
+    uv run --extra gen python tools/gen_world_heightmap.py
 
 ``src/satisfactory_mcp/domain/spatial/elevation.py`` used to open with "there is no
 heightmap", and for as long as the project's only terrain evidence was scattered resource
@@ -132,21 +132,26 @@ installed. ``--force`` says it anyway. The whole directory is written to
 from one build and one from another; an interrupted run leaves a staging directory nothing
 loads.
 
-**The side venv, and why there is one.** Oodle-compressed container blocks are opened by
-``pyooz``, which is GPL-3.0. It is not a dependency of this project: it is an offline
-generation-time tool, never imported from ``src/`` or ``sidecar/``, and no part of it is in
-the output. It comes off ``--pyooz-path``, which is a throwaway venv's site-packages -- the
-same argument and the same posture as ``tools/gen_map_image.py`` and
-``tools/gen_world_collectibles.py``. The recipe, run and proven::
+**What opens the container.** Oodle-compressed container blocks are opened by ``ooz``, from
+``pyooz``, which is the project's ``gen`` extra: an optional dependency, pinned exactly
+because it decides the bytes this file writes, and asked for on the command line -- the
+same posture as ``tools/gen_map_image.py`` and ``tools/gen_world_collectibles.py``::
 
-    uv venv <tmp>/hmapvenv
-    uv pip install --python <tmp>/hmapvenv pyooz
-    uv run python tools/gen_world_heightmap.py --pyooz-path <tmp>/hmapvenv/Lib/site-packages
+    uv run --extra gen python tools/gen_world_heightmap.py
 
-numpy and scipy, unlike pyooz, ARE dependencies of this project, so they come from the
-environment ``uv run`` provides -- and they are imported at the top of this file, before
-``--pyooz-path`` is ever put on ``sys.path``, so a side venv that happened to carry its own
-numpy cannot win the import and leave scipy compiled against the other one.
+Optional means optional **at import time**: nothing imports it at module scope, the one
+``import ooz`` in the repository sits inside ``core.gameassets.iostore.oodle_decompress``,
+and a machine with none of the extra installed still imports every module, runs the whole
+test suite and serves the map -- it just cannot generate. numpy and scipy, unlike ``ooz``,
+are dependencies of this project outright and are imported at the top of this file.
+
+**Where the reader lives.** None of the reading is reimplemented here, and none of it is
+imported by file path any more: the container is
+``satisfactory_mcp.core.gameassets.iostore``, a cooked package's exports, names and
+property tags are ``.packages``, the mip arithmetic is ``.textures``, and the build pin and
+the staged rename that keeps this directory from saying two things at once are
+``.provenance``. Each takes its decoder as an argument rather than importing one, which is
+what keeps the extra optional everywhere but at the point of use.
 
 **Licence.** Everything this writes is derived from Coffee Stain's cooked assets, read out
 of the reader's own installed copy of the game and left in a gitignored directory. Nothing
@@ -155,26 +160,38 @@ here is committed, uploaded or redistributed, and the server serves it to localh
 
 from __future__ import annotations
 
-import argparse
 import json
-import shutil
 import struct
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Imported before --pyooz-path touches sys.path: see the module docstring.
 import numpy as np
 from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
+from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.packages import (
+    AssetIndex,
+    PackageView,
+    ScriptObjects,
+    _int32,
+    class_name_of,
+    property_tags,
+)
+from satisfactory_mcp.core.gameassets.provenance import (
+    InstallNotFound,
+    install_directory,
+    installed_build,
+    read_str_path,
+)
+from satisfactory_mcp.core.gameassets.textures import raw_mip_sizes
 from satisfactory_mcp.domain.spatial import heightfield as hf
-
-#: Where Steam puts the game. Overridable; the container is the only thing read from it.
-DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")
+from tools._common import base_parser, require_gen
 
 #: Which packages are swept. Everything terrain lives under one world.
 LEVEL_DIR = "/GameLevel01/"
@@ -189,7 +206,7 @@ BASELINE_PX = 2048
 #: The mip chain of that raster, largest-first, at two bytes per texel: 2048 down to 128.
 #: Derived so the length check below is arithmetic rather than a number typed in. A file of
 #: another length means the raster was re-cooked, i.e. the game changed, and the run stops.
-BASELINE_MIPS = tuple(((BASELINE_PX >> i), (BASELINE_PX >> i) ** 2 * 2) for i in range(5))
+BASELINE_MIPS = raw_mip_sizes(BASELINE_PX, 5, 2)
 BASELINE_BYTES = sum(size for _px, size in BASELINE_MIPS)
 
 #: The raster's own box, metres of world per texel column. The in-game map square.
@@ -288,51 +305,15 @@ VALIDATION_TRIM_RMS_MAX_M = 0.5
 #: layer in particular is mostly ocean where nothing stands.
 ACCURACY_MIN_SAMPLES = 30
 
-#: Where it all goes, and the staging name it is renamed from.
+#: Where it all goes. The staging directory it is renamed from is
+#: ``core.gameassets.provenance.install_directory``'s business, not this file's.
 LOCAL_DIR = ROOT / "data" / "local"
-STAGING_SUFFIX = ".incoming"
-RETIRED_SUFFIX = ".retired"
 
 #: Bumped when the pipeline changes what it writes, so a sidecar dates its own field.
 GENERATOR_VERSION = 1
 
 #: Where the sidecar records the build, and what the staleness guard reads back.
 PIN_PATH = ("sources", "game", "game_version_pinned")
-
-
-def load_container_reader():
-    """``tools/gen_world_collectibles.py``, imported by path.
-
-    That file already carries this repository's IoStore reader, and a second copy of a
-    format parser is a second thing to be wrong. Imported here rather than at module scope
-    so this file can be imported -- by a test, say -- without pulling in the save parser it
-    does not need.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import gen_world_collectibles
-
-    return gen_world_collectibles
-
-
-def read_game_build(game: Path) -> tuple[str, dict]:
-    """The installed build, from the engine's own ``.version`` file beside the executable.
-
-    A stated number rather than a scanned one, and the same shape ``tools/gen_map_image.py``
-    pins: the file is JSON the build system wrote, so ``Changelist`` and ``BranchName`` are
-    exactly what the pin string needs.
-    """
-    found = sorted(game.glob("Engine/Binaries/Win64/*-Win64-Shipping.version"))
-    if not found:
-        raise SystemExit(
-            f"no Engine/Binaries/Win64/*-Win64-Shipping.version under {game} -- "
-            "point --game at the install holding FactoryGame/ and Engine/"
-        )
-    raw = json.loads(found[0].read_text(encoding="utf-8"))
-    pin = (
-        f"buildVersion {raw.get('Changelist')} "
-        f"(engine branch {raw.get('BranchName')}), the installed build"
-    )
-    return pin, raw
 
 
 # --------------------------------------------------------------------------------------
@@ -383,7 +364,7 @@ def _grass_data_heights(tail: bytes) -> np.ndarray | None:
     return np.frombuffer(tail, dtype="<u2", count=num, offset=pos).reshape(LANDSCAPE_N, LANDSCAPE_N)
 
 
-def sweep_levels(gwc, store, scripts, progress: bool = True) -> dict:
+def sweep_levels(store, scripts, progress: bool = True) -> dict:
     """One pass over every ``*.umap`` of the world: landscape components and placements.
 
     Both harvests need the same ``PackageView`` of the same 4,521 packages, and building
@@ -404,7 +385,7 @@ def sweep_levels(gwc, store, scripts, progress: bool = True) -> dict:
 
     for index, path in enumerate(paths):
         try:
-            view = gwc.PackageView(store.read_path(path), scripts)
+            view = PackageView(store.read_path(path), scripts)
         except Exception:
             unreadable += 1
             continue
@@ -419,10 +400,10 @@ def sweep_levels(gwc, store, scripts, progress: bool = True) -> dict:
                 continue
             root = view.export_ref(reference)
             if root is not None:
-                root_owner[root] = gwc.class_name_of(class_path)
+                root_owner[root] = class_name_of(class_path)
 
         for slot, class_path in view.class_of.items():
-            name = gwc.class_name_of(class_path)
+            name = class_name_of(class_path)
             if name == "LandscapeStreamingProxy":
                 props = view.props(slot)
                 offset = props.get("LandscapeSectionOffset")
@@ -439,10 +420,10 @@ def sweep_levels(gwc, store, scripts, progress: bool = True) -> dict:
                 proxies.append((section_x - lx / sx, section_y - ly / sy, lz, sx, sy, sz))
             elif name == "LandscapeComponent":
                 props = view.props(slot)
-                base_x = gwc._int32(props.get("SectionBaseX", b"\0\0\0\0"))
-                base_y = gwc._int32(props.get("SectionBaseY", b"\0\0\0\0"))
+                base_x = _int32(props.get("SectionBaseX", b"\0\0\0\0"))
+                base_y = _int32(props.get("SectionBaseY", b"\0\0\0\0"))
                 body = view.pkg.body(view.exports[slot])
-                _tags, end = gwc.property_tags(body, view.pkg.names)
+                _tags, end = property_tags(body, view.pkg.names)
                 heights = _grass_data_heights(body[end:])
                 if heights is None:
                     malformed += 1
@@ -644,9 +625,7 @@ def decode_trimesh(blob: bytes, low: np.ndarray, high: np.ndarray):
     return None, f"no index width fits {tris} triangles over {count} vertices"
 
 
-def read_mesh_geometry(
-    gwc, store, scripts, index, meshes: list[str], progress: bool = True
-) -> dict:
+def read_mesh_geometry(store, scripts, index, meshes: list[str], progress: bool = True) -> dict:
     """Decode the collision trimesh of every rock mesh the world places. Returns a dict.
 
     Only ``ROCK_DIRS`` are opened: a tree's collision is a tree, and the point of this layer
@@ -665,13 +644,13 @@ def read_mesh_geometry(
             failures[mesh] = "not in the container"
             continue
         try:
-            view = gwc.PackageView(store.read_path(package), scripts)
+            view = PackageView(store.read_path(package), scripts)
         except Exception as exc:
             failures[mesh] = f"unreadable package: {type(exc).__name__}"
             continue
         bounds = None
         for export in view.exports:
-            if gwc.class_name_of(view.class_of.get(export["slot"])) != "StaticMesh":
+            if class_name_of(view.class_of.get(export["slot"])) != "StaticMesh":
                 continue
             payload = view.props(export["slot"]).get("ExtendedBounds")
             if not payload:
@@ -689,10 +668,10 @@ def read_mesh_geometry(
             continue
         origin, extent = bounds
         for export in view.exports:
-            if gwc.class_name_of(view.class_of.get(export["slot"])) != "BodySetup":
+            if class_name_of(view.class_of.get(export["slot"])) != "BodySetup":
                 continue
             body = view.pkg.body(export)
-            _tags, end = gwc.property_tags(body, view.pkg.names)
+            _tags, end = property_tags(body, view.pkg.names)
             result, why = decode_trimesh(body[end:], origin - extent, origin + extent)
             if result is None:
                 failures[mesh] = why
@@ -1406,12 +1385,21 @@ def build_meta(
                 "import_name": "ooz",
                 "licence": "GPL-3.0",
                 "role": (
-                    "container block decompression, offline, at generation time only. Not a "
-                    "dependency of this project, never imported from src/ or sidecar/, and "
-                    "no part of it is in the output."
+                    "container block decompression, offline, at generation time only. An "
+                    "OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned exactly "
+                    "because it decides these bytes, and asked for on the command line -- "
+                    "`uv run --extra gen python tools/gen_world_heightmap.py`. It is "
+                    "imported at module scope nowhere, and lazily inside one function of "
+                    "satisfactory_mcp.core.gameassets.iostore, so the server and the test "
+                    "suite run with it absent. No part of it is in the output."
                 ),
             },
-            "container": "tools/gen_world_collectibles.py's IoStore reader, imported by path",
+            "container": (
+                "satisfactory_mcp.core.gameassets.iostore's IoStore reader, imported by "
+                "name. It was tools/gen_world_collectibles.py's, imported by file path, "
+                "until the four generators that read the same container came to share one "
+                "copy of it."
+            ),
             "codec": "satisfactory_mcp.domain.spatial.heightfield, imported so there is one",
         },
         "timings_s": timings,
@@ -1445,61 +1433,19 @@ def build_meta(
 
 
 def pinned_build(meta: dict) -> str | None:
-    """The build an existing sidecar names, or None if it names none."""
-    node: object = meta
-    for key in PIN_PATH:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return node if isinstance(node, str) else None
+    """The build an existing sidecar names, or None if it names none.
 
-
-def install(out_dir: Path, payload: dict[str, bytes]) -> dict:
-    """Write the whole field into staging and rename it into place.
-
-    The rename is the point: ``heightmap/`` appears complete or not at all. Four files that
-    have to agree about a georeference are exactly the case where a half-written directory
-    is worse than none -- a reader meeting three rasters from this build and a sidecar from
-    the last would get answers rather than an error.
+    ``PIN_PATH`` is this file's statement about its own sidecar; the walk that follows it
+    is everyone's, and lives in ``core.gameassets.provenance``.
     """
-    staging = out_dir.with_name(out_dir.name + STAGING_SUFFIX)
-    retired = out_dir.with_name(out_dir.name + RETIRED_SUFFIX)
-    for stale in (staging, retired):
-        if stale.exists():
-            shutil.rmtree(stale)
-    staging.mkdir(parents=True)
-    written = {}
-    for name, blob in payload.items():
-        (staging / name).write_bytes(blob)
-        written[name] = len(blob)
-    if out_dir.exists():
-        out_dir.rename(retired)
-    staging.rename(out_dir)
-    if retired.exists():
-        shutil.rmtree(retired)
-    return written
+    return read_str_path(meta, PIN_PATH)
 
 
 # --------------------------------------------------------------------------------------
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` -- a throwaway venv's site-packages. "
-            "See the module docstring for the recipe"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "-o",
         "--out-dir",
@@ -1515,14 +1461,13 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="no per-stage progress lines")
     args = parser.parse_args()
 
-    gwc = load_container_reader()
-    try:
-        ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-    except gwc.MissingOodle as exc:
-        print(exc)
-        return 2
+    pyooz_version = require_gen("ooz")["pyooz"]
 
-    build_pin, build_raw = read_game_build(args.game)
+    try:
+        build_pin, build_raw = installed_build(args.game)
+    except InstallNotFound as exc:
+        print(f"{exc} -- point --game at the install holding FactoryGame/ and Engine/")
+        return 1
     print(f"installed build: {build_pin}")
 
     out_dir: Path = args.out_dir
@@ -1558,9 +1503,9 @@ def main() -> int:
         print(f"no FactoryGame-Windows.utoc under {paks}")
         return 1
     print(f"reading the world from {paks} with pyooz {pyooz_version}")
-    store = gwc.IoStore(paks, "FactoryGame-Windows", ooz.decompress)
-    scripts = gwc.ScriptObjects(paks, ooz.decompress)
-    index = gwc.AssetIndex(store)
+    store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
+    scripts = ScriptObjects(paks, oodle_decompress)
+    index = AssetIndex(store)
     print(
         f"  .utoc v{store.version}, {store.entry_count} entries, "
         f"{store.block_size // 1024} KiB blocks, methods {store.methods}"
@@ -1570,7 +1515,7 @@ def main() -> int:
 
     # ---- stages 1 and 2: one sweep -----------------------------------------------------
     print("sweeping the world's packages for landscape components and placements")
-    sweep = sweep_levels(gwc, store, scripts, loud)
+    sweep = sweep_levels(store, scripts, loud)
     timings["sweep"] = round(sweep["seconds"], 1)
     print(
         f"  {sweep['packages']} packages in {sweep['seconds']:.0f}s: "
@@ -1592,7 +1537,7 @@ def main() -> int:
 
     # ---- stage 3: cliff collision ------------------------------------------------------
     print("decoding the cooked collision trimesh of every placed rock")
-    meshes = read_mesh_geometry(gwc, store, scripts, index, sweep["meshes"], loud)
+    meshes = read_mesh_geometry(store, scripts, index, sweep["meshes"], loud)
     timings["mesh_decode"] = round(meshes["seconds"], 1)
     print(
         f"  {len(meshes['geometry'])}/{meshes['wanted']} rock meshes decoded in "
@@ -1703,7 +1648,7 @@ def main() -> int:
         timings=timings,
     )
     payload[hf.META_NAME] = json.dumps(meta, indent=1).encode("utf-8")
-    written = install(out_dir, payload)
+    written = install_directory(out_dir, payload)
     total = sum(written.values())
     print(f"wrote {out_dir}  {total} B  ({total / 1e6:.1f} MB)")
     for name, size in written.items():

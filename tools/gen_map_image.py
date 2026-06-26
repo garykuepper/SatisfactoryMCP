@@ -1,6 +1,6 @@
 """Cut data/local/map.png -- the web map's base image -- out of the installed game.
 
-    uv run python tools/gen_map_image.py --pyooz-path <dir containing ooz>
+    uv run --extra gen python tools/gen_map_image.py
 
 The web page has always been able to show a base map at ``data/local/map.png``, and the
 repository has always shipped none: a rendered map of this world is Coffee Stain's
@@ -70,21 +70,27 @@ build -- or from somewhere else entirely, with no sidecar at all -- is not ours 
 replace on a whim, and the repository's own tables are pinned to a build the new artwork
 might no longer agree with. ``--force`` says it anyway.
 
-**The side venv, and why there is one.** Oodle-compressed container blocks are opened by
-``pyooz``, which is GPL-3.0, and the BC1 blocks by ``texture2ddecoder``. Neither is a
-dependency of this project: both are offline generation-time tools, never imported from
-``src/`` or ``sidecar/``, and no part of either is in the output. Pillow is only wanted
-here as well. All three come off ``--pyooz-path``, which is a throwaway venv's
-site-packages -- the same argument, and the same posture, as
-``tools/gen_world_collectibles.py``. The recipe, run and proven:
+**What opens the container, and where it comes from.** Oodle-compressed container blocks
+are opened by ``ooz``, from ``pyooz``, the BC1 blocks by ``texture2ddecoder``, and Pillow
+writes the PNG. All three are the project's ``gen`` extra: optional dependencies, pinned
+exactly because they decide the bytes this file writes, and asked for on the command line
+-- the same posture as ``tools/gen_world_collectibles.py``:
 
-    uv venv <tmp>/mapvenv
-    uv pip install --python <tmp>/mapvenv pyooz texture2ddecoder pillow
-    uv run python tools/gen_map_image.py --pyooz-path <tmp>/mapvenv/Lib/site-packages
+    uv run --extra gen python tools/gen_map_image.py
 
-The container reader itself is not reimplemented: ``tools/gen_world_collectibles.py``
-already has one, and it is imported from there by path so this file stays runnable and
-importable on its own.
+Optional means optional **at import time**: none of the three is imported at module scope
+anywhere in this repository, so a machine with none of them installed still imports every
+module, runs the whole test suite and serves the map -- it just cannot generate. The one
+``import ooz`` lives inside ``core.gameassets.iostore.oodle_decompress``, and the BC1
+decoder and Pillow are imported inside ``main`` and handed on to ``.textures`` and
+``.pyramid`` as arguments.
+
+None of the reading is reimplemented here, and none of it is imported by file path any
+more: the container is ``satisfactory_mcp.core.gameassets.iostore``, the mip arithmetic and
+the BC1 decode are ``.textures``, the build pin is ``.provenance``, and the pyramid --
+which two other layers are now cut with -- is ``.pyramid``. Each takes its decoder as an
+argument rather than importing one, which is what keeps the ``gen`` extra optional
+everywhere but at the point of use.
 
 **``--enhance``: two more zoom levels than the artwork has pixels.** The sheet runs out at
 8192 px -- about 0.9 m to the pixel -- and a factory is machines eight metres across, so
@@ -94,9 +100,9 @@ a read-only bake-off picked over Lanczos, vtracer+resvg and two other models by 
 stroke depth and edge gradient on four sampled regions. It is **off by default**: it needs
 a 45 MB binary this repository will not vendor and a Vulkan device, and a tool whose
 default path silently depends on either is a tool that fails on somebody else's machine.
-The same recipe, with the flag on the end:
+The same command, with the flag on the end:
 
-    uv run python tools/gen_map_image.py --pyooz-path <tmp>/mapvenv/Lib/site-packages --enhance
+    uv run --extra gen python tools/gen_map_image.py --enhance
 
 The stage is four passes and the model is only the second, because a second read-only
 bake-off round measured the model's two remaining defects and found both of them fixable
@@ -173,10 +179,10 @@ when its own recipe is behind what is already on disk. So re-cutting recipe 1's 
 recipe 2 is the upgrade it plainly is and runs without a flag, while a reader can still
 read off which pipeline drew the pixels they are looking at.
 
-The stage needs ``numpy`` and ``scipy``, which unlike Pillow ARE dependencies of this
-project, so they come from the project environment that ``uv run`` provides -- which is
-also why they must not be installed into the side venv, where a second numpy would be
-first on ``sys.path`` and leave scipy compiled against the other one.
+The stage needs ``numpy`` and ``scipy``, which unlike Pillow are dependencies of this
+project outright, so they come from the environment ``uv run`` provides -- the same one
+``--extra gen`` adds the decoders to, which is what makes the two halves of the stage
+provably the same numpy.
 
 **Licence.** The bytes this writes are Coffee Stain's artwork, read out of the reader's
 own installed copy of the game and left in a gitignored directory. Nothing here is
@@ -185,7 +191,6 @@ committed, uploaded or redistributed, and ``/api/mapimage`` serves it to localho
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import shutil
@@ -199,9 +204,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-#: Where Steam puts the game. Overridable; the container is the only thing read from it.
-DEFAULT_GAME = Path("G:/SteamLibrary/steamapps/common/Satisfactory")
+from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.provenance import InstallNotFound, installed_build
+from satisfactory_mcp.core.gameassets.pyramid import (
+    PYRAMID_TILE_PX,
+    TILES_DIR_NAME,
+    PyramidError,
+    cut_square,
+    enhanced_top_z,
+    install_pyramid,
+    pyramid_top_z,
+    tile_relpath,
+)
+from satisfactory_mcp.core.gameassets.textures import bc1_mip_sizes, decode_bc1_rgba
+from tools._common import base_parser, require_gen
 
 #: The mount-relative directory holding the four slices, inside FactoryGame-Windows.utoc.
 SLICE_DIR = "../../../FactoryGame/Content/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/"
@@ -216,7 +235,7 @@ SHEET_PX = TILE_PX * 2
 
 #: The ``.ubulk`` mip chain, largest-first: 4096 down to 128, BC1's 8 bytes per 4x4 block.
 #: Derived so that the file-length check below is arithmetic rather than a typed-in number.
-MIP_SIZES = tuple(((TILE_PX >> i), (max(TILE_PX >> i, 4) // 4) ** 2 * 8) for i in range(6))
+MIP_SIZES = bc1_mip_sizes(TILE_PX, 6)
 MIP0_BYTES = MIP_SIZES[0][1]
 UBULK_BYTES = sum(size for _px, size in MIP_SIZES)
 
@@ -237,22 +256,13 @@ LOCAL_DIR = ROOT / "data" / "local"
 IMAGE_NAME = "map.png"
 SIDECAR_NAME = "map.json"
 
-#: And where the pyramid goes: ``tiles/{z}/{x}_{y}.png``, cut from the same sheet in the
-#: same run. ``map.png`` stays -- it is the fallback for a page that finds no pyramid, and
-#: the one file a reader can open and eyeball -- but it is 16 MB of 8192x8192 that a
-#: browser decodes to 268 MB of RGBA whatever the view is, which is what the pyramid is
-#: for: at the whole-world framing the page fetches a few hundred KB of z2 instead.
-#: ``PYRAMID_TILE_PX`` is deliberately not called TILE_PX: a "tile" in this file is one of
-#: the four 4096 px slices the game ships, and this is the 256 px square a browser fetches.
-TILES_DIR_NAME = "tiles"
-PYRAMID_TILE_PX = 256
-
-#: The staging and retirement names beside it. A pyramid is only ever *renamed* into
-#: place, so a reader can never meet half of one: an interrupted run leaves
-#: ``tiles.incoming`` -- which nothing serves and the next run deletes -- rather than a
-#: ``tiles/`` tree that is missing the levels the run had not got to yet.
-TILES_STAGING = TILES_DIR_NAME + ".incoming"
-TILES_RETIRED = TILES_DIR_NAME + ".retired"
+# And where the pyramid goes: ``tiles/{z}/{x}_{y}.png``, cut from the same sheet in the
+# same run. ``map.png`` stays -- it is the fallback for a page that finds no pyramid, and
+# the one file a reader can open and eyeball -- but it is 16 MB of 8192x8192 that a
+# browser decodes to 268 MB of RGBA whatever the view is, which is what the pyramid is
+# for: at the whole-world framing the page fetches a few hundred KB of z2 instead. The
+# names, the level arithmetic and the staged rename are imported above from
+# ``core.gameassets.pyramid``, which cuts all three of this project's pyramids.
 
 #: --------------------------------------------------------------------------------------
 #: The optional enhancement stage. See the module docstring; these are the pinned numbers.
@@ -396,10 +406,6 @@ CONTROL_NEAR = (2000, 2001)
 CONTROL_FAR = (2000, 2100)
 
 
-class MissingImaging(RuntimeError):
-    """No BC1 decoder or no Pillow: a setup problem, not a bug."""
-
-
 class MissingUpscaler(RuntimeError):
     """The GPU stage cannot run, and says what to do about it.
 
@@ -408,73 +414,6 @@ class MissingUpscaler(RuntimeError):
     sidecar that says ``enhanced`` over pixels that are not, which is the one outcome worse
     than not running at all.
     """
-
-
-def load_container_reader():
-    """``tools/gen_world_collectibles.py``, imported by path.
-
-    That file already carries this repository's IoStore reader, and a second copy of a
-    format parser is a second thing to be wrong. Imported here rather than at module
-    scope so this file can be imported -- by a test, say -- without pulling in the save
-    parser it does not need.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import gen_world_collectibles
-
-    return gen_world_collectibles
-
-
-def load_imaging(extra_path: Path | None) -> tuple[object, object, dict[str, str]]:
-    """Import the BC1 decoder and Pillow out of the same throwaway venv as ``ooz``.
-
-    Same posture as the Oodle import next door: neither is a dependency of this project,
-    so neither is imported from the project environment.
-    """
-    if extra_path is not None:
-        sys.path.insert(0, str(extra_path))
-    try:
-        import texture2ddecoder
-        from PIL import Image
-    except ImportError as exc:
-        raise MissingImaging(
-            "no `texture2ddecoder` or no Pillow importable, so the map's BC1 blocks cannot "
-            "be decoded. This is deliberate: both are offline tools here, never "
-            "dependencies of this project. Do:\n"
-            "    uv venv <tmp>/mapvenv\n"
-            "    uv pip install --python <tmp>/mapvenv pyooz texture2ddecoder pillow\n"
-            "    uv run python tools/gen_map_image.py "
-            "--pyooz-path <tmp>/mapvenv/Lib/site-packages"
-        ) from exc
-    versions = {}
-    for dist in ("texture2ddecoder", "pillow"):
-        try:
-            from importlib.metadata import version
-
-            versions[dist] = version(dist)
-        except Exception:
-            versions[dist] = "unknown"
-    return texture2ddecoder, Image, versions
-
-
-def read_game_build(game: Path) -> tuple[str, dict]:
-    """The installed build, from the engine's own ``.version`` file beside the executable.
-
-    A stated number rather than a scanned one: the file is JSON the build system wrote,
-    so ``Changelist`` and ``BranchName`` are exactly what the pin string needs and there
-    is nothing to parse out of a binary.
-    """
-    found = sorted(game.glob("Engine/Binaries/Win64/*-Win64-Shipping.version"))
-    if not found:
-        raise SystemExit(
-            f"no Engine/Binaries/Win64/*-Win64-Shipping.version under {game} -- "
-            "point --game at the install holding FactoryGame/ and Engine/"
-        )
-    raw = json.loads(found[0].read_text(encoding="utf-8"))
-    pin = (
-        f"buildVersion {raw.get('Changelist')} "
-        f"(engine branch {raw.get('BranchName')}), the installed build"
-    )
-    return pin, raw
 
 
 # --------------------------------------------------------------------------------------
@@ -501,13 +440,6 @@ def read_slice(store, name: str) -> bytes:
             "Refusing to decode mip 0 out of a file whose layout is no longer known."
         )
     return raw[:MIP0_BYTES]
-
-
-def decode_tile(decoder, image_mod, raw: bytes):
-    """One 4096x4096 slice. ``decode_bc1`` returns **BGRA**, which is the whole trick."""
-    return image_mod.frombytes(
-        "RGBA", (TILE_PX, TILE_PX), decoder.decode_bc1(raw, TILE_PX, TILE_PX), "raw", "BGRA"
-    )
 
 
 def _line(tile, box: tuple[int, int, int, int]) -> bytes:
@@ -646,203 +578,6 @@ def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
             "larger than one step would be real drift, and pin_holds would say so."
         ),
     }
-
-
-# --------------------------------------------------------------------------------------
-# The pyramid: the same sheet, cut small enough that a view fetches only what it shows.
-# --------------------------------------------------------------------------------------
-
-
-def pyramid_top_z(sheet_px: int, tile_px: int = PYRAMID_TILE_PX) -> int:
-    """The deepest level of a pyramid over a ``sheet_px`` square: 8192 -> 5.
-
-    Level z holds ``2**z`` tiles a side, so level ``top`` is the sheet at its own
-    resolution. Derived rather than typed in, because ``--size`` can halve the sheet and a
-    pyramid one level too deep is a level of tiles upscaled from nothing.
-    """
-    levels = sheet_px // tile_px
-    if levels < 1 or levels & (levels - 1):
-        raise SystemExit(
-            f"a {sheet_px} px sheet is not a power-of-two multiple of {tile_px} px tiles, "
-            "so no pyramid divides it evenly"
-        )
-    return levels.bit_length() - 1
-
-
-def enhanced_top_z(
-    sheet_px: int, scale: int = ENHANCE_SCALE, tile_px: int = PYRAMID_TILE_PX
-) -> int:
-    """The deepest level once the sheet has been upscaled ``scale`` times: 8192, 4x -> 7.
-
-    Derived from ``pyramid_top_z`` rather than typed in, so the two cannot disagree about
-    how many levels a 4x upscale is worth -- it is exactly log2(scale) of them, and a scale
-    that is not a power of two would not divide the tile grid at all.
-    """
-    if scale < 1 or scale & (scale - 1):
-        raise SystemExit(f"an upscale of {scale}x is not a power of two, so it adds no levels")
-    return pyramid_top_z(sheet_px, tile_px) + (scale.bit_length() - 1)
-
-
-def tile_relpath(z: int, x: int, y: int) -> str:
-    """``{z}/{x}_{y}.png`` -- the one place the layout is written down.
-
-    The web API has the same function, and a test asserts the two agree: the tool that
-    writes the tree and the endpoint that serves it must not hold two opinions about
-    where a tile lives.
-    """
-    return f"{z}/{x}_{y}.png"
-
-
-def cut_square(piece, dest: Path, z: int, ox: int, oy: int, tile_px: int) -> int:
-    """Slice one square image into ``dest/{z}/{x}_{y}.png``, starting at tile ``(ox, oy)``.
-
-    The one place a level's pixels become files, whether the square is a whole downscale of
-    the sheet or one enhanced core out of sixty-four. Returns the bytes written, which is
-    what the caller sums into the level record a reader checks the tree against.
-
-    Square, so ``width`` is asked for twice rather than ``height`` once: every image this
-    file makes is one, and asking for only the attribute that is actually needed keeps the
-    stand-in a test can pass in down to the two methods that are really used.
-    """
-    (dest / str(z)).mkdir(parents=True, exist_ok=True)
-    written = 0
-    for y in range(piece.width // tile_px):
-        for x in range(piece.width // tile_px):
-            box = (x * tile_px, y * tile_px, (x + 1) * tile_px, (y + 1) * tile_px)
-            path = dest / tile_relpath(z, ox + x, oy + y)
-            piece.crop(box).save(path, format="PNG", optimize=True)
-            written += path.stat().st_size
-    return written
-
-
-#: What a level says it was cut from when the caller does not say. The default is this
-#: file's own answer; ``tools/gen_map_renders.py`` passes its own, because the same cutter
-#: now serves three pyramids and a level record that named the artwork under a hillshade
-#: would be the one part of the sidecar a reader could not trust.
-DEFAULT_LEVEL_SOURCE = "the game's own 8192 px artwork, Lanczos"
-
-
-def cut_pyramid(
-    sheet,
-    image_mod,
-    dest: Path,
-    tile_px: int = PYRAMID_TILE_PX,
-    source: str = DEFAULT_LEVEL_SOURCE,
-) -> dict:
-    """Cut ``sheet`` into ``dest/{z}/{x}_{y}.png`` for every level, and say what it wrote.
-
-    Each level below the top is one Lanczos downscale of the whole sheet, sliced up --
-    downscaling the sheet once per level rather than each tile from its four children
-    keeps every level a resampling of the original pixels, so no level accumulates the
-    softening of five successive halvings.
-
-    The levels are cheap: level z is a quarter of level z+1, so everything under the top
-    adds a third again to the top's own bytes.
-
-    ``--enhance`` adds levels ABOVE this top out of upscaled pixels; it does not change
-    these. z0..z5 are downscales of the game's own artwork here whether that stage runs or
-    not, because a level that has real pixels behind it has no business being drawn from
-    invented ones.
-    """
-    top = pyramid_top_z(sheet.width, tile_px)
-    levels = []
-    for z in range(top + 1):
-        side = tile_px << z
-        level = sheet if side == sheet.width else sheet.resize((side, side), image_mod.LANCZOS)
-        written = cut_square(level, dest, z, 0, 0, tile_px)
-        levels.append(
-            {
-                "z": z,
-                "sheet_px": side,
-                "tiles": (1 << z) ** 2,
-                "bytes": written,
-                "from": source,
-            }
-        )
-        print(f"  pyramid z{z}: {side}x{side}, {(1 << z) ** 2} tiles, {written / 1e6:.2f} MB")
-    return {
-        "layout": f"{TILES_DIR_NAME}/{{z}}/{{x}}_{{y}}.png",
-        "tile_px": tile_px,
-        "max_z": top,
-        "enhanced": False,
-        "count": sum(level["tiles"] for level in levels),
-        "bytes": sum(level["bytes"] for level in levels),
-        "levels": levels,
-        "role": (
-            "the same sheet at one resolution per zoom, so the page fetches the pixels it "
-            "can actually show. map.png is still written beside it: it is what a page "
-            "falls back to when there is no pyramid, and the one file a reader can open."
-        ),
-        "completeness": (
-            "written to " + TILES_STAGING + " and renamed into place, so this directory is "
-            "either a whole pyramid or absent -- an interrupted run cannot leave a partial "
-            "one for a reader to trust. count is what a doubter can check it against."
-        ),
-    }
-
-
-def merge_enhanced(stats: dict, extra: dict) -> dict:
-    """Fold the enhanced levels into the pyramid record the sidecar carries.
-
-    ``count`` and ``bytes`` are re-summed from the levels rather than added to, so the one
-    number ``install_pyramid`` checks the tree against stays derived from the same list a
-    reader would count themselves.
-    """
-    levels = stats["levels"] + extra["levels"]
-    return {
-        **stats,
-        "max_z": max(level["z"] for level in levels),
-        "enhanced": True,
-        "count": sum(level["tiles"] for level in levels),
-        "bytes": sum(level["bytes"] for level in levels),
-        "levels": levels,
-        "enhancement": extra["enhancement"],
-    }
-
-
-def install_pyramid(
-    sheet,
-    image_mod,
-    out_dir: Path,
-    tile_px: int = PYRAMID_TILE_PX,
-    enhance=None,
-    source: str = DEFAULT_LEVEL_SOURCE,
-) -> dict:
-    """Cut the pyramid into staging, then rename it over any older one.
-
-    The rename is the whole point: ``tiles/`` appears complete or not at all. A previous
-    tree is moved aside first (Windows will not rename onto a non-empty directory) and
-    deleted afterwards, and any leftovers from a run that died mid-swap are cleared first
-    rather than merged into.
-
-    ``enhance`` -- when ``--enhance`` was asked for -- is called with the staging directory
-    and adds the upscaled levels to it before the swap. It runs INSIDE the staging window
-    on purpose: the GPU stage is the part most likely to fail, and a failure there must
-    leave the pyramid that is already installed untouched rather than half-replaced.
-    """
-    staging = out_dir / TILES_STAGING
-    retired = out_dir / TILES_RETIRED
-    final = out_dir / TILES_DIR_NAME
-    for stale in (staging, retired):
-        if stale.exists():
-            shutil.rmtree(stale)
-    staging.mkdir(parents=True)
-    stats = cut_pyramid(sheet, image_mod, staging, tile_px, source)
-    if enhance is not None:
-        stats = merge_enhanced(stats, enhance(staging))
-
-    on_disk = sum(1 for _ in staging.rglob("*.png"))
-    if on_disk != stats["count"]:
-        raise SystemExit(
-            f"the pyramid was cut with {stats['count']} tiles but {on_disk} PNGs are in "
-            f"{staging} -- refusing to install a tree that does not match its own count"
-        )
-    if final.exists():
-        final.rename(retired)
-    staging.rename(final)
-    if retired.exists():
-        shutil.rmtree(retired)
-    return stats
 
 
 # --------------------------------------------------------------------------------------
@@ -994,31 +729,29 @@ def ensure_upscaler(cache: Path | None = None, *, smoke: bool = True) -> dict:
 def check_array_stack() -> tuple[str, str]:
     """numpy and scipy, and the check that they came out of the same environment.
 
-    These two are dependencies of this project, unlike Pillow, so they come from what
-    ``uv run`` provides rather than from ``--pyooz-path``. But that path is inserted at the
-    FRONT of ``sys.path``, so a side venv that happened to carry its own numpy would win
-    the import while scipy still came from the project -- a scipy compiled against a
-    different numpy, which fails as a segfault or a wrong answer rather than an ImportError.
-    Cheaper to state and check than to debug.
+    A scipy compiled against a different numpy than the one that wins the import fails as
+    a segfault or a wrong answer rather than an ImportError, so it is cheaper to state and
+    check than to debug. One environment holds both now -- the one ``uv run`` provides,
+    which is also where ``--extra gen`` puts the decoders -- so this should never fire;
+    a check that never fires is what a satisfied invariant looks like.
     """
     try:
         import numpy
         import scipy
     except ImportError as exc:
         raise MissingUpscaler(
-            "--enhance needs numpy and scipy, which ARE dependencies of this project: run "
-            "this through `uv run` rather than a bare python, and do not install them into "
-            "the --pyooz-path venv."
+            "--enhance needs numpy and scipy, which are dependencies of this project "
+            "outright: run this through `uv run` rather than a bare python."
         ) from exc
     homes = {Path(module.__file__).resolve().parents[1] for module in (numpy, scipy)}
     if len(homes) != 1:
         raise MissingUpscaler(
             "numpy and scipy are imported from different environments -- "
             + " and ".join(sorted(str(home) for home in homes))
-            + ".\nThat is what happens when the --pyooz-path venv carries its own numpy: it "
-            "goes to the front of sys.path and scipy is left compiled against another one. "
-            "Uninstall numpy and scipy from that venv; it only needs pyooz, "
-            "texture2ddecoder and pillow."
+            + ".\nThat happens when something ahead of the project environment on sys.path "
+            "carries its own numpy: it wins the import and scipy is left compiled against "
+            "another one. Run this as `uv run --extra gen python tools/gen_map_image.py`, "
+            "out of one environment."
         )
     return numpy.__version__, scipy.__version__
 
@@ -1758,8 +1491,13 @@ def build_sidecar(
                     "licence": "GPL-3.0",
                     "role": (
                         "container block decompression, offline, at generation time only. "
-                        "Not a dependency of this project, never imported from src/ or "
-                        "sidecar/, and no part of it is in the output."
+                        "An OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned "
+                        "exactly because it decides these bytes, and asked for on the "
+                        "command line -- `uv run --extra gen python tools/gen_map_image.py`. "
+                        "It is imported at module scope nowhere, and lazily inside one "
+                        "function of satisfactory_mcp.core.gameassets.iostore, so the "
+                        "server and the test suite run with it absent. No part of it is in "
+                        "the output."
                     ),
                 },
                 "block_compression": {
@@ -1794,22 +1532,7 @@ def build_sidecar(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` -- a throwaway venv's site-packages. "
-            "The same venv must carry texture2ddecoder and Pillow; see the module docstring"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "--size",
         type=int,
@@ -1855,20 +1578,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    gwc = load_container_reader()
-    try:
-        ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-    except gwc.MissingOodle as exc:
-        print(exc)
-        return 2
-    try:
-        decoder, image_mod, versions = load_imaging(args.pyooz_path)
-    except MissingImaging as exc:
-        print(exc)
-        return 2
-    versions["pyooz"] = pyooz_version
+    versions = require_gen("ooz", "texture2ddecoder", "PIL.Image")
+    pyooz_version = versions["pyooz"]
+    import texture2ddecoder as decoder
+    from PIL import Image as image_mod
 
-    build_pin, build_raw = read_game_build(args.game)
+    try:
+        build_pin, build_raw = installed_build(args.game)
+    except InstallNotFound as exc:
+        print(f"{exc} -- point --game at the install holding FactoryGame/ and Engine/")
+        return 1
     print(f"installed build: {build_pin}")
 
     # ---- staleness: whose picture is already there, and from which build? ------------
@@ -1946,7 +1665,7 @@ def main() -> int:
         print(f"no FactoryGame-Windows.utoc under {paks}")
         return 1
     print(f"reading the map slices from {paks} with pyooz {pyooz_version}")
-    store = gwc.IoStore(paks, "FactoryGame-Windows", ooz.decompress)
+    store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
     print(
         f"  .utoc v{store.version}, {store.entry_count} entries, "
         f"{store.block_size // 1024} KiB blocks, methods {store.methods}"
@@ -1956,7 +1675,7 @@ def main() -> int:
     tiles = {}
     for name in SLICES:
         raw = read_slice(store, name)
-        tiles[name] = decode_tile(decoder, image_mod, raw)
+        tiles[name] = decode_bc1_rgba(decoder, image_mod, raw, TILE_PX)
         col, row = (int(v) for v in name.split("_")[1].split("-"))
         print(
             f"  {name}: {UBULK_BYTES} B .ubulk, mip 0 decoded -> ({col * TILE_PX}, {row * TILE_PX})"
@@ -2041,6 +1760,9 @@ def main() -> int:
     except MissingUpscaler as exc:
         print(exc)
         return 6
+    except PyramidError as exc:
+        print(exc)
+        return 1
     tiles["game_version_pinned"] = build_pin
     print(
         f"wrote {out_dir / TILES_DIR_NAME}  {tiles['count']} tiles over z0..z{tiles['max_z']}  "

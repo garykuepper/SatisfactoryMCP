@@ -1,6 +1,6 @@
 """Draw two base-map layers of this world out of the 1 m heightfield and the game's biomes.
 
-    uv run python tools/gen_map_renders.py --pyooz-path <dir containing ooz and PIL>
+    uv run --extra gen python tools/gen_map_renders.py
 
 ``tools/gen_map_image.py`` cuts the game's own drawn map into ``data/local/tiles/``. That
 picture is Coffee Stain's artwork and it is the only base layer the page has ever had. This
@@ -26,9 +26,13 @@ a second input the heightmap generator has never heard of, and writes pictures. 
 share an input and nothing else -- no stage, no constant, no intermediate array -- so
 bolting this on would have coupled a six-minute extraction to a four-minute render and given
 one ``--force`` two meanings. What IS shared is shared by import: the codec comes from
-``satisfactory_mcp.domain.spatial.heightfield`` and the pyramid cutter, its staging dance and
-its refusals come from ``tools/gen_map_image.py``, because a tile layout with two
-implementations is a tile layout with two opinions.
+``satisfactory_mcp.domain.spatial.heightfield``, the pyramid cutter with its staging dance
+and its refusals from ``satisfactory_mcp.core.gameassets.pyramid``, and the container reader
+from ``satisfactory_mcp.core.gameassets`` beside it -- because a tile layout with two
+implementations is a tile layout with two opinions, and so is a container reader. The frame
+itself still comes from ``tools/gen_map_image.py``: those corners were measured by that tool
+against the artwork, and re-typing them here is exactly how three pyramids come to disagree
+about where the world is.
 
 The biome raster, and how its corners were found
 ------------------------------------------------
@@ -88,20 +92,21 @@ sidecar names a different field build stops. And a field that is not there at al
 error to work around -- it is the one input this file cannot invent, so the run says which
 tool writes it and exits. ``--force`` says it anyway.
 
-The side venv
--------------
-``pyooz`` (GPL-3.0) opens the container's Oodle blocks and Pillow writes the PNGs. Neither is
-a dependency of this project -- both are offline generation-time tools, never imported from
-``src/`` or ``sidecar/``, and no part of either is in the output -- so both come off
-``--pyooz-path``, the same argument and the same posture as ``tools/gen_map_image.py``::
+What opens the container
+------------------------
+``ooz``, from ``pyooz``, opens the container's Oodle blocks and Pillow writes the PNGs.
+Both are the project's ``gen`` extra: optional dependencies, pinned exactly because they
+decide the bytes this file writes, and asked for on the command line, the same posture as
+``tools/gen_map_image.py``::
 
-    uv venv <tmp>/renderenv
-    uv pip install --python <tmp>/renderenv pyooz pillow
-    uv run python tools/gen_map_renders.py --pyooz-path <tmp>/renderenv/Lib/site-packages
+    uv run --extra gen python tools/gen_map_renders.py
 
-numpy and scipy ARE dependencies of this project and are imported at the top of this file,
-before ``--pyooz-path`` touches ``sys.path``, so a side venv that happened to carry its own
-numpy cannot win the import and leave scipy compiled against the other one.
+Optional means optional **at import time**: neither is imported at module scope anywhere in
+this repository -- the one ``import ooz`` sits inside
+``core.gameassets.iostore.oodle_decompress`` and Pillow is imported by the one function
+below that needs it -- so a machine without the extra still imports every module and runs
+the whole test suite; it just cannot generate. numpy and scipy are dependencies of this
+project outright and are imported at the top of this file.
 
 Licence
 -------
@@ -112,8 +117,6 @@ committed, uploaded or redistributed, and the server serves it to localhost only
 
 from __future__ import annotations
 
-import argparse
-import importlib.util
 import json
 import struct
 import sys
@@ -121,47 +124,30 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Imported before --pyooz-path touches sys.path: see the module docstring.
 import numpy as np
 from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
+from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
+from satisfactory_mcp.core.gameassets.pyramid import (
+    TILES_DIR_NAME,
+    PyramidError,
+    install_pyramid,
+)
 from satisfactory_mcp.domain.spatial import heightfield as hf
+from tools._common import base_parser, require_gen
 
-
-def load_pyramid_cutter():
-    """``tools/gen_map_image.py``, imported by path -- ``tools/`` is not a package.
-
-    The pyramid layout, the staging rename and the level arithmetic all live there already.
-    A second copy of any of them is a second thing that can disagree with the endpoint that
-    serves the tree, so this file borrows rather than repeats. That module imports nothing
-    heavier than the standard library at module scope, which is why this can be a plain
-    module-level call rather than the deferred one ``gen_map_image`` itself uses for the
-    container reader.
-    """
-    path = Path(__file__).resolve().parent / "gen_map_image.py"
-    spec = importlib.util.spec_from_file_location("gen_map_image", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("gen_map_image", module)
-    spec.loader.exec_module(module)
-    return module
-
-
-gmi = load_pyramid_cutter()
-
-#: Where Steam puts the game. Overridable; the biome texture is the only thing read from it.
-DEFAULT_GAME = gmi.DEFAULT_GAME
-
-#: The corners every layer is drawn on: the in-game map square, taken from the tool that
-#: measured it rather than typed again, so the three pyramids cannot drift apart.
-BOUNDS_M = gmi.BOUNDS_M
-
-#: One layer's sheet, and the pyramid cut from it. Both the artwork's, for the same reason:
-#: a page that can switch base layers must not have to reconfigure its tile grid to do it.
-SHEET_PX = gmi.SHEET_PX
-PYRAMID_TILE_PX = gmi.PYRAMID_TILE_PX
+# The corners every layer is drawn on, the sheet they are drawn at, and the name of the
+# artwork the biome pin is scored against: all three from the tool that MEASURED them
+# rather than typed again here, so the three pyramids cannot drift apart. A plain import
+# of a sibling generator, which is possible now that the sibling holds nothing but its own
+# constants and its own stages -- the cutter and the reader it used to be borrowed for are
+# both in core.
+from tools.gen_map_image import BOUNDS_M, IMAGE_NAME, SHEET_PX
 
 #: Where the layers go, and what each one's sidecar is called. ``renders/<layer>/`` holds a
 #: ``tiles/`` tree of exactly the shape ``data/local/tiles/`` has, so the endpoint that
@@ -407,37 +393,21 @@ BAND_ROWS = 256
 BAND_HALO = 4
 
 
-class MissingImaging(RuntimeError):
-    """No Pillow: a setup problem, not a bug."""
-
-
 class MissingField(RuntimeError):
     """No heightfield. The one input this file cannot invent, and it says who writes it."""
 
 
-def load_imaging(extra_path: Path | None):
-    """Pillow, out of the same throwaway venv as ``ooz``. Same posture as next door."""
-    if extra_path is not None:
-        sys.path.insert(0, str(extra_path))
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise MissingImaging(
-            "no Pillow importable, so the renders cannot be written. This is deliberate: it "
-            "is an offline tool here, never a dependency of this project. Do:\n"
-            "    uv venv <tmp>/renderenv\n"
-            "    uv pip install --python <tmp>/renderenv pyooz pillow\n"
-            "    uv run python tools/gen_map_renders.py "
-            "--pyooz-path <tmp>/renderenv/Lib/site-packages"
-        ) from exc
-    Image.MAX_IMAGE_PIXELS = None
-    try:
-        from importlib.metadata import version
+def load_imaging():
+    """Pillow, once ``require_gen`` has shown it is there. Same posture as next door.
 
-        pillow = version("pillow")
-    except Exception:
-        pillow = "unknown"
-    return Image, pillow
+    The size limit goes off because Pillow's default guard is a decompression-bomb rule
+    for images off the internet, and every image here is one this repository's own tools
+    cut from the reader's own game -- an 8192 px sheet is the point, not an attack.
+    """
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    return Image
 
 
 # --------------------------------------------------------------------------------------
@@ -445,7 +415,7 @@ def load_imaging(extra_path: Path | None):
 # --------------------------------------------------------------------------------------
 
 
-def read_biome(gwc, store, scripts) -> dict:
+def read_biome(store, scripts) -> dict:
     """The 4096x4096 biome raster, its palette, and what each index is called.
 
     Every check here is the same kind of check ``gen_map_image`` makes on the map slices'
@@ -459,7 +429,7 @@ def read_biome(gwc, store, scripts) -> dict:
             "which means the game changed; the satellite layer has no other source for what "
             "grows where, and nothing here can be trusted until that is looked at."
         )
-    view = gwc.PackageView(store.read_path(BIOME_PATH), scripts)
+    view = PackageView(store.read_path(BIOME_PATH), scripts)
     export = next(
         (e for e in view.exports if (view.class_of[e["slot"]] or "") == BIOME_CLASS), None
     )
@@ -500,7 +470,7 @@ def read_biome(gwc, store, scripts) -> dict:
         tuple(palette_raw[4 + i * 4 : 8 + i * 4]) for i in range(entries)
     ]  # RGBA, the game's UI legend -- decoded for the record, never drawn
 
-    names = decode_colour_to_area(gwc, view, props["mColorToArea"])
+    names = decode_colour_to_area(view, props["mColorToArea"])
     if len(names) != entries:
         raise SystemExit(
             f"mColorPalette has {entries} entries and mColorToArea {len(names)}. The two "
@@ -521,7 +491,7 @@ def read_biome(gwc, store, scripts) -> dict:
     }
 
 
-def decode_colour_to_area(gwc, view, blob: bytes) -> list[str | None]:
+def decode_colour_to_area(view, blob: bytes) -> list[str | None]:
     """``mColorToArea`` -> the ``Area_*`` leaf name of each palette index.
 
     A ``TArray<FStruct>`` in Zen's tagged form is the count and then one property stream per
@@ -533,7 +503,7 @@ def decode_colour_to_area(gwc, view, blob: bytes) -> list[str | None]:
     out: list[str | None] = []
     pos = 4
     for _ in range(count):
-        tags, end = gwc.property_tags(blob, view.pkg.names, pos)
+        tags, end = property_tags(blob, view.pkg.names, pos)
         fields = {name: payload for name, _kind, payload, _value in tags}
         if "MapArea" not in fields:
             raise SystemExit(
@@ -1156,7 +1126,7 @@ def install_layer(sheet_rgb, image_mod, out_dir: Path, layer: str) -> tuple[dict
     directory = layer_dir(out_dir, layer)
     directory.mkdir(parents=True, exist_ok=True)
     started = time.time()
-    stats = gmi.install_pyramid(
+    stats = install_pyramid(
         image_mod.fromarray(sheet_rgb),
         image_mod,
         directory,
@@ -1169,22 +1139,7 @@ def install_layer(sheet_rgb, image_mod, out_dir: Path, layer: str) -> tuple[dict
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--game",
-        type=Path,
-        default=DEFAULT_GAME,
-        help="Satisfactory install directory (the one holding FactoryGame/ and Engine/)",
-    )
-    parser.add_argument(
-        "--pyooz-path",
-        type=Path,
-        default=None,
-        help=(
-            "directory holding an importable `ooz` and Pillow -- a throwaway venv's "
-            "site-packages. See the module docstring for the recipe"
-        ),
-    )
+    parser = base_parser(__doc__.splitlines()[0])
     parser.add_argument(
         "--field",
         type=Path,
@@ -1221,11 +1176,8 @@ def main() -> int:
 
     layers = tuple(dict.fromkeys(args.layer)) if args.layer else LAYERS
 
-    try:
-        image_mod, pillow_version = load_imaging(args.pyooz_path)
-    except MissingImaging as exc:
-        print(exc)
-        return 2
+    pillow_version = require_gen("PIL.Image")["pillow"]
+    image_mod = load_imaging()
 
     field = hf.load_field(args.field)
     if field is None:
@@ -1233,8 +1185,7 @@ def main() -> int:
             f"no heightfield at {args.field}. That field is the one input this file cannot "
             "invent -- every pixel of both layers is a height off it -- so there is nothing "
             "to draw. Write it first:\n"
-            "    uv run python tools/gen_world_heightmap.py --pyooz-path <venv>/Lib/"
-            "site-packages\n"
+            "    uv run --extra gen python tools/gen_world_heightmap.py\n"
             "It reads your own installed game and writes to the same gitignored directory."
         )
         return 4
@@ -1248,7 +1199,7 @@ def main() -> int:
     if not args.force:
         for layer in layers:
             sidecar_path = layer_dir(out_dir, layer) / RENDER_SIDECAR_NAME
-            if not (layer_dir(out_dir, layer) / gmi.TILES_DIR_NAME).is_dir():
+            if not (layer_dir(out_dir, layer) / TILES_DIR_NAME).is_dir():
                 continue
             try:
                 existing = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -1270,25 +1221,20 @@ def main() -> int:
     # ---- the biome raster ------------------------------------------------------------
     biome = None
     if "satellite" in layers:
-        gwc = gmi.load_container_reader()
-        try:
-            ooz, pyooz_version = gwc.load_oodle(args.pyooz_path)
-        except gwc.MissingOodle as exc:
-            print(exc)
-            return 2
+        pyooz_version = require_gen("ooz")["pyooz"]
         paks = args.game / "FactoryGame" / "Content" / "Paks"
         if not (paks / "FactoryGame-Windows.utoc").exists():
             print(f"no FactoryGame-Windows.utoc under {paks}")
             return 1
         print(f"reading the biome raster from {paks} with pyooz {pyooz_version}")
-        store = gwc.IoStore(paks, "FactoryGame-Windows", ooz.decompress)
-        scripts = gwc.ScriptObjects(paks, ooz.decompress)
-        biome = read_biome(gwc, store, scripts)
+        store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
+        scripts = ScriptObjects(paks, oodle_decompress)
+        biome = read_biome(store, scripts)
         print(
             f"  {biome['width']}x{biome['width']} palette indices, "
             f"{len(biome['palette'])} entries, {len(biome['distinct_areas'])} named areas"
         )
-        calibration = calibrate_biome(biome, out_dir / gmi.IMAGE_NAME, image_mod)
+        calibration = calibrate_biome(biome, out_dir / IMAGE_NAME, image_mod)
         if "skipped" in calibration:
             print(f"  calibration skipped: {calibration['skipped']}")
         else:
@@ -1365,7 +1311,11 @@ def main() -> int:
             not args.quiet,
         )
         drew = time.time() - started
-        stats, cut = install_layer(sheet, image_mod, out_dir, layer)
+        try:
+            stats, cut = install_layer(sheet, image_mod, out_dir, layer)
+        except PyramidError as exc:
+            print(exc)
+            return 1
         del sheet
         stats["game_version_pinned"] = field_build
         render = {

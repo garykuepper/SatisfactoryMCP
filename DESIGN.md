@@ -161,6 +161,14 @@ SatisfactoryMcp/
     server.py          # thin: imports the tool modules, re-exports, main()
     config.py          # env: SATISFACTORY_DOCS, SATISFACTORY_SAVES, cache dir
     core/              # knows nothing about anything above it
+      gameassets/      # GENERATION-TIME only, used by tools/gen_*.py and nothing else -- §19:
+                       # iostore.py (the game's own .utoc/.ucas container, Oodle
+                       # decompressor injected) + packages.py (a cooked package's
+                       # exports, property tags and transform chain)
+                       # provenance.py (which build an artifact was cut from, and the
+                       # staged rename that stops one saying two things at once)
+                       # textures.py (a mip chain's length, BC1 -> RGBA) +
+                       # pyramid.py (tiles/{z}/{x}_{y}.png, cut and renamed into place)
       gamedata/        # loader.py (UTF-16 read, NativeClass grouping)
                        # uestruct.py (UE struct-string parser)
                        # normalize.py (-> items / recipes / buildings / schematics)
@@ -3838,12 +3846,21 @@ build the cache does not know.
 
 **What has to be settled before building it**, and none of it is hard, only unexamined:
 
-* **Oodle.** The decompressor is `pyooz`, GPL-3.0, and today it is deliberately an offline
-  generation-time tool that never enters `pyproject.toml`, `src/` or `sidecar/`. Regenerating *at
-  runtime* would put it in the dependency graph and undo the licence position this project spent
-  months reaching. Either the cache is refreshed by an explicit `tools/` run the user invokes after
-  a patch — which keeps the current posture and is the conservative answer — or a permissively
-  licensed Kraken decoder is found first.
+* **Oodle — and this bullet used to give the wrong reason.** It read that `pyooz` is GPL-3.0, that
+  it must never enter `pyproject.toml` or `src/`, and that regenerating at runtime "would undo the
+  licence position this project spent months reaching". That is not a licence question and never
+  was: **using** a library imposes no obligations, copyleft attaches on **distribution**, this
+  project is not distributed, and no copyleft code is in the tree — what the parser work removed
+  was a *vendored* GPL file, which is a different thing from an installed dependency. Since
+  [§19](#19-one-container-reader-and-the-gen-extra-2026-07-31) `pyooz` **is** in `pyproject.toml`,
+  as the optional `gen` extra, and `core.gameassets.iostore` imports `ooz` inside one function.
+  What actually stands is operational, and it is enough on its own: the extra is optional **at
+  import time**, so the server, the parser, the domain and the whole test suite run on a machine
+  that has none of the three installed. Making a *request* depend on `ooz` would make a
+  generation-time decoder mandatory for every reader who never generates anything — a native
+  extension in the path of a tool call, for the sake of a table that changes once a patch. So the
+  cache is refreshed by an explicit `tools/` run the user invokes after a patch — the conservative
+  answer, on optionality and on the cost below, not on a licence.
 * **Cost.** ~3 s of extraction is fine for a build-time step and not for a tool call, so the
   refresh must be explicit or lazily cached, never per-request.
 * **What survives a refresh.** `data/world_collectibles.json` carries per-instance `state`
@@ -4326,8 +4343,10 @@ heightmap generator has never heard of, and writes pictures. They share an input
 else: no stage, no constant, no intermediate array. Bolting them together would have coupled
 a six-minute extraction to a ninety-second render and given one `--force` two meanings. What
 *is* shared is shared by import — the codec from `domain.spatial.heightfield`, and the
-pyramid cutter, its staging rename and its refusals from `gen_map_image.py`, which grew one
-optional `source=` so a level record can say what actually drew it.
+pyramid cutter, its staging rename and its refusals from `core.gameassets.pyramid`, which
+grew one optional `source=` so a level record can say what actually drew it. The frame
+itself — the corners, the sheet size, the artwork the biome pin is scored against — still
+comes from `gen_map_image.py`, because that is the tool that *measured* it.
 
 Measured on the reference machine: 12 s to draw terrain and 15 s satellite at 8192², 32 s
 each to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyramid over 1,365
@@ -4397,6 +4416,135 @@ the one answer that could be mistaken for success.
 The artwork's single-image `/api/mapimage` fallback survives as a detail of the artwork mode
 rather than a stage of a loader: probed only when its pyramid does not answer, and drawn as the
 `imageOverlay` it always was.
+
+---
+
+## 19. One container reader, and the `gen` extra (2026-07-31)
+
+Four generators read the game's own IoStore container, and until this work there was one copy of
+the reader: the opening ~800 lines of `tools/gen_world_collectibles.py`. The other three got at it
+by `importlib`-ing that 3,700-line script **by absolute file path** — which runs a collectibles
+generator's module body to obtain a `.utoc` parser, makes the import graph invisible to every tool
+that reads imports, and means a fix to the reader arrives in whichever caller happens to be run
+next. The decoders those generators need were installed in three throwaway venvs and reached with
+`--pyooz-path <venv>/Lib/site-packages`, inserted at the front of `sys.path` at runtime.
+
+Both are now gone, and nothing an artifact says about the world changed with them: **every byte
+of all six generators' output is identical across the move**, which is the claim the work was
+organised around rather than a hope it ended with (see *How it was proved*). The only artifact
+bytes this work changed at all are the four provenance sentences that described the old
+arrangement, and they are enumerated below.
+
+### What moved, and where it lives
+
+`src/satisfactory_mcp/core/gameassets/` — generation-time code in `core` because four callers
+need it, not because the server does. Nothing the server answers a request with comes through it;
+the artifacts under `data/` do, and these are what cuts them.
+
+| module | lines | what it is | used by |
+|---|---|---|---|
+| `iostore.py` | 217 | `.utoc`/`.ucas` reader, `ContainerError`, `oodle_decompress` | all four |
+| `packages.py` | 680 | a cooked package's exports, names, property tags, transform chain | all four |
+| `provenance.py` | 149 | which build an artifact was cut from; the staged rename that stops a directory saying two things at once | all four |
+| `textures.py` | 52 | mip-chain arithmetic, BC1 → RGBA | map image, heightmap |
+| `pyramid.py` | 253 | `tiles/{z}/{x}_{y}.png`, cut and renamed into place | map image, renders |
+
+`gen_world_collectibles.py` lost 904 lines and is 2,880; the three importers lost their loaders.
+`tools/` gained a package marker and `tools/_common.py` — `DEFAULT_GAME`, the shared `--game`
+parser, and `require_gen`. The test suite reaches the generators the same way anything else does,
+`from tools import gen_map_image`, and no test loads a `tools/*.py` by path any more.
+
+### The seam: the decoders are arguments
+
+`IoStore(paks, name, decompress)`, `ScriptObjects(paks, decompress)`,
+`textures.decode_bc1_rgba(decoder, image_mod, raw, px)`, `pyramid.install_pyramid(sheet, image_mod,
+…)`. Every module that needs a decoder takes it as a callable or a module rather than importing
+one, which is what lets the suite drive them with stand-ins and lets the whole package be imported
+on a machine that has none of the decoders installed. `iostore.oodle_decompress` is the real one,
+ready to be handed in, and its `import ooz` is inside the function body.
+
+Three rules are enforced by reading the source in `tests/test_architecture.py`, not by intention:
+
+* `test_the_gen_extra_is_optional_at_import_time` — outside `core.gameassets`, no module under
+  `satisfactory_mcp` or `pioneersav` has an edge to `ooz`, `pyooz`, `texture2ddecoder` or `PIL` at
+  any depth; inside it, such an import may sit only in a function body.
+* `test_gameassets_never_imports_dynamically` — no `importlib`, no `__import__`, no `sys.path`
+  mutation. This is what makes the rule above checkable by AST at all.
+* `test_gameassets_imports_nothing_but_the_stdlib_and_core` — the stdlib, `satisfactory_mcp.core.*`
+  and `config`, and the extra lazily. `core` still knows nothing about anything above it.
+
+### The environment: three side venvs became one extra
+
+`[project.optional-dependencies] gen = ["pyooz==0.0.8", "texture2ddecoder==1.0.6",
+"pillow==12.3.0"]`, and every invocation is `uv run --extra gen python tools/gen_X.py`. The pins
+are exact because these three decide the **bytes** a generator writes: a silent upgrade is a
+silent redraw of a map, or a silently different table, with nothing in the output to say so. They
+are not chosen — they are the versions every previous run used, read off those venvs before they
+were retired, which agreed on all three.
+
+`--pyooz-path`, `load_oodle`, `load_imaging`, `MissingOodle` and every `sys.path.insert` that
+reached a side venv are deleted. One environment holds numpy and scipy now, which removes a real
+failure rather than a hypothetical one: the venv the map generator used carried **its own numpy**,
+so `--enhance` — which imports scipy from the project — had a scipy compiled against a different
+numpy, and the tool refused with `rc=6` rather than segfault. The check survives as an invariant
+that should never fire.
+
+A missing extra is answered in one place and in one sentence. `require_gen` try-imports what a
+generator needs, prints the line that installs it and exits 2; `iostore.MissingGenExtra` carries
+the same sentence for a caller that got past that. Neither reports `No module named 'ooz'`, which
+says what happened and not what to do about it.
+
+**This is not a licence position** and the earlier framing of it as one was wrong; see the
+correction in [§15b](#15b-parked-derive-the-map-tables-from-the-installed-game-on-game-update).
+Optional at import time is an operational property: the server, the parser, the domain and the
+test suite run with none of the three installed, and only generation needs them.
+
+### How it was proved
+
+A baseline was banked first — every artifact of all six generators, plus a **snapshot of the save
+directory** (which rotates every few minutes while the world is being played, so a live directory
+is not a fixture). Each step then re-ran the generators into fresh directories and compared:
+trees as sorted `(relpath, sha256, bytes)` manifests, JSON sidecars deep-compared leaf by leaf
+with a mask for the fields that are *supposed* to differ between two runs — `transcribed`, which
+is a date, and the measured `timings_s` / `seconds_to_draw` / `seconds_to_cut` clocks. Everything
+else had to match exactly, and did, at every step.
+
+The full acceptance run compares 4,103 files / 185 MB of `map.png`, artwork pyramid, heightfield
+and both render pyramids, plus the two fixed-destination tables under `data/` (run, copied out,
+`git checkout --` restored), plus the 21,845-tile `--enhance` pyramid — which is worth stating
+because Real-ESRGAN on the GPU turned out to be **bit-stable**: two runs from identical code
+produced 21,845 identical tiles, so the enhanced levels could be compared by hash like everything
+else, on this machine and this driver.
+
+### The sidecars used to assert the old arrangement, twice over
+
+Each decoder block said its decompressor was *"not a dependency of this project, never imported
+from `src/` or `sidecar/`"*, and the heightfield's said its container reader was
+*"`tools/gen_world_collectibles.py`'s IoStore reader, imported by path"*. All four sentences are
+now false, and a provenance block that describes a mechanism the artifact was not produced by is
+worse than one that says nothing. They now name the extra, the pin, the invocation and
+`core.gameassets.iostore` — four leaves, enumerated so the byte-identity harness could fail both
+on one of them not changing and on anything else changing:
+
+```
+map.json                  _meta.decoders.oodle.role          (plain and --enhance)
+heightmap/meta.json       decoders.oodle.role
+heightmap/meta.json       decoders.container
+world_collectibles.json   _meta.source.placements.decompressor.role
+```
+
+`data/world_collectibles.json`, the one committed artifact of the four, keeps the old wording
+because **it is a record of the run that cut it**, at which the old wording was true; editing a
+generated table by hand would make it describe a mechanism that did not produce it, which is the
+defect being fixed. The next regeneration replaces it.
+
+### What deliberately did not move
+
+The questions. `gen_map_image.py` still owns the map frame — those corners were *measured* by that
+tool against the artwork, and re-typing them elsewhere is exactly how three pyramids come to
+disagree about where the world is. The refusals, the `--force` semantics, the validation gates and
+every per-tool constant stayed with their tool. What moved is only what four callers were already
+sharing badly.
 
 ---
 
