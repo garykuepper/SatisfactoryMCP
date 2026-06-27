@@ -2,8 +2,9 @@
 
 Part of the [SatisfactoryMcp design spec](../DESIGN.md) — §7 is the coordinate frame, the region
 layer and the selector language every spatial and planning tool shares; §17 and §18 are the web
-map's base layers and the mode model that lets a reader pick one. Section numbers are continuous
-with the rest of the spec; [DESIGN.md](../DESIGN.md) indexes it.
+map's base layers and the mode model that lets a reader pick one; §19 is the water channel every
+one of those layers draws. Section numbers are continuous with the rest of the spec;
+[DESIGN.md](../DESIGN.md) indexes it.
 
 ---
 
@@ -424,4 +425,74 @@ the one answer that could be mistaken for success.
 The artwork's single-image `/api/mapimage` fallback survives as a detail of the artwork mode
 rather than a stage of a loader: probed only when its pyramid does not answer, and drawn as the
 `imageOverlay` it always was.
+
+---
+
+## 19. The water channel, rebuilt out of the game's own water (2026-07-30)
+
+The heightmap's fifth stage used to be a flatness detector over the 2048 px interface raster.
+It found **20.4%** of the sheet as water against the artwork's 39.0% — 46.7% recall overall,
+**35.8% over Spire Coast** — and invented plateau lakes on flat mesas. The failures were
+structural rather than tunable: the raster's quantisation step is 3.9 m and the water it was
+asked to find is 2.1 m deep, a river is a metre of water in a groove it cannot resolve at all,
+and over the fill province the "terrain" the detector compared against **is** the water
+surface, so the depth it needed was identically zero.
+
+**Two sources, each asked only what it knows.** The four `SlicedMap` BC1 slices are the game's
+own drawing of its own world and its water is drawn blue, so `B - R >= 25` gives the plan
+shape: bimodal with nothing between the modes, 3 of the 626 static resource nodes called water
+(0.48%), registration measured at exactly (0, 0) sheet pixels by a ±2 px sweep. The 849 cooked
+water actors give the level: **837 carry a world AABB** — `BoxComponent.BoxExtent` (130),
+`BrushBodySetup.AggGeom` (270), `InstancedStaticMeshComponent.CachedBounds` (222) and, for the
+plane-backed blueprints whose cooked instance names no mesh, `WaterPlane`'s own
+`ExtendedBounds` (215) — each taken to world space through the composed `AttachParent` chain
+eight corners at a time, because 486 of them are rotated. **A box's top is the surface**: the
+save's 23 water extractors all sit inside a volume and stand on its box top to within
+**0.005 cm**.
+
+The channel goes from **9.589 km² to 18.248 km²**, against the artwork's 18.288. Spire Coast
+recall goes from 35.8% to **99.85%**, the invented plateau lakes are gone, and the ocean sits
+at −16.994 m, which is where all 31 ocean-spline boxes put it.
+
+### The level is per texel, not per body
+
+The literal recipe was one median per drawn body. It was rejected by measurement: the ocean
+and every river running into it are **one connected shape** in the artwork, spanning 141 m of
+box top, and a single median over that invents up to **157 m of depth** across 0.06 km². The
+level is therefore the *highest* box top standing over each texel — a box top is a surface, so
+where several overlap in plan the highest is the one visible from above. That is not rough:
+0.017% of neighbouring wet texel pairs step past 0.5 m, and those are river mouths, where a
+step is what is really there. The body median survives as the fallback for the **17 texels**
+of drawn water no box stands over at all.
+
+### `waterq.u8.z`, and the one arithmetic nothing may do
+
+A level and a **depth** are different claims. The level comes from a box and is good to
+centimetres wherever there is water; the depth is that level minus the ground, and over the
+fill layer the ground is a 3.9 m raster that routinely rounds *above* a sea surface 17 m down.
+So the field gained a fourth raster — `0` dry, `1` water with a depth measured against 1 m
+terrain, `2` water whose level is known and whose depth is not — and 7.39 km² of the 18.25
+takes value 2.
+
+**Nothing may decide submersion with `water_m > z_m` any more.** That test reads the open
+ocean as dry, and it is what `Reading.submerged` used to do; it now asks the quality byte and
+falls back to the comparison only for a field written before that byte existed. `Reading.
+water_depth_m` is `None` where the depth is unknown rather than `max(…, 0)`, and the inspector
+prints the reason instead of a plausible `0 m deep`.
+
+The same rule binds `tools/gen_map_renders.py`, which reads the rasters directly:
+`submerged` must come from `waterq.u8.z != 0` and the depth feather must be full alpha where
+the quality byte says the depth is unknown, or the sea will vanish.
+
+### Four gates, each aimed at a specific silent failure
+
+Dry-node false positives over 1% mean the colour classifier drifted or the sheet moved.
+Spire Coast recall under 95%, measured against the artwork over the `Spire Coast` cells of
+`data/region_names.json` — a hand trace of the wiki's map, so not this pipeline marking its
+own homework — means the region that exposed the old detector is being missed again. An ocean
+level more than 0.5 m from the median ocean-spline box top means the level is coming from the
+wrong volumes. And artwork water standing over no box at all, past 1%, means the mask and the
+volumes have stopped describing the same world, which is what a misregistration looks like
+from here. The run refuses to write if any of them fails. On build 495413 they measure
+0.48%, 99.85%, 0.000 m and 0.0001%.
 

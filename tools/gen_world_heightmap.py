@@ -90,21 +90,62 @@ most likely to be got wrong: the blank value is ``raw == 0``, which **decodes to
 not to zero. Testing ``raw > 0`` instead of ``decoded > FILL_FLOOR_CM`` leaks 138,481 texels
 of blank into the field as a false sea floor.
 
-**5. Water.** A surface channel, derived from where the interface raster goes flat above
-the terrain, shipped as **information only**. It does not gate the terrain, and that is a
-measured decision rather than an omission: the world's ~700 water actors are far too sparse
-to build a surface from (median 323 m to the nearest one over submerged ground) and their Z
-is a pivot rather than a water level, and a lake gate built on this flatness detector was
-measured to make the field *worse* -- nodes trim90 0.93 against 0.77. So the channel says
-where water probably stands and nothing downstream is allowed to move ground because of it.
+**5. Water.** The game's own water, from the two places the game states it. This stage was
+rebuilt: it used to be a flatness detector over the interface raster, and that detector
+found **20.4%** of the sheet as water against the artwork's 39.0% -- 46% recall, 35.8% over
+Spire Coast -- while inventing plateau lakes where a mesa happened to be flat. The failures
+were structural rather than tunable. The raster's own quantisation step is 3.9 m and the
+water it was asked to find is 2.1 m deep; a river is a metre of water in a groove the
+raster cannot resolve at all; and over the fill province the "terrain" the detector
+compared against **is** the water surface, so the depth it needed was identically zero.
+
+What replaced it uses each source for the thing that source actually knows:
+
+* **The artwork says WHERE.** The four ``SlicedMap`` BC1 slices -- the same ones
+  ``tools/gen_map_image.py`` decodes, imported from it rather than re-listed -- are the
+  game's own drawing of its own world, and its water is drawn blue. ``B - R >= 25``
+  separates it: the histogram is bimodal with nothing in the middle, and of the 626 static
+  resource nodes, every one of which stands on dry ground, it calls **3** water (0.48%).
+  Registration was measured rather than assumed -- a +/-2 px sweep puts the best agreement
+  at exactly (0, 0), which it should, since the sheet's box and this grid's are the same
+  7500 m square.
+* **The water volumes say HOW HIGH.** 837 of the world's 849 water actors carry a
+  world-space AABB, from four sources tried in order: a ``BoxComponent``'s ``BoxExtent``,
+  a cooked ``BrushBodySetup.AggGeom``'s convex-element boxes, an instanced component's
+  ``CachedBounds``, and -- for the plane-backed blueprints, whose cooked instance names no
+  mesh because a construction script assigns it -- ``WaterPlane``'s own ``ExtendedBounds``.
+  Every box goes to world space through the composed ``AttachParent`` chain, eight corners
+  at a time, so a rotated volume yields the AABB of the rotated box rather than of the
+  unrotated one. **A box's top is the water surface**, and that is measured: the save's 23
+  water extractors all sit inside a volume, and every one of them stands on its box's top
+  to within **0.005 cm**.
+
+The level is taken per texel as the **highest** box top standing over it, because a box top
+is a surface and where several water bodies overlap in plan the highest is the one you can
+see. A single median per drawn body was tried and rejected by measurement: the ocean and
+the rivers that run into it are one connected shape in the artwork spanning 141 m of box
+top, and one median over that invents up to 157 m of depth over 0.06 km2. The per-texel
+maximum is nonetheless flat -- 0.017% of neighbouring wet texel pairs step past 0.5 m, and
+those are river mouths, where a step is what is really there.
+
+**Where the ground is the fill layer, the DEPTH is not knowable and the channel says so.**
+That is what ``waterq.u8.z`` carries. The level is good to centimetres everywhere; the
+depth is the level minus the ground, and over the 3.9 m fill raster -- which is most of the
+ocean -- that subtraction has no meaning. Nothing may gate on ``water > terrain`` there,
+which is exactly the test that would read the open ocean as dry. Where the ground *is*
+1 m terrain, the same test is applied in the other direction and does real work: a rock
+standing out of a lake is dry, and 0.041 km2 of the artwork's water is exactly that.
+
+Still **information only**: nothing downstream moves ground because of this channel.
 
 What it writes
 --------------
-``data/local/heightmap/``, four files, about 18 MB::
+``data/local/heightmap/``, five files, about 18 MB::
 
     height.i16.z  7500x7500 int16 decimetres, row-delta + zlib, -32768 = no data
     prov.u8.z     0 no-data, 1 landscape, 3 fill, 4 cliff collision
     water.i16.z   water surface Z, same grid and no-data
+    waterq.u8.z   0 dry, 1 water with a measured depth, 2 water whose depth is unknowable
     meta.json     georeference, game build, generator version, coverage, measured accuracy
 
 The georeference is fixed and recorded: ``x_cm = -324700 + col*100``,
@@ -122,6 +163,18 @@ width guessed wrong -- has to fail loudly rather than ship a plausible-looking f
 quietly two metres out. The same pass measures per-layer accuracy and puts it in
 ``meta.json``, so a reading can carry the uncertainty of the layer that answered it instead
 of one number quoted for the whole map.
+
+**The water channel has four gates of its own**, and each one is aimed at a specific way
+the recipe could come apart without looking wrong. Dry-node false positives over
+``WATER_FP_MAX`` mean the colour classifier drifted or the sheet moved. Spire Coast recall
+under ``WATER_SPIRE_RECALL_MIN`` -- measured against the artwork over the ``Spire Coast``
+cells of ``data/region_names.json``, which is an independent hand trace of the wiki's map
+and therefore not this file marking its own homework -- means the region that exposed the
+old detector is being missed again. An ocean level more than ``WATER_OCEAN_TOLERANCE_M``
+from the median top of the ocean-spline boxes means the level is coming from the wrong
+boxes. And artwork water not standing over any box at all, past ``WATER_UNCOVERED_MAX``,
+means the mask and the volumes have stopped describing the same world -- which is what a
+misregistration by more than a few texels looks like from here.
 
 **Staleness.** The project's standing rule is that a pinned map artifact announces drift
 rather than answering silently wrong, and this one is pinned twice over: ``meta.json``
@@ -161,6 +214,7 @@ here is committed, uploaded or redistributed, and the server serves it to localh
 from __future__ import annotations
 
 import json
+import math
 import struct
 import sys
 import time
@@ -177,11 +231,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
 from satisfactory_mcp.core.gameassets.packages import (
     AssetIndex,
+    ClassFacts,
     PackageView,
     ScriptObjects,
     _int32,
     class_name_of,
     property_tags,
+    quat_rotate,
+    world_transform,
 )
 from satisfactory_mcp.core.gameassets.provenance import (
     InstallNotFound,
@@ -189,9 +246,15 @@ from satisfactory_mcp.core.gameassets.provenance import (
     installed_build,
     read_str_path,
 )
-from satisfactory_mcp.core.gameassets.textures import raw_mip_sizes
+from satisfactory_mcp.core.gameassets.textures import decode_bc1_rgba, raw_mip_sizes
 from satisfactory_mcp.domain.spatial import heightfield as hf
 from tools._common import base_parser, require_gen
+
+# The map sheet's four slices are one asset with one layout, so they are imported from the
+# generator that owns them rather than described twice. Same posture as
+# tools/gen_map_renders.py, and for the same reason: two descriptions of one texture are
+# two chances to be describing different textures.
+from tools.gen_map_image import SHEET_PX, SLICES, TILE_PX, read_slice
 
 #: Which packages are swept. Everything terrain lives under one world.
 LEVEL_DIR = "/GameLevel01/"
@@ -284,14 +347,62 @@ BOUNDS_INSIDE_MIN = 0.90
 #: holds a few hundred MB rather than the whole 120 M-triangle scatter at once.
 RASTER_FLUSH = 6_000_000
 
-#: The water detector, all of it, on the 2048 baseline grid. A region is water if the
-#: baseline is flat there, stands more than WATER_MIN_DEPTH_M above the terrain, covers at
-#: least WATER_MIN_TEXELS (~2,000 m2, so a flat rock is not a lake) and is level to within
-#: WATER_LEVEL_STD_M. Information only: nothing downstream may move ground because of it.
-WATER_FLAT_GRAD_M = 0.5
-WATER_MIN_DEPTH_M = 1.0
-WATER_MIN_TEXELS = 150
-WATER_LEVEL_STD_M = 2.5
+#: A water actor is one whose class name carries a water word and one of the game's own
+#: class prefixes. Deliberately a shape rather than a list: 849 actors on build 495413
+#: across nine classes, and a build that adds a tenth should be found, not missed.
+WATER_CLASS_TOKENS = ("Water", "Ocean", "Lake", "River")
+WATER_CLASS_PREFIXES = ("BP_", "FG", "BPW")
+
+#: Which of those classes are a water SURFACE, i.e. whose box top may set a level. The
+#: exclusions are the argument. ``BP_WaterFallTool_02_C`` is water and is not a surface --
+#: its box top is the lip of the fall, tens of metres above the pool it feeds -- and the
+#: two ``BP_WaterPlane_C`` are developer backdrops carrying no transform at all.
+WATER_SURFACE_CLASSES = frozenset(
+    {
+        "FGWaterVolume",
+        "BP_Water_C",
+        "BP_LakeWater_C",
+        "BPW_OceanSplineTool_02_C",
+        "BP_TranslucentWater_C",
+        "BP_River_PROT_C",
+    }
+)
+
+#: Component classes that can state a box. Order of preference is in ``_component_box``.
+WATER_BOX_COMPONENTS = frozenset(
+    {
+        "BoxComponent",
+        "BrushComponent",
+        "StaticMeshComponent",
+        "InstancedStaticMeshComponent",
+        "HierarchicalInstancedStaticMeshComponent",
+    }
+)
+
+#: The plane the water blueprints draw themselves with. Their cooked instances name no
+#: ``StaticMesh`` -- the construction script assigns it -- so this asset's own
+#: ``ExtendedBounds`` stands in, and the assumption was checked: of 215 such planes, the
+#: 187 whose centre falls inside an ``FGWaterVolume`` sit on that volume's top to a median
+#: of 1.3 cm. Read from the container rather than hard-coded, so a resized plane moves it.
+WATER_PLANE_MESH = "/Game/FactoryGame/World/Environment/Water/Mesh/WaterPlane"
+
+#: The artwork classifier. Blue minus red on the game's own map sheet, one threshold,
+#: measured: the histogram is bimodal with nothing between the modes, and it calls 3 of the
+#: 626 static resource nodes -- all of which stand on dry ground -- water.
+WATER_ARTWORK_BLUE_OVER_RED = 25
+
+#: The four gates the water stage refuses to write past. See the module docstring for what
+#: each one is aimed at.
+WATER_FP_MAX = 0.01
+WATER_SPIRE_RECALL_MIN = 0.95
+WATER_OCEAN_TOLERANCE_M = 0.5
+WATER_UNCOVERED_MAX = 0.01
+
+#: The class whose boxes are the ocean, and the region whose recall is the gate. Both are
+#: names in data the run reads rather than judgements this file makes.
+WATER_OCEAN_CLASS = "BPW_OceanSplineTool_02_C"
+WATER_GATE_REGION = "Spire Coast"
+REGION_TABLE = ROOT / "data" / "region_names.json"
 
 #: The node table the run validates against, and the gate it has to clear. The workflow
 #: that proved this pipeline measured 0.368 m trimmed RMS; 0.5 m is clear of that and well
@@ -310,7 +421,8 @@ ACCURACY_MIN_SAMPLES = 30
 LOCAL_DIR = ROOT / "data" / "local"
 
 #: Bumped when the pipeline changes what it writes, so a sidecar dates its own field.
-GENERATOR_VERSION = 1
+#: 2 is the rebuilt water stage and the ``waterq.u8.z`` raster that came with it.
+GENERATOR_VERSION = 2
 
 #: Where the sidecar records the build, and what the staleness guard reads back.
 PIN_PATH = ("sources", "game", "game_version_pinned")
@@ -364,19 +476,24 @@ def _grass_data_heights(tail: bytes) -> np.ndarray | None:
     return np.frombuffer(tail, dtype="<u2", count=num, offset=pos).reshape(LANDSCAPE_N, LANDSCAPE_N)
 
 
-def sweep_levels(store, scripts, progress: bool = True) -> dict:
-    """One pass over every ``*.umap`` of the world: landscape components and placements.
+def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict:
+    """One pass over every ``*.umap`` of the world: landscape, placements, water actors.
 
-    Both harvests need the same ``PackageView`` of the same 4,521 packages, and building
-    that view is the whole cost of the pass, so they share it. Returns the raw material for
-    stages 1 to 3 and nothing interpreted: the arithmetic that turns it into a field lives
-    in the functions below, where it can be read next to the constants it uses.
+    All three harvests need the same ``PackageView`` of the same 4,521 packages, and
+    building that view is the whole cost of the pass, so they share it. Returns the raw
+    material for stages 1 to 5 and nothing interpreted: the arithmetic that turns it into a
+    field lives in the functions below, where it can be read next to the constants it uses.
     """
     paths = sorted(p for p in store.paths.values() if p.endswith(LEVEL_SUFFIX) and LEVEL_DIR in p)
     components: list[tuple[int, int, np.ndarray]] = []
     proxies: list[tuple[float, float, float, float, float, float]] = []
     #: (mesh id, owner id, x, y, z, pitch, yaw, roll, sx, sy, sz)
     placements: list[tuple[float, ...]] = []
+    #: (class name, (x0, y0, z0, x1, y1, z1)) in world centimetres, for the water stage.
+    water: list[tuple[str, tuple[float, ...]]] = []
+    water_actors: dict[str, int] = {}
+    water_boxless: list[tuple[str, str, str]] = []
+    box_sources: dict[str, int] = {}
     mesh_ids: dict[str, int] = {}
     owner_ids: dict[str, int] = {}
     unreadable = 0
@@ -454,6 +571,17 @@ def sweep_levels(store, scripts, progress: bool = True) -> dict:
                 mesh_id = mesh_ids.setdefault(mesh, len(mesh_ids))
                 owner_id = owner_ids.setdefault(root_owner[slot], len(owner_ids))
                 placements.append((mesh_id, owner_id, x, y, z, pitch, yaw, roll, sx, sy, sz))
+            elif is_water_class(name):
+                water_actors[name] = water_actors.get(name, 0) + 1
+                box, sources = water_actor_box(view, slot, classes, meshes)
+                for source in sources:
+                    box_sources[source] = box_sources.get(source, 0) + 1
+                if box is None:
+                    water_boxless.append(
+                        (name, view.exports[slot]["name"], path.rsplit("/", 1)[-1])
+                    )
+                else:
+                    water.append((name, box))
 
         if progress and index % 500 == 0:
             print(
@@ -471,6 +599,10 @@ def sweep_levels(store, scripts, progress: bool = True) -> dict:
         "placements": np.array(placements, dtype=np.float64) if placements else np.zeros((0, 11)),
         "meshes": [m for m, _ in sorted(mesh_ids.items(), key=lambda kv: kv[1])],
         "owners": [o for o, _ in sorted(owner_ids.items(), key=lambda kv: kv[1])],
+        "water": water,
+        "water_actors": water_actors,
+        "water_boxless": water_boxless,
+        "water_box_sources": box_sources,
         "seconds": time.time() - started,
     }
 
@@ -958,57 +1090,484 @@ def baseline_indices() -> tuple[np.ndarray, np.ndarray]:
 
 
 # --------------------------------------------------------------------------------------
-# Stage 5: water, as information.
+# Stage 5, part one: the world-space bounding box of every water actor.
 # --------------------------------------------------------------------------------------
 
 
-def water_surface(baseline_cm: np.ndarray, valid: np.ndarray, frame: dict) -> dict:
-    """Flat, above-terrain, connected regions of the interface raster: probable water.
+def is_water_class(name: str) -> bool:
+    """Whether a class name is one of the world's water actors. A shape, not a list."""
+    return name.startswith(WATER_CLASS_PREFIXES) and any(t in name for t in WATER_CLASS_TOKENS)
 
-    Good to about two metres and not derived from water actors at all -- the ~700 of them
-    are a median 323 m apart over submerged ground and their Z is a pivot rather than a
-    surface, which is why this is a flatness detector instead. Everything it finds is
-    reported and **nothing gates the terrain on it**: a lake gate built on this detector was
-    measured to make the field worse, nodes trim90 0.93 against 0.77.
+
+def _bounds_pair(found: dict[str, bytes]) -> tuple[tuple, tuple] | None:
+    """``(Origin, BoxExtent)`` out of an already-parsed tag set, as two double triples."""
+    origin, extent = found.get("Origin", b""), found.get("BoxExtent", b"")
+    if len(origin) != 24 or len(extent) != 24:
+        return None
+    return struct.unpack("<3d", origin), struct.unpack("<3d", extent)
+
+
+def _extended_bounds(view: PackageView) -> tuple[tuple, tuple] | None:
+    """A ``StaticMesh``'s own ``ExtendedBounds``: the mesh's local box about its origin."""
+    for export in view.exports:
+        payload = view.props(export["slot"]).get("ExtendedBounds")
+        if not payload:
+            continue
+        entries, _end = property_tags(payload, view.pkg.names, 0)
+        pair = _bounds_pair({name: raw for name, _kind, raw, _value in entries})
+        if pair is not None:
+            return pair
+    return None
+
+
+def _box_sphere_bounds(payload: bytes, names) -> tuple[tuple, tuple] | None:
+    """An ``FBoxSphereBounds``, unwrapping the ``CachedBounds`` container it arrives in."""
+    entries, _end = property_tags(payload, names, 0)
+    found = {name: raw for name, _kind, raw, _value in entries}
+    if "Value" in found:
+        return _box_sphere_bounds(found["Value"], names)
+    return _bounds_pair(found)
+
+
+def _agg_geom_box(payload: bytes, names) -> tuple[list[float], list[float]] | None:
+    """The union of every convex element's ``ElemBox`` in a cooked ``FKAggregateGeom``.
+
+    This is where an ``FGWaterVolume`` keeps its shape. A cooked BSP brush holds its
+    vertices in WORLD space and its component transform is legitimately the identity, which
+    is why 270 of these decode correctly with no ``RelativeLocation`` anywhere on the actor.
+    An ``FBox`` is 3 doubles of min, 3 of max and a validity byte.
     """
-    x0, x1, y0, y1 = BASELINE_BOX_CM
-    centres_x = x0 + (np.arange(BASELINE_PX) + 0.5) * (x1 - x0) / BASELINE_PX
-    centres_y = y0 + (np.arange(BASELINE_PX) + 0.5) * (y1 - y0) / BASELINE_PX
-    li = np.round((centres_x - frame["x0_cm"]) / frame["scale_cm"]).astype(int)
-    lj = np.round((centres_y - frame["y0_cm"]) / frame["scale_cm"]).astype(int)
-    ok_x = (li >= 0) & (li < frame["width"])
-    ok_y = (lj >= 0) & (lj < frame["height"])
-    LI, LJ = np.clip(li, 0, frame["width"] - 1), np.clip(lj, 0, frame["height"] - 1)
-    land_m = frame["z_cm"][np.ix_(LJ, LI)] / 100.0
-    land_ok = frame["good"][np.ix_(LJ, LI)] & ok_y[:, None] & ok_x[None, :]
+    entries, _end = property_tags(payload, names, 0)
+    low = [math.inf] * 3
+    high = [-math.inf] * 3
+    found = 0
+    for name, _kind, array, _value in entries:
+        if name not in ("ConvexElems", "BoxElems") or len(array) < 4:
+            continue
+        count = struct.unpack_from("<I", array, 0)[0]
+        position = 4
+        for _ in range(count):
+            elements, position = property_tags(array, names, position)
+            for inner, _k, blob, _v in elements:
+                if inner == "ElemBox" and len(blob) >= 48:
+                    minimum = struct.unpack_from("<3d", blob, 0)
+                    maximum = struct.unpack_from("<3d", blob, 24)
+                    for axis in range(3):
+                        low[axis] = min(low[axis], minimum[axis])
+                        high[axis] = max(high[axis], maximum[axis])
+                    found += 1
+            if position >= len(array):
+                break
+    return (low, high) if found else None
 
-    base_m = baseline_cm / 100.0
-    gradient = np.maximum(np.abs(np.gradient(base_m, axis=0)), np.abs(np.gradient(base_m, axis=1)))
-    terrain = np.where(land_ok, land_m, np.where(valid, base_m, np.nan))
-    candidate = (
-        valid
-        & (gradient < WATER_FLAT_GRAD_M)
-        & (np.nan_to_num(base_m - terrain, nan=-1e9) > WATER_MIN_DEPTH_M)
-    )
-    labelled, count = ndimage.label(candidate)
-    surface = np.full(base_m.shape, np.nan, np.float32)
-    kept = 0
-    if count:
-        boxes = ndimage.find_objects(labelled)
+
+def _corners_to_world(low, high, transform) -> tuple[list[float], list[float]]:
+    """A local box through a world transform, eight corners at a time.
+
+    Corner by corner rather than centre-plus-extent because a rotated volume's world AABB
+    is the box AROUND the rotated box, not the unrotated box moved -- and 486 of the 837
+    water actors are rotated, so getting this wrong would be getting most of them wrong.
+    """
+    location, rotation, scale = transform
+    out_low = [math.inf] * 3
+    out_high = [-math.inf] * 3
+    for x in (low[0], high[0]):
+        for y in (low[1], high[1]):
+            for z in (low[2], high[2]):
+                turned = quat_rotate(rotation, (x * scale[0], y * scale[1], z * scale[2]))
+                for axis in range(3):
+                    value = location[axis] + turned[axis]
+                    out_low[axis] = min(out_low[axis], value)
+                    out_high[axis] = max(out_high[axis], value)
+    return out_low, out_high
+
+
+class MeshBounds:
+    """``ExtendedBounds`` per static mesh, read once each, plus the water plane's own.
+
+    A cache rather than a lookup because the plane-backed blueprints all name the same
+    mesh, and 215 of them asking the container 215 times would be 215 package reads for one
+    answer.
+    """
+
+    def __init__(self, store, scripts, index) -> None:
+        self.store, self.scripts, self.index = store, scripts, index
+        self._cache: dict[str, tuple | None] = {}
+
+    def of(self, mesh_path: str) -> tuple[tuple, tuple] | None:
+        if mesh_path not in self._cache:
+            bounds = None
+            package = self.index.path_for(mesh_path)
+            if package:
+                try:
+                    bounds = _extended_bounds(
+                        PackageView(self.store.read_path(package), self.scripts)
+                    )
+                except Exception:
+                    bounds = None
+            self._cache[mesh_path] = bounds
+        return self._cache[mesh_path]
+
+    @property
+    def plane(self) -> tuple[tuple, tuple] | None:
+        return self.of(WATER_PLANE_MESH)
+
+
+def _component_box(view: PackageView, slot: int, name: str, meshes: MeshBounds):
+    """One component's LOCAL box and where it came from, or ``(None, None)``.
+
+    Four sources, tried in the order they are trustworthy. ``BoxExtent`` is the component
+    saying its own half-extents. ``BrushBodySetup.AggGeom`` is the cooked collision of a
+    BSP volume. ``CachedBounds`` is what an instanced component records for all of its
+    instances at once. And a ``StaticMeshComponent`` uses its mesh's ``ExtendedBounds`` --
+    falling back to the water plane's when the cooked instance names no mesh at all, which
+    is the normal case here and is flagged in the source name rather than hidden.
+    """
+    props = view.props(slot)
+    if len(props.get("BoxExtent", b"")) == 24:
+        extent = struct.unpack("<3d", props["BoxExtent"])
+        return ([-e for e in extent], list(extent)), "BoxComponent.BoxExtent"
+    if name == "BrushComponent":
+        setup = view.export_ref(props.get("BrushBodySetup", b""))
+        geometry = view.props(setup).get("AggGeom") if setup is not None else None
+        box = _agg_geom_box(geometry, view.pkg.names) if geometry else None
+        return (box, "BrushBodySetup.AggGeom") if box else (None, None)
+    if name in ("InstancedStaticMeshComponent", "HierarchicalInstancedStaticMeshComponent"):
+        cached = props.get("CachedBounds")
+        pair = _box_sphere_bounds(cached, view.pkg.names) if cached else None
+        source = "InstancedStaticMeshComponent.CachedBounds"
+    elif name == "StaticMeshComponent":
+        mesh = view.import_path(props.get("StaticMesh", b"")) if "StaticMesh" in props else None
+        pair = meshes.of(mesh) if mesh else None
+        source = "StaticMesh.ExtendedBounds"
+        if pair is None:
+            pair = meshes.plane
+            source = "WaterPlane.ExtendedBounds (assumed)"
+    else:
+        return None, None
+    if pair is None:
+        return None, None
+    origin, extent = pair
+    low = [origin[axis] - extent[axis] for axis in range(3)]
+    high = [origin[axis] + extent[axis] for axis in range(3)]
+    return (low, high), source
+
+
+def water_actor_box(view: PackageView, actor: int, classes, meshes: MeshBounds):
+    """One water actor's world AABB in centimetres, and the box sources it came from.
+
+    The union over every box-like component in the actor's export subtree, each taken to
+    world space through its own composed ``AttachParent`` chain.
+
+    The one refusal is the last block. A mesh's ``ExtendedBounds`` is centred on the mesh's
+    own origin and therefore carries no position at all, so an actor whose ONLY box is an
+    assumed plane and which states no transform anywhere would land its box at the world
+    origin -- a parse artefact, not a placement. A ``BrushComponent`` is the opposite case
+    and must not be caught by this: its vertices are already in world space and its
+    identity transform is correct, which is how 270 ``FGWaterVolume`` have a right box and
+    no ``RelativeLocation`` between them.
+    """
+    stack = [actor]
+    seen: set[int] = set()
+    low = [math.inf] * 3
+    high = [-math.inf] * 3
+    sources: set[str] = set()
+    positioned = view.props(actor).get("RelativeLocation") is not None
+    while stack:
+        slot = stack.pop()
+        if slot in seen:
+            continue
+        seen.add(slot)
+        stack.extend(view.children.get(slot, []))
+        name = class_name_of(view.class_of.get(slot))
+        if name not in WATER_BOX_COMPONENTS:
+            continue
+        local, source = _component_box(view, slot, name, meshes)
+        if local is None:
+            continue
+        transform, _parent = world_transform(view, slot, classes)
+        if transform is None:
+            transform = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0))
+        if view.props(slot).get("RelativeLocation") is not None or transform[0] != (0.0, 0.0, 0.0):
+            positioned = True
+        corner_low, corner_high = _corners_to_world(local[0], local[1], transform)
+        for axis in range(3):
+            low[axis] = min(low[axis], corner_low[axis])
+            high[axis] = max(high[axis], corner_high[axis])
+        sources.add(source)
+    if not sources or not all(math.isfinite(v) for v in low + high):
+        return None, sources
+    if not positioned and all("assumed" in source for source in sources):
+        return None, set()
+    return tuple(low + high), sources
+
+
+# --------------------------------------------------------------------------------------
+# Stage 5, part two: the artwork's plan shape, the boxes' level, and the combine.
+# --------------------------------------------------------------------------------------
+
+
+def artwork_water_mask(store, decoder, image_mod) -> np.ndarray:
+    """The game's own map artwork, classified into water, on this file's 1 m grid.
+
+    One threshold on one difference, and both halves of that are the argument.
+    ``B - R`` because the artwork's water is the only blue thing on it -- terrain, cliffs,
+    biome tints and the grid are all warm -- so the statistic is bimodal with nothing in
+    the middle and the threshold's exact value barely matters. Nearest-neighbour down to
+    the 1 m grid because 8192 px over the same 7500 m box is 0.92 m to the pixel, i.e. the
+    two grids are within a texel of each other, and interpolating a hard-edged mask would
+    only invent a soft one.
+
+    The slices are read through ``tools/gen_map_image.py``'s own reader, so the file-length
+    check that guards the mip layout is the same check in both places, and this stage does
+    NOT depend on that generator having been run: it decodes the container, not ``map.png``.
+    """
+    sheet = np.zeros((SHEET_PX, SHEET_PX), dtype=bool)
+    for name in SLICES:
+        raw = read_slice(store, name)
+        pixels = np.asarray(decode_bc1_rgba(decoder, image_mod, raw, TILE_PX).convert("RGB"))
+        blue_over_red = pixels[:, :, 2].astype(np.int16) - pixels[:, :, 0].astype(np.int16)
+        col, row = (int(v) for v in name.split("_")[1].split("-"))
+        sheet[row * TILE_PX : (row + 1) * TILE_PX, col * TILE_PX : (col + 1) * TILE_PX] = (
+            blue_over_red >= WATER_ARTWORK_BLUE_OVER_RED
+        )
+    index = np.clip((np.arange(GRID_PX) * SHEET_PX / GRID_PX).astype(np.int32), 0, SHEET_PX - 1)
+    return sheet[index][:, index]
+
+
+def water_box_tops(boxes: list[tuple[str, tuple[float, ...]]]) -> tuple[np.ndarray, int]:
+    """The highest surface-class box top standing over each texel, in metres, or ``nan``.
+
+    The maximum, and that is measured rather than aesthetic. A box's top IS the surface of
+    the volume it bounds, so where several overlap in plan the highest is the one visible
+    from above -- and the alternative, one median per drawn body, was tried and rejected:
+    the ocean and its rivers are one connected shape in the artwork spanning 141 m of box
+    top, over which a single median invents up to 157 m of depth.
+    """
+    tops = np.full((GRID_PX, GRID_PX), np.nan, np.float32)
+    used = 0
+    for name, box in boxes:
+        if name not in WATER_SURFACE_CLASSES:
+            continue
+        x0, y0, _z0, x1, y1, z1 = box
+        # Vertex-aligned, so a texel is covered when its own point lies inside the box.
+        col0 = max(0, math.ceil((x0 - ORIGIN_X_CM) / SPACING_CM))
+        col1 = min(GRID_PX, math.floor((x1 - ORIGIN_X_CM) / SPACING_CM) + 1)
+        row0 = max(0, math.ceil((y0 - ORIGIN_Y_CM) / SPACING_CM))
+        row1 = min(GRID_PX, math.floor((y1 - ORIGIN_Y_CM) / SPACING_CM) + 1)
+        if col1 <= col0 or row1 <= row0:
+            continue
+        used += 1
+        window = tops[row0:row1, col0:col1]
+        top = np.float32(z1 / 100.0)
+        np.maximum(window, top, out=window, where=np.isfinite(window))
+        window[~np.isfinite(window)] = top
+    return tops, used
+
+
+def region_mask(name: str) -> np.ndarray | None:
+    """One named region of ``data/region_names.json``, on this grid. Independent evidence.
+
+    That table is a hand trace of the community wiki's biome map at 256 m, so it was made
+    without reference to anything in this pipeline -- which is the only reason a recall
+    measured against it means something. ``None`` if the table or the name is missing,
+    because a gate that cannot find its own reference must say so rather than pass.
+    """
+    if not REGION_TABLE.is_file():
+        return None
+    table = json.loads(REGION_TABLE.read_text(encoding="utf-8"))
+    letters = {region: key for key, region in table["legend"].items()}
+    if name not in letters:
+        return None
+    letter = letters[name]
+    grid = table["region_grid"]
+    meta = table["grid_meta"]
+    cells = np.array([[1 if ch == letter else 0 for ch in row] for row in grid], dtype=bool)
+    columns = ORIGIN_X_CM + np.arange(GRID_PX) * SPACING_CM
+    rows = ORIGIN_Y_CM + np.arange(GRID_PX) * SPACING_CM
+    ci = np.clip(((columns - meta["x0"]) / meta["cell"]).astype(int), 0, meta["nx"] - 1)
+    ri = np.clip(((rows - meta["y0"]) / meta["cell"]).astype(int), 0, meta["ny"] - 1)
+    return cells[ri][:, ci]
+
+
+def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np.ndarray) -> dict:
+    """The artwork's plan shape given the water volumes' level, and what is left unknown.
+
+    Three steps and one refusal. The level of a wet texel is the highest box top over it;
+    where nothing covers it -- 17 texels of 18.3 million on build 495413 -- the median of
+    its own drawn body's covered tops stands in, and a body with no box anywhere is dropped
+    rather than guessed at. Then the only gate: where the ground was measured at 1 m and
+    stands ABOVE that level, there is no water, which is a rock in a lake and takes 0.04
+    km2 off the mask. Where the ground is the fill layer or nothing at all, no such test is
+    possible in either direction, and the texel is water whose depth this file does not
+    know -- said in ``waterq.u8.z`` rather than implied by a subtraction.
+    """
+    tops, used = water_box_tops(boxes)
+    covered = np.isfinite(tops)
+    labelled, bodies = ndimage.label(mask, structure=np.ones((3, 3), bool))
+
+    level = np.where(mask & covered, tops, np.nan).astype(np.float32)
+    orphan = mask & ~covered
+    if orphan.any() and bodies:
+        where = np.nonzero(mask & covered)
+        medians = np.asarray(
+            ndimage.median(tops[where], labels=labelled[where], index=np.arange(1, bodies + 1)),
+            dtype=np.float32,
+        )
+        lookup = np.concatenate([[np.nan], medians]).astype(np.float32)
+        level[orphan] = lookup[labelled[orphan]]
+
+    terrain_m = np.where(height_dm == hf.NODATA, np.nan, height_dm / hf.DM_PER_M).astype(np.float32)
+    measurable = ((prov == hf.PROV_LANDSCAPE) | (prov == hf.PROV_CLIFF)) & np.isfinite(terrain_m)
+    standing_out = measurable & np.isfinite(level) & (level <= terrain_m)
+    level[standing_out] = np.nan
+
+    wet = np.isfinite(level)
+    quality = np.where(
+        wet, np.where(measurable, hf.WATER_MEASURED, hf.WATER_LEVEL_ONLY), hf.WATER_DRY
+    ).astype(np.uint8)
+    depths = (level - terrain_m)[wet & measurable]
+    return {
+        "level_m": level,
+        "quality": quality,
+        "boxes_rasterised": used,
+        "bodies": int(bodies),
+        "artwork_texels": int(mask.sum()),
+        "uncovered_texels": int(orphan.sum()),
+        "orphan_bodies": int((mask & ~covered & ~np.isfinite(level)).sum()),
+        "dropped_standing_out_texels": int(standing_out.sum()),
+        "water_texels": int(wet.sum()),
+        "measured_texels": int((quality == hf.WATER_MEASURED).sum()),
+        "level_only_texels": int((quality == hf.WATER_LEVEL_ONLY).sum()),
+        "depth_p50_m": round(float(np.median(depths)), 3) if depths.size else None,
+        "depth_p90_m": round(float(np.percentile(depths, 90)), 3) if depths.size else None,
+    }
+
+
+def validate_water(surface: dict, mask: np.ndarray, boxes: list) -> dict:
+    """The four gates, each measured against something this stage did not make.
+
+    Returns every number whether it passes or not; ``main`` decides what to do about it.
+    A gate that could not find its own reference reports ``None`` and is treated as a
+    failure, because "the check did not run" and "the check passed" are different things.
+    """
+    wet = surface["quality"] != hf.WATER_DRY
+    nodes = json.loads(NODE_TABLE.read_text(encoding="utf-8"))["nodes"]
+    x = np.array([n["x"] for n in nodes], float)
+    y = np.array([n["y"] for n in nodes], float)
+    col = np.clip(np.round((x - ORIGIN_X_CM) / SPACING_CM).astype(int), 0, GRID_PX - 1)
+    row = np.clip(np.round((y - ORIGIN_Y_CM) / SPACING_CM).astype(int), 0, GRID_PX - 1)
+
+    region = region_mask(WATER_GATE_REGION)
+    recall = None
+    region_truth = 0
+    if region is not None and (region & mask).any():
+        region_truth = int((region & mask).sum())
+        recall = float((wet & region & mask).sum() / region_truth)
+
+    tops = [box[5] / 100.0 for name, box in boxes if name == WATER_OCEAN_CLASS]
+    labelled, count = ndimage.label(mask, structure=np.ones((3, 3), bool))
+    ocean_level = None
+    ocean_reference = None
+    if tops and count:
         sizes = np.bincount(labelled.ravel())
-        for label in range(1, count + 1):
-            if sizes[label] < WATER_MIN_TEXELS:
-                continue
-            window = boxes[label - 1]
-            mask = labelled[window] == label
-            values = base_m[window][mask]
-            if values.std() > WATER_LEVEL_STD_M:
-                continue
-            # Assigned through the mask, not over the bounding box: two bodies can share a
-            # box, and painting the box would wipe one of them with the other's level.
-            surface[window][mask] = np.median(values)
-            kept += 1
-    return {"surface_m": surface, "regions": int(count), "bodies": kept}
+        biggest = int(np.argmax(sizes[1:]) + 1)
+        values = surface["level_m"][(labelled == biggest) & wet]
+        ocean_reference = float(np.median(tops))
+        if values.size:
+            ocean_level = float(np.median(values))
+
+    return {
+        "dry_node_false_positive": {
+            "nodes": len(nodes),
+            "called_water": int(wet[row, col].sum()),
+            "fraction": round(float(wet[row, col].mean()), 6),
+            "gate_max": WATER_FP_MAX,
+            "against": str(NODE_TABLE.relative_to(ROOT)).replace("\\", "/"),
+            "why": (
+                "every static resource node stands on dry ground, so a node the channel "
+                "calls water is a false positive with no interpretation needed"
+            ),
+        },
+        "region_recall": {
+            "region": WATER_GATE_REGION,
+            "artwork_texels": region_truth,
+            "recall": None if recall is None else round(recall, 6),
+            "gate_min": WATER_SPIRE_RECALL_MIN,
+            "against": "data/region_names.json, a hand trace of the wiki's biome map",
+            "why": (
+                "this region is where the flatness detector this stage replaced scored "
+                "worst -- 35.8% recall against the artwork -- so it is the one that says "
+                "whether the replacement actually replaced it"
+            ),
+        },
+        "ocean_level": {
+            "assigned_m": None if ocean_level is None else round(ocean_level, 3),
+            "box_median_m": None if ocean_reference is None else round(ocean_reference, 3),
+            "boxes": len(tops),
+            "offset_m": (
+                None
+                if ocean_level is None or ocean_reference is None
+                else round(abs(ocean_level - ocean_reference), 4)
+            ),
+            "gate_max_m": WATER_OCEAN_TOLERANCE_M,
+            "why": (
+                f"the largest drawn body is the ocean and every {WATER_OCEAN_CLASS} box "
+                "states the ocean's own surface, so the two have to agree or the level is "
+                "being taken from the wrong volumes"
+            ),
+        },
+        "artwork_over_a_box": {
+            "uncovered_texels": surface["uncovered_texels"],
+            "fraction": round(surface["uncovered_texels"] / max(surface["artwork_texels"], 1), 6),
+            "gate_max": WATER_UNCOVERED_MAX,
+            "why": (
+                "the mask and the volumes are two descriptions of one world, so water the "
+                "artwork draws where no volume stands means they have come apart -- which "
+                "is what a misregistered sheet looks like from here"
+            ),
+        },
+    }
+
+
+def water_gate_failures(checks: dict) -> list[str]:
+    """Which of the four gates did not pass, as sentences. Empty means write the field."""
+    failures = []
+    node = checks["dry_node_false_positive"]
+    if node["fraction"] > node["gate_max"]:
+        failures.append(
+            f"the channel calls {node['called_water']} of {node['nodes']} static resource "
+            f"nodes water ({node['fraction'] * 100:.2f}%), past the {node['gate_max'] * 100:.0f}% "
+            "gate. Every one of those nodes stands on dry ground, so the artwork classifier "
+            "or the sheet's registration has moved."
+        )
+    region = checks["region_recall"]
+    if region["recall"] is None or region["recall"] < region["gate_min"]:
+        measured = "unmeasurable" if region["recall"] is None else f"{region['recall'] * 100:.1f}%"
+        failures.append(
+            f"{region['region']} recall against the artwork is {measured}, under the "
+            f"{region['gate_min'] * 100:.0f}% gate. That region is what exposed the detector "
+            "this stage replaced, and it is exposing this one."
+        )
+    ocean = checks["ocean_level"]
+    if ocean["offset_m"] is None or ocean["offset_m"] > ocean["gate_max_m"]:
+        failures.append(
+            "the ocean's assigned level "
+            + (
+                "could not be measured at all"
+                if ocean["offset_m"] is None
+                else f"is {ocean['offset_m']:.2f} m from the median {WATER_OCEAN_CLASS} box top"
+            )
+            + f", past the {ocean['gate_max_m']} m gate."
+        )
+    covered = checks["artwork_over_a_box"]
+    if covered["fraction"] > covered["gate_max"]:
+        failures.append(
+            f"{covered['fraction'] * 100:.2f}% of the artwork's water stands over no water "
+            f"volume at all, past the {covered['gate_max'] * 100:.0f}% gate. The mask and "
+            "the boxes have stopped describing the same world."
+        )
+    return failures
 
 
 # --------------------------------------------------------------------------------------
@@ -1215,9 +1774,10 @@ def build_meta(
     cliffs: dict,
     field: dict,
     water: dict,
+    water_checks: dict,
     validation: dict,
     files: dict,
-    pyooz_version: str,
+    decoders: dict[str, str],
     timings: dict,
 ) -> dict:
     """The sidecar the loader reads, plus the provenance a reader needs to date the field."""
@@ -1353,21 +1913,83 @@ def build_meta(
                 "role": "outside the landscape frame only; the old baseline, unchanged",
             },
             "water": {
-                "derivation": (
-                    "flat, above-terrain, connected regions of the interface raster: "
-                    f"|gradient| < {WATER_FLAT_GRAD_M} m, more than {WATER_MIN_DEPTH_M} m "
-                    f"above the terrain, at least {WATER_MIN_TEXELS} texels, level to "
-                    f"within {WATER_LEVEL_STD_M} m"
+                "recipe": (
+                    "the game's own map artwork for the plan shape, the cooked water "
+                    "volumes' own bounding boxes for the level. Neither source is asked "
+                    "for what it does not know: the artwork has no Z at all, and the "
+                    "volumes are far too sparse to draw a coastline with"
                 ),
-                "regions_found": water["regions"],
-                "bodies_kept": water["bodies"],
-                "accuracy_m": 2.0,
+                "shape": {
+                    "asset": (
+                        "/Game/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/Map_<c>-<r>, "
+                        "the same four BC1 slices tools/gen_map_image.py draws"
+                    ),
+                    "classifier": f"blue - red >= {WATER_ARTWORK_BLUE_OVER_RED} on the 8192 sheet",
+                    "registration": (
+                        "(0, 0) sheet pixels, measured by a +/-2 px sweep rather than "
+                        "assumed. The sheet's box and this grid's are the same 7500 m "
+                        "square, so the resample is nearest at 0.92 m to the pixel"
+                    ),
+                    "artwork_water_km2": round(water["artwork_texels"] / 1e6, 4),
+                },
+                "level": {
+                    "actors": sum(sweep["water_actors"].values()),
+                    "by_class": dict(sorted(sweep["water_actors"].items())),
+                    "with_a_world_box": len(sweep["water"]),
+                    "without_a_box": len(sweep["water_boxless"]),
+                    "boxless": [
+                        {"class": cls, "actor": actor, "cell": cell}
+                        for cls, actor, cell in sweep["water_boxless"]
+                    ],
+                    "box_sources": dict(sorted(sweep["water_box_sources"].items())),
+                    "surface_classes": sorted(WATER_SURFACE_CLASSES),
+                    "boxes_rasterised": water["boxes_rasterised"],
+                    "rule": (
+                        "the highest surface-class box top standing over the texel. A box "
+                        "top is a surface, so where several overlap in plan the highest is "
+                        "the one visible from above; one median per drawn body was measured "
+                        "to invent up to 157 m of depth over 0.06 km2, because the ocean "
+                        "and its rivers are one drawn shape spanning 141 m of box top"
+                    ),
+                    "oracle": (
+                        "the save's 23 water extractors all sit inside a volume box and "
+                        "stand on its top to within 0.005 cm, which is what says a box top "
+                        "is the water surface rather than merely near it"
+                    ),
+                },
+                "combine": {
+                    "bodies": water["bodies"],
+                    "texels_with_no_box_over_them": water["uncovered_texels"],
+                    "texels_dropped_as_ground_above_the_level": water[
+                        "dropped_standing_out_texels"
+                    ],
+                    "water_km2": round(water["water_texels"] / 1e6, 4),
+                    "depth_measured_km2": round(water["measured_texels"] / 1e6, 4),
+                    "depth_unknown_km2": round(water["level_only_texels"] / 1e6, 4),
+                    "depth_p50_m": water["depth_p50_m"],
+                    "depth_p90_m": water["depth_p90_m"],
+                    "unknown_depth_rule": (
+                        "where the ground under the water is the fill layer or no data, "
+                        "the depth is not knowable and waterq.u8.z says so. Nothing may "
+                        "gate on water > terrain there: the fill raster's 3.9 m step "
+                        "routinely rounds above a sea surface 17 m down, which reads the "
+                        "open ocean as dry"
+                    ),
+                },
+                "validation": water_checks,
+                "accuracy_m": 0.05,
+                "supersedes": (
+                    "a flatness detector over the interface raster, which found 20.4% of "
+                    "the sheet as water against the artwork's 39.0% -- 46.7% recall, 35.8% "
+                    "over Spire Coast -- and invented plateau lakes on flat mesas. Its "
+                    "failures were structural: 3.9 m of quantisation against 2.1 m of "
+                    "water, rivers below the raster's resolution, and a fill province where "
+                    "the terrain it compared against IS the water surface"
+                ),
                 "role": (
-                    "INFORMATION ONLY. It does not gate the terrain, and that is measured "
-                    "rather than omitted: the world's ~700 water actors are a median 323 m "
-                    "apart over submerged ground and their Z is a pivot rather than a "
-                    "surface, and a lake gate built on this flatness detector was measured "
-                    "to make the field worse -- nodes trim90 0.93 against 0.77."
+                    "INFORMATION ONLY. Nothing downstream moves ground because of it, and "
+                    "that stays measured rather than assumed: a lake gate built on the old "
+                    "detector made the field worse, nodes trim90 0.93 against 0.77."
                 ),
             },
         },
@@ -1381,7 +2003,7 @@ def build_meta(
         "decoders": {
             "oodle": {
                 "name": "pyooz",
-                "version": pyooz_version,
+                "version": decoders.get("pyooz", "unknown"),
                 "import_name": "ooz",
                 "licence": "GPL-3.0",
                 "role": (
@@ -1392,6 +2014,17 @@ def build_meta(
                     "imported at module scope nowhere, and lazily inside one function of "
                     "satisfactory_mcp.core.gameassets.iostore, so the server and the test "
                     "suite run with it absent. No part of it is in the output."
+                ),
+            },
+            "texture": {
+                "name": "texture2ddecoder",
+                "version": decoders.get("texture2ddecoder", "unknown"),
+                "pillow": decoders.get("pillow", "unknown"),
+                "role": (
+                    "BC1 blocks of the four map slices, for the water channel's plan shape. "
+                    "The same two the map image is drawn with, and optional in the same "
+                    "way: both are handed to core.gameassets.textures as arguments, so this "
+                    "file imports neither at module scope."
                 ),
             },
             "container": (
@@ -1419,7 +2052,19 @@ def build_meta(
                 "SM_RockPile_*, SM_Cave_Pillar_*, SmoothRock_01 and a few others. Small and "
                 "rare; their AggGeom convex hulls are still open for a later pass."
             ),
-            "the water channel is good to about 2 m and is information only.",
+            (
+                f"{len(sweep['water_boxless'])} water actors ship no bounding box at all -- "
+                "FGWaterVolume brushes with no cooked BrushBodySetup, one FGRiverSpline, and "
+                "two developer backdrop planes with no transform. The artwork mask carries "
+                "their plan shape and neighbouring volumes carry their level; what is left "
+                f"over is {water['uncovered_texels']} texels of drawn water standing over no "
+                "box at all, which take their body's median."
+            ),
+            (
+                "the water channel states a LEVEL everywhere and a DEPTH only where the "
+                f"ground under it was measured at 1 m: {water['level_only_texels'] / 1e6:.2f} "
+                "km2 of it, most of the ocean, is depth-unknown. It is information only."
+            ),
         ],
         "staleness": (
             "sources.game.game_version_pinned is the build this field was cut from, in the "
@@ -1461,7 +2106,12 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="no per-stage progress lines")
     args = parser.parse_args()
 
-    pyooz_version = require_gen("ooz")["pyooz"]
+    # Three of the extra now, not one: the water channel's plan shape is the map sheet's
+    # own BC1 slices, so this generator decodes textures as well as container blocks.
+    decoders = require_gen("ooz", "texture2ddecoder", "PIL.Image")
+    pyooz_version = decoders["pyooz"]
+    import texture2ddecoder
+    from PIL import Image
 
     try:
         build_pin, build_raw = installed_build(args.game)
@@ -1513,15 +2163,22 @@ def main() -> int:
     loud = not args.quiet
     timings: dict[str, float] = {}
 
-    # ---- stages 1 and 2: one sweep -----------------------------------------------------
-    print("sweeping the world's packages for landscape components and placements")
-    sweep = sweep_levels(store, scripts, loud)
+    # ---- stages 1, 2 and the water actors: one sweep ------------------------------------
+    print("sweeping the world's packages for landscape, placements and water volumes")
+    classes = ClassFacts(store, index)
+    water_meshes = MeshBounds(store, scripts, index)
+    sweep = sweep_levels(store, scripts, classes, water_meshes, loud)
     timings["sweep"] = round(sweep["seconds"], 1)
     print(
         f"  {sweep['packages']} packages in {sweep['seconds']:.0f}s: "
         f"{len(sweep['components'])} landscape components, {len(sweep['placements'])} "
         f"placements over {len(sweep['meshes'])} distinct meshes "
         f"({sweep['unreadable']} unreadable, {sweep['malformed_components']} malformed)"
+    )
+    print(
+        f"  {sum(sweep['water_actors'].values())} water actors over "
+        f"{len(sweep['water_actors'])} classes, {len(sweep['water'])} with a world box, "
+        f"{len(sweep['water_boxless'])} without"
     )
 
     started = time.time()
@@ -1559,18 +2216,13 @@ def main() -> int:
         f"dropped {cliffs['dropped']}"
     )
 
-    # ---- stage 4: fill, and stage 5: water --------------------------------------------
+    # ---- stage 4: fill -----------------------------------------------------------------
     started = time.time()
     baseline_cm, baseline_valid = read_baseline(store)
-    water = water_surface(baseline_cm, baseline_valid, frame)
-    timings["fill_and_water"] = round(time.time() - started, 1)
-    print(
-        f"  interface raster decoded, {baseline_valid.mean() * 100:.1f}% of it says "
-        f"something; water found {water['regions']} candidate regions and kept "
-        f"{water['bodies']} bodies"
-    )
+    timings["fill"] = round(time.time() - started, 1)
+    print(f"  interface raster decoded, {baseline_valid.mean() * 100:.1f}% of it says something")
 
-    # ---- compose, validate, write ------------------------------------------------------
+    # ---- compose -----------------------------------------------------------------------
     started = time.time()
     field = compose(frame, cliffs, baseline_cm, baseline_valid)
     timings["compose"] = round(time.time() - started, 1)
@@ -1580,6 +2232,56 @@ def main() -> int:
         f"  z range {field['z_range_m'][0]:.1f} .. {field['z_range_m'][1]:.1f} m; "
         f"int16-decimetre quantisation RMS {field['quantisation_rms_m']:.4f} m"
     )
+
+    # ---- stage 5: water, after the terrain it is measured against ----------------------
+    print("classifying the map artwork's water and levelling it on the water volumes")
+    started = time.time()
+    mask = artwork_water_mask(store, texture2ddecoder, Image)
+    water = water_surface(mask, sweep["water"], field["height_dm"], field["prov"])
+    water_checks = validate_water(water, mask, sweep["water"])
+    timings["water"] = round(time.time() - started, 1)
+    print(
+        f"  artwork water {water['artwork_texels'] / 1e6:.3f} km2 over "
+        f"{water['bodies']} bodies; {water['boxes_rasterised']} surface boxes rasterised"
+    )
+    print(
+        f"  channel {water['water_texels'] / 1e6:.3f} km2: "
+        f"{water['measured_texels'] / 1e6:.3f} km2 with a measured depth, "
+        f"{water['level_only_texels'] / 1e6:.3f} km2 depth-unknown; dropped "
+        f"{water['dropped_standing_out_texels'] / 1e6:.3f} km2 where the ground stands above it"
+    )
+    node_check = water_checks["dry_node_false_positive"]
+    region_check = water_checks["region_recall"]
+    ocean_check = water_checks["ocean_level"]
+    covered_check = water_checks["artwork_over_a_box"]
+    print(
+        f"    dry-node false positives {node_check['called_water']}/{node_check['nodes']} "
+        f"= {node_check['fraction'] * 100:.2f}% (gate {node_check['gate_max'] * 100:.0f}%)"
+    )
+    print(
+        f"    {region_check['region']} recall "
+        + (
+            "unmeasurable"
+            if region_check["recall"] is None
+            else f"{region_check['recall'] * 100:.2f}%"
+        )
+        + f" (gate {region_check['gate_min'] * 100:.0f}%)"
+    )
+    print(
+        f"    ocean level {ocean_check['assigned_m']} m against {ocean_check['boxes']} box "
+        f"tops at {ocean_check['box_median_m']} m: offset {ocean_check['offset_m']} m "
+        f"(gate {ocean_check['gate_max_m']} m)"
+    )
+    print(
+        f"    artwork water over no box {covered_check['uncovered_texels']} texels "
+        f"= {covered_check['fraction'] * 100:.4f}% (gate {covered_check['gate_max'] * 100:.0f}%)"
+    )
+    failures = water_gate_failures(water_checks)
+    if failures:
+        for sentence in failures:
+            print(f"  {sentence}")
+        print("Refusing to write a water channel that does not pass its own gates.")
+        return 7
 
     started = time.time()
     validation = validate(field["height_dm"], field["prov"])
@@ -1607,15 +2309,15 @@ def main() -> int:
 
     started = time.time()
     water_dm = np.where(
-        np.isfinite(water["surface_m"]),
-        np.clip(np.round(np.nan_to_num(water["surface_m"]) * 10.0), -32767, 32767),
+        np.isfinite(water["level_m"]),
+        np.clip(np.round(np.nan_to_num(water["level_m"]) * hf.DM_PER_M), -32767, 32767),
         hf.NODATA,
     ).astype(np.int16)
-    bi, bj = baseline_indices()
     payload = {
         hf.HEIGHT_NAME: hf.encode_i16(field["height_dm"]),
         hf.PROV_NAME: hf.encode_u8(field["prov"]),
-        hf.WATER_NAME: hf.encode_i16(np.ascontiguousarray(water_dm[np.ix_(bj, bi)])),
+        hf.WATER_NAME: hf.encode_i16(water_dm),
+        hf.WATER_QUALITY_NAME: hf.encode_u8(water["quality"]),
     }
     timings["encode"] = round(time.time() - started, 1)
     files = {
@@ -1632,6 +2334,14 @@ def main() -> int:
             "content": "water surface Z, same grid, same no-data. Information only",
             "bytes": len(payload[hf.WATER_NAME]),
         },
+        hf.WATER_QUALITY_NAME: {
+            "content": (
+                f"{hf.WATER_DRY} dry, {hf.WATER_MEASURED} water with a depth measured "
+                f"against 1 m terrain, {hf.WATER_LEVEL_ONLY} water whose level is known and "
+                "whose depth is not. zlib, no delta"
+            ),
+            "bytes": len(payload[hf.WATER_QUALITY_NAME]),
+        },
     }
     meta = build_meta(
         build_pin=build_pin,
@@ -1642,9 +2352,10 @@ def main() -> int:
         cliffs=cliffs,
         field=field,
         water=water,
+        water_checks=water_checks,
         validation=validation,
         files=files,
-        pyooz_version=pyooz_version,
+        decoders=decoders,
         timings=timings,
     )
     payload[hf.META_NAME] = json.dumps(meta, indent=1).encode("utf-8")
