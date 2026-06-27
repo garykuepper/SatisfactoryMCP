@@ -14,13 +14,17 @@ failure -- and not anybody's Lanczos filter.
 from __future__ import annotations
 
 import types
+from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from satisfactory_mcp.core.gameassets.provenance import RETIRED_SUFFIX, STAGING_SUFFIX
 from satisfactory_mcp.core.gameassets.pyramid import (
     DEFAULT_LEVEL_SOURCE,
+    PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     TILES_RETIRED,
     TILES_STAGING,
@@ -31,6 +35,7 @@ from satisfactory_mcp.core.gameassets.pyramid import (
     install_pyramid,
     merge_enhanced,
     pyramid_top_z,
+    swap_into_place,
     tile_relpath,
 )
 
@@ -223,6 +228,78 @@ def test_a_tree_that_disagrees_with_its_own_count_is_not_installed(tmp_path):
 
     assert (tiles / "0" / "0_0.png").read_bytes() == b"the pyramid that is already installed"
     assert sorted(p.name for p in tiles.iterdir()) == ["0"]
+
+
+def test_the_denser_grid_is_the_same_pyramid_with_its_own_names(tmp_path):
+    """``tiles@2x/`` is one call with two arguments changed, and it cannot disturb ``tiles/``.
+
+    The @2x tree is the identical tile GRID at twice the pixels -- level z is still 2**z
+    tiles a side over the identical squares of the world -- which is why it is the same
+    cutter rather than a second one. Two things follow and both are asserted: it is exactly
+    one level shallower, because 512 * 2**z runs out of sheet before 256 * 2**z does; and it
+    stages and retires under ITS own names, so cutting it while a reader is being served the
+    1x tree touches nothing the reader can see.
+    """
+    plain = install_pyramid(_Sheet(1024), IMAGING, tmp_path)
+    dense = install_pyramid(
+        _Sheet(1024), IMAGING, tmp_path, tile_px=PYRAMID_TILE_2X_PX, dir_name=TILES_2X_DIR_NAME
+    )
+
+    assert (plain["max_z"], dense["max_z"]) == (2, 1)
+    assert dense["tile_px"] == PYRAMID_TILE_2X_PX == 512
+    assert dense["layout"] == "tiles@2x/{z}/{x}_{y}.png"
+    # Level z of each covers the same 2**z squares of the world; only the pixels differ.
+    assert [level["tiles"] for level in dense["levels"]] == [1, 4]
+    assert [level["sheet_px"] for level in dense["levels"]] == [512, 1024]
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [TILES_DIR_NAME, TILES_2X_DIR_NAME]
+    assert len(list((tmp_path / TILES_DIR_NAME).rglob("*.png"))) == plain["count"] == 21
+    assert len(list((tmp_path / TILES_2X_DIR_NAME).rglob("*.png"))) == dense["count"] == 5
+    assert TILES_2X_DIR_NAME + STAGING_SUFFIX in dense["completeness"]
+
+
+def test_a_tree_something_holds_open_is_swapped_level_by_level_rather_than_abandoned(tmp_path):
+    """Windows will not rename a directory anything has open, and that is the ordinary state.
+
+    An Explorer window sitting in ``tiles/``, the search indexer walking it, a backup agent:
+    any of them makes the whole-tree rename fail with ``Access is denied`` after ten minutes
+    of drawing, and it was doing exactly that on the machine this was written on. The
+    fallback is second-best rather than equal and says so: each level is renamed over its
+    predecessor, so a reader who catches the middle sees every level present with some of
+    them still the old cut, rather than a level missing.
+
+    Asserted through a refusal injected into ``Path.rename`` for the one call that is
+    supposed to fail, because the real cause cannot be arranged from inside a test.
+    """
+    final = tmp_path / TILES_DIR_NAME
+    staging = tmp_path / TILES_STAGING
+    for level, name in ((0, "0_0.png"), (1, "0_0.png"), (9, "0_0.png")):
+        (final / str(level)).mkdir(parents=True)
+        (final / str(level) / name).write_bytes(b"the tree that is being served")
+    for level in (0, 1):
+        (staging / str(level)).mkdir(parents=True)
+        (staging / str(level) / "0_0.png").write_bytes(b"the tree that was just cut")
+
+    real = Path.rename
+    refused = []
+
+    def refuse(self, target):
+        if self == final and not refused:
+            refused.append(self)
+            raise PermissionError(5, "Access is denied")
+        return real(self, target)
+
+    with mock.patch.object(Path, "rename", refuse):
+        how = swap_into_place(staging, final, tmp_path / TILES_RETIRED)
+
+    assert refused, "the whole-tree rename has to be TRIED before the fallback is taken"
+    assert "level by level" in how
+    assert not staging.exists()
+    # Every level is the new cut, and the level only the old tree had is gone rather than
+    # left behind pretending to belong to the new one.
+    assert sorted(p.name for p in final.iterdir()) == ["0", "1"]
+    for level in (0, 1):
+        assert (final / str(level) / "0_0.png").read_bytes() == b"the tree that was just cut"
 
 
 def test_the_enhance_stage_runs_inside_the_staging_window(tmp_path):
