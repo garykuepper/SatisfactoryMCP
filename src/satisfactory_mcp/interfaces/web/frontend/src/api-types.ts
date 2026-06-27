@@ -312,6 +312,9 @@ export interface Elevation {
   terrain_source: string | null;
   terrain_accuracy_m: number | null;
   terrain_water_m: number | null;
+  /** Null wherever the ground under the water was not measured well enough to subtract. */
+  terrain_water_depth_m: number | null;
+  terrain_water_note: string | null;
   ground_m: number | null;
   ground_spread_m: number | null;
   ground_count: number;

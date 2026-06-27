@@ -42,9 +42,17 @@ function elevationRows(e: Elevation): Row[] {
     rows.push(["terrain", e.terrain_m + " m (" + e.terrain_source + acc + ")"]);
     // Water is information, never a correction: the field's own generator measured that
     // gating terrain on it makes the terrain worse, so it is shown beside the ground and
-    // never instead of it.
+    // never instead of it. The level and the DEPTH are separate claims and the depth is
+    // the weaker one -- over the fill layer the ground under a sea surface is a 3.9 m
+    // raster, so there is no depth to state and the server says so instead of sending a
+    // zero. A "0 m deep" that means "not measured" is exactly the invented number the
+    // whole panel is built to avoid.
     if (e.terrain_water_m !== null && e.terrain_water_m !== undefined) {
-      rows.push(["water", e.terrain_water_m + " m surface, above this ground"]);
+      var depth =
+        e.terrain_water_depth_m !== null && e.terrain_water_depth_m !== undefined
+          ? e.terrain_water_depth_m + " m deep"
+          : e.terrain_water_note || "depth not known here";
+      rows.push(["water", e.terrain_water_m + " m surface, " + depth]);
     }
   }
   // Unsurveyed ground gets one line, not three saying the same nothing. With no field and

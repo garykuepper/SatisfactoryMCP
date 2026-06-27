@@ -351,6 +351,15 @@ def _elevation_json(near: spatial_elevation.Elevation) -> dict:
     ever rendered as 0: zero fill is a real, different measurement. ``terrain_note`` does
     the same job for the field, and it too has exactly two causes: no field on this
     machine, or a coordinate the field has no data for.
+
+    Water is two numbers for the same reason, and the second one is null far more often
+    than the first. ``terrain_water_m`` is the surface's own height, which the channel
+    takes from a cooked water volume's bounding box and knows to centimetres wherever
+    there is water at all. ``terrain_water_depth_m`` is that minus the ground, which only
+    exists where the ground under the water was itself measured at 1 m -- over the fill
+    layer, which is most of the ocean, subtracting a 3.9 m-quantised raster from a sea
+    surface produces a number nobody measured. So it is ``null`` there, with
+    ``terrain_water_note`` saying why, and never 0.0.
     """
     ground, built = near.ground, near.built
     # Derived from the samples actually present rather than from a hardcoded list, so a
@@ -379,6 +388,12 @@ def _elevation_json(near: spatial_elevation.Elevation) -> dict:
             if _terrain_field() is not None
             else "no terrain field on this machine (run tools/gen_world_heightmap.py)"
         )
+    water_note = None
+    if terrain is not None and terrain.submerged and terrain.water_depth_m is None:
+        water_note = (
+            f"the ground under this water is the {terrain.source} layer, which is too "
+            "coarse to subtract a surface from, so the depth here is not known"
+        )
 
     return {
         "radius_m": near.radius_m,
@@ -386,6 +401,8 @@ def _elevation_json(near: spatial_elevation.Elevation) -> dict:
         "terrain_source": terrain.source if terrain else None,
         "terrain_accuracy_m": terrain.accuracy_m if terrain else None,
         "terrain_water_m": _round(terrain.water_m) if terrain and terrain.submerged else None,
+        "terrain_water_depth_m": _round(terrain.water_depth_m) if terrain else None,
+        "terrain_water_note": water_note,
         "terrain_note": terrain_note,
         "ground_m": _round(near.median(*spatial_elevation.GROUND_SOURCES)),
         "ground_spread_m": _round(near.spread(*spatial_elevation.GROUND_SOURCES)),

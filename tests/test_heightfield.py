@@ -34,15 +34,21 @@ from tools import gen_world_heightmap
 
 #: The synthetic field's grid. Small, and deliberately NOT square: a width/height swap in
 #: the codec or the sampler survives a square raster and nothing else.
-FAKE_W, FAKE_H = 7, 5
+FAKE_W, FAKE_H = 7, 6
 FAKE_X0, FAKE_Y0, FAKE_SPACING = -300.0, -200.0, 100.0
 
 
-def build_field(tmp_path: Path, *, water: bool = True) -> Path:
+def build_field(tmp_path: Path, *, water: bool = True, quality: bool = True) -> Path:
     """Write a whole synthetic field and return its directory.
 
     Row 0 is landscape, row 1 cliff, row 2 fill, row 3 no data, row 4 landscape under
-    water -- one row per thing a reading can be, so a single field exercises all of them.
+    water whose depth was measured, row 5 fill under water whose depth was not -- one row
+    per thing a reading can be, so a single field exercises all of them.
+
+    Row 5 is the case the whole quality byte exists for and it is built to be nasty on
+    purpose: the water surface stands **below** the recorded ground, exactly as the open
+    ocean does over the 3.9 m fill raster. Anything that decides submersion by comparing
+    the two numbers calls it dry, which is the bug.
     """
     directory = tmp_path / hf.DIR_NAME
     directory.mkdir(parents=True)
@@ -55,17 +61,24 @@ def build_field(tmp_path: Path, *, water: bool = True) -> Path:
             (hf.PROV_FILL, -78),
             (hf.PROV_NODATA, hf.NODATA),
             (hf.PROV_LANDSCAPE, -150),
+            (hf.PROV_FILL, -150),
         ]
     ):
         height[row, :] = value
         prov[row, :] = layer
     wet = np.full((FAKE_H, FAKE_W), hf.NODATA, np.int16)
+    grade = np.full((FAKE_H, FAKE_W), hf.WATER_DRY, np.uint8)
     wet[4, :] = 20  # 2.0 m of water over ground at -15.0 m
+    grade[4, :] = hf.WATER_MEASURED
+    wet[5, :] = -170  # a sea surface at -17.0 m over a fill "ground" of -15.0 m
+    grade[5, :] = hf.WATER_LEVEL_ONLY
 
     (directory / hf.HEIGHT_NAME).write_bytes(hf.encode_i16(height))
     (directory / hf.PROV_NAME).write_bytes(hf.encode_u8(prov))
     if water:
         (directory / hf.WATER_NAME).write_bytes(hf.encode_i16(wet))
+        if quality:
+            (directory / hf.WATER_QUALITY_NAME).write_bytes(hf.encode_u8(grade))
     (directory / hf.META_NAME).write_text(
         json.dumps(
             {
@@ -117,6 +130,14 @@ def test_the_codec_round_trips_a_raster_exactly_including_the_wrap():
 
     prov = rng.integers(0, 5, size=(37, 61)).astype(np.uint8)
     assert np.array_equal(hf.decode_u8(hf.encode_u8(prov), 37, 61), prov)
+
+    # The water quality raster rides the same uint8 codec rather than a second one, which
+    # is the whole reason it is a uint8 raster: three values in long flat runs is what
+    # zlib is already good at, and a fourth encoder would be a fourth thing to get wrong.
+    grade = rng.choice(
+        [hf.WATER_DRY, hf.WATER_MEASURED, hf.WATER_LEVEL_ONLY], size=(37, 61)
+    ).astype(np.uint8)
+    assert np.array_equal(hf.decode_u8(hf.encode_u8(grade), 37, 61), grade)
 
 
 def test_the_delta_is_what_makes_the_raster_small():
@@ -261,7 +282,7 @@ def test_water_is_a_second_surface_and_never_a_correction_to_the_ground(tmp_path
     """The channel says a lake stands here; the ground stays exactly where the field put it.
 
     Measured, not stylistic: the generator's own docstring records that gating terrain on
-    this detector made the field worse (nodes trim90 0.93 against 0.77), so a reading under
+    this channel made the field worse (nodes trim90 0.93 against 0.77), so a reading under
     water reports both numbers and moves neither.
     """
     field = hf.load_field(build_field(tmp_path))
@@ -269,7 +290,42 @@ def test_water_is_a_second_surface_and_never_a_correction_to_the_ground(tmp_path
     assert under.z_m == -15.0, "the ground was moved to the water surface"
     assert under.water_m == 2.0
     assert under.submerged is True
+    assert under.water_depth_m == 17.0
     assert field.at(FAKE_X0, FAKE_Y0).submerged is False
+
+
+def test_a_depth_the_field_cannot_measure_is_None_and_never_a_zero(tmp_path):
+    """The open ocean, which is where every plausible version of this goes wrong.
+
+    Row 5 is water at -17.0 m over a ground the FILL layer puts at -15.0 m -- the real
+    arrangement over most of this world's sea, where a 3.9 m-quantised raster rounds above
+    a surface it is nowhere near. Two things must hold and neither is automatic. The texel
+    is submerged, which ``water_m > z_m`` denies. And its depth is ``None``, because
+    ``-17.0 - -15.0`` is a number nobody measured and ``max(..., 0)`` would print it as a
+    perfectly reasonable-looking 0.0 m of water.
+    """
+    field = hf.load_field(build_field(tmp_path))
+    sea = field.at(FAKE_X0, FAKE_Y0 + 5 * FAKE_SPACING)
+    assert sea.water_m == -17.0
+    assert sea.z_m == -15.0, "the ground was moved to meet the water"
+    assert sea.water_quality == hf.WATER_LEVEL_ONLY
+    assert sea.submerged is True, "a sea surface below the fill raster read as dry land"
+    assert sea.water_depth_m is None, "an unmeasured depth was reported as a number"
+    assert sea.depth_known is False
+
+
+def test_a_field_written_before_the_quality_byte_reads_exactly_as_it_used_to(tmp_path):
+    """Missing is not dry. Without ``waterq.u8.z`` the old comparison is all there is.
+
+    So the lake still reads as water and the sea still reads as land -- which is the bug
+    that raster was added to fix, and is the honest behaviour for a field that predates it.
+    """
+    field = hf.load_field(build_field(tmp_path, quality=False))
+    lake = field.at(FAKE_X0, FAKE_Y0 + 4 * FAKE_SPACING)
+    assert lake.water_m == 2.0 and lake.submerged is True
+    assert lake.water_depth_m == 17.0
+    sea = field.at(FAKE_X0, FAKE_Y0 + 5 * FAKE_SPACING)
+    assert sea.water_m == -17.0 and sea.submerged is False
 
 
 def test_a_field_without_a_water_channel_still_answers(tmp_path):
@@ -385,8 +441,43 @@ def test_the_inspect_endpoint_says_which_source_answered(tmp_path, monkeypatch):
     assert e["terrain_accuracy_m"] == 0.205
     assert e["terrain_note"] is None
     assert e["terrain_water_m"] is None
+    assert e["terrain_water_depth_m"] is None and e["terrain_water_note"] is None
     # And the populations are still there, still separate, still labelled.
     assert "ground_m" in e and "ground_count" in e and "fill_note" in e
+
+
+def test_the_endpoint_sends_a_water_level_without_a_depth_where_it_has_no_depth(
+    tmp_path, monkeypatch
+):
+    """The ocean over the wire: a surface height, a null depth, and the reason for the null.
+
+    The two water rows are asked about in one test because the contrast is the claim. Over
+    1 m terrain the panel gets both numbers; over the fill layer it gets the level, no
+    depth, and a sentence naming the layer that cannot supply one. A 0.0 there would read
+    as a measurement of nothing, which is the failure ``fill_note`` already argued about.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web.app import create_app
+
+    field = hf.load_field(build_field(tmp_path))
+    monkeypatch.setattr(web_api, "_terrain_field", lambda: field)
+    app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: None)
+    with TestClient(app) as client:
+        asked = {}
+        for label, row in (("lake", 4), ("sea", 5)):
+            params = {"x_m": FAKE_X0 / 100.0, "y_m": (FAKE_Y0 + row * FAKE_SPACING) / 100.0}
+            asked[label] = client.get("/api/inspect", params=params).json()["elevation"]
+
+    assert asked["lake"]["terrain_water_m"] == 2.0
+    assert asked["lake"]["terrain_water_depth_m"] == 17.0
+    assert asked["lake"]["terrain_water_note"] is None
+
+    assert asked["sea"]["terrain_water_m"] == -17.0, "the sea surface was dropped as dry"
+    assert asked["sea"]["terrain_water_depth_m"] is None, "an unmeasured depth was sent"
+    assert "fill" in (asked["sea"]["terrain_water_note"] or ""), "the null carries no reason"
 
 
 def test_the_endpoint_says_WHY_there_is_no_terrain_rather_than_leaving_a_null(monkeypatch):

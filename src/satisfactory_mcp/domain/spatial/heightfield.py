@@ -14,7 +14,7 @@ their own install.
 
 The format, and why it is this one
 ----------------------------------
-Three rasters over one grid, plus a JSON sidecar that carries the georeference so the
+Four rasters over one grid, plus a JSON sidecar that carries the georeference so the
 arrays never have to be interpreted from constants a caller typed in themselves.
 
 * ``height.i16.z`` -- terrain top surface, **decimetres**, ``-32768`` for no data. int16
@@ -25,6 +25,14 @@ arrays never have to be interpreted from constants a caller typed in themselves.
   middle and four metres good at the edge.
 * ``water.i16.z`` -- water surface Z on the same grid, same no-data. Information only; see
   the generator's docstring for the measurement that says it must not gate terrain.
+* ``waterq.u8.z`` -- whether the water's **depth** is knowable at that texel, which is a
+  different question from whether its level is. The level comes from a cooked water
+  volume's own bounding box and is good to centimetres everywhere; the depth is that level
+  minus the ground, and over the fill layer the ground is a 3.9 m-quantised raster whose
+  own no-data value the water surface frequently *is*. So a texel says one of three
+  things: dry, water whose depth was measured against 1 m terrain, or water whose level is
+  known and whose depth is not. Printing the third as a depth of zero is the one mistake
+  this byte exists to prevent.
 
 Every raster is ``zlib`` over the raw bytes, and the two int16 ones are **row-delta**
 first: neighbouring texels of a 1 m heightfield differ by a few decimetres, so the deltas
@@ -43,7 +51,12 @@ zlib over the whole array is one stream, so a texel read costs a full decode: ab
 resident for height and provenance together and a fraction of a second, once, on the first
 question anybody asks. That is the price of the format that measured smallest, and it is
 paid lazily and cached, so a server that is never asked about terrain never pays it. Water
-is decoded separately and only if something asks for it.
+and its quality byte are decoded separately and only if something asks for them.
+
+**A field written before the quality byte existed still reads.** ``waterq.u8.z`` is absent
+from those, and a reading then falls back to the only test that field supports -- a water
+surface standing above the ground -- which is exactly what it meant before. Missing is not
+the same as dry, and it is not read as dry.
 """
 
 from __future__ import annotations
@@ -70,7 +83,12 @@ __all__ = [
     "PROV_NAMES",
     "PROV_NODATA",
     "PROV_WATER_NAME",
+    "WATER_DRY",
+    "WATER_LEVEL_ONLY",
+    "WATER_MEASURED",
     "WATER_NAME",
+    "WATER_QUALITY_NAME",
+    "WATER_QUALITY_NAMES",
     "Field",
     "Reading",
     "decode_i16",
@@ -87,6 +105,7 @@ DIR_NAME = "heightmap"
 HEIGHT_NAME = "height.i16.z"
 PROV_NAME = "prov.u8.z"
 WATER_NAME = "water.i16.z"
+WATER_QUALITY_NAME = "waterq.u8.z"
 META_NAME = "meta.json"
 
 #: The int16 value that means "nothing is known here". Not zero: zero is sea level and a
@@ -112,6 +131,24 @@ PROV_NAMES = {
 #: What the water channel is called when a reading has one. Not a provenance value: water
 #: is a second surface over the same texel, not a different source for the ground.
 PROV_WATER_NAME = "water"
+
+#: ``waterq.u8.z``'s three values, and they are the file format: do not renumber. The
+#: distinction is between what the channel measured and what it only located. A level
+#: comes from a cooked water volume's own box and is good to centimetres wherever there is
+#: water at all; a DEPTH is that level minus the ground, and it exists only where the
+#: ground under the water was measured at 1 m -- the landscape and cliff layers. Over the
+#: fill layer, and over no-data, the ground beneath a water surface is unknown, so the
+#: depth is unknown, and ``WATER_LEVEL_ONLY`` is the channel saying so out loud instead of
+#: subtracting two numbers one of which it does not have.
+WATER_DRY = 0
+WATER_MEASURED = 1
+WATER_LEVEL_ONLY = 2
+
+WATER_QUALITY_NAMES = {
+    WATER_DRY: "dry",
+    WATER_MEASURED: "water, depth measured",
+    WATER_LEVEL_ONLY: "water, depth unknown",
+}
 
 #: zlib level 6. Measured against 9 on the shipped field: 9 costs 4.4x the compression
 #: time and saves 1.6% of 16.5 MB, which is not a trade worth making in a tool that runs
@@ -209,6 +246,7 @@ class Reading:
     provenance: int
     accuracy_m: float | None
     water_m: float | None = None
+    water_quality: int = WATER_DRY
 
     @property
     def source(self) -> str:
@@ -216,17 +254,47 @@ class Reading:
 
     @property
     def submerged(self) -> bool:
-        """Whether a water surface stands above this ground. Never a terrain correction."""
-        return self.water_m is not None and self.water_m > self.z_m
+        """Whether water stands over this ground. Never a terrain correction.
+
+        The channel decides this, not a comparison here. Over the fill layer the ground is
+        a 3.9 m-quantised raster that routinely rounds *above* a sea surface 17 m down, so
+        ``water_m > z_m`` reads the open ocean as dry -- which is precisely the arithmetic
+        the quality byte was added to stop being the answer. It is still the answer for a
+        field written before that byte existed, because there it is all such a field has.
+        """
+        if self.water_m is None:
+            return False
+        if self.water_quality != WATER_DRY:
+            return True
+        return self.water_m > self.z_m
+
+    @property
+    def depth_known(self) -> bool:
+        """Whether the ground under the water was measured well enough to subtract."""
+        return self.water_quality == WATER_MEASURED or (
+            self.water_quality == WATER_DRY and self.submerged
+        )
+
+    @property
+    def water_depth_m(self) -> float | None:
+        """How deep the water is, or ``None`` where the bed is not known well enough.
+
+        ``None`` rather than zero, and the difference is the whole point: a texel of open
+        ocean has a real depth this field cannot state, and reporting 0.0 there would read
+        as "the water is exactly at the ground", which is a measurement nobody made.
+        """
+        if not self.submerged or not self.depth_known or self.water_m is None:
+            return None
+        return max(self.water_m - self.z_m, 0.0)
 
 
 class Field:
     """A loaded heightmap: three rasters, a georeference, and the accuracy it measured.
 
     Constructed by ``load_field``. The height and provenance rasters are decoded when the
-    object is built -- there is no answer without both -- and water only when something
-    asks, because most questions are about ground and the channel is 0.3 MB compressed
-    against 112 MB decoded.
+    object is built -- there is no answer without both -- and the two water rasters only
+    when something asks, because most questions are about ground and the channel is a
+    fraction of a MB compressed against 112 MB decoded.
     """
 
     def __init__(self, meta: dict[str, Any], directory: Path) -> None:
@@ -244,6 +312,8 @@ class Field:
         self._prov = decode_u8((directory / PROV_NAME).read_bytes(), self.height, self.width)
         self._water_dm: np.ndarray | None = None
         self._water_tried = False
+        self._water_quality: np.ndarray | None = None
+        self._water_quality_tried = False
         self._accuracy = {
             int(key): value.get("accuracy_m")
             for key, value in (meta.get("provenance") or {}).items()
@@ -281,6 +351,21 @@ class Field:
                 self._water_dm = decode_i16(path.read_bytes(), self.height, self.width)
         return self._water_dm
 
+    def _water_quality_raster(self) -> np.ndarray | None:
+        """``waterq.u8.z``, or ``None`` for a field written before it existed.
+
+        Public enough to be read by name: ``tools/gen_map_renders.py`` draws the channel
+        straight off the rasters rather than one texel at a time, and it needs this one for
+        the same reason a reading does -- to stop asking whether the surface stands above a
+        ground it has no measurement of.
+        """
+        if not self._water_quality_tried:
+            self._water_quality_tried = True
+            path = self.directory / WATER_QUALITY_NAME
+            if path.is_file():
+                self._water_quality = decode_u8(path.read_bytes(), self.height, self.width)
+        return self._water_quality
+
     def at(self, x_cm: float, y_cm: float) -> Reading | None:
         """The terrain at one world coordinate, or ``None`` where the field knows nothing.
 
@@ -299,15 +384,20 @@ class Field:
         provenance = int(self._prov[row, col])
         water = self._water_raster()
         water_m = None
+        quality = WATER_DRY
         if water is not None:
             wet = int(water[row, col])
             if wet != NODATA:
                 water_m = wet / DM_PER_M
+                grades = self._water_quality_raster()
+                if grades is not None:
+                    quality = int(grades[row, col])
         return Reading(
             z_m=raw / DM_PER_M,
             provenance=provenance,
             accuracy_m=self._accuracy.get(provenance, UNKNOWN_ACCURACY_M),
             water_m=water_m,
+            water_quality=quality,
         )
 
 
