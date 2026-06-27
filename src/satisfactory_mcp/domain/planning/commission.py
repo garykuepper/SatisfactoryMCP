@@ -171,9 +171,9 @@ class Wave:
         **pipe transit**. A pipe's fluid volume is not in Docs.json -- the only dimension
         there is ``mRadius``, which is collision geometry, and turning that into litres
         would be a guess dressed as a measurement. Route lengths are unknown anyway
-        (§8.5), so on a long run the transit dominates this number. Machine input buffers
-        are out for a related reason: their capacity is per-BUILT-machine and these
-        machines do not exist yet.
+        (§8.5, ``docs/planning.md``), so on a long run the transit dominates this number.
+        Machine input buffers are out for a related reason: their capacity is
+        per-BUILT-machine and these machines do not exist yet.
         """
         deepest: dict[int, float] = {}
         for row in self.rows:

@@ -276,8 +276,8 @@ def yaw_of(quat) -> float:
       lightweight buildables has ``x == y == 0`` exactly, and of its 9,153 ``Build_*``
       actors only 396 do not -- pipeline flow indicators, ceiling attachments and wall
       poles, i.e. parts mounted on a wall, none of them a machine. So a single yaw is the
-      whole rotation of everything a top-down or floor view draws, which is why §16b of
-      DESIGN.md settles for one float instead of three.
+      whole rotation of everything a top-down or floor view draws, which is why §16b
+      (``docs/parked.md``) settles for one float instead of three.
     * **Handedness: positive yaw turns +X towards +Y**, in the same coordinates the
       projection's ``pos`` reports -- that is, it is directly comparable with
       ``atan2(dy, dx)`` between two positions, with no sign flip and no axis swap.

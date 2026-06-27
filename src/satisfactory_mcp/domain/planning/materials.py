@@ -1,9 +1,9 @@
 """What a plan costs to BUILD, as opposed to what it costs to run.
 
-The startup re-frame (§ 8.5d) split the two cleanly: power is what a plant costs to run and
-is the only thing constraining the order you switch it on in, while materials are what it
-costs to construct and are independent of order. So "can I afford this yet?" became a
-question worth answering on its own.
+The startup re-frame (§8.5d, ``docs/planning.md``) split the two cleanly: power is what a
+plant costs to run and is the only thing constraining the order you switch it on in, while
+materials are what it costs to construct and are independent of order. So "can I afford
+this yet?" became a question worth answering on its own.
 
 Every number is data. A building's cost is ``Building.build_cost`` -- the ingredients of
 the ``kind == "building"`` recipe that constructs it -- so a Fuel-Powered Generator is

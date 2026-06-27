@@ -110,11 +110,11 @@ def test_basket_is_described_the_way_plan_factory_describes_sources(game, state)
 
 
 def test_a_misspelled_source_refuses_instead_of_scoring_an_empty_scope(state):
-    """A typo'd region selects no nodes -- select_nodes never widens (DESIGN 7.3) --
-    but build_scenario still grants water pumps, so the empty scope SOLVES: feasible,
-    net_mw 0.0, and therefore a 0 delta on every option. Without the refusal the user
-    reads "neither option is worth anything" and never learns they misspelled a
-    region."""
+    """A typo'd region selects no nodes -- select_nodes never widens (§7.3, in
+    docs/spatial-and-map.md) -- but build_scenario still grants water pumps, so the empty
+    scope SOLVES: feasible, net_mw 0.0, and therefore a 0 delta on every option. Without
+    the refusal the user reads "neither option is worth anything" and never learns they
+    misspelled a region."""
     sc = advisor._request(state, ["region:Nowhereland"], advisor.standard_objectives()[0]).scenario
     assert {k[0] for k in sc.extractor_nodes} <= {"Build_WaterPump_C"}
     empty = solve(sc)

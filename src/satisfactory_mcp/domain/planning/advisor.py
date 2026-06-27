@@ -244,11 +244,11 @@ def evaluate_candidates(
     requests = {obj.key: _request(state, sources, obj) for obj in objs}
     sel = next(iter(requests.values())).selection
     if sel.errors and not sel.nodes:
-        # select_nodes already declines to widen (DESIGN 7.3), so the danger is not a
-        # whole-map answer -- it is that the empty scope still SOLVES. build_scenario
-        # always grants water pumps, so a typo'd region yields a feasible baseline of
-        # 0 MW and a 0 delta on every option: a confident "neither is worth anything"
-        # that reads as a verdict rather than as a misspelling. Refuse instead.
+        # select_nodes already declines to widen (§7.3, docs/spatial-and-map.md), so the
+        # danger is not a whole-map answer -- it is that the empty scope still SOLVES.
+        # build_scenario always grants water pumps, so a typo'd region yields a feasible
+        # baseline of 0 MW and a 0 delta on every option: a confident "neither is worth
+        # anything" that reads as a verdict rather than as a misspelling. Refuse instead.
         raise ValueError("no sources selected: " + "; ".join([*sel.errors, SELECTOR_HELP]))
 
     base_values: dict[str, float | None] = {}

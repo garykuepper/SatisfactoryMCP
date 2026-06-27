@@ -2,7 +2,8 @@
 
 Written before implementing, to survive a context compaction. These are decisions I
 should not make alone, because each one changes what the tool *is*, not how it is coded.
-Everything below assumes `planning/commission.py`, built on `slice_of` (§ 8.x).
+Everything below assumes `planning/commission.py`, built on `slice_of` (§8.2e, in
+[planning.md](planning.md)).
 
 The premise: a solved plan is a 43,000 MW end state that cannot be built in one sitting.
 Commissioning cuts it into an ordered sequence of stages, each of which is buildable and

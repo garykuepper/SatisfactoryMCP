@@ -272,7 +272,8 @@ confession.
 written into a save. Nothing in a `.sav` says a power slug *exists*; what it says is which
 map-placed actors are **gone**. So this list is not a curiosity at the tail of a block — it is
 the only record of what the player has collected, and reading it is the whole reason the block
-stopped being skipped. What the projection does with it is `removed`; see DESIGN §6.11.
+stopped being skipped. What the projection does with it is `removed`; see §6.11, in
+[save-projection.md](save-projection.md).
 
 Three lists, in three places, and they are three different lists rather than one written thrice:
 

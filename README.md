@@ -6,7 +6,10 @@ rates, reads your save for progress and unlocks, and runs a real LP/MILP optimiz
 Nothing is hardcoded and nothing is fetched from the network — game data comes from
 `CommunityResources/Docs/en-US.json`, which updates itself when the game patches.
 
-See [DESIGN.md](DESIGN.md) for the full design and the evidence behind every number.
+See [DESIGN.md](DESIGN.md) for the full design and the evidence behind every number. It is the
+spine — scope, decisions, data sources, architecture, the normalization contract — and it indexes
+the rest, which lives in [`docs/`](docs/): the save projection and the parser under it, the spatial
+model and the map, planning, the MCP surface, and what is parked.
 
 ## Setup
 

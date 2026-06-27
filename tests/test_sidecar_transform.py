@@ -268,7 +268,8 @@ def test_lifts_are_carried_as_belts_are(projection):
     """A conveyor lift is the vertical connector between two floors, and §16b needs it.
 
     It is not a separate record: a lift is a segment of an ordinary chain, told apart by its
-    class alone, which is why the class is interned per segment and not per chain.
+    class alone, which is why the class is interned per segment and not per chain. §16b is in
+    ``docs/parked.md``.
     """
     classes = projection["belts"]["classes"]
     lifts = [r for r in projection["belts"]["segments"] if "Lift" in classes[r[1]]]

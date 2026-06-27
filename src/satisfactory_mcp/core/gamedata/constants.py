@@ -132,9 +132,9 @@ BUILDING_CLASS_ALIASES: dict[str, str] = {
 #: concluded that the game records no flag. It does:
 #: `BP_UnlockSubsystem_C.mIsBuildingProductionBoostUnlocked` appears the moment the
 #: research completes. UE omits a SaveGame property still at its default, so **absent
-#: means false** -- exactly the rule §6 already states for empty TArrays, applied to a
-#: bool. "Not in the file" and "no such field" are different claims and only the first
-#: was evidence.
+#: means false** -- exactly the rule §6 (`docs/save-projection.md`) already states for
+#: empty TArrays, applied to a bool. "Not in the file" and "no such field" are different
+#: claims and only the first was evidence.
 #:
 #: The flag is authoritative when present. This register stays because it answers the
 #: other half -- *which research to go and do*, and what it costs -- and because it lets

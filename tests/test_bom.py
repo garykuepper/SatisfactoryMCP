@@ -166,7 +166,7 @@ def test_water_is_priced_last_or_the_crude_figure_is_nearly_3x_wrong(game, state
 
 
 def test_the_degeneracy_is_labelled_never_presented_as_the_number(rip):
-    """DESIGN 8.7: a degenerate min_raw component must be labelled as one of
+    """§8.7 (docs/planning.md): a degenerate min_raw component must be labelled as one of
     several optima or given a documented tie-break. This does both, and says so."""
     out = render_bom(rip)
     assert "degenerate" in out
