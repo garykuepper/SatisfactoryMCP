@@ -314,8 +314,10 @@ Two things had to be softened before it read as imagery rather than as a choropl
 area polygons meet along a mathematical line — they exist to name a place on a minimap, not
 to draw one — so the colour field is Gaussian-blurred by 24 texels (≈44 m) before it is
 sampled. And the shoreline is feathered twice: over 0.9 m of depth, which handles a beach,
-and by 0.8 output pixels of blur, which handles the great deal of this world's water that
-sits in box-shaped bodies against a cliff and has no depth band to blend in.
+and by 0.73 m of blur, which handles the great deal of this world's water that sits in
+box-shaped bodies against a cliff and has no depth band to blend in. (That second one was
+0.8 output *pixels* until the sheet doubled, at which point the same constant would have
+quietly meant half as much ground; it is in metres now.)
 
 ### Layers on the serving side
 
@@ -336,12 +338,121 @@ sits in box-shaped bodies against a cliff and has no depth band to blend in.
   and it never becomes a filename: the string is looked up in `_layer_dir`, which answers
   `None` for anything that is not a name this module wrote down.
 
-### z5 and no further
+### 16384 px, z6, and no further (2026-07-31)
 
-The artwork pyramid can invent z6 and z7 with an upscaler because a drawn map has strokes a
-model understands. These layers stop at 8192 px, which is 0.92 m to the pixel against a 1 m
-field. A z6 here would be interpolation claiming to be terrain, and there is no measurement
-that would make it not one.
+The renders were 8192 px — 0.92 m to the pixel — and stopped at z5 on the argument that a
+1 m field cannot support more. That argument was half right and the wrong half was the
+sampler. Bilinear is **C0**: its derivative jumps at every texel boundary, and the hillshade
+is a function of the derivative, so sampling the field below its own spacing ruled the relief
+into 1 m squares. Swapping to **Catmull-Rom** (cubic convolution, a = −1/2), which is C1, is
+what makes a finer grid mean anything: the surface has a continuous gradient and the shading
+computed on it does too. Where the 4×4 stencil is not whole — a fifth of this field is
+no-data, so that boundary is long — the 2×2 answer is used instead, because a cubic kernel
+has negative lobes and one straddling a hole overshoots.
+
+So the renders are now **16384², z0..z6**, 0.458 m to the pixel: 2.18 samples per metre of
+source, past Nyquist.
+
+**And 32768 was measured and refused.** On four windows — an offshore cliff island, a
+mainland cliff face, the dune field, the Spire Coast — in both layers, the change one
+doubling makes (the finer render box-filtered onto the coarser grid, minus the coarser
+render, mean absolute per channel) is **3.34 levels of 255 for 4096→8192, 2.69 for
+8192→16384, and 1.38 for 16384→32768** — at 3.6× the drawing time and 4× the bytes. More
+telling: the **high-frequency energy per pixel falls at every doubling**, in all eight
+window-and-layer pairs (15.34 → 14.32 → 13.57 on the mainland cliff). That is a sampler
+resolving an interpolant, not a picture finding new world in the source. What 32768 buys is
+antialiasing on cliff facets. z6 is the last level with a measurement behind it.
+
+The artwork pyramid can still invent z6 and z7 with an upscaler, because a drawn map has
+strokes a model understands. These layers have no such licence.
+
+### Borrowing the artwork's shading where the field's province is coarse (2026-07-31)
+
+The 1 m grid is one resolution and **not one accuracy**, and rendering as though it were is
+what made the offshore islands look like melted wax. Measured on the shipped field: 45.3% is
+landscape — continuous geometry the game evaluates itself, which genuinely sharpens — 21.3%
+is cliff, rasterised low-poly collision hulls whose facets resampling can only polish, and
+14.0% is fill, a 3.9 m-quantised block raster where resampling does nothing at all.
+
+Over the last two provinces, and only over them, the render borrows the artwork sheet's
+**luminance high pass**: the game's own 8192 px map, decoded from its four BC1 slices in the
+same run, minus its own Gaussian blur at σ = 8 px, multiplied into the shading and faded out
+on the provenance byte over 6 m. It is light, never colour — an ocean drawn blue contributes
+its brightness and nothing else — and where the provenance says landscape, the shading is the
+field's own and nothing is borrowed.
+
+Two things about it are findings rather than settings. **The drawn map has strokes**: every
+rock formation is outlined in hard dark ink, and multiplied straight in they come out as
+exactly what they are, a line drawing laid over terrain. So the high pass is softened by
+1.6 px and squashed through `tanh` at 1.2σ — a soft clip, so the mid-tones (the shading) pass
+almost linearly and the outliers (the ink) saturate. And **the gain was picked by looking**:
+at 0.17 an offshore cliff island is still eight flat plates with a hint of something on them,
+at 0.50 the artwork's contour rings read as rings; 0.30 is where a collision hull becomes
+rock and the dune field — landscape province, untouched — still looks exactly as it did.
+
+The same run now reads that sheet for the biome calibration too, which removes a skip path:
+the pin used to go unmeasured when `data/local/map.png` was absent, and it is scored against
+the container every run.
+
+### Two tile trees, and the second one is the same grid
+
+`tiles@2x/` holds the identical tile **grid** at 512 px a tile: level z is still 2^z tiles a
+side over the identical squares of the world. A hi-DPI client asks for the same
+`{z}/{x}/{y}`, adds `?px=512`, and draws the answer into the same CSS box — twice the pixels
+in each direction, no change to the CRS, the bounds, the zoom range or the tile size the
+layer is configured with. It is exactly one level shallower by arithmetic (512·2^z runs out
+of sheet before 256·2^z does), so past its top the two carry identical information.
+
+The probe advertises both depths (`X-Map-Tile-2x-Px`, `X-Map-Tile-2x-Max-Z`), absent when a
+layer has no such tree, and a request for a density a layer does not have falls back to the
+1x tile — which every client can draw at any density. Both trees' numbers ride in one cache
+tag, so recutting either changes every URL of that layer.
+
+The client picks it at `devicePixelRatio >= 1.5` rather than `> 1`: a 125% Windows scale
+reports 1.25, where the @2x tile is 60% more pixels than the screen can show. It is read once
+at probe time and not watched — a window dragged to another monitor is a reload, the same
+bargain the CRS already makes.
+
+### Cutting in parallel, and the proof that it is the same bytes
+
+Cutting 5,461 tiles at `optimize=True` is minutes of one core doing nothing but deflate. The
+**resampling stays serial** — level z is one Lanczos downscale of the whole sheet, in the
+parent, exactly as before — and only the per-tile encode is spread over processes, with the
+level published once into a `shared_memory` block every worker maps and one task per row of
+tiles. Because no worker resamples anything, no worker can disagree about a filter tap at a
+strip boundary, which is why this is byte-identical rather than merely equivalent.
+
+`--check-parallel` proves it rather than asserting it: one level cut both ways, SHA-256 of
+every tile compared name for name. On the reference machine, z5 of the artwork sheet, 1,024
+tiles: **5.43 s serial against 1.34 s on 16 workers, 4.05×, byte_identical true**, recorded
+in the sidecar.
+
+### And a swap Windows can refuse
+
+`install_pyramid` renames the finished tree over the old one so a reader meets a whole
+pyramid or none. **Windows will not rename a directory anything has open** — an Explorer
+window sitting in `tiles/`, the search indexer, a backup agent — and that is the ordinary
+state of a directory a person has been looking at, not a rare one: it ended a ten-minute run
+with `Access is denied` on the machine this was written on. So there is a second-best, and it
+says it is second-best: the swap is done **one level at a time**, each level renamed
+atomically over its predecessor, and a reader who catches the middle sees every level present
+with some still the old cut rather than a level missing. Which of the two happened is
+recorded in the sidecar as `tiles.installed_by`.
+
+### Measured on the reference machine
+
+| | terrain | satellite |
+|---|---|---|
+| draw 16384² | 65 s | 74 s |
+| cut both trees, 16 workers | 46 s | 42 s |
+| `tiles/` z0..z6 | 5,461 tiles, 237.5 MB | 5,461 tiles, 229.2 MB |
+| `tiles@2x/` z0..z5 | 1,365 tiles, 237.2 MB | 1,365 tiles, 228.6 MB |
+
+227 s for both layers end to end, against 91 s for both at 8192² with no @2x tree and a
+serial cutter. Banded at 256 rows with an **8**-row halo — up from 4, because the cubic
+stencil reaches two texels either side instead of one and the water blur's three sigma is
+five pixels at this resolution rather than two — so no pixel is computed from a one-sided
+gradient or a truncated kernel.
 
 ### Why a new tool rather than a stage on the heightmap generator
 
@@ -357,10 +468,9 @@ grew one optional `source=` so a level record can say what actually drew it. The
 itself — the corners, the sheet size, the artwork the biome pin is scored against — still
 comes from `gen_map_image.py`, because that is the tool that *measured* it.
 
-Measured on the reference machine: 12 s to draw terrain and 15 s satellite at 8192², 32 s
-each to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyramid over 1,365
-tiles. Banded at 256 rows with a 4-row halo, so no pixel is computed from a one-sided
-gradient or a truncated kernel and no whole-sheet float array is ever allocated.
+Measured when this first shipped at 8192²: 12 s to draw terrain and 15 s satellite, 32 s each
+to cut, 91 s for both layers end to end, 60.1 and 60.2 MB of PNG per pyramid over 1,365
+tiles. The 16384² numbers that replaced them are in the table above.
 
 ## 18. One base map at a time, and the page says which (2026-07-31)
 
@@ -380,7 +490,8 @@ not the three panes, not one data overlay, not the region blend's rule. That is 
 design of §17 arriving on the client exactly as intended — same frame, same tile size, same
 grid, so the client changes one path segment. The one per-mode difference that survives is
 depth: `maxNativeZoom` comes from that layer's own `X-Map-Tile-Max-Z`, so the renders stop at
-z5 and Leaflet upscales past it while the artwork runs to its own z7 if it was `--enhance`d.
+z6 (z5 when the client is fetching @2x tiles, which are one level shallower) and Leaflet
+upscales past it while the artwork runs to its own z7 if it was `--enhance`d.
 
 **Measured, at 1600×1000 on the reference world:** the frame is unmoved by a switch — map
 rect `[0, 40, 1600, 960]`, pane transform `translate3d(0,0,0)`, scale bar `500 m`, `z=-3
@@ -480,9 +591,23 @@ falls back to the comparison only for a field written before that byte existed. 
 water_depth_m` is `None` where the depth is unknown rather than `max(…, 0)`, and the inspector
 prints the reason instead of a plausible `0 m deep`.
 
-The same rule binds `tools/gen_map_renders.py`, which reads the rasters directly:
-`submerged` must come from `waterq.u8.z != 0` and the depth feather must be full alpha where
-the quality byte says the depth is unknown, or the sea will vanish.
+The same rule binds `tools/gen_map_renders.py`, which reads the rasters directly, and
+**2026-07-31 it does**: submersion is the coverage of `waterq.u8.z != 0` sampled onto the
+output grid, the depth feather applies only to the share whose depth was measured, and a
+level-only texel is drawn at full alpha. Measured on the shipped field, the comparison it
+replaced read **3.572 km² of ocean out of 18.248 as dry** — that is what used to be missing
+from both renders.
+
+Level-only water is also tinted at the **deep** end of the ramp rather than the shallow one,
+and that is a measurement rather than a preference: 95.2% of it stands over the fill province
+and 98% of its surface levels lie in a 0.7 m band around the ocean's own −16.99 m. It is the
+ocean. Running the ramp on `water_m − z_m` there would paint it the pale green of an
+ankle-deep sheet, because the number being subtracted is a 3.9 m raster's rounding error.
+
+One thing the channel still cannot fix: beyond the landscape's own extent the field has no
+height *and* no water volume, so those texels stay the page's `--sea`. Against bright water
+that edge is visible in the corners of the frame. It is the render saying nothing, which is
+the intended behaviour, and filling it would mean inventing ocean.
 
 ### Four gates, each aimed at a specific silent failure
 
