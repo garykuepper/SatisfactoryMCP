@@ -26,7 +26,9 @@ from fastapi.testclient import TestClient
 
 from satisfactory_mcp import config
 from satisfactory_mcp.core.gameassets.pyramid import (
+    PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     TILES_RETIRED,
     TILES_STAGING,
@@ -39,6 +41,7 @@ from satisfactory_mcp.core.gameassets.pyramid import (
 )
 from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M
 from satisfactory_mcp.core.saveio.projection import World
+from satisfactory_mcp.domain.spatial import heightfield as hf
 from satisfactory_mcp.domain.world.state import WorldState
 from satisfactory_mcp.interfaces.web import api as web_api
 from satisfactory_mcp.interfaces.web.app import STATIC_DIR, create_app
@@ -700,6 +703,81 @@ def test_every_layer_answers_with_its_own_depth_build_and_corners(client, tmp_pa
     assert client.head("/api/maptiles/0/0/0").headers["x-map-build"] == tags["map"]
 
 
+#: A tile out of the @2x tree, distinguishable from the 1x one by its bytes rather than by
+#: its size -- what is under test is which DIRECTORY a request reached, and a fixture whose
+#: two trees held the same bytes could not tell.
+_PNG_DENSE = _PNG[:-4] + b"AT2X"
+
+
+def test_a_hi_dpi_client_asks_for_the_same_tile_and_gets_twice_the_pixels(
+    client, tmp_path, monkeypatch
+):
+    """``?px=512`` is one directory hop, and everything else about the request is unchanged.
+
+    The @2x tree is the identical tile GRID -- level z is still 2**z tiles a side over the
+    identical squares of the world -- at 512 px a tile instead of 256. So the whole of the
+    serving design is that one query parameter picks a directory: same route, same
+    coordinates, same corners, same cache tag.
+
+    Three things have to hold, and each of them is a way the feature could be quietly wrong.
+    The probe has to advertise BOTH depths, because a client builds its layer from that one
+    response and cannot ask for a tree it has not been told about. A layer with no @2x tree --
+    the artwork, cut by a tool that writes none -- has to serve the 1x tile rather than a 404,
+    or asking for density on the wrong layer takes the base map down. And the @2x tree's own
+    depth has to be the one enforced, since it is one level shallower and a request past its
+    top must be refused against ITS grid rather than the 1x one's.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    _fake_pyramid(local, max_z=2)  # the artwork: 1x only, like the tool that writes it
+    directory = local / web_api.MAP_RENDERS_DIR_NAME / "terrain"
+    _fake_layer(
+        local,
+        "terrain",
+        max_z=2,
+        sidecar={
+            "_meta": {
+                "tiles": {"tile_px": 256, "max_z": 2, "count": 21},
+                "tiles_2x": {"tile_px": 512, "max_z": 1, "count": 5},
+            }
+        },
+        payload=_PNG_TERRAIN,
+    )
+    for z in range(2):
+        for x in range(1 << z):
+            for y in range(1 << z):
+                path = directory / web_api.MAP_TILES_2X_DIR_NAME / str(z) / f"{x}_{y}.png"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(_PNG_DENSE)
+
+    head = client.head("/api/maptiles/terrain/0/0/0")
+    assert head.headers["x-map-tile-px"] == "256"
+    assert head.headers["x-map-tile-max-z"] == "2"
+    assert head.headers["x-map-tile-2x-px"] == "512"
+    assert head.headers["x-map-tile-2x-max-z"] == "1"
+
+    # The same coordinates, one parameter apart, reach the two trees.
+    assert client.get("/api/maptiles/terrain/1/1/1").content == _PNG_TERRAIN
+    assert client.get("/api/maptiles/terrain/1/1/1?px=512").content == _PNG_DENSE
+    # Corners and cache tag are untouched by the density: it is the same picture.
+    dense = client.head("/api/maptiles/terrain/0/0/0?px=512")
+    assert dense.headers["x-map-bounds-m"] == head.headers["x-map-bounds-m"]
+    assert dense.headers["x-map-build"] == head.headers["x-map-build"]
+
+    # The @2x tree's own depth is what a request is checked against, and it is shallower.
+    assert client.get("/api/maptiles/terrain/2/3/3").status_code == 200
+    off = client.get("/api/maptiles/terrain/2/3/3?px=512")
+    assert off.status_code == 404 and "z0..z1" in off.json()["error"]
+
+    # A size this layer has no tree for, and a layer with no dense tree at all, both answer
+    # with the 1x tile -- which every client can draw at any density.
+    assert client.get("/api/maptiles/terrain/1/1/1?px=1024").content == _PNG_TERRAIN
+    assert client.get("/api/maptiles/terrain/1/1/1?px=nonsense").content == _PNG_TERRAIN
+    assert client.get("/api/maptiles/map/1/1/1?px=512").content == _PNG
+    assert "x-map-tile-2x-px" not in client.head("/api/maptiles/map/0/0/0").headers
+
+
 def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, monkeypatch):
     """``tools/gen_map_renders.py`` and this endpoint agree about names, or nothing works.
 
@@ -714,10 +792,17 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     assert gen_map_renders.BOUNDS_M == web_api.DEFAULT_MAP_BOUNDS_M
     # The tile grid is the cutter's, not this generator's: it hands its sheet to
     # ``core.gameassets.pyramid`` and the endpoint has to be configured for what THAT cuts.
-    # z5 and no further, because these layers' truth ends at the 1 m field they are
-    # sampled from.
+    # The default depth stays z5, which is what an 8192 sheet divides into and what a
+    # pyramid whose sidecar says nothing is assumed to be; the renders are 16384 and say so
+    # in their own sidecar, which is exactly the mechanism being asserted below.
     assert PYRAMID_TILE_PX == web_api.MAP_TILE_PX
     assert pyramid_top_z(gen_map_renders.SHEET_PX) == web_api.MAP_TILE_MAX_Z == 5
+    assert pyramid_top_z(gen_map_renders.RENDER_PX) == 6
+    # And the @2x tree is the same grid one level shallower, by arithmetic rather than by
+    # anybody's choice: 512 * 2**z runs out of sheet before 256 * 2**z does.
+    assert PYRAMID_TILE_2X_PX == web_api.MAP_TILE_2X_PX == 2 * PYRAMID_TILE_PX
+    assert TILES_2X_DIR_NAME == web_api.MAP_TILES_2X_DIR_NAME
+    assert pyramid_top_z(gen_map_renders.RENDER_PX, PYRAMID_TILE_2X_PX) == 5
 
     pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
     sidecar = gen_map_renders.build_sidecar(
@@ -728,12 +813,13 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
         },
         tiles={
             "tile_px": 256,
-            "max_z": 5,
-            "count": 1365,
-            "bytes": 60_000_000,
+            "max_z": 6,
+            "count": 5461,
+            "bytes": 240_000_000,
             "game_version_pinned": pin,
         },
-        render={"width_px": 8192},
+        tiles_2x={"tile_px": 512, "max_z": 5, "count": 1365, "bytes": 240_000_000},
+        render={"width_px": 16384},
         extra={},
     )
     assert gen_map_renders.pinned_field_build(sidecar) == pin
@@ -746,8 +832,19 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     (directory / web_api.MAP_RENDER_SIDECAR_NAME).write_text(json.dumps(sidecar), encoding="utf-8")
     monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
     read_back = web_api._map_pyramid("terrain")
-    assert (read_back["tile_px"], read_back["max_z"]) == (256, 5)
+    assert (read_back["tile_px"], read_back["max_z"]) == (256, 6)
+    assert (read_back["tile_2x_px"], read_back["max_2x_z"]) == (512, 5)
     assert web_api._map_bounds("terrain") == web_api.DEFAULT_MAP_BOUNDS_M
+
+    # A layer with no @2x block says so with None rather than with a zero, because zero is
+    # a depth a real pyramid can have and "there is no such tree" is not a depth.
+    plain = json.loads(json.dumps(sidecar))
+    del plain["_meta"]["tiles_2x"]
+    (directory / web_api.MAP_RENDER_SIDECAR_NAME).write_text(json.dumps(plain), encoding="utf-8")
+    without = web_api._map_pyramid("terrain")
+    assert (without["tile_2x_px"], without["max_2x_z"]) == (None, None)
+    # ...and the two trees' numbers are in one cache tag, so recutting either changes both.
+    assert without["build"] != read_back["build"]
 
 
 def test_the_sun_is_in_the_north_west_and_the_shore_is_not_a_staircase():
@@ -789,7 +886,9 @@ def test_the_sun_is_in_the_north_west_and_the_shore_is_not_a_staircase():
     ground = numpy.zeros((7, 40), numpy.float32)
     depth = numpy.linspace(-2.0, 6.0, 40, dtype=numpy.float32)
     water = numpy.broadcast_to(depth, (7, 40)).copy()
-    alpha = gen_map_renders.water_alpha(ground, water, water > ground)
+    wet = (water > ground).astype(numpy.float32)
+    measured = numpy.ones_like(wet)
+    alpha = gen_map_renders.water_alpha(ground, water, wet, measured, 0.8)
     assert alpha.min() == pytest.approx(0.0, abs=0.02), "dry ground is not tinted"
     assert alpha.max() == pytest.approx(1.0, abs=0.02), "open water is not half-painted"
     assert numpy.all(numpy.diff(alpha[3]) >= -1e-6), "coverage rises with depth, never falls"
@@ -799,8 +898,9 @@ def test_the_sun_is_in_the_north_west_and_the_shore_is_not_a_staircase():
     # that edge from being a staircase: the pixels either side of it are partial.
     cliff = numpy.zeros((7, 40), numpy.float32)
     cliff[:, :20] = 50.0
+    level = numpy.full((7, 40), 20.0, numpy.float32)
     hard = gen_map_renders.water_alpha(
-        cliff, numpy.full((7, 40), 20.0, numpy.float32), cliff < 20.0
+        cliff, level, (cliff < 20.0).astype(numpy.float32), numpy.ones((7, 40), numpy.float32), 0.8
     )
     assert set(numpy.round(hard[3, :14], 3)) == {0.0} and hard[3, -1] == pytest.approx(
         1.0, abs=0.02
@@ -810,11 +910,68 @@ def test_the_sun_is_in_the_north_west_and_the_shore_is_not_a_staircase():
     dry_rgb = numpy.full((7, 40, 3), 200.0, numpy.float32)
     shade = numpy.ones((7, 40), numpy.float32)
     shallow_rgb, deep_rgb = gen_map_renders.WATER_SHALLOW, gen_map_renders.WATER_DEEP
-    out = gen_map_renders.water_over(dry_rgb, ground, water, alpha, shade, shallow_rgb, deep_rgb)
+    tint = gen_map_renders.water_depth_fraction(ground, water, measured)
+    out = gen_map_renders.water_over(dry_rgb, tint, alpha, shade, shallow_rgb, deep_rgb)
     assert (out[3, 0] == 200.0).all(), "ground above the water is untouched"
     # And where it IS water it is water and only water, tinted by its own depth.
     shallow = shallow_rgb * (gen_map_renders.WATER_SHADE_FLOOR + gen_map_renders.WATER_SHADE_RANGE)
     assert out[3, -1] == pytest.approx(shallow, abs=12.0)
+
+
+def test_water_whose_depth_was_never_measured_is_still_drawn_as_water():
+    """The rule that stopped 3.572 km2 of ocean being rendered as land.
+
+    Over the fill province the ground under the water is a 3.9 m-quantised raster that
+    routinely rounds ABOVE a sea surface 17 m down, so ``water_m - z_m`` there is a negative
+    number and the depth feather run on it answers "no water". The quality byte exists to say
+    that the level is known and the depth is not, and the two consequences are asserted here
+    because both of them are invisible in a picture that is merely plausible: such a texel is
+    drawn at **full alpha**, and it is tinted at the **deep** end rather than the shallow one.
+
+    The second is a measurement rather than a preference -- 95.2% of level-only water on the
+    shipped field stands over the fill province and 98% of its surface levels sit in a 0.7 m
+    band around the ocean's own -16.99 m -- but what has to hold in code is only that the
+    unknown depth is never run through the ramp.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    # A sea surface at -17 over "ground" the fill layer rounded to -15: above the water.
+    ground = numpy.full((7, 40), -15.0, numpy.float32)
+    surface = numpy.full((7, 40), -17.0, numpy.float32)
+    wet = numpy.ones((7, 40), numpy.float32)
+    unknown = numpy.zeros((7, 40), numpy.float32)
+
+    drowned = gen_map_renders.water_alpha(ground, surface, wet, unknown, 0.8)
+    assert drowned.min() == pytest.approx(1.0, abs=1e-3), (
+        "water whose depth is unknown is fully water; the comparison that says otherwise is "
+        "the arithmetic the quality byte was added to stop being the answer"
+    )
+    assert gen_map_renders.water_depth_fraction(ground, surface, unknown).min() == pytest.approx(
+        1.0
+    ), "and it is tinted deep, not the pale green of an ankle-deep sheet"
+
+    # The same texels with the depth MEASURED are the old behaviour exactly: dry.
+    known = numpy.ones((7, 40), numpy.float32)
+    assert gen_map_renders.water_alpha(ground, surface, wet, known, 0.8).max() == pytest.approx(
+        0.0, abs=1e-3
+    )
+
+    # And a field with no quality byte at all falls back to the comparison rather than
+    # reading missing as dry -- which is all such a field can say.
+    class _Old:
+        _height_dm = numpy.array([[0, 0], [0, 0]], numpy.int16)
+        _prov = numpy.zeros((2, 2), numpy.uint8)
+
+        def _water_raster(self):
+            return numpy.array([[5, hf.NODATA], [5, 5]], numpy.int16)
+
+        def _water_quality_raster(self):
+            return None
+
+    plane, measured, note = gen_map_renders.water_planes(_Old())
+    assert plane.tolist() == [[1, 0], [1, 1]] and measured is plane
+    assert "predates the quality byte" in note
 
 
 def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():

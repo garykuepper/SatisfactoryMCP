@@ -13,9 +13,72 @@ file adds two more, drawn here rather than found:
   the steep ground, sun-bleached tops on the high plateaus and a little noise so the flats
   are not vector-flat.
 
-Both are 8192x8192 on the **same frame as the artwork sheet** -- x [-3247, 4253] m,
+Both are 16384x16384 on the **same frame as the artwork sheet** -- x [-3247, 4253] m,
 y [-3750, 3750] m -- and cut into the same 256 px pyramid, so the page's existing tile grid,
 its CRS and its bounds are untouched and a layer is a change of picture and nothing else.
+
+Why 16384 and not 32768
+-----------------------
+Measured rather than argued, on four windows -- an offshore cliff island, a mainland cliff
+face, the dune field and the Spire Coast -- in both layers, at four resolutions each. The
+statistic is what one doubling actually changes: the finer render box-filtered onto the
+coarser grid, minus the coarser render, mean absolute per channel::
+
+    4096 -> 8192     3.34 levels of 255
+    8192 -> 16384    2.69
+    16384 -> 32768   1.38     at 3.6x the drawing time and 4x the bytes
+
+and, more to the point, the **high-frequency energy per pixel goes DOWN at every doubling**,
+in all eight window-and-layer pairs -- 15.34 to 14.32 to 13.57 on the mainland cliff, and so
+on. That is the signature of a sampler resolving an interpolant rather than of a picture
+finding new world in the source: the field is a 1 m grid, 16384 px over 7500 m is 0.458 m to
+the pixel, and that is already past Nyquist. What 32768 buys is antialiasing on cliff
+facets, and one more pyramid level whose every pixel would be interpolation claiming to be
+terrain. So 16384 ships and z6 is the last honest level.
+
+Sampling, and what "continuous" means here
+-------------------------------------------
+The heightfield is a **surface**, not a picture: the landscape layer under it is a bilinear
+patch grid the game itself evaluates continuously, and the cliff layer is rasterised
+collision geometry on the same 1 m lattice. Doubling the output resolution is only worth
+anything if the sampler is continuous too, so it is: **Catmull-Rom** (cubic convolution,
+a = -1/2) rather than bilinear. That matters for exactly one reason -- bilinear is C0, its
+derivative jumps at every texel boundary, and the hillshade is a function of the derivative.
+Sampled bilinearly at 0.458 m the relief comes out ruled into 1 m squares; sampled with a
+C1 kernel it does not.
+
+The one place it falls back to bilinear is where the 4x4 stencil is not whole. A fifth of
+this field is no-data -- the corners outside the landscape -- and a cubic kernel has
+negative lobes, so a stencil straddling that boundary can overshoot. There, the 2x2 answer
+is used instead, which is exactly what this file drew everywhere before; where there is no
+data under either, the render says nothing and paints the page's own sea.
+
+Borrowing detail where the field has none
+------------------------------------------
+The 1 m grid is one resolution, but it is **not one accuracy**, and pretending otherwise is
+what made the offshore islands look like melted wax. Measured on the shipped field:
+45.3% of it is landscape, which is real continuous geometry and genuinely sharpens; 21.3%
+is cliff, rasterised low-poly collision hulls whose facets resampling can only polish; and
+14.0% is fill, a 3.9 m-quantised block raster where resampling does nothing at all. Those
+last two provinces carry less information than the artwork does -- Coffee Stain drew those
+same islands at 0.92 m -- so over them, and only over them, the render **borrows the
+artwork's luminance detail**: the sheet's own high-pass, above the scale the field can
+speak to, multiplied into the ground colour and faded out on the provenance byte. It is
+shading, not colour: the artwork's blue never reaches the render, only its light and shade.
+Where the provenance says landscape, the shading is the field's and nothing else.
+
+The water channel is read, not inferred
+----------------------------------------
+``waterq.u8.z`` says whether a texel is dry, water whose depth was measured against 1 m
+terrain, or water whose level is known and whose depth is not. **This file asks that byte.**
+The arithmetic it replaced -- water surface standing above the ground -- reads the open
+ocean as dry, because over the fill province the "ground" is a 3.9 m raster that rounds
+above a sea surface 17 m down: measured on the shipped field, 3.572 km2 of ocean out of
+18.248 vanished that way. The depth ramp is kept for the shallow end where a depth was
+really measured, and a level-only texel is drawn at full alpha and at the deep end of the
+ramp -- which is a measurement rather than a preference: 95.2% of level-only water stands
+over the fill province and 98% of its surface levels lie in a 0.7 m band around the ocean's
+own -16.99 m. It IS the ocean.
 
 Why a new file rather than a stage on gen_world_heightmap.py
 ------------------------------------------------------------
@@ -49,10 +112,10 @@ Nothing in the asset says where those 4096 texels go, so the corners are **measu
 biome raster's boundary texels, divided by its edge strength everywhere: an area boundary
 that is pinned right sits on a shore or a cliff the map draws, and one that is pinned wrong
 sits on flat fill. It is a ratio, so it does not reward a pin for merely making more
-boundary. Measured on the shipped sheet the in-game map square reads **2.28** and every
-neighbour is far below it -- 1.42 at 5% larger, 1.40 at 5% smaller, and the best of a
-+-600 m translation sweep at true scale is the pin itself. So the biome raster spans exactly
-the square the artwork does, 4096 texels over 7500 m, 1.831 m to the texel, row 0 north.
+boundary. Measured on the shipped sheet the in-game map square reads **1.97** and every
+neighbour is far below it -- 1.28 at 5% larger, 1.24 at 5% smaller, and 1.33 for the best of
+a +-600 m translation sweep at true scale. So the biome raster spans exactly the square the
+artwork does, 4096 texels over 7500 m, 1.831 m to the texel, row 0 north.
 
 That is the sharp measurement. The one the reader can check by name is
 ``agree_with_region_grid``: the 768 non-void cells of ``data/region_names.json``, which is an
@@ -77,10 +140,15 @@ can see what was there and what was done instead.
 What it writes
 --------------
 ``data/local/renders/{terrain,satellite}/``, each holding ``tiles/{z}/{x}_{y}.png`` for
-z0..z5 and a ``meta.json`` the web API reads. **z5 is 8192 px and there is no z6.** The
-artwork pyramid can invent two more levels with an upscaler because a drawn map has strokes
-an upscaler understands; these layers' truth ends at the 1 m field they are sampled from, and
-a z6 here would be an interpolation claiming to be terrain.
+z0..z6, ``tiles@2x/{z}/{x}_{y}.png`` for z0..z5, and a ``meta.json`` the web API reads.
+**z6 is 16384 px and there is no z7**, for the reason measured above.
+
+``tiles@2x/`` is the identical tile GRID at 512 px a tile: level z is still 2**z tiles a
+side over the identical squares of the world, so a client asks for the same ``{z}/{x}/{y}``
+and gets twice the pixels in each direction, which is what a display with a device pixel
+ratio above one wants. It is one level shallower than the 1x tree by arithmetic -- 512*2**z
+runs out of sheet before 256*2**z does -- and past that level the two carry identical
+information.
 
 Everything is under ``data/local/``, which is gitignored, and nothing here is ever committed.
 
@@ -94,10 +162,10 @@ tool writes it and exits. ``--force`` says it anyway.
 
 What opens the container
 ------------------------
-``ooz``, from ``pyooz``, opens the container's Oodle blocks and Pillow writes the PNGs.
-Both are the project's ``gen`` extra: optional dependencies, pinned exactly because they
-decide the bytes this file writes, and asked for on the command line, the same posture as
-``tools/gen_map_image.py``::
+``ooz``, from ``pyooz``, opens the container's Oodle blocks, ``texture2ddecoder`` unpacks
+the artwork's BC1 slices and Pillow writes the PNGs. All three are the project's ``gen``
+extra: optional dependencies, pinned exactly because they decide the bytes this file
+writes, and asked for on the command line, the same posture as ``tools/gen_map_image.py``::
 
     uv run --extra gen python tools/gen_map_renders.py
 
@@ -118,9 +186,12 @@ committed, uploaded or redistributed, and the server serves it to localhost only
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import struct
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -134,20 +205,25 @@ sys.path.insert(0, str(ROOT / "src"))
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
 from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
 from satisfactory_mcp.core.gameassets.pyramid import (
+    PYRAMID_TILE_2X_PX,
+    PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     PyramidError,
+    cut_square,
+    cut_square_parallel,
     install_pyramid,
 )
+from satisfactory_mcp.core.gameassets.textures import decode_bc1_rgba
 from satisfactory_mcp.domain.spatial import heightfield as hf
 from tools._common import base_parser, require_gen
 
-# The corners every layer is drawn on, the sheet they are drawn at, and the name of the
-# artwork the biome pin is scored against: all three from the tool that MEASURED them
-# rather than typed again here, so the three pyramids cannot drift apart. A plain import
-# of a sibling generator, which is possible now that the sibling holds nothing but its own
-# constants and its own stages -- the cutter and the reader it used to be borrowed for are
-# both in core.
-from tools.gen_map_image import BOUNDS_M, IMAGE_NAME, SHEET_PX
+# The corners every layer is drawn on, the sheet the ARTWORK is drawn at, and how to read
+# its four slices out of the container: all from the tool that MEASURED them rather than
+# typed again here, so the three pyramids cannot drift apart. A plain import of a sibling
+# generator, which is possible now that the sibling holds nothing but its own constants and
+# its own stages -- the cutter and the reader it used to be borrowed for are both in core.
+from tools.gen_map_image import BOUNDS_M, SHEET_PX, SLICES, TILE_PX, read_slice
 
 #: Where the layers go, and what each one's sidecar is called. ``renders/<layer>/`` holds a
 #: ``tiles/`` tree of exactly the shape ``data/local/tiles/`` has, so the endpoint that
@@ -160,6 +236,25 @@ RENDER_SIDECAR_NAME = "meta.json"
 #: run prints; ``--layer`` restricts it.
 LAYERS = ("terrain", "satellite")
 
+#: How many processes deflate tiles when ``--workers`` is not given. One per core, capped:
+#: past a certain point the cores are waiting on the disk rather than on zlib, and thirty-two
+#: Python interpreters each importing numpy to write PNGs is a startup cost with nothing on
+#: the other side of it.
+WORKER_CAP = 16
+DEFAULT_WORKERS = min(os.cpu_count() or 1, WORKER_CAP)
+
+#: Which level ``--check-parallel`` cuts twice. z5 is 1,024 tiles -- enough that the timing
+#: means something and the comparison is not one file -- and it is a level every supported
+#: sheet size actually has.
+CHECK_PARALLEL_Z = 5
+
+#: What a render is drawn at, and the levels that buys. 16384 px over 7500 m is 0.458 m to
+#: the pixel against a 1 m field -- past Nyquist, and measurably past the point where more
+#: pixels carry more world; see the module docstring. Derived from the artwork's own sheet
+#: size rather than typed, because the two are the same frame and one of them moving
+#: without the other is the drift this file exists not to have.
+RENDER_PX = SHEET_PX * 2
+
 #: Which recipe drew the pixels. Recorded per layer, so a reader looking at a tile can find
 #: out which set of rules made it, and a later recipe over an earlier one is an upgrade a
 #: run performs rather than announces.
@@ -169,8 +264,15 @@ RECIPES = {
         "45 deg, water tinted by depth. satellite: biome palette, slope-driven rock, "
         "elevation lightening, two octaves of noise, the same hillshade and water"
     ),
+    2: (
+        "recipe 1 at 16384 px, sampled with a C1 Catmull-Rom kernel so the hillshade has no "
+        "cell structure; submersion read from waterq.u8.z rather than inferred from a "
+        "comparison, level-only water at full alpha and the deep end of the ramp; and the "
+        "artwork sheet's luminance high-pass borrowed into the shading wherever the "
+        "provenance byte says cliff or fill, faded out towards landscape"
+    ),
 }
-RECIPE = 1
+RECIPE = 2
 
 # --------------------------------------------------------------------------------------
 # The biome raster.
@@ -287,13 +389,18 @@ WATER_DEEP = np.array([40, 110, 170], np.float32)
 #: turns those blocks into a beach.
 WATER_EDGE_M = 0.9
 
-#: And the same edge softened in SPACE as well as in depth, in output pixels. The depth
+#: And the same edge softened in SPACE as well as in depth, in METRES of ground. The depth
 #: feather above does nothing where the shore is a cliff -- the water goes from nothing to
 #: metres deep across one texel and there is no band to blend over -- and much of this
-#: world's water sits in box-shaped bodies against exactly that. A sub-pixel blur of the
-#: coverage is what antialiases those, and it touches nothing else: a pixel two from the
-#: edge is fully water or fully ground either way.
-WATER_EDGE_PX = 0.8
+#: world's water sits in box-shaped bodies against exactly that. A blur of the coverage is
+#: what antialiases those, and it touches nothing else: a pixel two from the edge is fully
+#: water or fully ground either way.
+#:
+#: In metres rather than in output pixels, which is the one thing about it that changed
+#: when the sheet doubled. 0.8 px was 0.73 m at 8192 and would have been 0.37 m at 16384 --
+#: the same constant quietly meaning half as much ground, which is how a recipe stops being
+#: the recipe that was approved.
+WATER_EDGE_BLUR_M = 0.73
 
 #: How much the hillshade is allowed to touch water. Some, because a lake surface that
 #: ignores the light sits on the picture rather than in it; not much, because the shading is
@@ -305,6 +412,61 @@ WATER_SHADE_RANGE = 0.25
 #: nothing rather than guess, and saying it in the colour the page is already painted means
 #: the tile disappears into the background instead of drawing a border nobody asked for.
 SEA_RGB = np.array([16, 32, 44], np.float32)
+
+# --------------------------------------------------------------------------------------
+# Borrowing the artwork's detail where the field's own province is coarse.
+# --------------------------------------------------------------------------------------
+
+#: Which provinces of the field carry less information than the artwork does. Landscape is
+#: deliberately absent: it is continuous geometry the game itself evaluates, it is 45.3% of
+#: the field, and its shading is the field's own. These two are not -- cliff is rasterised
+#: low-poly collision hulls and fill is a 3.9 m block raster -- and over them a render drawn
+#: from the field alone is smooth because it has nothing to say, not because the world is.
+BORROW_PROVENANCE = (hf.PROV_CLIFF, hf.PROV_FILL)
+
+#: How far the borrow fades out across a province boundary, in field texels (metres). The
+#: provenance byte is a hard label on a 1 m grid, and a hard switch between two shading
+#: rules would draw the label itself: a coastline of shading style around every island. Six
+#: metres is wide enough that no boundary reads as a line and narrow enough that a 40 m
+#: island is fully borrowed in the middle.
+BORROW_FEATHER_M = 6.0
+
+#: The scale of artwork detail that is borrowed, in artwork pixels (0.92 m each). The high
+#: pass is the sheet minus its own Gaussian blur at this sigma, so what comes across is
+#: everything FINER than about 7 m and nothing coarser -- the coarse structure is the
+#: field's job and the two must not both draw it. Deliberately smaller than the fill layer's
+#: own 3.9 m quantisation is large, because that is exactly the band the field cannot speak
+#: in.
+BORROW_DETAIL_SIGMA_PX = 8.0
+
+#: And then two things are done to that high pass, both of which are the difference between
+#: borrowing the artwork's SHADING and tracing its ink.
+#:
+#: The map is a drawing, and a drawing has strokes: every rock formation on it is outlined
+#: in a hard dark line one or two pixels wide. Multiplied straight into a render those come
+#: out as exactly what they are -- ink -- and the result reads as a line drawing laid over
+#: terrain rather than as light falling on it. So the high pass is first blurred by
+#: ``BORROW_DETAIL_SOFTEN_PX``, which turns a stroke into the gradient a stroke was standing
+#: in for; and then it is squashed through ``tanh`` at ``BORROW_DETAIL_SIGMAS`` standard
+#: deviations of itself, which is a soft clip rather than a hard one -- the mid-tones, which
+#: are the shading, pass through almost linearly, and the strokes, which are the outliers,
+#: saturate instead of dominating.
+BORROW_DETAIL_SOFTEN_PX = 1.6
+BORROW_DETAIL_SIGMAS = 1.2
+
+#: How much of the result reaches the picture, and how far it may push a pixel either way.
+#: Picked by looking, on the four crops the upgrade was judged on. At 0.17 the offshore
+#: cliff islands are still flat facets with a hint of something on them; at 0.50 the drawn
+#: map's contour rings read as rings rather than as terracing. 0.30 is where a collision
+#: hull stops being eight flat plates and starts being rock, and where the dune field --
+#: which is landscape province and therefore untouched -- still looks exactly as it did.
+BORROW_GAIN = 0.30
+BORROW_CLAMP = (0.74, 1.26)
+
+#: Luma weights. Rec. 601, because what is wanted is the artwork's LIGHT -- the shading a
+#: human drew on those cliffs -- and 601 is the weighting that matches how a human sees it.
+#: The colour never crosses: an ocean drawn blue contributes its brightness and nothing else.
+BORROW_LUMA = np.array([0.299, 0.587, 0.114], np.float32)
 
 # --------------------------------------------------------------------------------------
 # The satellite layer's own rules.
@@ -382,15 +544,22 @@ NOISE_SEED = 20260731
 NOISE_OCTAVES = ((256, 0.055), (1024, 0.035))
 NOISE_SMOOTH = 1.0
 
-#: Rows of the output drawn at a time. 256 rows of 8192 costs about 30 MB of float32 per
-#: intermediate, which is the point: the whole sheet at once would be 268 MB apiece.
+#: Rows of the output drawn at a time. 256 rows of 16384 costs about 17 MB of float32 per
+#: intermediate, which is the point: the whole sheet at once would be over a gigabyte
+#: apiece.
 BAND_ROWS = 256
 
 #: The halo each band is computed with, so the hillshade's gradient at a band edge sees the
 #: rows on the other side of it -- and so does the water edge's blur, which reaches further
 #: than the gradient does. Cropped off before the band is stored, so no pixel of the output
 #: was ever computed from a one-sided difference or a truncated kernel.
-BAND_HALO = 4
+#:
+#: Eight rather than four: the cubic sampler's stencil is two texels either side instead of
+#: one, and the water blur's three sigma at 16384 is five pixels rather than two. Both
+#: numbers went up when the sheet did, and a halo that had not would have drawn a seam
+#: every 256 rows -- which is the failure this constant exists to prevent, so it is sized
+#: against the widest kernel in the band rather than left at what used to be enough.
+BAND_HALO = 8
 
 
 class MissingField(RuntimeError):
@@ -559,6 +728,106 @@ def biome_lookup(biome: dict) -> tuple[np.ndarray, list[str]]:
 
 
 # --------------------------------------------------------------------------------------
+# The artwork sheet: the ruler the biome pin is scored against, and the detail the coarse
+# provinces borrow.
+# --------------------------------------------------------------------------------------
+
+
+def read_artwork_sheet(store, decoder, image_mod):
+    """The game's own 8192 px map sheet, stitched out of its four BC1 slices.
+
+    Read from the container rather than from ``data/local/map.png``, and that is worth a
+    sentence: the PNG is the same pixels, but it is written by a DIFFERENT tool that a
+    reader may not have run, and this file now needs the sheet for two things that are not
+    optional -- scoring the biome pin, which used to be skipped when the PNG was absent, and
+    the detail the cliff and fill provinces borrow. Reading the source removes the skip and
+    removes the second copy at once.
+
+    The slice names, their layout and the ``.ubulk`` length check all come from
+    ``tools/gen_map_image.py``, which is the tool that proved them; nothing about the
+    artwork is re-decided here.
+    """
+    sheet = image_mod.new("RGB", (SHEET_PX, SHEET_PX))
+    for name in SLICES:
+        col, row = (int(value) for value in name.split("_")[1].split("-"))
+        slice_image = decode_bc1_rgba(decoder, image_mod, read_slice(store, name), TILE_PX)
+        sheet.paste(slice_image.convert("RGB"), (col * TILE_PX, row * TILE_PX))
+    return sheet
+
+
+def artwork_detail(sheet) -> tuple[np.ndarray, dict]:
+    """The artwork's luminance high pass as int8, and what scaling it took.
+
+    What comes back is everything in the drawn map FINER than ``BORROW_DETAIL_SIGMA_PX``
+    -- the light and shade a human put on those cliffs -- with the coarse structure removed,
+    because the coarse structure is the field's job and two sources drawing it at once would
+    double every hillside. Luminance only: the artwork's colour never crosses into a render.
+
+    Held as int8 rather than float32 because it is 67 MB against 268, it is sampled
+    bilinearly afterwards anyway, and 1/127th of two and a half standard deviations is finer
+    than any of it will survive being multiplied into a colour.
+    """
+    rgb = np.asarray(sheet, np.float32)
+    luma = rgb @ BORROW_LUMA
+    high = luma - ndimage.gaussian_filter(luma, BORROW_DETAIL_SIGMA_PX, mode="nearest")
+    high = ndimage.gaussian_filter(high, BORROW_DETAIL_SOFTEN_PX, mode="nearest")
+    spread = float(high.std())
+    detail = (np.tanh(high / max(spread * BORROW_DETAIL_SIGMAS, 1e-6)) * 127.0).astype(np.int8)
+    return detail, {
+        "role": (
+            "the artwork sheet's own luminance minus its Gaussian blur, i.e. everything the "
+            "drawn map says below about "
+            f"{BORROW_DETAIL_SIGMA_PX * (BOUNDS_M['x_max_m'] - BOUNDS_M['x_min_m']) / SHEET_PX:.1f}"
+            " m and nothing above it"
+        ),
+        "sheet_px": SHEET_PX,
+        "metres_per_pixel": round((BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / SHEET_PX, 4),
+        "high_pass_sigma_px": BORROW_DETAIL_SIGMA_PX,
+        "soften_sigma_px": BORROW_DETAIL_SOFTEN_PX,
+        "luma_weights": [float(value) for value in BORROW_LUMA],
+        "measured_std": round(spread, 4),
+        "tanh_knee_at_sigmas": BORROW_DETAIL_SIGMAS,
+        "why_tanh": (
+            "the artwork is a drawing and a drawing has strokes -- every rock formation is "
+            "outlined in hard dark ink. A soft clip lets the mid-tones (the shading) through "
+            "almost linearly and saturates the outliers (the ink), which is the difference "
+            "between borrowing light and tracing lines"
+        ),
+        "stored_as": "int8, +-127 at full saturation",
+    }
+
+
+def coarse_province(field) -> tuple[np.ndarray, dict]:
+    """Where the field is coarser than the artwork, as a feathered 0..255 mask at 1 m.
+
+    ``BORROW_PROVENANCE`` is a hard label on a 1 m grid and the borrow is a change of
+    shading rule, so switching on it directly would draw the LABEL: a visible coastline of
+    style around every island the fill layer covers. The mask is therefore blurred before it
+    is sampled, at the field's own resolution and once, rather than per band with a halo
+    wide enough to hold the kernel.
+
+    Stored as uint8 because it is a weight in [0, 1] that is about to be multiplied by a
+    detail term that is itself quantised to 1/127.
+    """
+    inside = np.isin(field._prov, BORROW_PROVENANCE)
+    share = float(inside.mean())
+    feather = ndimage.gaussian_filter(
+        inside.astype(np.float32), BORROW_FEATHER_M * 100.0 / field.spacing_cm, mode="nearest"
+    )
+    return (np.clip(feather, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), {
+        "provinces": [hf.PROV_NAMES[value] for value in BORROW_PROVENANCE],
+        "share_of_the_field": round(100 * share, 2),
+        "feather_m": BORROW_FEATHER_M,
+        "role": (
+            "1 where the field's own province is coarser than the artwork -- rasterised "
+            "collision hulls, or a 3.9 m block raster -- 0 over the landscape layer, which "
+            "is continuous geometry and keeps shading of its own, and a Gaussian ramp "
+            "between them so the provenance byte is never itself drawn"
+        ),
+    }
+
+
+# --------------------------------------------------------------------------------------
 # Calibration: where do the biome raster's 4096 texels go?
 # --------------------------------------------------------------------------------------
 
@@ -605,7 +874,7 @@ def pinned_box(dx_cm: float, dy_cm: float, scale: float) -> tuple[float, float, 
     return (cx + dx_cm - half, cx + dx_cm + half, cy + dy_cm - half, cy + dy_cm + half)
 
 
-def calibrate_biome(biome: dict, sheet_path: Path, image_mod) -> dict:
+def calibrate_biome(biome: dict, sheet, image_mod) -> dict:
     """Score the pin by the artwork's own edges, and sweep for one that beats it.
 
     The statistic is the ratio of the sheet's mean edge strength ON the biome raster's area
@@ -613,22 +882,13 @@ def calibrate_biome(biome: dict, sheet_path: Path, image_mod) -> dict:
     a shore or a scarp the map draws; one that is pinned wrong lies on flat fill. Being a
     ratio, it cannot be won by a pin that simply produces more boundary.
 
-    Skipped, not faked, when the artwork sheet is absent: it is the only picture here whose
-    corners have already been measured, and without a ruler there is no measurement.
+    The ruler is the sheet this run decoded out of the container, not the PNG a different
+    tool may or may not have written beside it. That used to be a skip path -- no
+    ``map.png``, no measurement -- and it is gone: the sheet is now read for the detail
+    borrow anyway, so the pin is scored against the artwork every single run.
     """
-    if not sheet_path.is_file():
-        return {
-            "skipped": (
-                f"{sheet_path} is not present, so the pin could not be scored. Run "
-                "tools/gen_map_image.py to cut the artwork sheet, then this again; the "
-                "renders are still drawn at the pin below, which is what that sheet measured."
-            ),
-            "pin": dict(BOUNDS_M),
-        }
     grey = np.asarray(
-        image_mod.open(sheet_path)
-        .convert("L")
-        .resize((CALIBRATION_PX, CALIBRATION_PX), image_mod.LANCZOS),
+        sheet.convert("L").resize((CALIBRATION_PX, CALIBRATION_PX), image_mod.LANCZOS),
         np.float32,
     )
     gy, gx = np.gradient(ndimage.gaussian_filter(grey, 1.0))
@@ -662,9 +922,10 @@ def calibrate_biome(biome: dict, sheet_path: Path, image_mod) -> dict:
             "shore or a scarp the map draws; one pinned wrong sits on flat fill. A ratio, so "
             "a pin cannot win it by making more boundary."
         ),
-        "ruler": str(sheet_path.relative_to(ROOT))
-        if sheet_path.is_relative_to(ROOT)
-        else str(sheet_path),
+        "ruler": (
+            f"the game's own {SHEET_PX} px map sheet, decoded from its four BC1 slices in "
+            "this same run"
+        ),
         "resolution_px": CALIBRATION_PX,
         "edge_ratio_at_the_pin": round(at_pin, 4),
         "sweep": (
@@ -775,51 +1036,140 @@ def frame_coordinates(size: int) -> tuple[np.ndarray, np.ndarray]:
     return x, y
 
 
-def bilinear_weights(coordinate: np.ndarray, origin: float, spacing: float, limit: int):
-    """The two flanking indices and the weight of the second, clamped to the grid.
+def grid_position(coordinate: np.ndarray, origin: float, spacing: float, limit: int):
+    """Where a run of world coordinates falls on a raster's index axis, clamped to it.
 
     Clamped rather than masked: the frame is half a metre wider than the field's last vertex
     on two sides, and a strip of no-data half a pixel wide down the east and south edges
     would be a hole this file invented. Past the edge the nearest vertex is the honest
     answer, and it is the same answer the field's own reader gives.
     """
-    position = np.clip((coordinate - origin) / spacing, 0.0, limit - 1.0)
-    low = np.floor(position).astype(np.int64)
-    low = np.minimum(low, limit - 2) if limit > 1 else low
-    return low, np.minimum(low + 1, limit - 1), (position - low).astype(np.float32)
+    return np.clip((coordinate - origin) / spacing, 0.0, limit - 1.0)
 
 
-def sample_bilinear(raster: np.ndarray, rows, cols, nodata: int):
-    """Bilinear over an int16 raster that has holes in it. Returns (values, all-four-missing).
+def taps_linear(position: np.ndarray, limit: int) -> tuple[np.ndarray, np.ndarray]:
+    """The two flanking indices and their weights: ``(2, N)`` each. Plain bilinear.
 
-    A no-data texel is given zero weight rather than a value, and the remaining weights are
-    renormalised, so a pixel beside a hole is the average of the neighbours that DO know
-    rather than an average dragged toward -32768. Only where all four are missing does the
-    render have nothing to say, and that is the mask that comes back.
+    Kept, and not as a legacy: it is what the cubic kernel below falls back to wherever its
+    own stencil runs off the data, and it is what every category plane is sampled with,
+    because a coverage fraction outside [0, 1] is not a coverage fraction.
     """
-    (r0, r1, fr), (c0, c1, fc) = rows, cols
-    corners = np.stack(
+    low = np.minimum(np.floor(position).astype(np.int64), max(limit - 2, 0))
+    fraction = (position - low).astype(np.float32)
+    index = np.stack([low, np.minimum(low + 1, limit - 1)])
+    return index, np.stack([1.0 - fraction, fraction])
+
+
+def taps_cubic(position: np.ndarray, limit: int) -> tuple[np.ndarray, np.ndarray]:
+    """The four indices around a position and their Catmull-Rom weights: ``(4, N)`` each.
+
+    Cubic convolution with a = -1/2, which is the interpolating member of that family: it
+    passes through every sample it is given, and -- the reason it is here rather than
+    bilinear -- it is **C1**, so the surface it draws has a continuous first derivative. The
+    hillshade is a function of that derivative, and a C0 kernel sampled at half its own
+    texel spacing rules the relief into 1 m squares. The weights sum to exactly one, which
+    is what lets the no-data bookkeeping below use their sum as a completeness test.
+
+    Indices are clamped to the grid, so a stencil hanging off the edge repeats the edge
+    vertex -- the same answer the field's own reader gives past its last row.
+    """
+    base = np.floor(position).astype(np.int64)
+    t = (position - base).astype(np.float32)
+    index = np.stack([np.clip(base + offset, 0, limit - 1) for offset in (-1, 0, 1, 2)])
+    weight = np.stack(
         [
-            raster[np.ix_(r0, c0)],
-            raster[np.ix_(r0, c1)],
-            raster[np.ix_(r1, c0)],
-            raster[np.ix_(r1, c1)],
+            0.5 * t * (t * (2.0 - t) - 1.0),
+            0.5 * (t * t * (3.0 * t - 5.0) + 2.0),
+            0.5 * t * (t * (4.0 - 3.0 * t) + 1.0),
+            0.5 * t * t * (t - 1.0),
         ]
-    ).astype(np.float32)
-    fr = fr[:, None]
-    weights = np.stack(
-        [
-            (1 - fr) * (1 - fc),
-            (1 - fr) * fc,
-            fr * (1 - fc),
-            fr * fc,
-        ]
-    ).astype(np.float32)
-    weights *= corners != nodata
-    total = weights.sum(0)
-    missing = total <= 0
-    value = (weights * corners).sum(0) / np.where(missing, 1.0, total)
-    return value, missing
+    )
+    return index, weight
+
+
+def resample(raster: np.ndarray, rows, cols, nodata: int | None):
+    """Separable interpolation of ``raster`` onto the output grid. Returns (sum, weight).
+
+    Separable and in that order for a reason that is arithmetic rather than taste: the
+    output rows a band needs come from one CONTIGUOUS run of source rows, so the row axis is
+    a slice and only the column axis is a gather. Interpolating in x first over that short
+    slab and in y second over the result is four gathers of the small array and four of the
+    large one, against sixteen of the large one if the 4x4 stencil were evaluated directly.
+
+    The no-data bookkeeping rides along: every tap is multiplied by whether its texel had a
+    value, and the weights come back separately, so the caller can tell a whole stencil
+    (weight exactly one) from a partial one from nothing at all. ``nodata`` of ``None`` says
+    the raster has no holes -- a category coverage plane -- and skips it.
+    """
+    (row_index, row_weight), (col_index, col_weight) = rows, cols
+    low, high = int(row_index.min()), int(row_index.max())
+    slab = raster[low : high + 1]
+    values = slab.astype(np.float32)
+    known = None if nodata is None else (slab != nodata).astype(np.float32)
+    if known is not None:
+        values = values * known
+
+    across = np.zeros((slab.shape[0], col_index.shape[1]), np.float32)
+    across_weight = np.zeros_like(across)
+    for tap in range(col_index.shape[0]):
+        across += col_weight[tap] * values[:, col_index[tap]]
+        if known is None:
+            across_weight += col_weight[tap]
+        else:
+            across_weight += col_weight[tap] * known[:, col_index[tap]]
+
+    total = np.zeros((row_index.shape[1], col_index.shape[1]), np.float32)
+    total_weight = np.zeros_like(total)
+    for tap in range(row_index.shape[0]):
+        picked = row_index[tap] - low
+        total += row_weight[tap][:, None] * across[picked]
+        total_weight += row_weight[tap][:, None] * across_weight[picked]
+    return total, total_weight
+
+
+#: How far the cubic stencil's own weights may fall from one before this file stops
+#: believing it. They sum to one exactly wherever every texel under the stencil has a value,
+#: so anything below this is a stencil straddling the edge of the data, where a kernel with
+#: negative lobes has no business extrapolating.
+STENCIL_WHOLE = 1.0 - 1e-4
+
+
+def sample_surface(raster: np.ndarray, cubic, linear, nodata: int):
+    """A height raster on the output grid: cubic inside the data, bilinear at its edge.
+
+    Returns ``(values, missing)``. Three cases, and the middle one is the whole reason this
+    is not one call: where the 4x4 stencil is whole, the C1 answer is used and the hillshade
+    is smooth; where it is not -- a fifth of this field is no-data, so that boundary is real
+    and long -- the 2x2 answer is used instead, because a cubic kernel has negative lobes
+    and one straddling a hole overshoots; and where even that has nothing under it, the
+    render says nothing and the caller paints the page's own sea.
+    """
+    smooth, smooth_weight = resample(raster, *cubic, nodata)
+    flat, flat_weight = resample(raster, *linear, nodata)
+    missing = flat_weight <= 0.0
+    near = flat / np.where(missing, 1.0, flat_weight)
+    return np.where(smooth_weight >= STENCIL_WHOLE, smooth, near), missing
+
+
+def sample_plain(raster: np.ndarray, taps) -> np.ndarray:
+    """A raster with no holes in it, interpolated onto the output grid. Nothing clipped.
+
+    The weights of either kernel sum to one and there is no no-data to renormalise around,
+    so the weighted sum IS the answer. Used for the two rasters this file makes itself --
+    the artwork's signed high pass and the feathered province mask -- neither of which is a
+    coverage and neither of which may be clipped into [0, 1] on the way through.
+    """
+    return resample(raster, *taps, None)[0]
+
+
+def sample_coverage(plane: np.ndarray, taps) -> np.ndarray:
+    """What fraction of the ground under each output pixel is in some category, in [0, 1].
+
+    Bilinear and never cubic: a category is a yes or a no on a 1 m grid, and what is wanted
+    from it is coverage. A kernel with negative lobes would answer -0.06 of a texel wet,
+    which is not a thing a texel can be.
+    """
+    return np.clip(sample_plain(plane, taps), 0.0, 1.0)
 
 
 def hillshade(z_m: np.ndarray, spacing_m: float) -> np.ndarray:
@@ -904,52 +1254,79 @@ def sample_noise(fields, rows: np.ndarray, cols: np.ndarray, size: int) -> np.nd
 # --------------------------------------------------------------------------------------
 
 
-def water_alpha(z_m: np.ndarray, water_m: np.ndarray, submerged: np.ndarray) -> np.ndarray:
-    """How much of each pixel is water, in [0, 1]. Feathered twice, for two reasons.
+def water_alpha(z_m, water_m, wet: np.ndarray, measured: np.ndarray, blur_px: float):
+    """How much of each pixel is water, in [0, 1]. Feathered three ways, for three reasons.
 
-    ``submerged`` is a step function on a 1 m grid, so a hard composite draws every
-    coastline as a staircase of metre blocks. The first feather is in DEPTH, which handles
-    a beach: the water thins out over the last ``WATER_EDGE_M`` and the blend goes with it.
-    The second is in SPACE, because a beach is not what most of this world's water has -- a
+    ``wet`` is the coverage the quality byte gives -- what fraction of the ground under this
+    pixel the channel calls water at all -- and it is already a fraction rather than a step,
+    because it was sampled as coverage. ``measured`` is the share of that water whose DEPTH
+    was measured against 1 m terrain.
+
+    The depth feather is the first, and it now applies only where there is a depth: the
+    water thins out over the last ``WATER_EDGE_M`` and the blend goes with it, which is what
+    a beach looks like. Where the byte says the level is known and the depth is not, that
+    ramp is meaningless -- the "depth" there is a 3.9 m block raster's rounding error, and
+    running the ramp on it is precisely what used to erase three and a half square
+    kilometres of ocean -- so those texels are drawn at **full alpha** and the ramp is not
+    consulted.
+
+    The third is in SPACE, because a beach is not what most of this world's water has: a
     great deal of it sits in box-shaped bodies against a cliff, where the depth goes from
-    nothing to metres across one texel and there is no band for the first feather to work
-    in. A sub-pixel blur is what antialiases those, and being sub-pixel it cannot move a
-    shoreline, only stop it being a staircase.
+    nothing to metres across one texel and there is no band for the depth feather to work
+    in. A blur under a metre wide is what antialiases those, and being under a metre it
+    cannot move a shoreline, only stop it being a staircase.
     """
-    alpha = np.where(submerged, np.clip((water_m - z_m) / WATER_EDGE_M, 0.0, 1.0), 0.0)
-    return ndimage.gaussian_filter(alpha, WATER_EDGE_PX, mode="nearest")
+    ramp_alpha = np.clip((water_m - z_m) / WATER_EDGE_M, 0.0, 1.0)
+    alpha = wet * (measured * ramp_alpha + (1.0 - measured))
+    return ndimage.gaussian_filter(alpha, blur_px, mode="nearest")
 
 
-def water_over(rgb, z_m, water_m, alpha, shade, shallow, deep):
+def water_depth_fraction(z_m, water_m, measured: np.ndarray) -> np.ndarray:
+    """How dark the water reads, in [0, 1]: measured depth where there is one, deep where not.
+
+    The colour ramp wants a depth and a level-only texel has none. Drawing those at the
+    shallow end -- which is what subtracting a 3.9 m raster from a sea surface gives -- would
+    paint the open ocean the pale green of an ankle-deep sheet. They are drawn at the deep
+    end instead, and that is a measurement rather than a preference: on the shipped field
+    95.2% of level-only water stands over the fill province and 98% of its surface levels lie
+    inside a 0.7 m band around the ocean's own -16.99 m. It *is* the ocean.
+    """
+    known = np.clip((water_m - z_m) / WATER_DEPTH_FULL_M, 0.0, 1.0)
+    return measured * known + (1.0 - measured)
+
+
+def water_over(rgb, depth, alpha, shade, shallow, deep):
     """Lay water over ground, tinted by its own depth. Both layers want this arithmetic.
 
     Shallow reads pale, deep reads dark, and the light touches it a little -- but only a
     little, because the hillshade under a lake is computed from the lake BED and that is not
     what a water surface looks like from above.
     """
-    depth = np.clip((water_m - z_m) / WATER_DEPTH_FULL_M, 0.0, 1.0)[..., None]
-    colour = (shallow * (1 - depth) + deep * depth) * (
+    tint = depth[..., None]
+    colour = (shallow * (1 - tint) + deep * tint) * (
         WATER_SHADE_FLOOR + WATER_SHADE_RANGE * shade[..., None]
     )
     weight = alpha[..., None]
     return rgb * (1 - weight) + colour * weight
 
 
-def terrain_colours(z_m, water_m, wet, missing, shade, ramp_lo, ramp_hi, **_unused):
-    """The approved preview at full resolution: ramp, shade, water, and silence.
+def terrain_colours(depth, wet, missing, shade, borrow, z_m, ramp_lo, ramp_hi, **_unused):
+    """The approved preview at full resolution: ramp, shade, borrowed detail, water, silence.
 
     Deliberately the same arithmetic as the preview the owner picked, scaled up rather than
-    re-tuned. The one thing that is not the same is the resolution the hillshade is computed
-    at -- 0.92 m to the pixel instead of 4 -- which is not a change of recipe, it is the
-    recipe finally seeing the field it was always sampling.
+    re-tuned. Two things are not the same. The resolution the hillshade is computed at is
+    0.458 m to the pixel instead of 4, which is not a change of recipe -- it is the recipe
+    finally seeing the field it was always sampling. And ``borrow`` multiplies in the
+    artwork's own light over the provinces where the field has none of its own, which is a
+    change of recipe and is why this is recipe 2.
     """
     height = np.clip((z_m - ramp_lo) / max(ramp_hi - ramp_lo, 1e-6), 0.0, 1.0)
-    rgb = ramp(height, RAMP_STOPS) * shade[..., None]
-    rgb = water_over(rgb, z_m, water_m, wet, shade, WATER_SHALLOW, WATER_DEEP)
+    rgb = ramp(height, RAMP_STOPS) * (shade * borrow)[..., None]
+    rgb = water_over(rgb, depth, wet, shade, WATER_SHALLOW, WATER_DEEP)
     return np.where(missing[..., None], SEA_RGB, rgb)
 
 
-def satellite_colours(z_m, water_m, wet, missing, shade, slope, biome_rgb, noise, **_unused):
+def satellite_colours(depth, wet, missing, shade, borrow, z_m, slope, biome_rgb, noise, **_unused):
     """Ground colour from the biome, then rock, then altitude, then light, then water.
 
     In that order, and the order is the argument. The biome says what grows there; the slope
@@ -957,13 +1334,17 @@ def satellite_colours(z_m, water_m, wet, missing, shade, slope, biome_rgb, noise
     the altitude bleaches what is left, because the high plateaus are thin soil and sun; the
     hillshade lights all of it at once, because a shadow falls on rock and canopy alike; and
     the water goes on top, because it is a different surface rather than a different ground.
+
+    ``borrow`` rides with the hillshade and not with the colour, which is the whole design of
+    it: what is taken from the artwork is light, and it lands exactly where the field's own
+    light is uninformative.
     """
     rock = np.clip((slope - ROCK_LO_DEG) / (ROCK_HI_DEG - ROCK_LO_DEG), 0.0, 1.0)[..., None]
     rgb = biome_rgb * (1 - rock) + ROCK_RGB * rock
     lift = np.clip((z_m - HIGH_LO_M) / (HIGH_HI_M - HIGH_LO_M), 0.0, 1.0)[..., None] * HIGH_LIFT
     rgb = rgb * (1 - lift) + HIGH_RGB * lift
-    rgb = rgb * noise[..., None] * shade[..., None]
-    rgb = water_over(rgb, z_m, water_m, wet, shade, SATELLITE_WATER_SHALLOW, SATELLITE_WATER_DEEP)
+    rgb = rgb * noise[..., None] * (shade * borrow)[..., None]
+    rgb = water_over(rgb, depth, wet, shade, SATELLITE_WATER_SHALLOW, SATELLITE_WATER_DEEP)
     return np.where(missing[..., None], SEA_RGB, rgb)
 
 
@@ -985,44 +1366,102 @@ def ramp_range(field) -> tuple[float, float]:
     )
 
 
-def render_layer(
-    layer: str, field, biome_rgb: np.ndarray | None, biome, size, progress
-) -> np.ndarray:
+def water_planes(field) -> tuple[np.ndarray | None, np.ndarray | None, str]:
+    """The two 0/1 planes the water composite is sampled from, and where they came from.
+
+    ``wet`` is "the channel calls this texel water" and ``measured`` is "and it measured the
+    depth". Both come off ``waterq.u8.z`` when the field has one, which is the whole point:
+    the comparison they replace -- a water surface standing above the ground -- reads the
+    open ocean as dry, because over the fill province the ground is a 3.9 m raster that
+    rounds above a sea surface 17 m down.
+
+    A field written before that byte existed still renders, and falls back to exactly what
+    it meant then. Missing is not the same as dry and is not read as dry; it is read as "all
+    this field can say", which is the comparison.
+    """
+    water = field._water_raster()
+    if water is None:
+        return None, None, "no water raster in this field; nothing is drawn as water"
+    grades = field._water_quality_raster()
+    if grades is None:
+        wet = ((water != hf.NODATA) & (water > field._height_dm)).astype(np.uint8)
+        return (
+            wet,
+            wet,
+            (
+                "no waterq.u8.z: this field predates the quality byte, so submersion falls "
+                "back to a water surface standing above the ground, which is all such a "
+                "field can say"
+            ),
+        )
+    return (
+        (grades != hf.WATER_DRY).astype(np.uint8),
+        (grades == hf.WATER_MEASURED).astype(np.uint8),
+        "waterq.u8.z: dry / depth measured against 1 m terrain / level known and depth not",
+    )
+
+
+def render_layer(layer, field, biome_rgb, biome, borrow, size, progress) -> np.ndarray:
     """One whole layer, drawn a band of rows at a time. Returns ``(size, size, 3)`` uint8.
 
-    Banded because the sheet is 67 million pixels and this recipe holds a dozen float32
-    intermediates over it: whole-sheet arrays would be 268 MB apiece and the run would live
-    or die on how much memory the reader's machine happened to have. Each band is computed
-    with BAND_HALO extra rows on both sides and cropped afterwards, so the hillshade's
-    gradient never sees a band edge -- a one-sided difference at every 256th row would draw
-    31 horizontal lines across the world.
+    Banded because the sheet is 268 million pixels and this recipe holds a dozen float32
+    intermediates over it: whole-sheet arrays would be a gigabyte apiece and the run would
+    live or die on how much memory the reader's machine happened to have. Each band is
+    computed with BAND_HALO extra rows on both sides and cropped afterwards, so neither the
+    hillshade's gradient nor the cubic sampler's stencil nor the water blur's kernel ever
+    sees a band edge -- a one-sided difference at every 256th row would draw 63 horizontal
+    lines across the world.
     """
     painter = LAYER_PAINTERS[layer]
     x_cm, y_cm = frame_coordinates(size)
     spacing_m = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / size
-    cols = bilinear_weights(x_cm, field.x0_cm, field.spacing_cm, field.width)
-    biome_cols = biome_index(x_cm, BOUNDS_M["x_min_m"], BOUNDS_M["x_max_m"], biome["width"])
+    blur_px = WATER_EDGE_BLUR_M / spacing_m
+    detail, province = borrow
     ramp_lo, ramp_hi = ramp_range(field)
     noise = noise_fields(NOISE_SEED) if layer == "satellite" else None
+    wet_plane, measured_plane, _source = water_planes(field)
     water = field._water_raster()
     out = np.empty((size, size, 3), np.uint8)
     column_index = np.arange(size)
+
+    # The column taps are the same for every band, on both grids the bands sample: the
+    # field's 1 m lattice and the artwork's 8192 sheet. Built once.
+    field_x = grid_position(x_cm, field.x0_cm, field.spacing_cm, field.width)
+    cols_cubic = taps_cubic(field_x, field.width)
+    cols_linear = taps_linear(field_x, field.width)
+    art_step_cm = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) * 100 / SHEET_PX
+    art_x0_cm = BOUNDS_M["x_min_m"] * 100 + art_step_cm / 2
+    art_cols = taps_linear(grid_position(x_cm, art_x0_cm, art_step_cm, SHEET_PX), SHEET_PX)
+    art_y0_cm = BOUNDS_M["y_min_m"] * 100 + art_step_cm / 2
+    biome_cols = biome_index(x_cm, BOUNDS_M["x_min_m"], BOUNDS_M["x_max_m"], biome["width"])
 
     started = time.time()
     for top in range(0, size, BAND_ROWS):
         bottom = min(top + BAND_ROWS, size)
         lo = max(top - BAND_HALO, 0)
         hi = min(bottom + BAND_HALO, size)
-        rows = bilinear_weights(y_cm[lo:hi], field.y0_cm, field.spacing_cm, field.height)
-        z_dm, missing = sample_bilinear(field._height_dm, rows, cols, hf.NODATA)
+        field_y = grid_position(y_cm[lo:hi], field.y0_cm, field.spacing_cm, field.height)
+        cubic = (taps_cubic(field_y, field.height), cols_cubic)
+        linear = (taps_linear(field_y, field.height), cols_linear)
+
+        z_dm, missing = sample_surface(field._height_dm, cubic, linear, hf.NODATA)
         z_m = z_dm / np.float32(hf.DM_PER_M)
-        if water is not None:
-            water_dm, dry = sample_bilinear(water, rows, cols, hf.NODATA)
-            water_m = water_dm / np.float32(hf.DM_PER_M)
-            submerged = ~dry & (water_m > z_m)
-        else:
+        if wet_plane is None:
+            wet = measured = np.zeros(z_m.shape, np.float32)
             water_m = z_m
-            submerged = np.zeros(z_m.shape, bool)
+        else:
+            water_dm, _dry = sample_surface(water, cubic, linear, hf.NODATA)
+            water_m = water_dm / np.float32(hf.DM_PER_M)
+            wet = sample_coverage(wet_plane, linear)
+            measured = sample_coverage(measured_plane, linear) / np.where(wet <= 0.0, 1.0, wet)
+            measured = np.clip(measured, 0.0, 1.0)
+
+        art_rows = taps_linear(
+            grid_position(y_cm[lo:hi], art_y0_cm, art_step_cm, SHEET_PX), SHEET_PX
+        )
+        strength = sample_plain(province, linear) / 255.0
+        lift = 1.0 + BORROW_GAIN * strength * (sample_plain(detail, (art_rows, art_cols)) / 127.0)
+
         shade = hillshade(z_m, spacing_m)
         extra: dict = {}
         if layer == "satellite":
@@ -1034,16 +1473,17 @@ def render_layer(
             extra["noise"] = sample_noise(noise, np.arange(lo, hi), column_index, size)
         rgb = painter(
             z_m=z_m,
-            water_m=water_m,
-            wet=water_alpha(z_m, water_m, submerged),
+            depth=water_depth_fraction(z_m, water_m, measured),
+            wet=water_alpha(z_m, water_m, wet, measured, blur_px),
             missing=missing,
             shade=shade,
+            borrow=np.clip(lift, *BORROW_CLAMP),
             ramp_lo=ramp_lo,
             ramp_hi=ramp_hi,
             **extra,
         )
         out[top:bottom] = np.clip(rgb[top - lo : bottom - lo], 0, 255).astype(np.uint8)
-        if progress and (top // BAND_ROWS) % 8 == 0:
+        if progress and (top // BAND_ROWS) % 16 == 0:
             done = bottom / size
             print(
                 f"  {layer}: {done:5.1%} of {size}x{size} in {time.time() - started:5.1f}s",
@@ -1071,12 +1511,22 @@ def pinned_field_build(sidecar: dict) -> str | None:
     return node if isinstance(node, str) else None
 
 
-def build_sidecar(*, layer: str, field_meta: dict, tiles: dict, render: dict, extra: dict) -> dict:
+def build_sidecar(
+    *,
+    layer: str,
+    field_meta: dict,
+    tiles: dict,
+    render: dict,
+    extra: dict,
+    tiles_2x: dict | None = None,
+) -> dict:
     """The file the web API reads for this layer, plus the provenance to date it by.
 
     The four corner keys sit at the top exactly as ``map.json``'s do, and ``_meta.tiles``
     carries the same block, so the endpoint reads a render layer with the code it already
-    had for the artwork one.
+    had for the artwork one. ``_meta.tiles_2x`` is the same block again for the denser tree
+    beside it, and its absence is how a layer says it has none -- which is what the artwork
+    pyramid, cut by another tool, still says.
     """
     build = ((field_meta.get("sources") or {}).get("game") or {}).get("game_version_pinned")
     return {
@@ -1110,6 +1560,7 @@ def build_sidecar(*, layer: str, field_meta: dict, tiles: dict, render: dict, ex
             },
             "render": render,
             "tiles": tiles,
+            **({"tiles_2x": tiles_2x} if tiles_2x else {}),
             "staleness": (
                 "sources.heightfield.game_version_pinned is the build the field under these "
                 "pixels was cut from. tools/gen_map_renders.py refuses to replace this layer "
@@ -1121,18 +1572,91 @@ def build_sidecar(*, layer: str, field_meta: dict, tiles: dict, render: dict, ex
     }
 
 
-def install_layer(sheet_rgb, image_mod, out_dir: Path, layer: str) -> tuple[dict, float]:
-    """Cut one layer's pyramid into place, and say what it wrote and how long it took."""
+def install_layer(
+    sheet_rgb, image_mod, out_dir: Path, layer: str, workers: int
+) -> tuple[dict, dict, float]:
+    """Cut one layer's two pyramids into place, and say what they wrote and how long it took.
+
+    Two trees from one sheet, in the order a reader would want them if the run died between:
+    ``tiles/`` first, because that is what every client can read, and ``tiles@2x/`` after,
+    because a client that cannot find it simply asks for the 1x it already had. Each is
+    renamed into place on its own, so the pair is never half-swapped in a way that leaves
+    the page without a base map.
+    """
     directory = layer_dir(out_dir, layer)
     directory.mkdir(parents=True, exist_ok=True)
+    sheet = image_mod.fromarray(sheet_rgb)
+    source = f"tools/gen_map_renders.py, {layer} recipe {RECIPE}, Lanczos"
     started = time.time()
-    stats = install_pyramid(
-        image_mod.fromarray(sheet_rgb),
+    stats = install_pyramid(sheet, image_mod, directory, source=source, workers=workers)
+    dense = install_pyramid(
+        sheet,
         image_mod,
         directory,
-        source=f"tools/gen_map_renders.py, {layer} recipe {RECIPE}, Lanczos",
+        tile_px=PYRAMID_TILE_2X_PX,
+        source=source,
+        workers=workers,
+        dir_name=TILES_2X_DIR_NAME,
     )
-    return stats, time.time() - started
+    return stats, dense, time.time() - started
+
+
+def check_parallel(sheet_rgb, image_mod, scratch: Path, workers: int) -> dict:
+    """Cut one level twice -- serially and in parallel -- and compare every tile's SHA-256.
+
+    The claim the parallel cutter makes is not "equivalent" or "within tolerance", it is
+    **identical bytes**, and that is a claim a hash settles rather than an argument. Run on
+    demand rather than every time: it costs one extra cut of one level, and what it is
+    guarding against is a change to the cutter rather than a flaky machine.
+    """
+    from hashlib import sha256
+
+    sheet = image_mod.fromarray(sheet_rgb)
+    level = sheet.resize((PYRAMID_TILE_PX << CHECK_PARALLEL_Z,) * 2, image_mod.LANCZOS)
+    digests = {}
+    timings = {}
+    for name, jobs in (("serial", 1), ("parallel", workers)):
+        dest = scratch / name
+        dest.mkdir(parents=True, exist_ok=True)
+        if jobs > 1:
+            with ProcessPoolExecutor(max_workers=jobs) as pool:
+                # Wake every worker before the clock starts. Spawning thirty-two Python
+                # interpreters that each import numpy is a second and a half of startup,
+                # and folding that into the measurement would understate the cutting by
+                # more than the cutting costs.
+                list(pool.map(int, range(jobs)))
+                started = time.time()
+                cut_square_parallel(level, dest, CHECK_PARALLEL_Z, PYRAMID_TILE_PX, pool)
+                timings[name] = round(time.time() - started, 2)
+        else:
+            started = time.time()
+            cut_square(level, dest, CHECK_PARALLEL_Z, 0, 0, PYRAMID_TILE_PX)
+            timings[name] = round(time.time() - started, 2)
+        digests[name] = {
+            str(path.relative_to(dest)).replace("\\", "/"): sha256(path.read_bytes()).hexdigest()
+            for path in sorted(dest.rglob("*.png"))
+        }
+    same = digests["serial"] == digests["parallel"]
+    shutil.rmtree(scratch, ignore_errors=True)
+    return {
+        "level": CHECK_PARALLEL_Z,
+        "tiles": len(digests["serial"]),
+        "seconds_serial": timings["serial"],
+        "seconds_parallel": timings["parallel"],
+        "speedup": round(timings["serial"] / max(timings["parallel"], 1e-9), 2),
+        "workers": workers,
+        "byte_identical": same,
+        "differing_tiles": sorted(
+            name
+            for name in digests["serial"]
+            if digests["serial"][name] != digests["parallel"].get(name)
+        )[:8],
+        "method": (
+            "the same level cut both ways into two scratch directories, SHA-256 of every "
+            "tile compared name by name. The parallel path resamples nothing -- it is handed "
+            "the level already resized -- so this is an identity, not a tolerance."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -1162,9 +1686,30 @@ def main() -> int:
     parser.add_argument(
         "--size",
         type=int,
-        default=SHEET_PX,
-        choices=[SHEET_PX, SHEET_PX // 2, SHEET_PX // 4],
-        help=f"square edge of each render (default {SHEET_PX}, the artwork's own)",
+        default=RENDER_PX,
+        choices=[RENDER_PX * 2, RENDER_PX, RENDER_PX // 2, RENDER_PX // 4],
+        help=(
+            f"square edge of each render (default {RENDER_PX}, which is 0.458 m to the "
+            "pixel against a 1 m field -- see the module docstring for why doubling it "
+            "again was measured and refused)"
+        ),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            f"processes deflating tiles (default {DEFAULT_WORKERS}; 1 cuts serially). The "
+            "resampling is single-threaded either way, so the tiles are the same bytes"
+        ),
+    )
+    parser.add_argument(
+        "--check-parallel",
+        action="store_true",
+        help=(
+            f"cut z{CHECK_PARALLEL_Z} both serially and in parallel and compare every "
+            "tile's SHA-256, then carry on"
+        ),
     )
     parser.add_argument(
         "--force",
@@ -1175,8 +1720,12 @@ def main() -> int:
     args = parser.parse_args()
 
     layers = tuple(dict.fromkeys(args.layer)) if args.layer else LAYERS
+    workers = max(1, args.workers)
 
-    pillow_version = require_gen("PIL.Image")["pillow"]
+    versions = require_gen("ooz", "texture2ddecoder", "PIL.Image")
+    pillow_version, pyooz_version = versions["pillow"], versions["pyooz"]
+    import texture2ddecoder as decoder
+
     image_mod = load_imaging()
 
     field = hf.load_field(args.field)
@@ -1218,39 +1767,75 @@ def main() -> int:
                 )
                 return 3
 
+    # ---- the artwork sheet, which every layer now needs ------------------------------
+    paks = args.game / "FactoryGame" / "Content" / "Paks"
+    if not (paks / "FactoryGame-Windows.utoc").exists():
+        print(f"no FactoryGame-Windows.utoc under {paks}")
+        return 1
+    print(f"reading the game's own assets from {paks} with pyooz {pyooz_version}")
+    store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
+    artwork = read_artwork_sheet(store, decoder, image_mod)
+    detail, detail_meta = artwork_detail(artwork)
+    print(
+        f"  artwork sheet {SHEET_PX}x{SHEET_PX} from {len(SLICES)} BC1 slices; luminance "
+        f"high pass at sigma {BORROW_DETAIL_SIGMA_PX} px, std {detail_meta['measured_std']}"
+    )
+    province, province_meta = coarse_province(field)
+    print(
+        f"  coarse provenance ({', '.join(province_meta['provinces'])}) is "
+        f"{province_meta['share_of_the_field']}% of the field, feathered "
+        f"{BORROW_FEATHER_M:g} m"
+    )
+    borrow = (detail, province)
+    _wet_plane, _measured_plane, water_source = water_planes(field)
+    print(f"  water: {water_source}")
+
+    # The check cuts the ARTWORK, on purpose: a real picture with real entropy, so the PNGs
+    # it produces are real PNGs rather than a run-length of one colour that would compare
+    # equal however the two paths differed.
+    parallel_check = None
+    if args.check_parallel:
+        parallel_check = check_parallel(
+            np.asarray(artwork, np.uint8), image_mod, out_dir / "parallel.check", workers
+        )
+        print(
+            f"  parallel cutter: z{parallel_check['level']}, {parallel_check['tiles']} tiles, "
+            f"{parallel_check['seconds_serial']}s serial vs "
+            f"{parallel_check['seconds_parallel']}s on {workers} workers "
+            f"({parallel_check['speedup']}x) -- byte-identical: "
+            f"{parallel_check['byte_identical']}"
+        )
+        if not parallel_check["byte_identical"]:
+            print(
+                "  the parallel cutter does not reproduce the serial one's bytes. That is "
+                "the one thing it promises, so nothing is written: "
+                + ", ".join(parallel_check["differing_tiles"])
+            )
+            return 5
+
     # ---- the biome raster ------------------------------------------------------------
     biome = None
     if "satellite" in layers:
-        pyooz_version = require_gen("ooz")["pyooz"]
-        paks = args.game / "FactoryGame" / "Content" / "Paks"
-        if not (paks / "FactoryGame-Windows.utoc").exists():
-            print(f"no FactoryGame-Windows.utoc under {paks}")
-            return 1
-        print(f"reading the biome raster from {paks} with pyooz {pyooz_version}")
-        store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
         scripts = ScriptObjects(paks, oodle_decompress)
         biome = read_biome(store, scripts)
         print(
             f"  {biome['width']}x{biome['width']} palette indices, "
             f"{len(biome['palette'])} entries, {len(biome['distinct_areas'])} named areas"
         )
-        calibration = calibrate_biome(biome, out_dir / IMAGE_NAME, image_mod)
-        if "skipped" in calibration:
-            print(f"  calibration skipped: {calibration['skipped']}")
-        else:
+        calibration = calibrate_biome(biome, artwork, image_mod)
+        print(
+            f"  calibration: edge ratio {calibration['edge_ratio_at_the_pin']} at the pin "
+            f"against {calibration['edge_ratio_at_the_best_rival_shift']} for the best "
+            f"shift and {calibration['edge_ratio_at_other_scales']} at other scales -- "
+            f"margin {calibration['margin_over_the_best_rival']}x over "
+            f"{calibration['sweep']}"
+        )
+        if not calibration["pin_holds"]:
             print(
-                f"  calibration: edge ratio {calibration['edge_ratio_at_the_pin']} at the pin "
-                f"against {calibration['edge_ratio_at_the_best_rival_shift']} for the best "
-                f"shift and {calibration['edge_ratio_at_other_scales']} at other scales -- "
-                f"margin {calibration['margin_over_the_best_rival']}x over "
-                f"{calibration['sweep']}"
+                "  WARNING: the pin no longer beats its rivals by the required margin. "
+                "The biome texture moved, or the artwork sheet did. The layer is still "
+                "drawn -- it is the corners that are in question -- and _meta says so."
             )
-            if not calibration["pin_holds"]:
-                print(
-                    "  WARNING: the pin no longer beats its rivals by the required margin. "
-                    "The biome texture moved, or the artwork sheet did. The layer is still "
-                    "drawn -- it is the corners that are in question -- and _meta says so."
-                )
         agreement = agree_with_region_grid(biome)
         if "skipped" not in agreement:
             print(
@@ -1298,6 +1883,29 @@ def main() -> int:
         biome_rgb, biome_source = None, {}
 
     # ---- draw and cut ----------------------------------------------------------------
+    borrow_source = {
+        "artwork_detail": {
+            "name": f"the game's own {SHEET_PX} px map sheet, from its four BC1 slices",
+            "licence": (
+                "Coffee Stain Studios' own artwork, read out of the reader's installed copy "
+                "of the game. Its LUMINANCE only, high-passed, and multiplied into shading "
+                "-- no pixel of it is drawn and no colour of it crosses. Not committed, not "
+                "redistributed, and served to localhost only."
+            ),
+            **detail_meta,
+            "applied_where": province_meta,
+            "gain": BORROW_GAIN,
+            "clamp": list(BORROW_CLAMP),
+            "reading": (
+                "the field is one resolution but not one accuracy. Over the landscape "
+                "province -- 45.3% of it -- the geometry is continuous and its own shading "
+                "is the best there is, so nothing is borrowed. Over cliff and fill it is "
+                "rasterised hulls and 3.9 m blocks, which is why those provinces read as "
+                "melted wax when drawn from the field alone, and the artwork drew the same "
+                "ground at 0.92 m."
+            ),
+        }
+    }
     total_started = time.time()
     for layer in layers:
         print(f"drawing {layer} at {args.size}x{args.size}")
@@ -1307,45 +1915,70 @@ def main() -> int:
             field,
             biome_rgb,
             biome or {"width": 1, "area": np.zeros((1, 1), np.uint8)},
+            borrow,
             args.size,
             not args.quiet,
         )
         drew = time.time() - started
         try:
-            stats, cut = install_layer(sheet, image_mod, out_dir, layer)
+            stats, dense, cut = install_layer(sheet, image_mod, out_dir, layer, workers)
         except PyramidError as exc:
             print(exc)
             return 1
         del sheet
         stats["game_version_pinned"] = field_build
+        dense["game_version_pinned"] = field_build
+        spacing_m = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / args.size
         render = {
             "width_px": args.size,
             "height_px": args.size,
-            "metres_per_pixel": round((BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / args.size, 4),
+            "metres_per_pixel": round(spacing_m, 4),
             "sampling": (
-                "bilinear over the 1 m field per output pixel, with a no-data texel given "
-                "zero weight rather than a value"
+                "Catmull-Rom (cubic convolution, a = -1/2) over the 1 m field per output "
+                "pixel wherever the 4x4 stencil is whole, bilinear where it straddles the "
+                "edge of the data, and nothing at all where no texel under it has a value. "
+                "C1, which is what lets the hillshade be computed at output resolution "
+                "without ruling the relief into 1 m squares"
             ),
             "hillshade": (
                 f"sun at azimuth {SUN_AZIMUTH_DEG} deg, altitude {SUN_ALTITUDE_DEG} deg, "
-                f"shade in [{SHADE_FLOOR}, {SHADE_FLOOR + SHADE_RANGE}]"
+                f"shade in [{SHADE_FLOOR}, {SHADE_FLOOR + SHADE_RANGE}], computed at the "
+                "output's own spacing"
             ),
+            "water": {
+                "source": water_source,
+                "depth_ramp_m": WATER_DEPTH_FULL_M,
+                "edge_feather_m": WATER_EDGE_M,
+                "edge_blur_m": WATER_EDGE_BLUR_M,
+                "edge_blur_px": round(WATER_EDGE_BLUR_M / spacing_m, 3),
+                "level_only": (
+                    "full alpha and the deep end of the ramp. 95.2% of level-only water "
+                    "stands over the fill province and 98% of its surface levels lie in a "
+                    "0.7 m band around the ocean's own -16.99 m, so it is the ocean, and a "
+                    "depth ramp run on a 3.9 m raster's rounding error is what used to draw "
+                    "3.572 km2 of it as land"
+                ),
+            },
             "seconds_to_draw": round(drew, 1),
             "seconds_to_cut": round(cut, 1),
+            "cut_workers": workers,
+            **({"parallel_cutter_check": parallel_check} if parallel_check else {}),
             "imaging": {"name": "pillow", "version": pillow_version},
         }
         sidecar = build_sidecar(
             layer=layer,
             field_meta=field_meta,
             tiles=stats,
+            tiles_2x=dense,
             render=render,
-            extra=biome_source if layer == "satellite" else {},
+            extra={**borrow_source, **(biome_source if layer == "satellite" else {})},
         )
         path = layer_dir(out_dir, layer) / RENDER_SIDECAR_NAME
         path.write_text(json.dumps(sidecar, indent=1), encoding="utf-8")
         print(
             f"wrote {layer_dir(out_dir, layer)}  {stats['count']} tiles over "
-            f"z0..z{stats['max_z']}  {stats['bytes'] / 1e6:.1f} MB  "
+            f"z0..z{stats['max_z']} ({stats['bytes'] / 1e6:.1f} MB) plus {dense['count']} "
+            f"@2x over z0..z{dense['max_z']} ({dense['bytes'] / 1e6:.1f} MB)  "
             f"(drew {drew:.0f}s, cut {cut:.0f}s)"
         )
     print(f"done in {time.time() - total_started:.0f}s")

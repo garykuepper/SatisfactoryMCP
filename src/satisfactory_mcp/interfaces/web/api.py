@@ -523,6 +523,25 @@ MAP_BOUNDS_NAME = "map.json"
 #: renaming the finished tree into place so this endpoint can never serve half of one.
 MAP_TILES_DIR_NAME = "tiles"
 
+#: ...and the same tile GRID at twice the pixels, for a display whose device pixel ratio is
+#: above one. Level z of ``tiles@2x/`` covers the identical squares of the world that level
+#: z of ``tiles/`` does -- 2**z of them a side -- and each square is 512 px instead of 256,
+#: so a client asks for the same ``{z}/{x}/{y}`` it always did and draws twice the pixels
+#: into the same CSS box. That is the whole of the @2x design on this side: one query
+#: parameter chooses a directory, and every other answer this endpoint gives is unchanged.
+#:
+#: One level shallower than the 1x tree by arithmetic rather than by choice, since
+#: ``512 * 2**z`` runs out of sheet before ``256 * 2**z`` does -- so the probe advertises
+#: the two depths separately and a client past the @2x top asks for 1x tiles again.
+MAP_TILES_2X_DIR_NAME = "tiles@2x"
+MAP_TILE_2X_PX = 512
+
+#: The query parameter that picks between them, and what it takes: the tile size the client
+#: wants in pixels. A number rather than a flag because it says what it means and because a
+#: third density would be one more value rather than one more spelling; anything this
+#: server has no tree for falls back to the 1x tile, which every client can draw.
+MAP_TILE_PX_PARAM = "px"
+
 #: There is now more than one picture of this world, so a tile has to say WHICH.
 #:
 #: ``map`` is the game's own artwork under ``local/tiles/``, which is where it has always
@@ -635,34 +654,46 @@ def _map_pyramid(layer: str = MAP_LAYER_DEFAULT) -> dict[str, Any]:
         meta = json.loads(path.read_text(encoding="utf-8")) if path is not None else {}
     except (OSError, ValueError):
         meta = {}
-    tiles: Any = meta.get("_meta") if isinstance(meta, dict) else None
-    tiles = tiles.get("tiles") if isinstance(tiles, dict) else None
-    if not isinstance(tiles, dict):
-        tiles = {}
+    block: Any = meta.get("_meta") if isinstance(meta, dict) else None
+    block = block if isinstance(block, dict) else {}
+    tiles = block.get("tiles") if isinstance(block.get("tiles"), dict) else {}
+    dense = block.get("tiles_2x") if isinstance(block.get("tiles_2x"), dict) else None
 
-    def _whole(key: str, default: int, floor: int) -> int:
-        value = tiles.get(key)
+    def _whole(source: dict, key: str, default: int, floor: int) -> int:
+        value = source.get(key)
         return (
             value
             if isinstance(value, int) and not isinstance(value, bool) and value >= floor
             else default
         )
 
+    # The @2x tree's own numbers ride in the SAME digest, so recutting one and not the other
+    # still changes every URL of that layer. Two trees of one picture that could disagree
+    # about which build they came from is exactly the state an ``immutable`` tile must not
+    # be served in.
     stamp = "|".join(
         [
             layer,
             *(str(tiles.get(key)) for key in ("game_version_pinned", "count", "bytes", "max_z")),
+            *(str((dense or {}).get(key)) for key in ("count", "bytes", "max_z")),
         ]
     )
     return {
-        "tile_px": _whole("tile_px", MAP_TILE_PX, 1),
-        "max_z": _whole("max_z", MAP_TILE_MAX_Z, 0),
+        "tile_px": _whole(tiles, "tile_px", MAP_TILE_PX, 1),
+        "max_z": _whole(tiles, "max_z", MAP_TILE_MAX_Z, 0),
+        "tile_2x_px": _whole(dense, "tile_px", MAP_TILE_2X_PX, 1) if dense else None,
+        "max_2x_z": _whole(dense, "max_z", 0, 0) if dense else None,
         "build": hashlib.sha256(stamp.encode("utf-8")).hexdigest()[:12],
     }
 
 
 def map_tile_path(
-    z: int, x: int, y: int, max_z: int = MAP_TILE_MAX_Z, layer: str = MAP_LAYER_DEFAULT
+    z: int,
+    x: int,
+    y: int,
+    max_z: int = MAP_TILE_MAX_Z,
+    layer: str = MAP_LAYER_DEFAULT,
+    tree: str = MAP_TILES_DIR_NAME,
 ) -> Path | None:
     """Where one pyramid tile lives, or ``None`` if ``(z, x, y)`` is off the pyramid.
 
@@ -676,15 +707,36 @@ def map_tile_path(
     ``layer`` is the one segment that IS a string, and it never reaches a path: it is
     looked up in ``_layer_dir``, which answers ``None`` for anything that is not one of the
     names this module wrote down. So a layer segment shaped like an escape is an unknown
-    layer and nothing else -- there is no join for it to escape through.
+    layer and nothing else -- there is no join for it to escape through. ``tree`` is the
+    same kind of thing one step further in: it is chosen by ``_tile_tree`` from the two
+    names written down above and is never a string a request supplied.
     """
     directory = _layer_dir(layer)
-    if directory is None or not 0 <= z <= max_z:
+    if directory is None or tree not in (MAP_TILES_DIR_NAME, MAP_TILES_2X_DIR_NAME):
+        return None
+    if not 0 <= z <= max_z:
         return None
     span = 1 << z
     if not (0 <= x < span and 0 <= y < span):
         return None
-    return directory / MAP_TILES_DIR_NAME / str(z) / f"{x}_{y}.png"
+    return directory / tree / str(z) / f"{x}_{y}.png"
+
+
+def _tile_tree(request: Request, pyramid: dict[str, Any]) -> tuple[str, int]:
+    """Which of a layer's two trees this request asked for, and how deep that one goes.
+
+    The rule is deliberately forgiving in one direction only. A client that asks for a
+    density this layer has gets it; a client that asks for one it does not -- an artwork
+    pyramid cut by a tool that writes no @2x tree, a layer generated before this existed,
+    a hand-typed number -- gets the 1x tile, which every client can draw at any density. The
+    other direction has no fallback to make: a client that asks for nothing wants 256.
+    """
+    if pyramid["max_2x_z"] is None:
+        return MAP_TILES_DIR_NAME, pyramid["max_z"]
+    asked = request.query_params.get(MAP_TILE_PX_PARAM)
+    if asked is not None and asked.isdigit() and int(asked) == pyramid["tile_2x_px"]:
+        return MAP_TILES_2X_DIR_NAME, pyramid["max_2x_z"]
+    return MAP_TILES_DIR_NAME, pyramid["max_z"]
 
 
 @router.get("/regions")
@@ -843,13 +895,20 @@ def _serve_tile(request: Request, layer: str, z: int, x: int, y: int) -> Any:
     regenerating a pyramid changes that layer's tag, which changes every URL of that layer,
     which is what makes ``immutable`` safe to send. The ETag carries the same tag for
     anything that revalidates instead.
+
+    **And ``?px=`` picks the density.** A layer may hold two trees of the same grid -- 256 px
+    tiles and 512 px tiles over the identical squares of the world -- so a hi-DPI client asks
+    for the same ``{z}/{x}/{y}`` and names the tile size it wants. The @2x tree is one level
+    shallower, which is why the depth in the headers is the depth of the tree actually being
+    served and both depths are advertised.
     """
     pyramid = _map_pyramid(layer)
-    path = map_tile_path(z, x, y, pyramid["max_z"], layer)
+    tree, depth = _tile_tree(request, pyramid)
+    path = map_tile_path(z, x, y, depth, layer, tree)
     if path is None:
         return _fail(
-            f"no tile {layer}/{z}/{x}/{y}: this pyramid runs z0..z{pyramid['max_z']}, and "
-            "level z is a 2**z by 2**z grid, so x and y stop there",
+            f"no tile {layer}/{z}/{x}/{y}: this pyramid runs z0..z{depth}, and level z is a "
+            "2**z by 2**z grid, so x and y stop there",
             404,
         )
     if not path.is_file():
@@ -878,6 +937,19 @@ def _serve_tile(request: Request, layer: str, z: int, x: int, y: int) -> Any:
         "X-Map-Tile-Px": str(pyramid["tile_px"]),
         "X-Map-Tile-Max-Z": str(pyramid["max_z"]),
         "X-Map-Build": pyramid["build"],
+        # The denser tree, when this layer has one, on the same probe: a client that is
+        # going to ask for @2x tiles has to know both that they exist and how deep they go
+        # BEFORE it builds its layer, and this is the request it was already making.
+        # Absent, not zero, when there is no such tree -- the same way an absent pyramid is
+        # a 204 rather than a depth of -1.
+        **(
+            {
+                "X-Map-Tile-2x-Px": str(pyramid["tile_2x_px"]),
+                "X-Map-Tile-2x-Max-Z": str(pyramid["max_2x_z"]),
+            }
+            if pyramid["max_2x_z"] is not None
+            else {}
+        ),
         "Cache-Control": "public, max-age=31536000, immutable" if versioned else "no-cache",
         "ETag": etag,
     }
