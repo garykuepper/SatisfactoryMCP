@@ -171,10 +171,35 @@ var PyramidLayer = L.TileLayer.extend({
   },
 }) as new (url: string, options: L.TileLayerOptions) => L.TileLayer;
 
+/* Whether this display can show more pixels than a 256 px tile carries.
+ *
+ * Read once, at probe time, and deliberately not watched: a window dragged between a laptop
+ * screen and an external monitor changes devicePixelRatio, and rebuilding every tile layer
+ * mid-drag to chase it would refetch the whole view for a difference nobody asked for. A
+ * reload picks up the new one, which is the same bargain the CRS and the bounds already make.
+ *
+ * `>= 1.5` rather than `> 1`: a 125% Windows scale factor reports 1.25, and at 1.25 the @2x
+ * tile is 60% more pixels than the screen can show -- four times the bytes to be downsampled
+ * by the compositor. 150% and up is where the denser tile is nearer the truth than the
+ * sparser one. */
+function wantsDenseTiles(): boolean {
+  return (window.devicePixelRatio || 1) >= 1.5;
+}
+
 /* One pyramid, wired to the pixel space map.ts' CRS_SHEET_PX set up: Leaflet's tile level Z
  * + 5 is the pyramid's z, because 256 * 2^(Z+5) is 8192 * 2^Z, and 8192 sheet pixels are one
  * screen pixel each at map zoom 0. So the level Leaflet asks for is the level whose pixels
  * match the view, which is the whole point of cutting a pyramid.
+ *
+ * A layer may hold that grid TWICE -- `tiles/` at 256 px a tile and `tiles@2x/` at 512 --
+ * and this is where the second one is chosen. Nothing about the grid changes: `tileSize`
+ * stays the CSS size it always was, the zoom offset stays 5, the same `{z}/{x}/{y}` names
+ * the same square of the world. The tile simply arrives with twice the pixels in it and
+ * Leaflet draws it into the same box, which on a hi-DPI display is the difference between a
+ * resampled map and a sharp one. The @2x tree is one level shallower by arithmetic -- 512 *
+ * 2^z runs out of sheet before 256 * 2^z does -- so `maxNativeZoom` comes from whichever
+ * tree is actually being fetched, and past it Leaflet upscales the deepest level it has,
+ * which carries exactly the same information the 1x tree's next level would have.
  *
  * Returns null -- this mode cannot be drawn as a pyramid -- when the server describes one
  * this grid cannot draw: corners that are not the square the CRS is anchored on, or a tile
@@ -196,7 +221,7 @@ function pyramidMaker(spec: ModeSpec, response: Response): (() => L.Layer) | nul
   if (moved) return null;
 
   var tilePx = +response.headers.get("X-Map-Tile-Px")! || 256;
-  // Each layer's OWN depth: the renders stop at z5 and the artwork can be cut deeper, so
+  // Each layer's OWN depth: the renders stop at z6 and the artwork can be cut deeper, so
   // this is the one number a mode switch actually has to carry across. Past it Leaflet
   // upscales the deepest level it has instead of asking for one that is not there.
   var maxZ = +response.headers.get("X-Map-Tile-Max-Z")!;
@@ -204,14 +229,26 @@ function pyramidMaker(spec: ModeSpec, response: Response): (() => L.Layer) | nul
   var top = Math.log2(MAP_SHEET_PX / tilePx); // the pyramid z that IS the sheet: 5.
   if (!isFinite(top) || top !== Math.round(top)) return null;
 
+  // ...and, when this layer has a denser tree and this display can use it, that tree's
+  // size and depth instead. `tileSize` deliberately stays `tilePx`: it is the CSS size of
+  // a tile and the grid must not move. What changes is how many pixels arrive inside it.
+  var densePx = +response.headers.get("X-Map-Tile-2x-Px")!;
+  var denseMaxZ = +response.headers.get("X-Map-Tile-2x-Max-Z")!;
+  var dense = wantsDenseTiles() && isFinite(densePx) && densePx > 0 && isFinite(denseMaxZ);
+  if (dense) maxZ = denseMaxZ;
+
   // The build tag makes every URL change when the pyramid is recut, which is what lets
   // the server mark a tile immutable: a pan that comes back over old ground refetches
   // nothing at all, and a regenerated map is picked up on the next load rather than a
   // day later. It is per layer, so recutting the satellite cannot invalidate the terrain
-  // a browser is holding.
+  // a browser is holding -- and the @2x tree's own numbers are inside the same tag, so
+  // recutting either one changes both.
   var tag = response.headers.get("X-Map-Build");
+  var query = [];
+  if (tag) query.push("v=" + encodeURIComponent(tag));
+  if (dense) query.push("px=" + densePx);
   var url =
-    "/api/maptiles/" + spec.layer + "/{z}/{x}/{y}" + (tag ? "?v=" + encodeURIComponent(tag) : "");
+    "/api/maptiles/" + spec.layer + "/{z}/{x}/{y}" + (query.length ? "?" + query.join("&") : "");
   var bounds = mapImageLatLngBounds(b);
 
   return function () {
