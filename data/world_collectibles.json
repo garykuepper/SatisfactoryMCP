@@ -96,13 +96,13 @@
      "unresolved_class_hashes_in_the_map": 0,
      "role": "turns a script-import hash back into /Script/FactoryGame.<Class>. With 0 unresolved hashes above, every actor class in the map has a name."
     },
-    "seconds": 4.2,
+    "seconds": 4.1,
     "decompressor": {
      "name": "pyooz",
      "version": "0.0.8",
      "import_name": "ooz",
      "licence": "GPL-3.0",
-     "role": "Oodle block decompression, offline, at generation time only. It is not a dependency of this project, is never imported from src/ or sidecar/, and no part of it is present in this file."
+     "role": "Oodle block decompression, offline, at generation time only. An OPTIONAL dependency: the `gen` extra in pyproject.toml, pinned exactly because it decides these bytes, and asked for on the command line -- `uv run --extra gen python tools/gen_world_collectibles.py`. It is imported at module scope nowhere, and lazily inside one function of satisfactory_mcp.core.gameassets.iostore, so the server and the test suite run with it absent. No part of it is present in this file."
     },
     "licence": "the coordinates are facts about Coffee Stain's map, read out of the installed game. No third-party world table contributed to this file."
    },
