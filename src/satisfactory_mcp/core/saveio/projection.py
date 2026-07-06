@@ -27,7 +27,11 @@ from ... import config
 #: direction be inferred; 15 added the SPLINE TANGENTS to both route keys, so a curved belt or
 #: a pipe elbow can be drawn as the curve it was built as rather than as the chords between its
 #: corners, and a ``storage`` key -- the containers and fluid buffers, with what is in each one.
-SCHEMA_VERSION = 15
+#: 16 is the first bump that CORRECTS existing keys rather than adding new ones, so a pickle
+#: written under 15 is not merely thinner than what this code expects, it disagrees with it:
+#: ``inventories`` bucketed eight containers' contents as unspendable machine buffers, and a
+#: placement whose rotation would not read claimed to be axis-aligned instead of saying nothing.
+SCHEMA_VERSION = 16
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

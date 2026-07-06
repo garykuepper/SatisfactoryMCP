@@ -147,18 +147,28 @@ def test_every_placed_record_carries_a_yaw(projection):
     An absent yaw has to mean "this projection predates schema 12", never "this building is
     unrotated" -- a consumer cannot tell those apart after the fact, and the world is full of
     genuinely unrotated buildings.
+
+    Since schema 16 the KEY is always there and its VALUE may be null, which is the third
+    claim: this placement's rotation would not decode. None is here, on this save -- asserted,
+    because that is what makes the range checks below statements about every record rather
+    than about the ones that happened to read -- and the projection says so in ``warnings``
+    when there are, rather than letting an undecodable header pass for a square one.
     """
     for key in PLACED:
         records = projection[key]
         assert records, f"{key} is empty in the fixture"
         assert all("yaw" in r for r in records), f"{key}: a record with no yaw"
+        assert all(r["yaw"] is not None for r in records), f"{key}: an unreadable rotation"
         assert all(-180.0 <= r["yaw"] <= 180.0 for r in records), f"{key}: yaw out of range"
         assert any(r["yaw"] for r in records), f"{key}: every yaw is zero, which is not this save"
 
     rows = projection["structures"]["instances"]
     assert rows and all(len(r) == 5 for r in rows), "a structure row without its yaw column"
-    assert all(-180.0 <= r[4] <= 180.0 for r in rows)
+    assert all(r[4] is not None and -180.0 <= r[4] <= 180.0 for r in rows)
     assert sum(1 for r in rows if r[4] % 90) == 4631, "the angled pieces of the reference world"
+    assert not [w for w in projection["warnings"] if "rotation" in w], (
+        "a save with no unreadable rotation must not announce one"
+    )
 
 
 def test_a_half_turn_has_one_spelling(projection):
@@ -185,11 +195,20 @@ def test_yaw_of_a_quaternion_turns_x_towards_y():
 
 
 def test_a_rotation_that_is_not_one_costs_a_yaw_and_not_the_projection():
-    """``yaw_of`` runs on whatever the decoder produced, so it must answer for any shape."""
-    assert yaw_of(None) == 0.0
-    assert yaw_of(()) == 0.0
-    assert yaw_of((0.0, 0.0, 1.0)) == 0.0
-    assert yaw_of(("x", "y", "z", "w")) == 0.0
+    """``yaw_of`` runs on whatever the decoder produced, so it must answer for any shape.
+
+    And the answer is None, not 0.0. Schema 16: zero is a real bearing that most of this
+    world genuinely has, so returning it for a quaternion that would not read published a
+    measurement nobody made, mixed in with 17,500 that were made and indistinguishable from
+    them after the fact. Null is the claim ``api.py`` and the map already handle -- drawn
+    axis-aligned, labelled "facing: unknown" -- and it is the difference between the two.
+    """
+    assert yaw_of(None) is None
+    assert yaw_of(()) is None
+    assert yaw_of((0.0, 0.0, 1.0)) is None
+    assert yaw_of(("x", "y", "z", "w")) is None
+    # Still a float where there is one, and 0.0 keeps meaning axis-aligned.
+    assert yaw_of((0.0, 0.0, 0.0, 1.0)) == 0.0
 
 
 # ------------------------------------------------------------------------------- belts
@@ -906,25 +925,36 @@ def test_a_containers_contents_are_its_own_and_they_add_up(projection):
     component NAMES, with no idea which actor owns which -- so it is an independent count of
     the same items, and a mis-joined or double-counted inventory would not match it.
 
-    It matches with a stated remainder, and the remainder is itself the finding: the old bucket
-    rule names only ``StorageContainer``, ``CentralStorage`` and ``FreightWagon``, so the
-    Personal Storage Boxes, the HUB's built-in container and the Blueprint Designer's have
-    never been in it. These rows cover those too, and the excess is EXACTLY their contents --
-    which is both the check and the reason that older sum was quietly short.
+    **It used to match with a remainder, and the remainder was the bug.** Schema 15 recorded
+    it as a finding and tolerated it: the bucket rule matched three substrings where the row
+    join uses STORAGE_CLASSES, so the 6 Personal Storage Boxes, the HUB's built-in container
+    and the Blueprint Designer's were in one and not the other, and 10,667 units over 31 item
+    classes were bucketed as machine buffers -- material ``stock()`` will not spend. Schema 16
+    made the bucket the same membership test, and there is nothing left over: the two now
+    agree item for item, which is the strongest form this cross-check can take.
+
+    A freight wagon would still be a legitimate remainder in ``bucketed`` -- it is stock and it
+    is not a container, so it has no row here -- and no save in the reference directory has
+    one. Asserted as an exact match rather than as an inequality because that is what this
+    world says; a wagon arriving here should be a failure somebody reads, not a silent pass.
     """
     per_row: dict[str, float] = {}
-    outside: dict[str, float] = {}
-    named = ("StorageContainer", "CentralStorage", "FreightWagon")
     for r in projection["storage"]:
         for item, amount in r.get("items", ()):
             per_row[item] = per_row.get(item, 0) + amount
-            if not any(tag in r["cls"] for tag in named):
-                outside[item] = outside.get(item, 0) + amount
     bucketed = projection["inventories"]["storage"]
-    assert per_row and bucketed and outside
-    assert set(bucketed) <= set(per_row), "an item the bucket found in no container at all"
-    excess = {i: n - bucketed.get(i, 0) for i, n in per_row.items() if n != bucketed.get(i)}
-    assert excess == outside
+    assert per_row and bucketed
+    assert per_row == bucketed, "the two counts of the same stacks disagree"
+    # And the eight containers the old rule could not see are really in there, so that this
+    # is a statement about the fix rather than about two empty sums.
+    named = ("StorageContainer", "CentralStorage", "FreightWagon")
+    outside: dict[str, float] = {}
+    for r in projection["storage"]:
+        if any(tag in r["cls"] for tag in named):
+            continue
+        for item, amount in r.get("items", ()):
+            outside[item] = outside.get(item, 0) + amount
+    assert len(outside) == 31 and sum(outside.values()) == 10667
 
 
 def test_a_fluid_buffer_takes_its_fluid_from_the_network_that_claims_it(projection):

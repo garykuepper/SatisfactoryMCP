@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-15 projection is this project's shape, versioned with this project's cache,
+the schema-16 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -62,7 +62,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 #: The four pipeline classes that carry an ``mSplineData`` -- the fluid pipes, Mk1 and Mk2,
 #: each in the ordinary and the ``NoIndicator`` variant a player gets when the flow indicator
@@ -150,6 +150,17 @@ STORAGE_CLASSES = (
     # FGCentralStorageSubsystem's central total -- 33 uploaders here against one subsystem.
     "Build_CentralStorage_C",
 )
+
+#: Owners whose ``StorageInventory`` counts as the player's stock but which are not in
+#: STORAGE_CLASSES, matched on a word inside the instance name rather than by class.
+#:
+#: One entry, and it is here rather than in the list above because the two are known
+#: differently. A Freight Wagon is a VEHICLE, not a buildable: it has no ``Build_`` class, no
+#: footprint in the docs dump, and no save in this repository's reference directory holds one
+#: -- so the exact class name cannot be read off anything here, only guessed at. This word is
+#: what the bucket rule has matched on since schema 11, it is unchanged, and leaving it alone
+#: is the only way to be sure the fix beside it does not quietly move a wagon's cargo.
+_STORAGE_OWNER_HINTS = ("FreightWagon",)
 
 #: The fluid half. A different record, not a different key: these hold a single fluid in an
 #: ``mFluidBox`` float rather than a stack list, and the fluid's identity is not on the actor
@@ -267,8 +278,8 @@ def pos_of(header) -> list | None:
         return None
 
 
-def yaw_of(quat) -> float:
-    """Top-down facing in degrees from a placement quaternion ``(x, y, z, w)``.
+def yaw_of(quat) -> float | None:
+    """Top-down facing in degrees from a placement quaternion ``(x, y, z, w)``, or None.
 
     **The convention, and it is measured rather than assumed.**
 
@@ -295,11 +306,25 @@ def yaw_of(quat) -> float:
 
     The general form is kept even though ``x == y == 0`` reduces it to ``2*atan2(z, w)``:
     the 396 wall-mounted actors above do carry pitch, and this is their yaw, not nonsense.
+
+    **A rotation that will not read comes back as None, and it used to come back as 0.0.**
+    Schema 16, and the reason is the one this module states everywhere else: 0.0 is a
+    MEASUREMENT -- it means axis-aligned, which most of the world genuinely is -- so an
+    unreadable quaternion returning it published a bearing nobody read off anything, mixed
+    in with 8,000 real ones and indistinguishable from them. A consumer bucketing yaws, or
+    drawing a footprint, had no way to tell the two apart afterwards. Null is the claim the
+    rest of the stack already understands: ``api.py``'s ``_yaw`` maps it straight through,
+    and the map draws a null yaw axis-aligned while saying "facing: unknown" rather than
+    "facing: 0deg" -- which it has done since schema 12, for a projection too old to carry
+    the field at all. This is the same statement about one placement instead of all of them.
+
+    ``extract`` counts what came back null and says so in ``warnings``, so a save where the
+    header decode is going wrong announces itself instead of looking like a tidy grid.
     """
     try:
         x, y, z, w = (float(v) for v in quat)
     except (TypeError, ValueError):
-        return 0.0
+        return None
     deg = round(math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))), 2)
     return 180.0 if deg == -180.0 else deg
 
@@ -663,9 +688,10 @@ def extract(path: str) -> dict:
             "cls": cls,
             "instance": instance,
             "pos": pos_of(header),
-            # Always emitted, like `pos` and unlike the property-derived fields below: an
-            # actor header always carries a transform, so an absent yaw would mean the
-            # projection is old rather than the building is unrotated.
+            # The KEY is always emitted, like `pos` and unlike the property-derived fields
+            # below: an actor header always carries a transform, so an absent yaw would mean
+            # the projection is old rather than the building is unrotated. Its VALUE is null
+            # where the transform would not read -- a third claim again, and see `yaw_of`.
             "yaw": yaw_of(getattr(header, "rotation", None)),
         }
         if "mCurrentPotential" in p:
@@ -741,6 +767,24 @@ def extract(path: str) -> dict:
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
     out["progression"].setdefault("purchased_schematics", [])
+
+    # Counted off the finished payload rather than tallied inside `yaw_of`, which is a pure
+    # function called from three places including `_structures`, and threading a counter
+    # through them would buy nothing this does not: what is reported is exactly the number of
+    # null yaws a reader can go and find. Silent on a healthy save -- all 8,347 lightweight
+    # pieces and all 9,153 actors on the reference world read -- and the point is that a
+    # header decode going wrong stops looking like a world built on the grid.
+    unread = sum(
+        1
+        for key in ("machines", "extractors", "generators", "attachments", "storage")
+        for record in out[key]
+        if record.get("yaw") is None
+    ) + sum(1 for row in out["structures"]["instances"] if len(row) > 4 and row[4] is None)
+    if unread:
+        out["warnings"].append(
+            f"{unread} placement(s) carry a rotation this parser could not read; "
+            "their yaw is null rather than 0, which would have meant axis-aligned"
+        )
     return out
 
 
@@ -1492,6 +1536,16 @@ def _storage(actors: list, held: dict, networks: list) -> list:
     return rows
 
 
+def owner_class(owner: str) -> str:
+    """``Build_StorageContainerMk1_C_2147441119`` -> ``Build_StorageContainerMk1_C``.
+
+    The instance id is a trailing ``_<digits>`` and nothing else is, so stripping one is
+    exact. A name with no numeric tail comes back whole rather than losing its ``_C``.
+    """
+    head, sep, tail = owner.rpartition("_")
+    return head if sep and tail.isdigit() else owner
+
+
 def inventory_bucket(instance: str) -> str:
     """Which pile a stack belongs to, from the component's instanceName.
 
@@ -1503,13 +1557,36 @@ def inventory_bucket(instance: str) -> str:
     5,556,375 and Fuel 1,048,762 -- pipe and machine-buffer contents, in litres --
     which is a wildly wrong answer to "what do I have on hand". A build-cost check
     against that number would tell the player they can afford anything.
+
+    **The storage test is membership in STORAGE_CLASSES, and it was three substrings.**
+    Schema 16. Until now this asked whether the owner's name contained ``StorageContainer``,
+    ``CentralStorage`` or ``FreightWagon``, which is a different question from the one the
+    list next door answers and gets a different answer: the Personal Storage Box
+    (``Build_StoragePlayer_C``), the HUB's own container (``Build_StorageIntegrated_C``) and
+    the Blueprint Designer's (``Build_StorageBlueprint_C``) contain none of those words, so
+    everything in them was bucketed as a MACHINE BUFFER -- material that exists but cannot be
+    spent -- and ``stock()`` never saw it. On the reference save that is 8 containers holding
+    **10,667 units across 31 item classes**: 2,309 Wire, 1,445 Concrete, 1,353 Steel Beams,
+    440 Gifts, 125 SAM Fluctuators, and the alien remains a MAM node costs -- 16 Hog, 5
+    Stinger, 2 Spitter. Every affordability answer in the server reads ``stock()``, so all 31
+    were understated; two of them were reported as **zero** with the player standing next to
+    a box of them, 12 Wood and 34 Copper Ingot, and the rest were short by that much.
+
+    The two lists had already disagreed once, in writing: schema 15's ``storage`` key joins
+    its rows by STORAGE_CLASSES and its reconciliation test recorded the difference as a
+    remainder to be tolerated. It is the same eight containers, and it was the bug.
+
+    The role gate stays. Every splitter and merger in the world owns a component literally
+    named ``StorageInventory`` -- 848 of them here -- but so does nothing else on these
+    classes, and requiring the role is what keeps a container's other components out of a
+    total that means "stock".
     """
     owner = instance.rsplit(".", 2)[-2] if instance.count(".") >= 2 else instance
     role = instance.rsplit(".", 1)[-1]
     if "PlayerState" in owner or owner.startswith(("Char_", "BP_Player")):
         return "player"
-    if role == "StorageInventory" and any(
-        tag in owner for tag in ("StorageContainer", "CentralStorage", "FreightWagon")
+    if role == "StorageInventory" and (
+        owner_class(owner) in STORAGE_CLASSES or any(tag in owner for tag in _STORAGE_OWNER_HINTS)
     ):
         return "storage"
     return "machine"

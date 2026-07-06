@@ -32,6 +32,10 @@ this still catches.
 
 Every later schema adds its own entry to that list rather than re-banking, which is why the
 list is keyed by what was added and annotated with which schema added it.
+
+**Schema 16 is the first entry that is not an addition**, and it needed a decision rather than
+a line: it CORRECTED ``inventories``, which is one of the banked keys. The choice made, and
+the choice rejected, are argued in ``_unfix_16``.
 """
 
 from __future__ import annotations
@@ -88,11 +92,71 @@ POST_11_ADDITIONS = {
     #: Schema 12. ``structures.instances`` rows were ``[classIndex, x, y, z]`` and gained a
     #: fifth column, the same yaw. A row is positional, so the addition is a length, not a name.
     "row_width": {"structures": 4},
+    #: Schema 16, and the first entry here that is not an ADDITION. See ``_unfix_16`` below for
+    #: what it undoes and why it is undone this way; these are the three container classes the
+    #: schema-11 bucket rule could not see, which is the whole of the difference.
+    "storage_bucket_fix": (
+        "Build_StoragePlayer_C",
+        "Build_StorageIntegrated_C",
+        "Build_StorageBlueprint_C",
+    ),
 }
 
 
+def _unfix_16(projection: dict, inventories: dict) -> dict:
+    """``inventories`` with schema 16's storage-bucket fix put back, for comparison only.
+
+    **The one place this file compares a CHANGED schema-11 key rather than dropping a new
+    one, so the choice is argued rather than made.** Schema 16 corrected
+    ``inventories["storage"]``: the bucket rule matched three substrings where it meant
+    membership of STORAGE_CLASSES, so the Personal Storage Boxes, the HUB's own container and
+    the Blueprint Designer's were bucketed as machine buffers -- 10,667 units over 31 item
+    classes on the reference save, moved out of ``machine`` and into ``storage``. ``header``
+    aside, ``inventories`` is one of the twenty keys the vendored parser and this one were
+    shown to agree on, and that bank is never re-recorded. So the fix moves a banked value on
+    every save, and something has to give.
+
+    The alternative was a per-field exception: declare ``inventories`` outside the oracle's
+    scope from schema 16 on, and stop comparing it. That is one line and it is what the phrase
+    "documented exception" would have bought -- at the price of retiring the key whole. The
+    two parsers agreed about the PLAYER bucket, about the machine bucket's other 6,500 stacks
+    and about all 52 item classes; none of that is affected by this fix, and none of it would
+    be checked again.
+
+    So the split is reconstructed instead. Only three classes moved, ``storage`` carries those
+    same containers' contents per instance, and it is dropped whole here anyway -- so
+    subtracting them from ``storage`` and adding them back to ``machine`` lands exactly on the
+    numbers the old rule produced, in integers, with nothing rounded. What the bank goes on
+    checking is everything else in the key.
+
+    **What this does cost, stated rather than left to be found.** The reconstruction is
+    computed from this parser's own ``storage`` rows, so if this parser started misreading one
+    of those eight containers, ``storage`` and ``inventories`` would move together and cancel:
+    that one drift is now invisible here. It is real, it is confined to eight containers of
+    one key, and it is smaller than the exception's cost, which is the whole key on every
+    save for ever. It is also not a new KIND of blindness -- an oracle can never catch a
+    fault the two sides share, which the module docstring says at the top.
+    """
+    moved: dict[str, float] = {}
+    for row in projection.get("storage") or ():
+        if isinstance(row, dict) and row.get("cls") in POST_11_ADDITIONS["storage_bucket_fix"]:
+            for item, amount in row.get("items") or ():
+                moved[item] = moved.get(item, 0) + amount
+    out = {bucket: dict(stacks) for bucket, stacks in inventories.items()}
+    for item, amount in moved.items():
+        rest = out.get("storage", {}).get(item, 0) - amount
+        # Removed rather than left at zero: the old rule never wrote a key it had counted
+        # nothing into, so a lingering ``item: 0`` would digest differently and read as drift.
+        if rest:
+            out["storage"][item] = rest
+        else:
+            out.get("storage", {}).pop(item, None)
+        out["machine"][item] = out.get("machine", {}).get(item, 0) + amount
+    return out
+
+
 def as_schema_11(projection: dict) -> dict:
-    """The projection with every post-11 addition removed, and nothing else touched.
+    """The projection with every post-11 addition removed, and one correction put back.
 
     Not a general downgrade: it undoes exactly ``POST_11_ADDITIONS`` and leaves every other
     difference -- which is the point, because every other difference is drift.
@@ -100,6 +164,8 @@ def as_schema_11(projection: dict) -> dict:
     out = {k: v for k, v in projection.items() if k not in POST_11_ADDITIONS["keys"]}
     if "schema_version" in out:
         out["schema_version"] = POST_11_ADDITIONS["schema_version"]
+    if isinstance(out.get("inventories"), dict):
+        out["inventories"] = _unfix_16(projection, out["inventories"])
     for key, field in POST_11_ADDITIONS["record_fields"].items():
         if isinstance(out.get(key), list):
             out[key] = [
@@ -189,10 +255,18 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0]}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0]}],
         "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [[0, 10, 20, 30]]},
+        # The bucketing the deleted parser was compared against: a Personal Storage Box's
+        # contents counted as a machine buffer, and 60 of the 100 Iron Plate -- the box's
+        # share -- missing from what the player can spend. Wrong, and what the bank holds.
+        "inventories": {
+            "player": {"Desc_Wire_C": 7},
+            "storage": {"Desc_IronPlate_C": 40},
+            "machine": {"Desc_IronPlate_C": 60, "Desc_Rubber_C": 5},
+        },
         "warnings": [],
     }
-    fifteen = {
-        "schema_version": 15,
+    sixteen = {
+        "schema_version": 16,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -215,28 +289,62 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
             "networks": [{"id": 3, "fluid": "Desc_Water_C"}],
             "segments": [[0, 0, [[1, 2, 3], [4, 5, 6]], 4, [[7, 8, 9, 1, 2, 3]]]],
         },
+        # Two containers, and the second is the one schema 16 moved. Its 60 Iron Plate are in
+        # ``storage`` below and were in ``machine`` before, which is exactly what _unfix_16
+        # has to undo -- and the Rubber beside them is a real machine buffer that must not be
+        # touched by the undoing.
         "storage": [
             {
                 "cls": "Build_StorageContainerMk1_C",
                 "instance": "x.Build_StorageContainerMk1_C_1",
                 "pos": [1.0, 2.0, 3.0],
                 "yaw": 90.0,
-                "items": [["Desc_IronPlate_C", 4800]],
+                "items": [["Desc_IronPlate_C", 40]],
                 "slots": 24,
-            }
+            },
+            {
+                "cls": "Build_StoragePlayer_C",
+                "instance": "x.Build_StoragePlayer_C_2",
+                "pos": [4.0, 5.0, 6.0],
+                "yaw": None,
+                "items": [["Desc_IronPlate_C", 60]],
+                "slots": 10,
+            },
         ],
+        "inventories": {
+            "player": {"Desc_Wire_C": 7},
+            "storage": {"Desc_IronPlate_C": 100},
+            "machine": {"Desc_Rubber_C": 5},
+        },
         "warnings": [],
     }
-    filtered = as_schema_11(fifteen)
+    filtered = as_schema_11(sixteen)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(fifteen)
-    moved["machines"] = [{**fifteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(sixteen)
+    moved["machines"] = [{**sixteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
+    )
+
+    # And the same demand of the schema-16 undo specifically, because it is the one step here
+    # that RESTORES a value rather than dropping one: a reconstruction that simply copied the
+    # bank's shape would pass the equality above and hide every stack in the key for ever. A
+    # container the two parsers would have read differently still has to move the digest.
+    misread = dict(sixteen)
+    misread["storage"] = [
+        {**sixteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
+        sixteen["storage"][1],
+    ]
+    misread["inventories"] = {
+        **sixteen["inventories"],
+        "storage": {"Desc_IronPlate_C": 101},
+    }
+    assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
+        "a miscounted container reads as agreement, which makes the whole key vacuous"
     )
 
 
@@ -260,7 +368,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             continue
         proj = _projection(path)
         assert "error" not in proj, (name, proj.get("detail"))
-        assert proj["schema_version"] == 15, (name, "unexpected schema for the filter")
+        assert proj["schema_version"] == 16, (name, "unexpected schema for the filter")
         proj = as_schema_11(proj)
         for key, want in entry.items():
             if key == "n_objects_value":

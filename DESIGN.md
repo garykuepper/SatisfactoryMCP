@@ -204,7 +204,7 @@ SatisfactoryMcp/
                        # normalize.py (-> items / recipes / buildings / schematics)
                        # model.py  search.py  footprint.py  constants.py
       saveio/          # projection.py: spawns the extractor, validates, caches
-                       # extract.py: runs IN the child, builds the schema-15 projection
+                       # extract.py: runs IN the child, builds the schema-16 projection
       text.py          # num + plural ONLY — the two helpers domain may reach
     domain/            # returns dataclasses and dicts, NEVER formatted text
       world/           # state.py: WorldState, a thin aggregate over the facets

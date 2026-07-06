@@ -474,6 +474,58 @@ turn on for you is not one. Colour picked by the method the pipe rust was: `#ad4
 in CIE Lab from its nearest filled footprint box (the generator red) and 48.5 from the nearest
 biome ground, with the fluid buffers one house-sized value step down at dE 16.7.
 
+### Schema 16: two answers that were confidently wrong (2026-07-30)
+
+The first bump that CORRECTS keys instead of adding them, which is also why it needed a decision
+about the parity bank rather than a line in a list.
+
+* **`inventories["storage"]` was matching three substrings where it meant a class list.** The
+  rule read "does the owner's name contain `StorageContainer`, `CentralStorage` or
+  `FreightWagon`", and `STORAGE_CLASSES` four screens above it in the same file names six
+  classes. Three of them contain none of those words — the Personal Storage Box, the HUB's
+  built-in container and the Blueprint Designer's — so everything in those 8 containers was
+  bucketed as a MACHINE BUFFER, which `stock()` deliberately will not spend. **10,667 units
+  across 31 item classes** on the reference save: 2,309 Wire, 1,445 Concrete, 1,353 Steel Beams,
+  440 Gifts, 125 SAM Fluctuators, and the alien remains a MAM node costs — 16 Hog, 5 Stinger, 2
+  Spitter. Every affordability answer in the server reads `stock()`, so all 31 were understated
+  by exactly their contents; **two came out at zero** with the player standing next to a box of
+  them — 12 Wood and 34 Copper Ingot — and the Dimensional Depot is what kept the other 29 from
+  reading as nothing at all, which is luck rather than a design.
+* **It had already been written down as tolerable.** Schema 15's reconciliation test asserted
+  `excess == outside`, and its note called the remainder "the reason that older sum was quietly
+  short". Same eight containers; it was the bug, not a finding. That test now asserts the two
+  counts are equal item for item, with the 31 classes and 10,667 units pinned separately so the
+  equality cannot pass by both sides being empty.
+* **The rule is now membership in `STORAGE_CLASSES`, and the `FreightWagon` word survives
+  untouched.** A wagon is a vehicle, has no `Build_` class, and no save in the reference
+  directory holds one — so its exact class name cannot be read off anything here, and changing
+  a test that has stood since schema 11 on a guess would risk moving cargo nobody can check.
+* **`yaw_of` returned 0.0 when a quaternion would not decode**, and 0.0 is the measurement for
+  *axis-aligned*, which most of this world genuinely is. A failure was therefore published as a
+  bearing, mixed in with 17,500 real ones and indistinguishable afterwards. It returns `null`
+  now — the claim `api.py`'s `_yaw` and the map have handled since schema 12, drawn
+  axis-aligned and labelled "facing: unknown" — and `extract` counts the nulls into `warnings`,
+  so a header decode going wrong stops looking like a world built on the grid. **Zero on the
+  reference save**, which is why the fixture's placement bytes did not move.
+* **The parity bank keeps the key rather than losing it.** `inventories` is one of the twenty
+  the deleted oracle was measured against, and the bank is never re-recorded, so a corrected
+  banked key had to give somewhere. The rejected option was a documented per-field exception —
+  one line, at the price of never checking the player bucket, the machine bucket's other 6,500
+  stacks or any of the 52 item classes again. Instead `as_schema_11` **reconstructs the old
+  split**: only three classes moved, the `storage` key carries those same containers' contents
+  per instance and is dropped whole anyway, so subtracting them from `storage` and adding them
+  back to `machine` lands on the old numbers exactly, in integers. The cost, stated in the
+  test: a fault this parser made in one of those eight containers would now move both sides
+  together and cancel. That is eight containers of one key against the whole key for ever, and
+  it is the limit an oracle always had. **All 31 banked saves still digest to the vendored
+  parser's values on every key they were banked for.**
+* **Cost:** the projection grew 1,492,138 → 1,492,188 bytes (**+50** — the net of ten item
+  classes appearing in `storage`, which had 42 and now has 52, against seven leaving `machine`,
+  which had 67 and now has 60). The only two keys that differ between the old fixture and the
+  new are `schema_version` and `inventories`, and the move is conserved to the unit in both
+  directions: what `storage` gained is exactly what `machine` lost, and `player` and `depot`
+  are untouched.
+
 ---
 
 ## 19. One container reader, and the `gen` extra (2026-07-31)
