@@ -53,6 +53,17 @@ exclude = ["src/satisfactory_mcp/interfaces/web/frontend"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["integration: requires the real game install / save files"]
+# The DEFAULT run is the one a fresh clone can pass, because the documented command is
+# `uv run pytest -q` and a clone with no game and no saves has to be able to run it. 803 of
+# the 1,419 tests need the install or a .sav; measured on a clone with neither, they were 20
+# failures, 61 errors and a wall of skips, which is a suite that says nothing. Deselecting
+# them by marker leaves 616 tests that run off committed fixtures alone, in 9 s.
+#
+# `-m integration` is the other half and the owner's full run: it needs Docs.json and the
+# save directory, and both commands are in README.md and docs/mcp-surface.md. Deliberately
+# NOT `-m "integration or not integration"` cleverness -- two commands, each of which says
+# what it needs, beats one that quietly does less than it looks like it does.
+addopts = ["-m", "not integration"]
 
 [tool.ruff]
 line-length = 100

@@ -64,16 +64,10 @@ def test_an_old_projection_loses_a_source_rather_than_failing(game, state):
     assert counts["building"] > 400
 
 
-def test_foundations_are_the_dense_source_on_a_current_save(game):
+def test_foundations_are_the_dense_source_on_a_current_save(game, live):
     """8,347 of them against 566 buildings on the live save. They are what gives a
     developed site any evidence about itself at all -- one building per machine is sparse,
     one sample per foundation piece is not."""
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    try:
-        live = _state(None, None)
-    except Exception:  # pragma: no cover - only when no .sav is present
-        pytest.skip("needs a readable save")
     counts = _counts(elevation.sample_points(nodes_mod.load_nodes(), live))
     assert counts["structure"] > 8000
     assert counts["structure"] > counts["building"] * 10

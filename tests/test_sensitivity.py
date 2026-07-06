@@ -27,13 +27,6 @@ SPIRE = dict(
 
 
 @pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
-@pytest.fixture
 def sweep(game, live):
     return sweep_unlocks(build_scenario(game, live, **SPIRE), live)
 

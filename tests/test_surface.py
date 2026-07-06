@@ -12,7 +12,13 @@ import pytest
 
 from satisfactory_mcp import server as srv
 
-pytestmark = pytest.mark.integration
+#: ``usefixtures("game")`` is the guard, not decoration. Every test here calls a tool, and a
+#: tool reaches the game data through ``app.game()`` -- an lru_cache'd function, not this
+#: suite's fixture -- so with no ``Docs.json`` on the machine they raised FileNotFoundError
+#: out of the middle of a call rather than skipping. Requesting ``game`` puts the suite's own
+#: "is the install here" check in front of every one of them; it is session-scoped, so on a
+#: machine that has the install it costs one dictionary lookup per test.
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("game")]
 
 #: Per-response ceiling in characters. Generous, but a tool that blows past it is
 #: almost certainly returning a whole table.

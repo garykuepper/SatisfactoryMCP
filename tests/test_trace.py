@@ -17,13 +17,6 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
-@pytest.fixture
 def gens(live):
     out = [
         r["instance"].rsplit(".", 1)[-1]

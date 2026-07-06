@@ -227,16 +227,13 @@ def test_the_tool_says_short_when_the_budget_exceeds_what_is_held(game):
     assert "SHORT by" in _bill_line(out)
 
 
-def test_a_sloop_budget_warns_when_the_research_is_missing(game):
+def test_a_sloop_budget_warns_when_the_research_is_missing(game, live):
     """Spending sloops needs Production Amplifier researched, and the save carries no flag
     for it -- it is derived from the purchased schematics. Planning ahead of the research
     is legitimate, so this warns rather than refusing, but staying silent would print a
     plan that cannot be built as shown."""
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    st = _state(None, None)
     out = srv.plan_factory(sloops=16, limit=3, **SPIRE)
-    if st.has_capability("production_boost"):
+    if live.has_capability("production_boost"):
         assert "NOT RESEARCHED" not in out
         return
     line = next(x for x in out.splitlines() if "NOT RESEARCHED" in x)

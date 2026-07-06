@@ -20,13 +20,6 @@ from satisfactory_mcp import server as srv
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
 # ------------------------------------------------------------ measured power
 
 

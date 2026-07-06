@@ -9,6 +9,7 @@ import pytest
 from satisfactory_mcp import config
 from satisfactory_mcp.core.gamedata.loader import load_docs
 from satisfactory_mcp.core.gamedata.normalize import normalize
+from satisfactory_mcp.core.saveio.projection import SaveError
 from satisfactory_mcp.domain.world.state import WorldState
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -41,6 +42,34 @@ def game():
     if not _docs_available():
         pytest.skip("needs the game install")
     return normalize(load_docs(config.docs_path()))
+
+
+@pytest.fixture
+def live(game) -> WorldState:
+    """The world as it stands on THIS machine, or a skip -- eight modules wrote this out.
+
+    Not the same thing as the ``state`` fixture below, and the difference is the point:
+    ``state`` is the committed projection, frozen, which is what makes most of the suite
+    reproducible; ``live`` is whatever save is newest right now, which is what a test
+    measuring the tool's real answer has to read.
+
+    So it needs a save, and a clone has none. Eight modules built this fixture by hand and
+    none of them guarded the call, so on a machine with the game installed and no ``.sav``
+    the suite reported **61 errors** -- an error, not a skip, which reads as the code being
+    broken rather than as the machine being unequipped. ``SaveError`` is exactly and only the
+    "could not produce a projection" signal, so catching it here converts the one condition
+    a clone is actually in, and leaves a genuine parser fault raising.
+
+    Function-scoped, matching the fixtures it replaces. It costs nothing to re-enter: the
+    projection is cached in-process by ``load_projection`` and this is a dictionary lookup
+    after the first test in a session pays the parse.
+    """
+    from satisfactory_mcp.interfaces.mcp.app import _state
+
+    try:
+        return _state(None, None)
+    except SaveError as exc:
+        pytest.skip(f"needs a readable save: {exc}")
 
 
 @pytest.fixture(scope="session")

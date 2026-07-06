@@ -15,6 +15,11 @@ looks exactly like a world that never did the research.
 
 The tests below pin that, and that the planner refuses to be silent when a plan spends a
 capability the player has not got.
+
+They read the `live` fixture rather than `state`, and here that is not a preference: the
+committed projection is a schema-5 one from BEFORE Production Amplifier was researched, so
+judging a tool's output -- which reads the newest save on this machine -- against it would be
+comparing two different worlds.
 """
 
 from __future__ import annotations
@@ -28,16 +33,6 @@ from satisfactory_mcp.core.gamedata.constants import CAPABILITY_SCHEMATICS
 from satisfactory_mcp.domain.world.state import WorldState
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def live(game):
-    """The save on this machine. The `state` fixture is a committed schema-5 projection
-    from BEFORE Production Amplifier was researched, so judging a tool's output -- which
-    reads the live save -- against it compares two different worlds."""
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
 
 
 # ------------------------------------------------------- the register

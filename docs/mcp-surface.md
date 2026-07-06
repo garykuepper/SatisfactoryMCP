@@ -385,6 +385,14 @@ parse that just completed. Keeps the 12 newest.
   byproduct table in [§8.2](planning.md#82-the-byproduct-rule--the-crux) as a regression fixture.
 - Mark real-file tests `@pytest.mark.integration`, skipped when `SATISFACTORY_DOCS` is unset, so CI is
   green with no game install.
+- **Two commands, and the default is the one a clone can run.** `uv run pytest -q` carries
+  `addopts = ["-m", "not integration"]`, so it selects the 616 tests that read only committed
+  fixtures — green on a machine with no game and no saves, 9 s. `uv run pytest -q -m integration`
+  is the other 803 and needs both. That split is enforced rather than assumed: before it, the
+  documented command on a bare clone gave 20 failures and 61 errors, because a tool reaches game
+  data through the lru_cache'd `app.game()` rather than through the suite's fixture, and eight
+  modules built a live `WorldState` with no guard. The `live` fixture in `tests/conftest.py` is
+  now the single place that turns "no readable save" into a skip.
 
 Deps: `mcp[cli]>=1.28`, `pydantic>=2.13`, `platformdirs`, `scipy>=1.11`, `numpy`; dev `pytest`,
 `pytest-cov`, `ruff`. `requires-python = ">=3.11"`.

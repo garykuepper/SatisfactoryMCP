@@ -31,13 +31,6 @@ THREE = {"A-rig": RIG, "B-hall": HALL, "C-resin": RESIN}
 
 
 @pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
-@pytest.fixture
 def decoupled(game, live):
     stored = live.plans.find("spire-coast-full")
     if stored is None:

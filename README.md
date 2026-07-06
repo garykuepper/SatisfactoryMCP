@@ -20,6 +20,12 @@ uv run python tools/gen_region_names.py     # builds data/region_names.json (21 
 uv run pytest -q
 ```
 
+`pytest` runs the 616 tests that need nothing but this checkout — they read a committed save
+projection and committed game-data slices, so a clone with no Satisfactory install and no saves
+passes them. The other 803 are marked `integration` and are deselected by default; run them with
+`uv run pytest -q -m integration` on a machine that has the game and at least one save, and
+individual tests will still skip if the world they measure is not the one you are playing.
+
 Register with Claude Code at **user scope**, so it loads in any directory rather than only inside
 this repo — you will usually be asking about the game, not about this code:
 

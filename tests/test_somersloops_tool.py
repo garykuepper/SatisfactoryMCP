@@ -14,13 +14,6 @@ from satisfactory_mcp import server as srv
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
 def test_it_reports_free_committed_and_owned(game, live):
     out = srv.somersloops()
     budget = live.sloop_budget()

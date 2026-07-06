@@ -28,7 +28,10 @@ from satisfactory_mcp.domain.planning.scenario import build_scenario
 from satisfactory_mcp.domain.world.state import WorldState
 from satisfactory_mcp.presenters.text import primitives as render
 
-pytestmark = pytest.mark.integration
+#: See test_surface.py for why ``game`` is requested module-wide: the three tests here that
+#: call a tool rather than the domain reach the game through the lru_cache'd ``app.game()``,
+#: which is not this suite's fixture and does not skip when the install is absent.
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("game")]
 
 #: A diff answers a strictly larger question than plan_factory (1,669 chars measured)
 #: and replaces a plan_factory + world_summary + power_report + factory_sites sequence

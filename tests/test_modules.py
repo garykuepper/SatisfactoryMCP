@@ -26,13 +26,6 @@ NORECYC = ["Alternate: Recycled Plastic", "Alternate: Recycled Rubber"]
 
 
 @pytest.fixture
-def live(game):
-    from satisfactory_mcp.interfaces.mcp.app import _state
-
-    return _state(None, None)
-
-
-@pytest.fixture
 def rig(game, live):
     return prepare(
         game,
