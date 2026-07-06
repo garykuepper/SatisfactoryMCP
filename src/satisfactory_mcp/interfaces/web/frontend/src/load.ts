@@ -162,6 +162,12 @@ export function loadLive() {
       parts.push(s.age_note);
       var span = el("summary");
       span.textContent = parts.join(" — ");
+      // Set in the same breath as the text, and so are the two branches that replace this
+      // one below. `title` is a property of the element, not of the string just written to
+      // it, so a branch that only touches `textContent` leaves the PREVIOUS world's tooltip
+      // hanging off the new world's header -- and this tooltip is the only place the
+      // measured/nameplate split is spelled out, so what survives is three specific power
+      // figures presented as this world's. worlds.ts does both together for the same reason.
       span.title =
         "power: " +
         Math.round(measured) +
@@ -176,8 +182,12 @@ export function loadLive() {
       busy(false);
       clearPrefixed(["player"]);
       // The header is the page's identity line; a failure leaves a statement, not a
-      // blank that reads as "everything is fine, there is just nothing here".
-      el("summary").textContent = "this world's save could not be read";
+      // blank that reads as "everything is fine, there is just nothing here". Tooltip
+      // included: leaving the previous world's power figures hovering over the words
+      // "could not be read" is worse than the blank, because it is an answer.
+      var failed = "this world's save could not be read";
+      el("summary").textContent = failed;
+      el("summary").title = failed;
       fail("summary: " + friendly(e));
     });
 }
@@ -194,7 +204,12 @@ function busy(on: boolean): void {
 export function reload(note?: string): void {
   state.epoch += 1;
   map.closePopup(); // an open card is a claim about the previous world/save
-  el("summary").textContent = note || "loading…";
+  // Same reason the popup is closed one line up, and the same reason the two branches in
+  // loadLive() set both: a tooltip is a claim about the previous world too, and this one
+  // outlives the switch by the whole length of a 3 s parse if it is not replaced here.
+  var loading = note || "loading…";
+  el("summary").textContent = loading;
+  el("summary").title = loading;
   busy(true);
   writeHash();
   loadStatic();

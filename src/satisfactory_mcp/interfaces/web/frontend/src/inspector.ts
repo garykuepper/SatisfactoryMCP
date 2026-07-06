@@ -37,7 +37,8 @@ function elevationRows(e: Elevation): Row[] {
   // a metre and four metres good respectively, so quoting one number for both would be
   // the same overclaim as one median over nodes and foundations.
   var rows: Row[] = [];
-  if (e.terrain_m !== null && e.terrain_m !== undefined) {
+  var measured = e.terrain_m !== null && e.terrain_m !== undefined;
+  if (measured) {
     var acc = e.terrain_accuracy_m === null ? "" : " ±" + e.terrain_accuracy_m + " m";
     rows.push(["terrain", e.terrain_m + " m (" + e.terrain_source + acc + ")"]);
     // Water is information, never a correction: the field's own generator measured that
@@ -54,12 +55,21 @@ function elevationRows(e: Elevation): Row[] {
           : e.terrain_water_note || "depth not known here";
       rows.push(["water", e.terrain_water_m + " m surface, " + depth]);
     }
+  } else if (e.terrain_note) {
+    // A missing terrain is printed as the REASON it is missing, exactly as a missing fill is
+    // below, and the reason is the useful half: one of the server's two notes tells the reader
+    // to run tools/gen_world_heightmap.py and the other says this coordinate is open ocean or
+    // a cave mouth. The page used to throw both away and print nothing, which reads as the
+    // ground being unremarkable rather than as never having been looked at.
+    rows.push(["terrain", e.terrain_note]);
   }
   // Unsurveyed ground gets one line, not three saying the same nothing. With no field and
-  // nothing standing nearby, "nothing known" is a real answer and the honest one.
+  // nothing standing nearby, "nothing known" is a real answer and the honest one -- and it
+  // is still owed even when the note above explains the field's silence, because the two say
+  // different things: why there is no texel, and that nothing is standing here either.
   if (!e.ground_count && !e.built_count) {
-    if (rows.length) return rows;
-    return [["elevation", "nothing known within " + e.radius_m + " m"]];
+    if (measured) return rows;
+    return rows.concat([["elevation", "nothing known within " + e.radius_m + " m"]]);
   }
   // Ground and built stay apart, exactly as the server sends them: a node rests on
   // terrain and a foundation is wherever the player put it, so one median labelled

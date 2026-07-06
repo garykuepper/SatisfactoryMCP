@@ -121,8 +121,14 @@ export interface BeltRow {
   chain: number;
   cls: string;
   name: string | null;
-  /** Vertical, so its top-down polyline is one point and it is drawn as a ring. */
-  lift: boolean;
+  /** True: vertical, so its top-down polyline is one point and it is drawn as a ring.
+   *
+   * `null` is a third answer and not a false one. The server reads this off the docs dump's
+   * own native class (`api.py`, `_belt_class`) and refuses to guess for a class the dump has
+   * no entry for, in as many words: "not a lift would be a guess, and the map draws a lift and
+   * a belt as different things". Typing it `boolean` made the page collapse that refusal into
+   * "belt" at the first `if`, which is the one thing the server declined to say. */
+  lift: boolean | null;
   items_per_min: number | null;
   points_m: Point3M[];
   curve_m: RouteCurveM;
@@ -315,6 +321,10 @@ export interface Elevation {
   /** Null wherever the ground under the water was not measured well enough to subtract. */
   terrain_water_depth_m: number | null;
   terrain_water_note: string | null;
+  /** Why `terrain_m` is null, when it is. The server has exactly two answers -- no field on
+   * this machine (with the generator to run), or a coordinate the field has no data for --
+   * and it sends whichever applied. Same job as `fill_note` next door. */
+  terrain_note: string | null;
   ground_m: number | null;
   ground_spread_m: number | null;
   ground_count: number;

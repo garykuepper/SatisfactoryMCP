@@ -210,6 +210,11 @@ function retessellate(piece: L.Polyline, ppm: number): boolean {
  * so its top-down polyline is one point and a polyline through it draws nothing at all.
  * The ring is also the right picture: seen from above, a lift is a hole in the floor.
  *
+ * A class the docs dump has no entry for gets a `lift` of NULL rather than false, and the
+ * page owes it the same ring on the same evidence: not "the dump says it is vertical", but
+ * "this route covers no ground, and only a ring can draw that". The popup says which of the
+ * two it was, because a reader cannot tell a measured ring from an inferred one by looking.
+ *
  * A SPLITTER or MERGER gets a square, in this layer and in no other. It is a piece of the
  * belt network -- no recipe, no power, meaningless without the runs either side of it -- so
  * it is drawn by the layer that draws them, which is also what keeps it from being drawn
@@ -289,12 +294,53 @@ function liftRadius(ppm: number): number {
   return Math.max(LIFT_MIN_RADIUS_PX, (BELT_WIDTH_M / 2) * ppm);
 }
 
-function beltPopup(b: BeltRow, first: Point3M, last: Point3M): string {
+/* Does this route go anywhere seen from above? The only evidence left when the dump has no
+ * entry for a class, and the same evidence the `lift` flag stands on: a lift's points share
+ * their x and y exactly — measured server-side, maximum horizontal extent 0.0 m over all 302
+ * on the reference world — so a polyline through them draws nothing at all.
+ *
+ * NOT a point count. A lift arrives as TWO points, one at each end of its rise, so counting
+ * them says "this is an ordinary run" about the one shape that cannot be drawn as one.
+ *
+ * A tenth of a metre because that is what the payload is rounded to: below it there is no
+ * horizontal extent left in the numbers to draw with. */
+var FLAT_ROUTE_M = 0.1;
+
+function coversGround(points: Point3M[]): boolean {
+  var first = points[0];
+  if (!first) return false;
+  for (var i = 1; i < points.length; i++) {
+    var p = points[i]!;
+    if (Math.abs(p[0] - first[0]) >= FLAT_ROUTE_M) return true;
+    if (Math.abs(p[1] - first[1]) >= FLAT_ROUTE_M) return true;
+  }
+  return false;
+}
+
+/* What the glyph means, and it has three answers because `lift` has three.
+ *
+ * `true` is a measurement: the server read the docs dump's own native class. `false` is also a
+ * measurement, and needs no line — a belt drawn as a line is what a reader already assumes.
+ *
+ * `null` is the server declining to guess for a class the dump has no entry for, and it says
+ * so in `api.py`: "not a lift would be a guess, and the map draws a lift and a belt as
+ * different things". The page has to make a drawing decision anyway, so it makes the one the
+ * geometry supports, and then SAYS that the shape came from the geometry rather than from a
+ * classification. Silence would hand a reader a ring indistinguishable from a measured one. */
+function beltKind(b: BeltRow, ring: boolean): string | null {
+  if (b.lift === true) return "conveyor lift — vertical, so drawn as a ring";
+  if (b.lift === false || b.lift === undefined) return null;
+  return ring
+    ? "the dump has no entry for this class, so whether it is a lift is unknown — drawn as a ring because this route covers no ground"
+    : "the dump has no entry for this class, so whether it is a lift is unknown — drawn as a line because this route covers ground";
+}
+
+function beltPopup(b: BeltRow, kind: string | null, first: Point3M, last: Point3M): string {
   return popup([
     ["belt", b.name || b.cls],
     // Said out loud, because the glyph is the one encoding on this map that exists
     // because of a measurement rather than because of a preference.
-    ["kind", b.lift ? "conveyor lift — vertical, so drawn as a ring" : null],
+    ["kind", kind],
     ["rate", b.items_per_min ? b.items_per_min + " items/min at 100%" : null],
     // Travel order, input to output: the projection reverses the save's own output-first
     // storage, so these two rows mean what they say.
@@ -314,7 +360,12 @@ export function drawBelts(data: BeltsResponse): void {
     var first = b.points_m[0]!;
     var last = b.points_m[b.points_m.length - 1]!;
     var piece: L.Path;
-    if (b.lift) {
+    // An unknown class draws on its own geometry: no horizontal extent means a ring, because
+    // a polyline through coincident points draws nothing at all, which is the same reasoning
+    // the `lift` flag carries for the classes the dump does know. Without this such a piece
+    // was drawn as a zero-length line and was simply absent from the map.
+    var ring = b.lift === true || (b.lift === null && !coversGround(b.points_m));
+    if (ring) {
       piece = L.circleMarker([-first[1], first[0]], {
         radius: liftRadius(ppm),
         color: beltColour(b.items_per_min),
@@ -331,7 +382,7 @@ export function drawBelts(data: BeltsResponse): void {
         opacity: 0.85,
       });
     }
-    piece.bindPopup(beltPopup(b, first, last)).addTo(group);
+    piece.bindPopup(beltPopup(b, beltKind(b, ring), first, last)).addTo(group);
   });
   (data.attachments || []).forEach(function (a) {
     if (a.x_m === null || a.y_m === null) return;
