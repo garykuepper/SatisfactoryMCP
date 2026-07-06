@@ -66,6 +66,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from ...core.saveio import rows as saverows
+
 __all__ = ["FORWARD", "REVERSE", "UNKNOWN", "pipe_flow"]
 
 #: Along the segment's own point order, against it, and "we will not say".
@@ -177,15 +179,10 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
             for role in ports:
                 joins.union((actor, first), (actor, role))
 
-    pipe_actors = set()
-    for seg in (projection.get("pipes") or {}).get("segments") or ():
-        if (
-            isinstance(seg, (list, tuple))
-            and len(seg) >= 4
-            and isinstance(seg[3], int)
-            and seg[3] >= 0
-        ):
-            pipe_actors.add(seg[3])
+    # Decoded once and held, because the segments are walked twice here: for the actors that
+    # ARE pipes, and then for the node pair each of those pipes joins.
+    segments = list(saverows.iter_pipe_segments(projection))
+    pipe_actors = {seg.actor_index for seg in segments if seg.actor_index >= 0}
 
     # An extractor cannot consume what it pulls out of the ground and a generator cannot
     # produce its fuel, so the projection's own sorting of the world settles the buildings
@@ -193,7 +190,6 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
     producers = {r.get("cls") for r in projection.get("extractors") or () if isinstance(r, dict)}
     consumers = {r.get("cls") for r in projection.get("generators") or () if isinstance(r, dict)}
 
-    pipes: list[tuple[tuple | None, tuple | None]] = []
     devices: list[tuple[tuple, tuple]] = []
     terminals: list[tuple[tuple, str, int]] = []
 
@@ -231,15 +227,20 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
             if kind != "any":
                 terminals.append((joins.find((actor, role)), kind, actor))
 
+    # One entry per ROW of the table, not per row that decoded: ``/api/pipes`` joins to this
+    # list by a segment's position, so a torn row owes it a slot that says "no idea" rather
+    # than shifting every pipe after it up by one. `saverows.iter_pipe_segments` reports each
+    # segment's own ordinal for exactly this, and `pipe_segment_count` sizes the list.
     c0, c1 = role_ix.get("PipelineConnection0"), role_ix.get("PipelineConnection1")
-    for seg in (projection.get("pipes") or {}).get("segments") or ():
-        actor = seg[3] if isinstance(seg, (list, tuple)) and len(seg) >= 4 else -1
-        ports = ports_of.get(actor, ()) if isinstance(actor, int) and actor >= 0 else ()
-        pipes.append(
-            (
-                joins.find((actor, c0)) if c0 in ports else None,
-                joins.find((actor, c1)) if c1 in ports else None,
-            )
+    pipes: list[tuple[tuple | None, tuple | None]] = [(None, None)] * saverows.pipe_segment_count(
+        projection
+    )
+    for seg in segments:
+        actor = seg.actor_index
+        ports = ports_of.get(actor, ()) if actor >= 0 else ()
+        pipes[seg.index] = (
+            joins.find((actor, c0)) if c0 in ports else None,
+            joins.find((actor, c1)) if c1 in ports else None,
         )
 
     adjacency: dict[tuple, list] = defaultdict(list)

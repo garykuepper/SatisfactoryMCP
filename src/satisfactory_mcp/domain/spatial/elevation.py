@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ...core.saveio import rows as saverows
 from . import geo, heightfield
 
 __all__ = ["Elevation", "Sample", "probe", "sample_points"]
@@ -191,15 +192,11 @@ def sample_points(node_table=None, state=None) -> list[Sample]:
 
     # Foundations arrive as flat [class_index, x, y, z] rows rather than as records, and
     # they are by far the densest source -- 8,347 against 566 buildings on the reference
-    # save. Guarded field-by-field because this is raw projection data, and a malformed
-    # row should cost one sample rather than the whole probe.
-    raw = (state.projection.get("structures") or {}).get("instances") or ()
-    for inst in raw:
-        if isinstance(inst, (list, tuple)) and len(inst) >= 4:
-            try:
-                out.append(Sample("structure", float(inst[1]), float(inst[2]), float(inst[3])))
-            except (TypeError, ValueError):
-                continue
+    # save. Decoded through ``core.saveio.rows``, which is where the guard that used to be
+    # written out here now lives, once, for all ten readers of these three tables: a
+    # malformed row still costs one sample rather than the whole probe.
+    for piece in saverows.iter_structures(state.projection):
+        out.append(Sample("structure", piece.x, piece.y, piece.z))
     return out
 
 

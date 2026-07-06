@@ -67,6 +67,8 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from ...core.saveio import rows as saverows
+
 __all__ = ["LINK_XY", "LINK_Z", "STAND_ON", "Slab", "Structures", "build_structures"]
 
 #: Face-adjacency cutoff in cm. Between a shared face (800) and a shared corner (1131).
@@ -176,19 +178,13 @@ def build_structures(
     link_z: float = LINK_Z,
 ) -> Structures:
     """Group foundations into slabs and assign each machine to the one beneath it."""
-    payload = projection.get("structures") or {}
-    classes: list[str] = payload.get("classes", [])
-    instances: list[list[int]] = payload.get("instances", [])
-    if not instances:
-        return Structures()
-
     tiles: list[tuple[float, float, float]] = []
     walkways: list[tuple[float, float, float]] = []
-    for row in instances:
-        if len(row) < 4:
-            continue
-        cls = classes[row[0]] if 0 <= row[0] < len(classes) else ""
-        point = (float(row[1]), float(row[2]), float(row[3]))
+    for piece in saverows.iter_structures(projection):
+        # ``""`` for a class index the table cannot resolve: the two tests below are
+        # substring tests, and a piece with no name is neither a foundation nor a bridge.
+        cls = piece.cls or ""
+        point = (piece.x, piece.y, piece.z)
         if any(k in cls for k in _FOUNDATION):
             tiles.append(point)
         elif any(k in cls for k in _BRIDGE):

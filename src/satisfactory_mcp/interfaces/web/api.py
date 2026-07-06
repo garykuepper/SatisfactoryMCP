@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from ... import config
 from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.saveio import projection as proj
+from ...core.saveio import rows as saverows
 from ...domain.collectibles.service import collect_view
 from ...domain.factories import floors as ffloors
 from ...domain.factories import identity as fidentity
@@ -1020,8 +1021,8 @@ def structures(request: Request, save: str | None = None, world: str | None = No
     These are the only record of what was physically BUILT -- they appear in no actor
     header, which is why the projection interns them separately as
     ``{"classes": [...], "instances": [[class_index, x, y, z, yaw], ...]}`` in centimetres.
-    Read guarded field by field, exactly as ``domain.spatial.elevation`` reads them: this
-    is raw projection data and a malformed row should cost one piece, not the endpoint.
+    Decoded by ``core.saveio.rows``, which is where the guard lives for all ten readers
+    of these interned tables: a malformed row costs one piece, not the endpoint.
 
     **Rotation is carried, as of schema 12**, and this docstring used to say the opposite
     -- the instance transform's quaternion was dropped at extraction and a client could
@@ -1054,29 +1055,20 @@ def structures(request: Request, save: str | None = None, world: str | None = No
     except Exception as exc:
         return _fail(f"could not read save: {exc}", 404)
 
-    raw = st.projection.get("structures") or {}
-    classes = list(raw.get("classes") or ())
-    rows = []
-    for inst in raw.get("instances") or ():
-        if not isinstance(inst, (list, tuple)) or len(inst) < 4:
-            continue
-        try:
-            index = int(inst[0])
-            x, y, z = float(inst[1]), float(inst[2]), float(inst[3])
-        except (TypeError, ValueError):
-            continue
-        rows.append(
-            {
-                "cls": classes[index] if 0 <= index < len(classes) else None,
-                "x_m": _m(x),
-                "y_m": _m(y),
-                "z_m": _m(z),
-                # Optional on purpose: a row from a schema-11 projection is four columns
-                # long and is still a real piece at a real place, it just has no facing.
-                "yaw": _yaw(inst[4]) if len(inst) > 4 else None,
-            }
-        )
-    return {"structures": rows, "count": len(rows), "tile_m": FOUNDATION_M}
+    out = [
+        {
+            "cls": piece.cls,
+            "x_m": _m(piece.x),
+            "y_m": _m(piece.y),
+            "z_m": _m(piece.z),
+            # Optional on purpose: a row from a schema-11 projection is four columns long
+            # and is still a real piece at a real place, it just has no facing. ``None``
+            # covers the schema-16 unreadable rotation too -- see ``saveio.rows``.
+            "yaw": _yaw(piece.yaw),
+        }
+        for piece in saverows.iter_structures(st.projection)
+    ]
+    return {"structures": out, "count": len(out), "tile_m": FOUNDATION_M}
 
 
 # ---------------------------------------------------------------------- belts
@@ -1178,8 +1170,9 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
     were decoded by the parser and thrown away at the projection. They arrive interned the
     way the structures next door are -- ``{"classes": [...], "segments": [[chain_index,
     class_index, [[x, y, z], ...]], ...]}``, world centimetres -- and, like that endpoint,
-    the legend is resolved here so the page does not have to carry it, and every field is
-    read guarded so that a malformed segment costs that segment rather than the network.
+    the legend is resolved here so the page does not have to carry it, and the row is
+    decoded by ``core.saveio.rows`` so that a malformed segment costs that segment rather
+    than the network.
 
     **Points are in travel order, input to output.** The save stores them output-first and
     the projection reverses them, so a client can draw direction along a run without
@@ -1225,36 +1218,18 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
     except Exception as exc:
         return _fail(f"could not read save: {exc}", 404)
 
-    raw = st.projection.get("belts") or {}
-    classes = list(raw.get("classes") or ())
     resolved: dict[int, dict[str, Any]] = {}
     rows = []
-    for seg in raw.get("segments") or ():
-        if not isinstance(seg, (list, tuple)) or len(seg) < 3:
-            continue
-        try:
-            chain = int(seg[0])
-            index = int(seg[1])
-        except (TypeError, ValueError):
-            continue
-        points = []
-        for p in seg[2] or ():
-            if not isinstance(p, (list, tuple)) or len(p) < 3:
-                continue
-            try:
-                points.append([_m(float(p[0])), _m(float(p[1])), _m(float(p[2]))])
-            except (TypeError, ValueError):
-                continue
-        if not points:
-            continue  # nothing to place; a piece with no geometry is not a piece
-        if index not in resolved:
-            resolved[index] = _belt_class(st, classes[index] if 0 <= index < len(classes) else None)
+    for seg in saverows.iter_belt_segments(st.projection):
+        if seg.class_index not in resolved:
+            resolved[seg.class_index] = _belt_class(st, seg.cls)
+        points = [[_m(x), _m(y), _m(z)] for x, y, z in seg.points]
         rows.append(
             {
-                "chain": chain,
-                **resolved[index],
+                "chain": seg.chain,
+                **resolved[seg.class_index],
                 "points_m": points,
-                "curve_m": _curve_m(seg[3] if len(seg) > 3 else None, points),
+                "curve_m": _curve_m(seg.spans, points),
             }
         )
     attachments = [
@@ -1296,8 +1271,8 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
     actor, stored in the actor's own frame and translated back at the projection -- so this
     is the same shape one layer down: ``{"classes": [...], "networks": [...], "segments":
     [[network_index, class_index, [[x, y, z], ...]], ...]}`` in world centimetres, resolved
-    here so the page carries no legend, every field read guarded so a malformed segment costs
-    that segment.
+    here so the page carries no legend, the row decoded by ``core.saveio.rows`` so a
+    malformed segment costs that segment.
 
     **Each pipe says which fluid it carries**, which is the thing a belt cannot say: the game
     keeps an ``FGPipeNetwork`` per connected plumbing system with the fluid on it and its
@@ -1346,38 +1321,23 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
     except Exception as exc:
         return _fail(f"could not read save: {exc}", 404)
 
-    raw = st.projection.get("pipes") or {}
-    classes = list(raw.get("classes") or ())
-    networks = list(raw.get("networks") or ())
+    networks = list((st.projection.get("pipes") or {}).get("networks") or ())
     # Positional against ``segments``, which is what the domain service promises, so a
     # projection too old to carry the join reads as one long row of "unknown" rather than
-    # as an error. Guarded by index below for the same reason.
+    # as an error. Guarded by index below for the same reason -- and ``seg.index`` is the
+    # row's position in the raw table rather than a count of what decoded, which is what
+    # keeps the two lists lined up when a row is torn.
     flows = st.pipe_flow
     resolved: dict[int, dict[str, Any]] = {}
     rows = []
-    for order, seg in enumerate(raw.get("segments") or ()):
-        if not isinstance(seg, (list, tuple)) or len(seg) < 3:
-            continue
-        try:
-            net = int(seg[0])
-            index = int(seg[1])
-        except (TypeError, ValueError):
-            continue
-        points = []
-        for p in seg[2] or ():
-            if not isinstance(p, (list, tuple)) or len(p) < 3:
-                continue
-            try:
-                points.append([_m(float(p[0])), _m(float(p[1])), _m(float(p[2]))])
-            except (TypeError, ValueError):
-                continue
-        if not points:
-            continue  # nothing to place; a piece with no geometry is not a piece
-        if index not in resolved:
-            resolved[index] = _pipe_class(st, classes[index] if 0 <= index < len(classes) else None)
+    for seg in saverows.iter_pipe_segments(st.projection):
+        if seg.class_index not in resolved:
+            resolved[seg.class_index] = _pipe_class(st, seg.cls)
+        points = [[_m(x), _m(y), _m(z)] for x, y, z in seg.points]
+        net = seg.network_index
         entry = networks[net] if 0 <= net < len(networks) else {}
         fluid = entry.get("fluid") if isinstance(entry, dict) else None
-        flow = flows[order] if 0 <= order < len(flows) else {}
+        flow = flows[seg.index] if 0 <= seg.index < len(flows) else {}
         rows.append(
             {
                 "direction": flow.get("direction", "unknown"),
@@ -1389,9 +1349,9 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
                 # Resolved against the dump like every other class here, so a popup never has
                 # to show a reader a `Desc_…_C`.
                 "fluid_name": st.game.item_name(fluid) if fluid else None,
-                **resolved[index],
+                **resolved[seg.class_index],
                 "points_m": points,
-                "curve_m": _curve_m(seg[4] if len(seg) > 4 else None, points),
+                "curve_m": _curve_m(seg.spans, points),
             }
         )
     return {

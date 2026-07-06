@@ -1,0 +1,284 @@
+"""The shared decoders for the projection's three interned tables.
+
+``core/saveio/rows.py`` exists because ten call sites were each decoding these rows by hand,
+with guards copied from one another and already drifting apart. Two things therefore have
+to be tested that neither the endpoints' tests nor the domain's cover:
+
+* **the guard itself**, against rows the writer never emits -- torn, truncated, overlong,
+  numerically nonsense -- because "a malformed row costs that row and nothing else" is a
+  promise every one of those ten call sites makes in prose and none of them can now keep
+  on its own;
+* **the drift tripwire**, which is the one below that is not about correctness at all. A
+  schema-17 column added to any of these three tables would be silently ignored by every
+  iterator here, and the projection would go on decoding, so nothing would fail. Holding
+  ``*_ROW_WIDTH`` against the widest row the committed projection actually contains turns
+  that silence into a failing test in the module that would have to be changed.
+
+No game install and no save: the synthetic projections are written out here and the
+reference one is the committed fixture.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from satisfactory_mcp.core.saveio import rows
+
+FIXTURE = Path(__file__).parent / "fixtures" / "save_projection.json"
+
+
+def _structures(instances, classes=("Build_Foundation_8x1_01_C", "Build_Wall_8x4_01_C")):
+    return {"structures": {"classes": list(classes), "instances": instances}}
+
+
+def _belts(segments, classes=("Build_ConveyorBeltMk3_C",)):
+    return {"belts": {"classes": list(classes), "segments": segments}}
+
+
+def _pipes(segments, classes=("Build_Pipeline_C",)):
+    return {"pipes": {"classes": list(classes), "segments": segments}}
+
+
+# ------------------------------------------------------------------- structures
+
+
+def test_a_structure_row_decodes_to_raw_centimetres_and_its_own_class():
+    """No rounding, no metres, no naming: the row's numbers and the table's own class."""
+    (piece,) = rows.iter_structures(_structures([[1, 1234.5, -6789.5, 42.25, -20.0]]))
+    assert piece == rows.Structure(
+        class_index=1,
+        cls="Build_Wall_8x4_01_C",
+        x=1234.5,
+        y=-6789.5,
+        z=42.25,
+        yaw=-20.0,
+    )
+
+
+def test_a_four_column_structure_row_is_a_placement_with_no_facing():
+    """Schema 11's shape. The yaw column arrived in 12 and the row is additive."""
+    (piece,) = rows.iter_structures(_structures([[0, 10, 20, 30]]))
+    assert (piece.x, piece.y, piece.z) == (10.0, 20.0, 30.0)
+    assert piece.yaw is None
+
+
+def test_an_unreadable_rotation_and_an_absent_one_arrive_the_same_way():
+    """Schema 16 writes ``null`` where the quaternion would not read.
+
+    Not because the two are the same claim -- the extractor is emphatic that they are not --
+    but because no reader of these rows has ever distinguished them: both mean "draw it
+    axis-aligned and do not publish a bearing", which is what ``/api/structures`` sends.
+    """
+    both = list(rows.iter_structures(_structures([[0, 1, 2, 3, None], [0, 1, 2, 3]])))
+    assert [p.yaw for p in both] == [None, None]
+
+
+def test_a_structure_row_the_class_list_cannot_answer_is_still_a_place():
+    """An index past the end is an unknown class at a known position, not a missing piece."""
+    (piece,) = rows.iter_structures(_structures([[9, 1, 2, 3, 0.0]]))
+    assert piece.class_index == 9
+    assert piece.cls is None
+
+
+def test_a_torn_structure_row_costs_that_row_and_nothing_after_it():
+    good = [0, 100, 200, 300, 90.0]
+    projection = _structures(
+        [
+            "not a row",
+            None,
+            [],
+            [0, 1, 2],  # three columns: no Z, so no place
+            [0, "x", 2, 3],  # a coordinate that is not a number
+            ["nope", 1, 2, 3],  # a class index that is not a number
+            [0, 1, 2, [3]],  # a coordinate that is a list
+            good,
+        ]
+    )
+    decoded = list(rows.iter_structures(projection))
+    assert len(decoded) == 1
+    assert (decoded[0].x, decoded[0].y, decoded[0].z, decoded[0].yaw) == (100.0, 200.0, 300.0, 90.0)
+
+
+def test_an_unreadable_yaw_costs_the_facing_and_not_the_piece():
+    """The trailing column is the one a reader is allowed to shrug at."""
+    (piece,) = rows.iter_structures(_structures([[0, 1, 2, 3, "sideways"]]))
+    assert (piece.x, piece.y, piece.z) == (1.0, 2.0, 3.0)
+    assert piece.yaw is None
+
+
+def test_a_projection_with_no_structures_at_all_yields_nothing():
+    for projection in ({}, {"structures": None}, {"structures": []}, {"structures": {}}):
+        assert list(rows.iter_structures(projection)) == []
+
+
+# ------------------------------------------------------------------------ belts
+
+
+def test_a_belt_row_decodes_its_chain_its_class_its_points_and_its_curve():
+    span = [7, 8, 9, 1, 2, 3]
+    (seg,) = rows.iter_belt_segments(_belts([[4, 0, [[1, 2, 3], [4, 5, 6]], [span]]]))
+    assert seg.index == 0
+    assert seg.chain == 4
+    assert seg.class_index == 0
+    assert seg.cls == "Build_ConveyorBeltMk3_C"
+    assert seg.points == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    # Handed through exactly as stored: the one reader of it converts to metres itself.
+    assert seg.spans == [span]
+
+
+def test_a_three_column_belt_row_is_a_straight_run_and_not_an_old_projection():
+    """2,198 of the reference world's 3,085 pieces have no bend and so no fourth column."""
+    (seg,) = rows.iter_belt_segments(_belts([[0, 0, [[0, 0, 0], [800, 0, 0]]]]))
+    assert seg.spans is None
+
+
+def test_a_torn_belt_row_costs_that_row_and_leaves_the_ordinals_of_the_rest():
+    projection = _belts(
+        [
+            "not a segment",
+            [0, 0],  # two columns: no geometry
+            [0, 0, []],  # a route with no points is not a piece
+            [0, 0, [[1, 2]]],  # a point with no Z
+            ["x", 0, [[1, 2, 3]]],  # a chain index that is not a number
+            [1, 0, [[1, 2, 3], [4, 5, 6]]],
+        ]
+    )
+    decoded = list(rows.iter_belt_segments(projection))
+    assert [seg.index for seg in decoded] == [5], "the ordinal is the row's place in the table"
+    assert decoded[0].chain == 1
+
+
+def test_one_unreadable_point_costs_that_point_and_not_the_belt():
+    """The same trade all four call sites were already making, in one place now."""
+    (seg,) = rows.iter_belt_segments(
+        _belts([[0, 0, [[1, 2, 3], "not a point", [4, 5], [7, 8, 9]]]])
+    )
+    assert seg.points == [[1.0, 2.0, 3.0], [7.0, 8.0, 9.0]]
+
+
+def test_the_belt_segment_count_is_rows_in_not_rows_decoded():
+    projection = _belts(["not a segment", [0, 0, [[1, 2, 3]]]])
+    assert rows.belt_segment_count(projection) == 2
+    assert len(list(rows.iter_belt_segments(projection))) == 1
+
+
+# ------------------------------------------------------------------------ pipes
+
+
+def test_a_pipe_row_decodes_its_network_its_class_its_points_its_actor_and_its_curve():
+    span = [7, 8, 9, 1, 2, 3]
+    (seg,) = rows.iter_pipe_segments(_pipes([[2, 0, [[1, 2, 3], [4, 5, 6]], 11, [span]]]))
+    assert seg.index == 0
+    assert seg.network_index == 2
+    assert seg.class_index == 0
+    assert seg.cls == "Build_Pipeline_C"
+    assert seg.points == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    assert seg.actor_index == 11
+    assert seg.spans == [span]
+
+
+def test_a_three_column_pipe_row_is_a_schema_13_projection_and_joins_nothing():
+    """The actor column arrived in 14, and a pipe without one is still drawable."""
+    (seg,) = rows.iter_pipe_segments(_pipes([[0, 0, [[0, 0, 0], [400, 0, 0]]]]))
+    assert seg.actor_index == -1
+    assert seg.spans is None
+
+
+def test_an_actor_column_that_is_not_an_index_reads_as_no_join():
+    """``-1`` for every way of not naming an actor, so the caller has one case to handle.
+
+    An actor index is a position in a list the projection also carries, so a float, a string
+    or a negative number here is a torn column rather than a number in the wrong type -- and
+    the pipe is still a pipe, which is why this costs the join and not the row.
+    """
+    projection = _pipes(
+        [
+            [0, 0, [[0, 0, 0], [1, 1, 1]], -1],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], "not an index"],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], 3.0],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], None],
+        ]
+    )
+    assert [seg.actor_index for seg in rows.iter_pipe_segments(projection)] == [-1, -1, -1, -1]
+
+
+def test_a_torn_pipe_row_leaves_a_HOLE_in_the_ordinals_rather_than_shifting_them():
+    """The property ``/api/pipes`` and ``pipe_flow`` join to each other on.
+
+    Both key a segment by its position in the table, so a row that will not decode has to
+    take its own ordinal with it. A decoder that simply skipped would renumber every pipe
+    after the fault and hang each one's inferred direction on its neighbour.
+    """
+    projection = _pipes(
+        [
+            [0, 0, [[0, 0, 0], [1, 1, 1]], 5],
+            "not a segment",
+            [0, 0, [[2, 2, 2], [3, 3, 3]], 6],
+        ]
+    )
+    decoded = list(rows.iter_pipe_segments(projection))
+    assert [seg.index for seg in decoded] == [0, 2]
+    assert rows.pipe_segment_count(projection) == 3
+
+
+def test_a_projection_with_no_pipes_at_all_yields_nothing():
+    for projection in ({}, {"pipes": None}, {"pipes": {}}, {"pipes": {"segments": None}}):
+        assert list(rows.iter_pipe_segments(projection)) == []
+        assert rows.pipe_segment_count(projection) == 0
+
+
+# ------------------------------------------------------------------- the tripwire
+
+
+def _widths(table: dict, key: str) -> set[int]:
+    return {len(row) for row in table[key]}
+
+
+def test_the_iterators_read_every_column_the_writer_emits(projection):
+    """The drift tripwire, and the only test here that is about a FUTURE change.
+
+    ``extract`` decides these rows' shape and this module decides how much of it is read.
+    Nothing connects the two: adding a sixth structure column in schema 17 would leave every
+    iterator working, every endpoint answering and every test passing, with the new column
+    reaching no reader at all -- which is the failure mode this whole module was written to
+    stop happening one call site at a time.
+
+    So the widest row the committed projection contains is held against what the decoder
+    says it consumes. A new column fails here first, in the module that has to decide
+    whether these ten readers want it.
+
+    Held against the FIXTURE rather than against a constant in ``extract``, because the
+    fixture is what the suite tests the server against: a column the extractor emits and the
+    fixture has not been regenerated for is a second thing worth failing on.
+    """
+    checks = (
+        ("structures", "instances", rows.STRUCTURE_ROW_WIDTH),
+        ("belts", "segments", rows.BELT_ROW_WIDTH),
+        ("pipes", "segments", rows.PIPE_ROW_WIDTH),
+    )
+    for key, sub, width in checks:
+        widths = _widths(projection[key], sub)
+        assert widths, f"{key} is empty in the fixture, so this test proves nothing"
+        assert max(widths) == width, (
+            f"{key}[{sub!r}] rows are up to {max(widths)} columns wide and "
+            f"core.saveio.rows reads {width} -- decide whether the new column has a reader"
+        )
+
+
+def test_the_fixture_carries_both_the_short_and_the_long_form_of_a_route():
+    """Otherwise the tripwire above and the len-guards below it are untested by real data.
+
+    A curve column is emitted only where a route bends, so a fixture of nothing but straight
+    runs would exercise the three-column belt path and never the four-column one.
+    """
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert _widths(fixture["belts"], "segments") == {3, 4}
+    assert _widths(fixture["pipes"], "segments") == {4, 5}
+
+
+def test_every_row_of_the_reference_projection_decodes(projection):
+    """No row of a real save is torn, so the guards must be costing nothing on real data."""
+    assert len(list(rows.iter_structures(projection))) == len(projection["structures"]["instances"])
+    assert len(list(rows.iter_belt_segments(projection))) == rows.belt_segment_count(projection)
+    assert len(list(rows.iter_pipe_segments(projection))) == rows.pipe_segment_count(projection)

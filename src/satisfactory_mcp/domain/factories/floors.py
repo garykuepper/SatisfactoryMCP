@@ -94,6 +94,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from ...core.saveio import rows as saverows
+
 __all__ = [
     "BAND_EPS_CM",
     "BELT_HEIGHT_CM",
@@ -462,25 +464,20 @@ def foundation_tops(projection: dict) -> list[tuple[float, float, float, str]]:
     """``(x, y, top, class)`` for every foundation piece, centimetres.
 
     ``top`` is the surface a machine stands on: ``z + thickness/2``, because a lightweight's
-    stored Z is its vertical centre. Read guarded field by field, exactly as
-    ``spatial.elevation`` reads the same rows -- this is raw projection data and a malformed
-    row should cost one piece rather than the decomposition.
+    stored Z is its vertical centre. Decoded through ``core.saveio.rows``, which holds the
+    ``len``/``isinstance`` guard this used to spell out for itself -- a malformed row still
+    costs one piece rather than the decomposition.
+
+    ``cls`` is ``""`` rather than ``None`` for a class index the table cannot resolve,
+    because what follows asks whether a hint is a substring of it and an unnamed piece is
+    simply not a foundation.
     """
-    payload = projection.get("structures") or {}
-    classes = list(payload.get("classes") or ())
     out: list[tuple[float, float, float, str]] = []
-    for row in payload.get("instances") or ():
-        if not isinstance(row, (list, tuple)) or len(row) < 4:
-            continue
-        try:
-            index = int(row[0])
-            x, y, z = float(row[1]), float(row[2]), float(row[3])
-        except (TypeError, ValueError):
-            continue
-        cls = classes[index] if 0 <= index < len(classes) else ""
+    for piece in saverows.iter_structures(projection):
+        cls = piece.cls or ""
         if not any(hint in cls for hint in FOUNDATION_HINTS):
             continue
-        out.append((x, y, z + thickness_cm(cls) / 2.0, cls))
+        out.append((piece.x, piece.y, piece.z + thickness_cm(cls) / 2.0, cls))
     return out
 
 
@@ -655,31 +652,20 @@ def belt_runs(projection: dict, game=None) -> list[tuple[int, bool, int, list]]:
     chain join at a median 0.00 cm, so the chain is the run and the piece is a fragment of
     one. 3,085 pieces are 1,909 runs on the reference world.
     """
-    payload = projection.get("belts") or {}
-    classes = list(payload.get("classes") or ())
-    lifts = {
-        i
-        for i, cls in enumerate(classes)
-        if game is not None
-        and (building := game.buildings.get(cls)) is not None
-        and building.native == LIFT_NATIVE
-    }
+    # Resolved once per belt CLASS rather than once per piece, which is what the interned
+    # class index is for -- 3,085 pieces over a handful of classes on the reference world.
+    lift_of: dict[int, bool] = {}
     chains: dict[int, list[tuple[int, list]]] = defaultdict(list)
-    for segment in payload.get("segments") or ():
-        if not isinstance(segment, (list, tuple)) or len(segment) < 3:
-            continue
-        try:
-            chain, class_index = int(segment[0]), int(segment[1])
-        except (TypeError, ValueError):
-            continue
-        points = [p for p in (segment[2] or ()) if isinstance(p, (list, tuple)) and len(p) >= 3]
-        if points:
-            chains[chain].append((class_index, points))
+    for segment in saverows.iter_belt_segments(projection):
+        if segment.class_index not in lift_of:
+            building = game.buildings.get(segment.cls) if game is not None else None
+            lift_of[segment.class_index] = building is not None and building.native == LIFT_NATIVE
+        chains[segment.chain].append((segment.class_index, segment.points))
     out = []
     for chain in sorted(chains):
         pieces = chains[chain]
         points = [p for _index, part in pieces for p in part]
-        out.append((chain, any(index in lifts for index, _ in pieces), len(pieces), points))
+        out.append((chain, any(lift_of[index] for index, _ in pieces), len(pieces), points))
     return out
 
 
@@ -689,15 +675,7 @@ def pipe_runs(projection: dict) -> list[tuple[int, list]]:
     ``index`` is the position in ``pipes["segments"]``, which is the same positional key
     ``domain.world.flow`` hands back and ``/api/pipes`` emits rows in.
     """
-    payload = projection.get("pipes") or {}
-    out = []
-    for order, segment in enumerate(payload.get("segments") or ()):
-        if not isinstance(segment, (list, tuple)) or len(segment) < 3:
-            continue
-        points = [p for p in (segment[2] or ()) if isinstance(p, (list, tuple)) and len(p) >= 3]
-        if points:
-            out.append((order, points))
-    return out
+    return [(segment.index, segment.points) for segment in saverows.iter_pipe_segments(projection)]
 
 
 def _classify(index: dict, points: list, slack: float) -> Run:
