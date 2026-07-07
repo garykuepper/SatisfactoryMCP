@@ -33,6 +33,7 @@ the switch that chose between them went with it -- see the comment above the imp
 
 from __future__ import annotations
 
+import collections
 import json
 import math
 import os
@@ -365,6 +366,41 @@ def _map_items(value) -> dict:
     return out
 
 
+#: What a run threw away, keyed by a sentence that reads with a count in front of it.
+#: A plain ``Counter`` rather than a class: the only operations are ``+= 1`` at a dozen
+#: guards and one drain at the end, and the guards are the point.
+Drops = collections.Counter
+
+#: How many distinct drop reasons ``warnings`` names before it stops naming them. A save
+#: that is going wrong goes wrong in a handful of ways at once; a save that produces
+#: twenty different reasons has a broken parser, and the first six say so just as well.
+DROP_REASONS_SHOWN = 6
+
+#: Ceiling on the per-chain stderr line below. One line per unreadable chain is fine for
+#: the three a torn save produces and is a screenful for the 1,400 a version bump would.
+CHAIN_NOTES_SHOWN = 5
+
+
+def _drop_notes(drops: Drops) -> list[str]:
+    """One ``warnings`` sentence per kind of record this extraction threw away.
+
+    The projection is built by a dozen guards that ``continue`` past anything they cannot
+    read, and every one of them is right to: a single undecodable spline must not cost the
+    other 502 pipes. What was wrong is that they were silent, so a save whose trailing
+    bytes had stopped decoding published a *smaller* world and called it the world -- and
+    the caller, which reads ``warnings`` and shows it, had nothing to show.
+
+    Counted rather than logged per occurrence, the same shape the world generators use for
+    their own unresolved tallies: 900 identical lines say exactly what one line and a
+    number say, and only one of the two survives a scroll buffer.
+    """
+    notes = [f"{count} {reason}" for reason, count in drops.most_common(DROP_REASONS_SHOWN)]
+    rest = len(drops) - DROP_REASONS_SHOWN
+    if rest > 0:
+        notes.append(f"and {rest} further kind(s) of unreadable record, not listed")
+    return notes
+
+
 def extract(path: str) -> dict:
     save = read_full_save(path)
     # Diagnostics, and only to stderr: stdout is the projection and has to stay parseable.
@@ -418,6 +454,10 @@ def extract(path: str) -> dict:
         "graph": {"actors": [], "roles": [], "material": [], "power": []},
         "warnings": [],
     }
+    #: Threaded into the three builders that skip records rather than returned by them,
+    #: because what a reader wants is ONE list of what this save cost, not three fields
+    #: nobody added to the schema. Drained into ``warnings`` at the bottom.
+    drops = Drops()
     counts: dict[str, int] = {}
     n_objects = 0
     #: (chain actor world position, the actor) for every conveyor chain. Held rather than
@@ -618,7 +658,7 @@ def extract(path: str) -> dict:
             # Holds Build_* classes that appear in NO actor header, so a
             # header-only census undercounts what is actually built.
             out["lightweight_counts"] = _lightweight(obj)
-            out["structures"] = _structures(obj)
+            out["structures"] = _structures(obj, drops)
             continue
         if cls == "FGPipeNetwork":
             fluid = ref_class(p.get("mFluidDescriptor"))
@@ -757,11 +797,11 @@ def extract(path: str) -> dict:
         "power": power_edges,
     }
     out["building_counts"] = dict(sorted(counts.items()))
-    out["belts"] = _belts(chain_actors)
+    out["belts"] = _belts(chain_actors, drops)
     # ``actor_ix`` READ-ONLY, hence the dict rather than ``actor_id``: the graph's actor
     # list was snapshotted three lines up, so interning a new name here would mint an
     # index past the end of it. A pipe with no connection at all gets -1 instead.
-    out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix)
+    out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix, drops)
     out["storage"] = _storage(storage_actors, held, pipe_nets)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
@@ -785,6 +825,7 @@ def extract(path: str) -> dict:
             f"{unread} placement(s) carry a rotation this parser could not read; "
             "their yaw is null rather than 0, which would have meant axis-aligned"
         )
+    out["warnings"].extend(_drop_notes(drops))
     return out
 
 
@@ -1013,7 +1054,7 @@ def _lightweight(obj) -> dict:
     return out
 
 
-def _structures(obj) -> dict:
+def _structures(obj, drops: Drops) -> dict:
     """Transforms of every lightweight buildable -- foundations, ramps, walls, catwalks.
 
     These carry the one signal power and belts both lack: what the player physically
@@ -1045,23 +1086,36 @@ def _structures(obj) -> dict:
     instances: list[list] = []
 
     for entry in getattr(obj, "actorSpecificInfo", None) or []:
-        if not (isinstance(entry, list) and len(entry) == 2):
+        # NOT a drop: the blob is ``[version, [classPath, [instance, ...]], ...]``, so the
+        # leading element is the record format's version word and is skipped on every save
+        # there has ever been. Counting it would put a warning on all 31 of them.
+        if not isinstance(entry, list):
+            continue
+        if len(entry) != 2:
+            drops["lightweight class block(s) skipped: not a [class, instances] pair"] += 1
             continue
         cls_path, items = entry
         cls = ref_class(cls_path) or str(cls_path).rsplit(".", 1)[-1]
         if not isinstance(items, list):
+            drops[f"lightweight class block(s) skipped: {cls} lists no instances"] += 1
             continue
         ci = index.get(cls)
         if ci is None:
             ci = index[cls] = len(classes)
             classes.append(cls)
         for inst in items:
-            if not (isinstance(inst, list) and len(inst) >= 2) or not _placed(inst):
+            if not (isinstance(inst, list) and len(inst) >= 2):
+                drops["lightweight piece(s) dropped: no [rotation, position] to read"] += 1
+                continue
+            # NOT counted as a drop: a stale slot is a record of nothing, and emitting it
+            # invents floor. See `_placed`, which is where that measurement lives.
+            if not _placed(inst):
                 continue
             pos = inst[1]
             try:
                 instances.append([ci, int(pos[0]), int(pos[1]), int(pos[2]), yaw_of(inst[0])])
             except (TypeError, ValueError, IndexError):
+                drops["lightweight piece(s) dropped: position would not read as numbers"] += 1
                 continue
 
     return {"classes": classes, "instances": instances}
@@ -1174,7 +1228,7 @@ def _spans(points: list, tangents: list) -> list:
     return [spans] if curved else []
 
 
-def _belts(chains: list) -> dict:
+def _belts(chains: list, drops: Drops) -> dict:
     """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``.
 
     The one thing a map of a factory cannot be drawn without and the projection had no
@@ -1233,34 +1287,54 @@ def _belts(chains: list) -> dict:
        spline-less offset a conveyor lift junction carries. In file order the median join
        is 2,450 cm and the worst 11,200, i.e. every chain is drawn as a zigzag.
 
-    A chain whose trailing bytes will not decode costs that chain and is reported on
-    stderr, not the whole projection: belts are new and a save that projected yesterday
-    must not stop projecting because one trailer is unreadable.
+    A chain whose trailing bytes will not decode costs that chain and is counted into
+    ``warnings``, not the whole projection: belts are new and a save that projected
+    yesterday must not stop projecting because one trailer is unreadable. The first few
+    also name their exception on stderr, because the type of the failure is what says
+    whether the format moved, and a count cannot carry it.
     """
     classes: list[str] = []
     index: dict[str, int] = {}
     segments: list[list] = []
     chain_ix = 0
+    chain_notes = 0
 
     for origin, obj in chains:
         try:
             info = obj.actorSpecificInfo
         except PARSE_ERROR as exc:
-            print(f"pioneersav: conveyor chain skipped: {exc}", file=sys.stderr)
+            drops["conveyor chain(s) dropped: the trailing bytes would not decode"] += 1
+            # Capped: one line per chain is three lines on a torn save and 1,909 -- the
+            # whole reference world -- on a version bump, which is the case where stderr
+            # matters most and is exactly the case that scrolls the reason off the top.
+            if chain_notes < CHAIN_NOTES_SHOWN:
+                chain_notes += 1
+                print(f"pioneersav: conveyor chain skipped: {exc}", file=sys.stderr)
+            elif chain_notes == CHAIN_NOTES_SHOWN:
+                chain_notes += 1
+                print(
+                    "pioneersav: further unreadable conveyor chains not listed; "
+                    "the projection's warnings carry the total",
+                    file=sys.stderr,
+                )
             continue
         if not (isinstance(info, list) and len(info) >= 3 and isinstance(info[2], list)):
+            drops["conveyor chain(s) dropped: no segment list in actorSpecificInfo"] += 1
             continue
         try:
             ox, oy, oz = (float(v) for v in origin)
         except (TypeError, ValueError):
+            drops["conveyor chain(s) dropped: the actor position would not read"] += 1
             continue
 
         rows: list[list] = []
         for seg in reversed(info[2]):
             if not (isinstance(seg, list) and len(seg) >= 3):
+                drops["belt segment(s) dropped: no [?, class, points] to read"] += 1
                 continue
             cls = _conveyor_class(ref_path(seg[1]) or "")
             if not cls:
+                drops["belt segment(s) dropped: the class is not a known conveyor"] += 1
                 continue
             points = []
             tangents = []
@@ -1288,10 +1362,12 @@ def _belts(chains: list) -> dict:
                     points.append(at)
                     tangents.append(pair)
                 except (TypeError, ValueError, IndexError):
+                    drops["belt point(s) dropped: location or tangent would not read"] += 1
                     continue
             # A single point is not a route. 2 is the commonest case by far -- a straight
             # belt -- and the most that can be said about a 1-point segment is where it is.
             if len(points) < 2:
+                drops["belt segment(s) dropped: fewer than 2 readable points"] += 1
                 continue
             ci = index.get(cls)
             if ci is None:
@@ -1325,7 +1401,7 @@ def _conveyor_class(path: str) -> str:
     return "_".join(parts) if len(parts) > 1 else ""
 
 
-def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
+def _pipes(actors: list, networks: list, actor_ix: dict, drops: Drops) -> dict:
     """Every fluid pipe's route, as polylines, and the fluid each one carries.
 
     ``actors`` is ``[(class, instanceName, actorPosition, mSplineData), ...]``,
@@ -1421,10 +1497,12 @@ def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
 
     for cls, instance, origin, spline in actors:
         if not isinstance(spline, list):
+            drops["pipe(s) dropped: mSplineData is not a list of points"] += 1
             continue
         try:
             ox, oy, oz = (float(v) for v in origin)
         except (TypeError, ValueError):
+            drops["pipe(s) dropped: the actor position would not read"] += 1
             continue
         points = []
         tangents = []
@@ -1441,11 +1519,13 @@ def _pipes(actors: list, networks: list, actor_ix: dict) -> dict:
                 points.append(at)
                 tangents.append(pair)
             except (TypeError, ValueError, IndexError):
+                drops["pipe point(s) dropped: Location or tangent would not read"] += 1
                 continue
         # A single point is not a route, the same bar `_belts` sets -- and unlike a belt
         # there is no lift here to except: not one of the reference save's 503 pipes is
         # vertical (minimum horizontal span 11.6 cm), so every pipe is drawable as a line.
         if len(points) < 2:
+            drops["pipe(s) dropped: fewer than 2 readable spline points"] += 1
             continue
         ci = index.get(cls)
         if ci is None:

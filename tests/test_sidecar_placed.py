@@ -67,7 +67,7 @@ from pioneersav.lightweight import LIGHTWEIGHT_SUBSYSTEM
 from pioneersav.objects import ActorHeader
 from pioneersav.properties import read_object
 from pioneersav.versions import FIRST_MODERN_BODY
-from satisfactory_mcp.core.saveio.extract import _lightweight, _placed, _structures
+from satisfactory_mcp.core.saveio.extract import Drops, _lightweight, _placed, _structures
 from satisfactory_mcp.domain.factories.structure import build_structures
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -154,7 +154,7 @@ def _before_the_fix(blob, *extra: list) -> dict:
     pre-``_placed`` census over exactly the same positions -- which is what makes the slab
     numbers in the two tests below a comparison rather than an assertion about one number.
     """
-    payload = _structures(Subsystem(blob))
+    payload = _structures(Subsystem(blob), Drops())
     ci = payload["classes"].index(FOUNDATION)
     rows = [[ci, int(r[1][0]), int(r[1][1]), int(r[1][2])] for r in extra]
     return {"classes": payload["classes"], "instances": payload["instances"] + rows}
@@ -195,7 +195,7 @@ def test_the_projection_emits_every_placed_record(blob, blob_v2):
     )
     for b, expected in censuses:
         assert _lightweight(Subsystem(b)) == expected
-        assert len(_structures(Subsystem(b))["instances"]) == sum(expected.values())
+        assert len(_structures(Subsystem(b), Drops())["instances"]) == sum(expected.values())
 
 
 # ------------------------------------------------------------------ the guard itself
@@ -292,7 +292,12 @@ def test_a_stale_record_is_dropped_from_both_projection_fields(blob_v2):
         ]
     )
     assert _lightweight(salted) == _lightweight(Subsystem(blob_v2))
-    assert _structures(salted) == _structures(Subsystem(blob_v2))
+    drops = Drops()
+    assert _structures(salted, drops) == _structures(Subsystem(blob_v2), Drops())
+    # And a stale slot is NOT a warning. The drop channel says "this save carries records
+    # this parser could not read"; a stale slot is one the game itself wrote as nothing, so
+    # counting it would put a permanent complaint on 7 of the 31 saves that are all fine.
+    assert sum(drops.values()) == 0
 
 
 def test_a_stale_record_that_stands_apart_invents_a_whole_slab(blob_v2):
@@ -304,7 +309,7 @@ def test_a_stale_record_that_stands_apart_invents_a_whole_slab(blob_v2):
     ``plan_layout`` offers to build on.
     """
     phantom = _moved(_stale(_records(blob_v2)[FOUNDATION][0]), 4_000.0)
-    guarded = _slabs(_structures(Subsystem(_salted(blob_v2, phantom))))
+    guarded = _slabs(_structures(Subsystem(_salted(blob_v2, phantom)), Drops()))
     assert [s.tiles for s in guarded] == [3], "the phantom must not be floor"
 
     was = _slabs(_before_the_fix(blob_v2, phantom))
@@ -319,7 +324,9 @@ def test_a_stale_record_beside_a_slab_invents_floor_inside_it(blob_v2):
     "will this fit" gets a yes it should not.
     """
     phantom = _moved(_stale(_records(blob_v2)[FOUNDATION][0]), 800.0)  # one tile along
-    assert [s.tiles for s in _slabs(_structures(Subsystem(_salted(blob_v2, phantom))))] == [3]
+    assert [
+        s.tiles for s in _slabs(_structures(Subsystem(_salted(blob_v2, phantom)), Drops()))
+    ] == [3]
     assert [s.tiles for s in _slabs(_before_the_fix(blob_v2, phantom))] == [4]
 
 

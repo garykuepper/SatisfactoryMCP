@@ -35,6 +35,7 @@ from satisfactory_mcp.core.saveio.extract import (
     PIPE_CLASSES,
     STORAGE_CLASSES,
     TANGENT_EPS_CM,
+    Drops,
     _belts,
     _bulge,
     _conveyor_class,
@@ -305,7 +306,7 @@ def test_belts_out_of_real_trailing_bytes(projection):
     """
     chains = _trailer_chains()
     assert chains, "no chain records in the trailer fixture"
-    out = _belts([([1000.0, 2000.0, 3000.0], Chain(info)) for info in chains])
+    out = _belts([([1000.0, 2000.0, 3000.0], Chain(info)) for info in chains], Drops())
     assert out["classes"] and out["segments"]
     assert {r[0] for r in out["segments"]} == set(range(len(chains)))
     for row in out["segments"]:
@@ -314,7 +315,7 @@ def test_belts_out_of_real_trailing_bytes(projection):
 
     # The same records with the actor at the origin: every point moves by exactly the offset,
     # which is the whole of what the frame correction does.
-    at_origin = _belts([([0.0, 0.0, 0.0], Chain(info)) for info in chains])
+    at_origin = _belts([([0.0, 0.0, 0.0], Chain(info)) for info in chains], Drops())
     for moved, base in zip(out["segments"], at_origin["segments"]):
         assert [[p[0] - 1000, p[1] - 2000, p[2] - 3000] for p in moved[2]] == base[2]
 
@@ -326,21 +327,36 @@ def test_a_chain_that_will_not_decode_costs_that_chain_and_not_the_save():
     Letting it out would turn one unreadable belt into a world the server cannot open at all.
     """
     chains = _trailer_chains()
+    drops = Drops()
     out = _belts(
         [
             ([0.0, 0.0, 0.0], Unreadable(None)),
             *(([0.0, 0.0, 0.0], Chain(info)) for info in chains),
-        ]
+        ],
+        drops,
     )
     assert {r[0] for r in out["segments"]} == set(range(len(chains))), "indices stay dense"
+    # And it SAYS it cost that chain. A projection quietly one belt short is the failure
+    # this channel exists for: the payload alone cannot be told from a world with one belt
+    # fewer in it.
+    assert sum(drops.values()) == 1
+    assert "trailing bytes" in next(iter(drops))
 
 
 def test_a_chain_of_nothing_recognisable_is_dropped_rather_than_raising():
-    """Same reasoning as ``_placed``: this runs on whatever the decoder produced."""
-    assert _belts([]) == {"classes": [], "segments": []}
-    assert _belts([(None, Chain(None))]) == {"classes": [], "segments": []}
-    assert _belts([([0.0, 0.0, 0.0], Chain([1, 2]))]) == {"classes": [], "segments": []}
-    assert _belts([(["x", 0.0, 0.0], Chain([1, 2, []]))]) == {"classes": [], "segments": []}
+    """Same reasoning as ``_placed``: this runs on whatever the decoder produced.
+
+    Each of these is also one count in ``warnings`` -- dropping is right, dropping in
+    silence is what made a torn save look like a smaller world.
+    """
+    empty = {"classes": [], "segments": []}
+    drops = Drops()
+    assert _belts([], drops) == empty
+    assert sum(drops.values()) == 0, "nothing in, nothing dropped"
+    assert _belts([(None, Chain(None))], drops) == empty
+    assert _belts([([0.0, 0.0, 0.0], Chain([1, 2]))], drops) == empty
+    assert _belts([(["x", 0.0, 0.0], Chain([1, 2, []]))], drops) == empty
+    assert sum(drops.values()) == 3, "three unreadable chains, three counted"
 
 
 def test_a_belts_class_comes_off_the_instance_name_with_its_C_intact():
@@ -574,6 +590,7 @@ def test_pipes_are_translated_by_their_actor_and_not_rotated_by_it():
         ],
         nets,
         {"Build_Pipeline_C_1": 0},
+        Drops(),
     )
     moved = _pipes(
         [
@@ -586,6 +603,7 @@ def test_pipes_are_translated_by_their_actor_and_not_rotated_by_it():
         ],
         nets,
         {"Build_Pipeline_C_1": 0},
+        Drops(),
     )
     assert base["segments"][0][2] == [[0, 0, 0], [0, 100, 0], [0, 100, 250]]
     assert [[p[0] - 1000, p[1] + 2000, p[2] - 3000] for p in moved["segments"][0][2]] == base[
@@ -610,21 +628,37 @@ def test_a_pipe_no_network_claims_is_still_drawn():
         ],
         [(3, "Desc_Water_C", ["x.Build_Pipeline_C_1"])],
         {"Build_PipelineMK2_C_9": 4},
+        Drops(),
     )
     assert out["segments"] == [[-1, 0, [[0, 0, 0], [0, 800, 0]], 4]]
     assert out["networks"] == [{"id": 3, "fluid": "Desc_Water_C"}]
 
 
 def test_a_pipe_of_nothing_recognisable_is_dropped_rather_than_raising():
-    """Same reasoning as ``_belts``: this runs on whatever the property decoder produced."""
+    """Same reasoning as ``_belts``: this runs on whatever the property decoder produced.
+
+    And the same second claim: each drop is one count in ``warnings``, so a save whose
+    splines have stopped decoding says so rather than publishing a world with no pipes.
+    """
     empty = {"classes": [], "networks": [], "segments": []}
-    assert _pipes([], [], {}) == empty
-    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), None)], [], {}) == empty
-    assert _pipes([("Build_Pipeline_C", "i", None, _spline((0, 0, 0), (1, 1, 1)))], [], {}) == empty
-    assert _pipes([("Build_Pipeline_C", "i", ("x", 0, 0), _spline((0, 0, 0)))], [], {}) == empty
+    drops = Drops()
+    assert _pipes([], [], {}, drops) == empty
+    assert sum(drops.values()) == 0, "nothing in, nothing dropped"
+    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), None)], [], {}, drops) == empty
+    assert (
+        _pipes([("Build_Pipeline_C", "i", None, _spline((0, 0, 0), (1, 1, 1)))], [], {}, drops)
+        == empty
+    )
+    assert _pipes([("Build_Pipeline_C", "i", ("x", 0, 0), _spline((0, 0, 0)))], [], {}, drops) == (
+        empty
+    )
     # One point is not a route, the same bar the belts set.
-    assert _pipes([("Build_Pipeline_C", "i", (0, 0, 0), _spline((0, 0, 0)))], [], {}) == empty
+    assert (
+        _pipes([("Build_Pipeline_C", "i", (0, 0, 0), _spline((0, 0, 0)))], [], {}, drops) == empty
+    )
+    assert sum(drops.values()) == 4, "four unreadable pipes, four counted"
     # A struct with no Location among its fields costs that point, not the pipe.
+    point_drops = Drops()
     assert _pipes(
         [
             (
@@ -636,9 +670,11 @@ def test_a_pipe_of_nothing_recognisable_is_dropped_rather_than_raising():
         ],
         [],
         {},
+        point_drops,
     )["segments"] == [[-1, 0, [[0, 0, 0], [0, 400, 0]], -1]]
+    assert sum(point_drops.values()) == 1, "the point, and only the point"
     # A network whose id is not an integer keeps its fluid and loses its id.
-    assert _pipes([], [(None, "Desc_Water_C", [])], {})["networks"] == [
+    assert _pipes([], [(None, "Desc_Water_C", [])], {}, Drops())["networks"] == [
         {"id": None, "fluid": "Desc_Water_C"}
     ]
 
@@ -825,8 +861,8 @@ def test_tangents_are_rounded_with_the_points_but_never_translated_with_them():
     belt = ObjectReference("Persistent_Level", "x.Build_ConveyorBeltMk3_C_7")
     info = [belt, belt, [[belt, belt, bend, 0.0, 0.0, 900.0, -1, -1, 0]], [900.0, 9, -1, -1], []]
 
-    here = _belts([([0.0, 0.0, 0.0], Chain(info))])["segments"]
-    there = _belts([([120_000.0, -80_000.0, 500.0], Chain(info))])["segments"]
+    here = _belts([([0.0, 0.0, 0.0], Chain(info))], Drops())["segments"]
+    there = _belts([([120_000.0, -80_000.0, 500.0], Chain(info))], Drops())["segments"]
     assert len(here) == len(there) == 1
     assert len(here[0]) == 4, "this run bends, so it carries tangents"
     assert [[p[0] + 120_000, p[1] - 80_000, p[2] + 500] for p in here[0][2]] == there[0][2]
@@ -850,7 +886,7 @@ def test_a_point_that_will_not_decode_takes_its_own_tangents_with_it():
     broken = [[0.0, 200.0, 0.0], "not a vector", [0.0, 300.0, 0.0]]
     belt = ObjectReference("Persistent_Level", "x.Build_ConveyorBeltMk3_C_7")
 
-    def run(points):
+    def run(points, drops=None):
         info = [
             belt,
             belt,
@@ -858,9 +894,15 @@ def test_a_point_that_will_not_decode_takes_its_own_tangents_with_it():
             [900.0, 9, -1, -1],
             [],
         ]
-        return _belts([([0.0, 0.0, 0.0], Chain(info))])["segments"]
+        return _belts([([0.0, 0.0, 0.0], Chain(info))], drops if drops is not None else Drops())[
+            "segments"
+        ]
 
-    assert run([good, broken, far, end]) == run([good, far, end])
+    drops = Drops()
+    assert run([good, broken, far, end], drops) == run([good, far, end])
+    # Identical output, and the difference between the two runs is now stated rather than
+    # inferable only by having the other one to compare against.
+    assert sum(drops.values()) == 1, "the broken triple, counted"
 
 
 # ------------------------------------------------------------------------------ storage

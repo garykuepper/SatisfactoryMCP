@@ -248,7 +248,7 @@ def test_an_undecoded_class_reads_as_None_and_not_as_empty(save):
             assert obj.actor_specific_info is None
             assert obj.actorSpecificInfo is None
             assert sidecar._lightweight(obj) == {}
-            assert sidecar._structures(obj) == {"classes": [], "instances": []}
+            assert sidecar._structures(obj, sidecar.Drops()) == {"classes": [], "instances": []}
 
 
 # --------------------------------------------------------------- one failure type
