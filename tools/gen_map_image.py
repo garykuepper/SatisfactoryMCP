@@ -615,6 +615,11 @@ def run_upscaler(exe: Path, models: Path, src: Path, dst: Path, scale: int) -> t
     ``-m`` is passed explicitly: the binary will find ``models/`` beside itself, but only
     by resolving its own path, and a tool that depends on that is a tool that breaks when
     it is invoked through a symlink or a copied exe.
+
+    ``stdin=DEVNULL`` for the reason every other subprocess in this repository has it: a
+    downloaded binary that decides to prompt inherits this process's console and blocks a
+    generator that has no one watching it. Closed stdin turns that into an immediate EOF
+    and a return code, which is a failure the caller can report.
     """
     proc = subprocess.run(
         [
@@ -632,6 +637,7 @@ def run_upscaler(exe: Path, models: Path, src: Path, dst: Path, scale: int) -> t
             "-f",
             "png",
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,

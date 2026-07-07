@@ -249,3 +249,28 @@ def test_an_unreadable_collectible_table_is_not_cached_as_a_refusal(tmp_path, mo
 
     _write(path, _COLLECTIBLES_A, 3_000_000_000)
     assert len(collectibles_table.load_collectibles()) == 1
+
+
+def test_a_corrupt_collectible_table_can_be_told_from_a_missing_one(tmp_path, monkeypatch):
+    """ "You never ran the generator" and "what it wrote is broken" are different answers.
+
+    Both arrived as ``None``, so a reader who HAD run the generator was told the table did
+    not exist and went looking for a run that had already happened. The degrading callers
+    still degrade -- that is the default, and it is right for them -- but ``strict`` exists
+    so a caller that wants to say which one it is can.
+    """
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    collectibles_table._TABLE.clear()
+    path = tmp_path / collectibles_table.COLLECTIBLES_FILE
+
+    # Not there at all: still ``None``, strict or not. Absence is not a fault.
+    assert collectibles_table.load_collectibles(strict=True) is None
+
+    for broken in ("{ not json", "[]", '{"collectibles": []}'):
+        path.write_text(broken, encoding="utf-8")
+        assert collectibles_table.load_collectibles() is None, broken
+        with pytest.raises(collectibles_table.CollectiblesUnreadable, match="exists but"):
+            collectibles_table.load_collectibles(strict=True)
+
+    _write(path, _COLLECTIBLES_A, 4_000_000_000)
+    assert len(collectibles_table.load_collectibles(strict=True)) == 1

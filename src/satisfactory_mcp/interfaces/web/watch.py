@@ -14,12 +14,15 @@ browser that has gone away, and the newest save is the only one worth telling it
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from ... import config
 
 __all__ = ["POLL_SECONDS", "SaveEvent", "SaveWatcher"]
+
+log = logging.getLogger(__name__)
 
 #: Slow enough to be free, fast enough that a manual save shows up before the player
 #: has alt-tabbed back to the browser.
@@ -52,6 +55,9 @@ class SaveWatcher:
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
         self.latest: SaveEvent | None = None
+        #: Polls that raised in a row. Zeroed by any poll that gets through, so this is
+        #: "the watcher is broken now" and never "the watcher hiccuped once in March".
+        self.consecutive_failures = 0
 
     # ---- subscription ---------------------------------------------------
 
@@ -111,15 +117,33 @@ class SaveWatcher:
     async def _run(self) -> None:
         # The first scan establishes the baseline. It publishes too, which is what
         # gives a browser that connected before the first poll something to draw.
+        #
+        # The catch-all stays -- a save directory that vanished mid-poll is not a reason
+        # to stop watching, and the next scan will find it or keep finding nothing -- but
+        # it no longer swallows the OTHER thing that can raise here. `poll_once` also
+        # calls `_publish`, and a bug in the fan-out raises on every single poll: this
+        # loop then span for the lifetime of the server, three seconds at a time, telling
+        # nobody, while every connected browser sat on a page that never updated again.
+        # Silence and "no save has changed" looked exactly alike.
+        #
+        # So: the first failure is logged with its traceback, and every twentieth after
+        # that. Logged once rather than each time because the failure mode this exists for
+        # is the one that repeats forever, and a line every 3 s is a log nobody can read.
         while True:
             try:
                 await self.poll_once()
+                self.consecutive_failures = 0
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # A save directory that vanished mid-poll is not a reason to stop
-                # watching; the next scan will find it or keep finding nothing.
-                pass
+                self.consecutive_failures += 1
+                if self.consecutive_failures == 1 or self.consecutive_failures % 20 == 0:
+                    log.warning(
+                        "save watcher poll failed (%d in a row); still polling every %.0fs",
+                        self.consecutive_failures,
+                        self.interval,
+                        exc_info=True,
+                    )
             await asyncio.sleep(self.interval)
 
     # ---- lifecycle ------------------------------------------------------

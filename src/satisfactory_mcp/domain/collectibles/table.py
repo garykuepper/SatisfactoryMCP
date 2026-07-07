@@ -8,7 +8,13 @@ from dataclasses import dataclass, field
 
 from ... import config
 
-__all__ = ["COLLECTIBLES_FILE", "CollectibleTable", "_name_stem", "load_collectibles"]
+__all__ = [
+    "COLLECTIBLES_FILE",
+    "CollectibleTable",
+    "CollectiblesUnreadable",
+    "_name_stem",
+    "load_collectibles",
+]
 
 
 def _leaf(instance: str) -> str:
@@ -152,13 +158,31 @@ COLLECTIBLES_FILE = "world_collectibles.json"
 _TABLE: dict[tuple[str, int], CollectibleTable] = {}
 
 
-def load_collectibles() -> CollectibleTable | None:
+class CollectiblesUnreadable(Exception):
+    """The table is THERE and will not parse -- a different fact from "not generated".
+
+    Absent is the ordinary state of a fresh clone and the answer is "run the generator".
+    Corrupt is a half-written file, a truncated download or an interrupted run, and the
+    answer is "delete it and run the generator" -- but only if somebody is told, and
+    collapsing the two meant nobody ever was. A reader that has generated the table and
+    then sees "no collectible table" goes looking for the run that did not happen.
+    """
+
+
+def load_collectibles(*, strict: bool = False) -> CollectibleTable | None:
     """The map's placement table, or ``None`` when it has not been generated.
 
     ``None`` rather than an exception: the file is untracked, so a fresh clone does not
     have one, and every caller degrades to the save-only census instead of failing. What
     is lost without it is everything the save cannot know by itself -- how many of each
     kind exist, where they are, and therefore what remains.
+
+    ``strict=True`` raises :class:`CollectiblesUnreadable` for a file that exists and
+    cannot be read, and still returns ``None`` for one that is not there. Off by default
+    because the degrading callers are right to degrade; on for a caller -- a generator
+    checking its own output, a report saying why a census is save-only -- that wants to
+    tell the reader the difference between "you never ran it" and "what it wrote is
+    broken". Both used to arrive as ``None``, so nobody could.
     """
     path = config.data_dir() / COLLECTIBLES_FILE
     if not path.is_file():
@@ -169,10 +193,20 @@ def load_collectibles() -> CollectibleTable | None:
         if hit is not None:
             return hit
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError) as exc:
+        # ``ValueError`` covers ``JSONDecodeError``, which subclasses it, and the numeric
+        # parse errors a truncated file produces on the way there. Named rather than caught
+        # broadly so that a bug in this function keeps raising as a bug.
+        if strict:
+            raise CollectiblesUnreadable(f"{path} exists but will not read: {exc}") from exc
         return None
-    rows = payload.get("collectibles") or []
+    # A JSON file that is not an object at all is corrupt, not empty -- and it used to
+    # reach ``payload.get`` and raise ``AttributeError`` out of a function documented to
+    # return ``None``, which is neither of the two answers this is allowed to give.
+    rows = payload.get("collectibles") or [] if isinstance(payload, dict) else []
     if not rows:
+        if strict:
+            raise CollectiblesUnreadable(f"{path} exists but lists no collectibles")
         return None
     table = CollectibleTable(rows=rows, meta=payload.get("_meta") or {})
     _TABLE.clear()

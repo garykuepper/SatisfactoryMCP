@@ -472,6 +472,7 @@ class ClassFacts:
         self._flags: dict[str, dict[str, bool | None]] = {}
         self._components: dict[str, dict[str, dict[str, bytes]]] = {}
         self._views: dict[str, PackageView | None] = {}
+        self._failures: dict[str, str] = {}
 
     @property
     def resolved(self) -> int:
@@ -481,6 +482,24 @@ class ClassFacts:
     def looked_up(self) -> int:
         return len(self._templates)
 
+    @property
+    def failed(self) -> int:
+        """Classes whose package is on disk and would not parse.
+
+        Beside ``resolved`` and ``looked_up`` because it is the third of three and the
+        one the other two hide. A class with no package at all and a class whose package
+        raised both answer ``None`` from ``_view`` and both come out of ``templates`` as
+        ``{}``, so a container this build cannot read at all -- a format change, a bad
+        decompressor -- reads as a world where nothing happens to have a template, which
+        is a normal-looking number. This one is zero on a healthy install and is not.
+        """
+        return len(self._failures)
+
+    @property
+    def failures(self) -> dict[str, str]:
+        """``{class package: exception type}`` for every one of the above, for a report."""
+        return dict(self._failures)
+
     def _view(self, class_package: str) -> PackageView | None:
         if class_package in self._views:
             return self._views[class_package]
@@ -489,8 +508,14 @@ class ClassFacts:
         if path:
             try:
                 view = PackageView(self.store.read_path(path))
-            except Exception:
-                view = None
+            except Exception as exc:
+                # Still cached, because `_load` asks once per class and re-reading a
+                # package that just raised buys nothing -- but recorded, so that "no
+                # template" and "could not read the package that holds the template" stop
+                # being the same answer. They were, and a run that could not open a single
+                # asset reported the same shape of result as one where every asset was fine
+                # and simply carried no component templates.
+                self._failures[class_package] = type(exc).__name__
         self._views[class_package] = view
         return view
 
