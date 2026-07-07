@@ -10,6 +10,23 @@ from ....presenters.text.search import render_search
 from ..app import Limit, _item_id, _state, game, mcp
 
 
+def _no_save_note(reason: str | None) -> str:
+    """Why the HAVE/LOCKED column is blank, in the one wording all three tools use.
+
+    Three tools here mark rows against the save and all three blank the column when it
+    will not read. Two of them used to blank it in SILENCE, which produces a confident
+    table of dashes that reads as "nothing is unlocked" -- the single most misleading
+    answer this surface can give a player deciding what to build next, because it is
+    indistinguishable from a correct answer about a fresh world.
+
+    The reason is carried through rather than summarised: "could not read save" is the
+    same sentence for a save mid-write, a save directory that is not there and a game
+    patch this parser has not caught up with, and only the first is worth retrying.
+    """
+    detail = f" ({reason})" if reason else ""
+    return f"no save could be read{detail}, so HAVE/LOCKED is blank -- game data only"
+
+
 @mcp.tool(structured_output=False)
 def search_items(query: str, limit: Limit = 10, offset: int = 0) -> str:
     """Find items by name. Returns form, energy and sink points."""
@@ -94,15 +111,19 @@ def alternates_for_item(
     if iid is None:
         return f"no item matching {item!r}"
     producers = g.producers_of(iid, "part")
-    have: set[str] = set()
+    # ``None``, not an empty set. The status column blanks for both "no save" and "a save
+    # whose recipe list is empty", and only one of those is a fact about the world -- so
+    # the reason is carried rather than collapsed, and said out loud in the notes below.
+    have: set[str] | None = None
+    save_error: str | None = None
     try:
         have = _state(save).available_recipe_ids
-    except Exception:
-        pass
+    except Exception as exc:
+        save_error = str(exc)
     producers.sort(key=lambda r: (not r.is_alternate, r.name))
     rows = []
     for r in producers:
-        status = "HAVE" if r.cls in have else ("LOCKED" if have else "-")
+        status = "-" if have is None else ("HAVE" if r.cls in have else "LOCKED")
         if not include_locked and status == "LOCKED":
             continue
         b = g.machine(r)
@@ -118,10 +139,15 @@ def alternates_for_item(
     n_alt = sum(1 for r in producers if r.is_alternate)
     body = render.table(("recipe", "building", "in/min", "out/min", "status"), rows)
     footer = render.ids_footer((r.name, r.cls) for r in producers)
+    # The blank status column is the WHOLE point of this tool for a player deciding what to
+    # build, and a blank that means "could not read your save" reads exactly like a blank
+    # that means "nothing is unlocked". Same note ``list_buildings`` already carries.
+    notes = [_no_save_note(save_error)] if have is None else []
     return render.envelope(
         f"# {len(rows)} automatable recipe(s) make {g.item_name(iid)} "
         f"({n_alt} alternate). rates=/min at 100% clock, one machine.",
         body + "\n" + footer,
+        notes,
     )
 
 
@@ -161,8 +187,8 @@ def search_recipes(
     have: set[str] | None = None
     try:
         have = _state(save).available_recipe_ids
-    except Exception:
-        pass
+    except Exception as exc:
+        notes.append(_no_save_note(str(exc)))
 
     hits, census = search.search(
         g,
@@ -206,9 +232,12 @@ def list_buildings(
     try:
         st = _state(save, world)
         unlocked, built = st.unlocked_building_ids, st.built_counts
-    except Exception:
-        # Game data alone is still a useful answer; the columns just go blank.
+        save_error = None
+    except Exception as exc:
+        # Game data alone is still a useful answer; the columns just go blank -- and the
+        # note at the bottom says which save could not be read and why.
         st, unlocked, built = None, None, {}
+        save_error = str(exc)
     # Every kind reachable, and nothing unreachable. "all" used to match nothing at all,
     # and the AWESOME Sink and both Pipeline Pumps fell through every branch -- so a
     # caller could not check sink draw or pump head from the data and fell back on
@@ -278,7 +307,7 @@ def list_buildings(
             "rather than checked changes every belt and pipe count in a plan"
         )
     elif unlocked is None:
-        notes.append("no save could be read, so HAVE/LOCKED is blank -- game data only")
+        notes.append(_no_save_note(save_error))
     unknown = [b.name for b in picks if not b.footprint]
     if unknown:
         notes.append(
