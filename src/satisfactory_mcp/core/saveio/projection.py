@@ -88,7 +88,43 @@ def _child_env() -> dict[str, str]:
     return env
 
 
+#: How much of the child's stderr is carried, in characters, taken from the END. The end is
+#: where a traceback's exception line is and where the last thing the parser complained about
+#: is; the beginning is a page of notes about a file that then parsed fine.
+STDERR_TAIL_CHARS = 600
+
+
+def _because(tail: str) -> str:
+    """The stderr tail as a clause to hang on a message, or nothing at all.
+
+    A separate function because it is appended at three raise sites and an empty stderr must
+    add no punctuation to any of them -- a message ending in ``: `` reads as a truncated
+    error rather than as an error with nothing more to say.
+    """
+    return f" -- sidecar stderr: {tail}" if tail else ""
+
+
 def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
+    """Run the extractor in a child process and return its payload, or raise ``SaveError``.
+
+    **Both of the child's channels are evidence, and this function used to read each of them
+    in exactly one case.** stdout is the payload; stderr is the parser saying what it skipped
+    and the interpreter printing a traceback. Before this, stderr was read only when stdout
+    was empty -- so a crash whose traceback was on stderr and whose exception NAME was on
+    stdout reported ``AttributeError:`` and nothing else -- and the exit code was read only
+    in that same case, so a child that wrote a payload and then died was believed.
+
+    The four outcomes, in the order they are decided:
+
+    * **nothing on stdout** -- the sidecar never got going. Exit code and stderr tail.
+    * **stdout carries an ``error`` key** -- the child's own designed refusal, an unreadable
+      save or a bad argument. Its own words, plus the stderr tail, which is where the
+      traceback for an *unexpected* exception is.
+    * **stdout parses and the exit code is non-zero** -- the child died after writing. The
+      payload is of unknown completeness and is refused rather than cached.
+    * **stdout parses and the exit was clean** -- the payload, with any stderr folded into
+      its ``warnings``.
+    """
     # ``-m``, not a file path: the child then imports the extractor exactly the way this
     # process was imported, so there is no second copy of the code to drift out of date.
     cmd = [sys.executable, "-m", config.EXTRACTOR_MODULE, *args]
@@ -109,15 +145,48 @@ def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
     except subprocess.TimeoutExpired as exc:
         raise SaveError(f"sidecar timed out after {timeout}s") from exc
     out = proc.stdout.decode("utf-8", errors="replace").strip()
+    tail = proc.stderr.decode("utf-8", errors="replace")[-STDERR_TAIL_CHARS:].strip()
     if not out:
-        err = proc.stderr.decode("utf-8", errors="replace")[-600:]
-        raise SaveError(f"sidecar produced no output (exit {proc.returncode}): {err}")
+        raise SaveError(f"sidecar produced no output (exit {proc.returncode}){_because(tail)}")
     try:
         payload = json.loads(out)
     except json.JSONDecodeError as exc:
-        raise SaveError(f"sidecar emitted invalid JSON: {out[:200]}") from exc
+        raise SaveError(f"sidecar emitted invalid JSON: {out[:200]}{_because(tail)}") from exc
+
+    # The child's own refusal, which is the one failure it is designed to have: `main` writes
+    # `{"error": ..., "detail": ...}` and exits non-zero for an unreadable save, and for an
+    # unexpected exception it ALSO writes the traceback to stderr. That traceback used to be
+    # dropped on the floor, so "AttributeError: " was the whole of what a reader got.
     if isinstance(payload, dict) and "error" in payload:
-        raise SaveError(f"{payload['error']}: {payload.get('detail', '')}")
+        raise SaveError(f"{payload['error']}: {payload.get('detail', '')}{_because(tail)}")
+
+    # A non-zero exit with clean JSON on stdout, which nothing checked until now. It means
+    # the child died AFTER writing a payload -- a crash in the interpreter's own shutdown, a
+    # MemoryError past the final `json.dump`, a kill from outside -- and the payload is then
+    # of unknown completeness. Serving it would cache a half-read world under a key that says
+    # it is the whole one, which is exactly the failure the schema in `_cache_key` exists to
+    # prevent by a different route.
+    if proc.returncode != 0:
+        raise SaveError(
+            f"sidecar exited {proc.returncode} after writing a payload, so what it wrote "
+            f"cannot be trusted{_because(tail)}"
+        )
+
+    # It worked, and it still had something to say. `extract` sends the parser's own notes to
+    # stderr on purpose -- what pioneersav skipped, which conveyor chain would not decode --
+    # so that stdout stays parseable and so that the two parsers' payloads could not differ
+    # over a diagnostic. Those notes were then read by nobody at all, which is a different
+    # thing from keeping them out of the projection. They ride here instead, in the key the
+    # projection already has for exactly this.
+    #
+    # ONE entry rather than one per line: this is the tail of a truncated stream, so its first
+    # line is very likely half a line, and splitting it would publish a fragment as though it
+    # were a note somebody wrote.
+    if tail and isinstance(payload, dict):
+        payload.setdefault("warnings", []).append(
+            f"the sidecar wrote to stderr and the parse still succeeded; "
+            f"last {STDERR_TAIL_CHARS} characters: {tail}"
+        )
     return payload
 
 

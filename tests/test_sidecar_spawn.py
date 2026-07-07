@@ -116,6 +116,78 @@ def test_empty_sidecar_output_reports_the_exit_code_and_stderr(monkeypatch):
         proj._run_sidecar(["--list", "somewhere"])
 
 
+def _fake(returncode: int, stdout: bytes, stderr: bytes = b""):
+    """A stub ``subprocess.run``. The whole child, in one line, for the cases below."""
+
+    def run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+
+    return run
+
+
+def test_a_nonzero_exit_is_a_failure_even_when_the_json_parses(monkeypatch):
+    """The gap this closes: the exit code was never looked at once stdout parsed.
+
+    A child that writes a complete-looking payload and then dies -- in interpreter shutdown,
+    on a MemoryError past the final ``json.dump``, on a kill from outside -- produced a
+    payload of unknown completeness, and the caller cached it under a key asserting it was
+    the whole world. A thin world that looks well-formed is the dangerous kind, which is the
+    same argument the schema in ``_cache_key`` rests on.
+    """
+    monkeypatch.setattr(proj.subprocess, "run", _fake(3, b'{"schema_version": 16}', b"segfault"))
+    with pytest.raises(proj.SaveError, match="exited 3"):
+        proj._run_sidecar(["somewhere.sav"])
+
+
+def test_the_stderr_tail_rides_along_with_every_refusal(monkeypatch):
+    """``extract`` prints the traceback to stderr and the exception NAME to stdout.
+
+    So the payload alone says ``AttributeError:`` with an empty detail and the only thing
+    that says where is the stream that used to be read exclusively when stdout was empty --
+    i.e. never, in the one case where it mattered most.
+    """
+    payload = b'{"error": "AttributeError", "detail": "", "path": "x.sav"}'
+    trace = b'Traceback...\n  File "extract.py", line 700, in extract\nAttributeError: rotation'
+    monkeypatch.setattr(proj.subprocess, "run", _fake(1, payload, trace))
+    with pytest.raises(proj.SaveError, match="AttributeError") as caught:
+        proj._run_sidecar(["x.sav"])
+    assert "line 700" in str(caught.value), "the traceback is the only thing that says where"
+
+    # And invalid JSON, which is the third refusal and had the same blind spot.
+    monkeypatch.setattr(proj.subprocess, "run", _fake(1, b"not json at all", b"why it happened"))
+    with pytest.raises(proj.SaveError, match="why it happened"):
+        proj._run_sidecar(["x.sav"])
+
+
+def test_a_clean_exit_with_stderr_folds_the_tail_into_the_projections_warnings(monkeypatch):
+    """The parser's own notes reach a reader instead of being dropped on the floor.
+
+    ``extract`` sends them to stderr deliberately -- stdout has to stay parseable, and a
+    diagnostic must not become a projection field that makes two parsers' payloads differ.
+    Neither of those reasons says the notes should be discarded, and they were.
+    """
+    stderr = b"pioneersav: at body offset 12345: skipped an unknown property\n"
+    monkeypatch.setattr(
+        proj.subprocess, "run", _fake(0, b'{"schema_version": 16, "warnings": []}', stderr)
+    )
+    payload = proj._run_sidecar(["x.sav"])
+    assert len(payload["warnings"]) == 1
+    assert "body offset 12345" in payload["warnings"][0]
+    # One entry, not one per line: this is the tail of a truncated stream and its first line
+    # may be half a line, so splitting it would publish a fragment as if it were a note.
+    assert payload["warnings"][0].startswith("the sidecar wrote to stderr")
+
+
+def test_a_quiet_success_gains_no_warning_at_all(monkeypatch):
+    """Otherwise every projection carries a note saying nothing happened."""
+    monkeypatch.setattr(proj.subprocess, "run", _fake(0, b'{"warnings": []}', b"   \n"))
+    assert proj._run_sidecar(["x.sav"])["warnings"] == []
+    # And a payload with no ``warnings`` key at all -- ``--header-only`` and ``--list`` --
+    # is left exactly as it arrived rather than growing an empty one.
+    monkeypatch.setattr(proj.subprocess, "run", _fake(0, b'{"header": {}}', b""))
+    assert proj._run_sidecar(["x.sav", "--header-only"]) == {"header": {}}
+
+
 def test_a_schema_bump_makes_every_cached_projection_miss(monkeypatch):
     """The cache is keyed on the schema, so old pickles are never served to new code.
 
