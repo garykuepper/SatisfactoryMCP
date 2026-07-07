@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ... import config
+from ...core import atomic
 
 __all__ = ["MATCH_THRESHOLD", "REANCHOR_THRESHOLD", "Label", "LabelStore"]
 
@@ -127,9 +128,15 @@ class LabelStore:
         )
 
     def save(self) -> Path:
+        """Persist the store. Atomic, for the reason ``PlanStore.save`` gives.
+
+        A factory name is the one thing here the player typed rather than the game
+        recorded, and there is nowhere to get it back from. See ``core.atomic``.
+        """
         path = self.path_for(self.world_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        return atomic.write_text(
+            path,
             json.dumps(
                 {
                     "schema": SCHEMA,
@@ -141,7 +148,6 @@ class LabelStore:
             ),
             encoding="utf-8",
         )
-        return path
 
     # ---- mutation ------------------------------------------------------
 

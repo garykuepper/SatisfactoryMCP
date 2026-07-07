@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 
 from ... import config
 from . import geo
@@ -145,14 +144,23 @@ class RegionMap:
         return entry
 
 
-@lru_cache(maxsize=1)
+#: Keyed by the file and its mtime, so a regenerated raster is picked up without a restart.
+#: See ``spatial.nodes._TABLE`` for the argument; this artifact moves for the same reason,
+#: a map update, and moves in the same generation run.
+_MAP: dict[tuple[str, int], RegionMap] = {}
+
+
 def load_regions() -> RegionMap:
     path = config.data_dir() / "region_names.json"
     if not path.is_file():
         raise FileNotFoundError(f"{path} missing -- run: uv run python tools/gen_region_names.py")
+    key = (str(path), path.stat().st_mtime_ns)
+    hit = _MAP.get(key)
+    if hit is not None:
+        return hit
     payload = json.loads(path.read_text(encoding="utf-8"))
     gm = payload["grid_meta"]
-    return RegionMap(
+    region_map = RegionMap(
         grid=payload["region_grid"],
         confidence=payload["confidence_grid"],
         legend=payload["legend"],
@@ -165,3 +173,6 @@ def load_regions() -> RegionMap:
         nx=gm["nx"],
         ny=gm["ny"],
     )
+    _MAP.clear()
+    _MAP[key] = region_map
+    return region_map

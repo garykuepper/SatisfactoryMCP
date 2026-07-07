@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
 
 from ... import config
 
@@ -142,7 +141,17 @@ class CollectibleTable:
 COLLECTIBLES_FILE = "world_collectibles.json"
 
 
-@lru_cache(maxsize=1)
+#: Keyed by the file and its mtime, for the argument ``spatial.nodes._TABLE`` makes. This
+#: table is the one of the three that moves MOST -- it is untracked, it is regenerated
+#: whenever the reader re-derives placements from a new game build, and a stale copy is
+#: exactly the "pinned tables drift every map update" failure the loaders are warned about.
+#:
+#: A miss is not cached. ``None`` here means the file is absent or unreadable, which is a
+#: state a reader fixes by running the generator, and there would be no mtime to key the
+#: absence on anyway -- so the next call looks again rather than answering from a cached no.
+_TABLE: dict[tuple[str, int], CollectibleTable] = {}
+
+
 def load_collectibles() -> CollectibleTable | None:
     """The map's placement table, or ``None`` when it has not been generated.
 
@@ -155,10 +164,17 @@ def load_collectibles() -> CollectibleTable | None:
     if not path.is_file():
         return None
     try:
+        key = (str(path), path.stat().st_mtime_ns)
+        hit = _TABLE.get(key)
+        if hit is not None:
+            return hit
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
     rows = payload.get("collectibles") or []
     if not rows:
         return None
-    return CollectibleTable(rows=rows, meta=payload.get("_meta") or {})
+    table = CollectibleTable(rows=rows, meta=payload.get("_meta") or {})
+    _TABLE.clear()
+    _TABLE[key] = table
+    return table

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ... import config
+from ...core import atomic
 
 __all__ = ["SCHEMA", "Plan", "PlanStore"]
 
@@ -94,9 +95,16 @@ class PlanStore:
         )
 
     def save(self) -> Path:
+        """Persist the store. Atomic, because these are the player's own words.
+
+        A plan is a request the reader typed and nothing on this machine can reconstruct
+        it -- not a save, not the docs dump, not the cache. So the file is replaced whole
+        rather than truncated and rewritten in place; see ``core.atomic``.
+        """
         path = self.path_for(self.world_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        return atomic.write_text(
+            path,
             json.dumps(
                 {
                     "schema": SCHEMA,
@@ -108,7 +116,6 @@ class PlanStore:
             ),
             encoding="utf-8",
         )
-        return path
 
     def find(self, name: str) -> Plan | None:
         needle = name.strip().casefold()
