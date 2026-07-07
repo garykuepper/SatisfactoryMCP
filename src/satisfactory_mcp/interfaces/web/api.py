@@ -25,7 +25,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -815,7 +815,20 @@ def regions() -> Any:
     return JSONResponse(payload, headers={"Cache-Control": "max-age=3600"})
 
 
-@router.api_route("/mapimage", methods=["GET", "HEAD"])
+#: Explicit, on the three routes that serve GET and HEAD from one handler, and not for
+#: tidiness. FastAPI derives an operation id per operation and walks ``route.methods``, which
+#: is a SET -- so which of the two methods names the shared id is decided by string hash
+#: order and differs from one interpreter run to the next. That is invisible in the server
+#: and loud in the repository: ``npm run typegen`` writes ``operations["..._get"]`` or
+#: ``operations["..._head"]`` at random, and the committed schema, whose whole claim is that
+#: "a diff here is the server's surface changing", grows a diff that is nothing of the kind.
+#: Naming them fixes the id to one string that is true of both methods.
+OPERATION_MAPIMAGE = "mapimage"
+OPERATION_MAPTILES = "maptiles"
+OPERATION_MAPTILES_LAYER = "maptiles_layer"
+
+
+@router.api_route("/mapimage", methods=["GET", "HEAD"], operation_id=OPERATION_MAPIMAGE)
 def mapimage(request: Request) -> Any:
     """A map render the *user* dropped in, if they dropped one in. Never shipped.
 
@@ -959,7 +972,7 @@ def _serve_tile(request: Request, layer: str, z: int, x: int, y: int) -> Any:
     return FileResponse(path, headers=headers)
 
 
-@router.api_route("/maptiles/{z}/{x}/{y}", methods=["GET", "HEAD"])
+@router.api_route("/maptiles/{z}/{x}/{y}", methods=["GET", "HEAD"], operation_id=OPERATION_MAPTILES)
 def maptiles(request: Request, z: int, x: int, y: int) -> Any:
     """The artwork pyramid, at the URL it has always had. An alias for ``map``.
 
@@ -972,7 +985,9 @@ def maptiles(request: Request, z: int, x: int, y: int) -> Any:
     return _serve_tile(request, MAP_LAYER_DEFAULT, z, x, y)
 
 
-@router.api_route("/maptiles/{layer}/{z}/{x}/{y}", methods=["GET", "HEAD"])
+@router.api_route(
+    "/maptiles/{layer}/{z}/{x}/{y}", methods=["GET", "HEAD"], operation_id=OPERATION_MAPTILES_LAYER
+)
 def maptiles_layer(request: Request, layer: str, z: int, x: int, y: int) -> Any:
     """One tile of a named base layer: ``map``, ``terrain`` or ``satellite``.
 
@@ -1583,9 +1598,152 @@ def factories(request: Request, save: str | None = None, world: str | None = Non
 
 
 # --------------------------------------------------------------------- floors
+#
+# **The one endpoint in this module that declares its response body, and the reason is that
+# nothing has been written against it yet.** Every other endpoint here is annotated ``->
+# dict``, so FastAPI publishes no response schema for it and ``/openapi.json`` types the
+# rest of them ``unknown``; the map page fills that gap by hand in ``api-types.ts``, from
+# observed payloads, which that file says at the top and which is honest about what it is --
+# an observation, and an observation can be wrong in one direction.
+#
+# Converting the lot is a change to the server's whole public surface and belongs in its own
+# commit. Converting THIS one is a different act: the floor view has no client at all yet, so
+# there is no hand-written block to reconcile with and no drawing code whose guards are the
+# evidence for a nullable. The types below are read off the serialisers three screens down
+# rather than off a payload, ``npm run typegen`` turns them into the page's own types, and
+# the client that gets written next is written against a declared contract instead of a
+# further hand-maintained interface.
+#
+# TypedDict rather than a pydantic model, for the same reason the serialisers are functions
+# returning dicts: this layer decides nothing and holds no state, and a class hierarchy here
+# would invite behaviour into a module whose whole claim is that it has none.
+#
+# **Nullability is not decoration.** ``_m``, ``_xyz`` and ``_yaw`` all return ``float |
+# None``, so every field they produce is declared that way even where the reference world
+# has never produced a null -- a response_model is a validator as well as a schema, and a
+# field declared ``float`` that arrives null is a 500 rather than a null.
 
 
-def _band_json(band: ffloors.Band) -> dict:
+class FloorDeck(TypedDict):
+    """One band, identified. What a run's ``ends`` are made of."""
+
+    platform: int
+    ordinal: int
+    top_m: float | None
+
+
+class FloorBand(TypedDict):
+    """One floor of one platform. See ``_band_json`` for what each field means."""
+
+    ordinal: int
+    top_m: float | None
+    low_m: float | None
+    high_m: float | None
+    span_m: float | None
+    pieces: int
+    cells: int
+    area_m2: float
+    share: float
+    minor: bool
+    machines: list[str]
+    attachments: list[str]
+    machine_count: int
+    attachment_count: int
+
+
+class FloorPlatform(TypedDict):
+    """One 4-connected run of foundation cells, and the bands its tops fall into."""
+
+    index: int
+    cells: int
+    pieces: int
+    area_m2: float
+    centre_m: list[float | None]
+    extent_m: list[float | None]
+    clean: float
+    label: str | None
+    slab: int | None
+    bands: list[FloorBand]
+
+
+class FloorRun(TypedDict):
+    """One belt chain or one pipe, keyed by the join the belt and pipe payloads carry.
+
+    ``ends`` is always two entries, head then tail, either of which may be ``null`` where
+    that end is over no deck. A pair rather than a list is what it means, and JSON has no
+    pair -- so the length is a promise the prose makes and the schema cannot.
+    """
+
+    kind: str
+    key: int
+    pieces: int
+    lift: bool
+    rise_m: float | None
+    riser: bool
+    ends: list[FloorDeck | None]
+
+
+class FloorPlacement(TypedDict):
+    """One thing that is NOT on a floor, and the reason it is not."""
+
+    instance_leaf: str
+    cls: str
+    name: str
+    kind: str
+    x_m: float | None
+    y_m: float | None
+    z_m: float | None
+    above_terrain_m: float | None
+
+
+class FloorCounts(TypedDict):
+    """The shape of the answer before the rows. Nested; see ``FloorReport.counts``."""
+
+    platforms: int
+    bands: int
+    runs: int
+    violations: int
+    #: Keyed by ``ffloors.GROUPS`` and ``ffloors.MEMBERSHIPS``. Left as open maps rather
+    #: than spelled out as four fields each: the two vocabularies are the domain's, they
+    #: are exported from there, and restating them here would be a second place to update.
+    placements: dict[str, int]
+    membership: dict[str, int]
+
+
+class FloorRules(TypedDict):
+    """The thresholds the answer was produced with, in the units the answer is in."""
+
+    tile_m: float | None
+    cluster_tol_m: float | None
+    band_eps_m: float | None
+    min_band_pieces: int
+    belt_height_m: float | None
+    riser_m: float | None
+    terrain_tol_m: float
+    minor_share: float
+
+
+class FloorsResponse(TypedDict):
+    """What ``/api/floors`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+
+    Field order matters here and is the emission order below, because a response_model
+    serialises in declaration order: reordering these reorders the bytes on the wire.
+    """
+
+    note: str | None
+    selection: str | None
+    terrain_measured: bool
+    counts: FloorCounts
+    platforms: list[FloorPlatform]
+    #: Keyed by ``ffloors.MEMBERSHIPS``, and ``placements`` by ``ffloors.GROUPS`` less
+    #: ``band`` -- what landed on a floor is listed inside its own band, by id.
+    runs: dict[str, list[FloorRun]]
+    placements: dict[str, list[FloorPlacement]]
+    violations: list[FloorRun]
+    rules: FloorRules
+
+
+def _band_json(band: ffloors.Band) -> FloorBand:
     """One floor: where its deck is, how big it is, and what stands on it -- by id.
 
     ``machines`` and ``attachments`` are **instance ids, not geometry**, and that is the
@@ -1620,7 +1778,7 @@ def _band_json(band: ffloors.Band) -> dict:
     }
 
 
-def _platform_json(platform: ffloors.Platform) -> dict:
+def _platform_json(platform: ffloors.Platform) -> FloorPlatform:
     """One platform, and the provenance of the decomposition that produced it."""
     return {
         "index": platform.index,
@@ -1639,13 +1797,13 @@ def _platform_json(platform: ffloors.Platform) -> dict:
     }
 
 
-def _deck_json(deck: ffloors.Deck | None) -> dict | None:
+def _deck_json(deck: ffloors.Deck | None) -> FloorDeck | None:
     if deck is None:
         return None
     return {"platform": deck.platform, "ordinal": deck.ordinal, "top_m": _m(deck.top_cm)}
 
 
-def _run_json(run: ffloors.Run) -> dict:
+def _run_json(run: ffloors.Run) -> FloorRun:
     """One belt chain or one pipe, keyed by the join a client already has.
 
     For a belt that is ``chain``, the field ``/api/belts`` puts on every piece. For a pipe
@@ -1665,7 +1823,7 @@ def _run_json(run: ffloors.Run) -> dict:
     }
 
 
-def _placement_json(st: WorldState, placement: ffloors.Placement) -> dict:
+def _placement_json(st: WorldState, placement: ffloors.Placement) -> FloorPlacement:
     """One thing that is NOT on a floor, and the reason it is not."""
     building = st.game.buildings.get(placement.cls)
     return {
@@ -1680,7 +1838,7 @@ def _placement_json(st: WorldState, placement: ffloors.Placement) -> dict:
     }
 
 
-@router.get("/floors")
+@router.get("/floors", response_model=FloorsResponse)
 def floors_view(
     request: Request,
     factory: str | None = None,

@@ -33,6 +33,14 @@ this still catches.
 Every later schema adds its own entry to that list rather than re-banking, which is why the
 list is keyed by what was added and annotated with which schema added it.
 
+**And the list is pinned in both directions**, because a hand-maintained list of exceptions
+fails by omission rather than by error. Until ``test_a_new_top_level_key_cannot_escape_the
+_comparison`` a schema-17 key added to the projection and forgotten here would simply not be
+compared -- silently, on every save, for ever, with no test failing to say so. That test
+reads the committed fixture and demands that what it holds beyond the bank is EXACTLY
+``POST_11_ADDITIONS["keys"]``: a new key with no entry fails, and a stale entry for a key
+that no longer exists fails too.
+
 **Schema 16 is the first entry that is not an addition**, and it needed a decision rather than
 a line: it CORRECTED ``inventories``, which is one of the banked keys. The choice made, and
 the choice rejected, are argued in ``_unfix_16``.
@@ -345,6 +353,42 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
     }
     assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
         "a miscounted container reads as agreement, which makes the whole key vacuous"
+    )
+
+
+def test_a_new_top_level_key_cannot_escape_the_comparison(banked, projection):
+    """``POST_11_ADDITIONS["keys"]`` is exactly what the projection has that the bank has not.
+
+    **The list of exceptions is hand-maintained, and a hand-maintained list fails by
+    omission.** Everything above pins what the filter DOES; nothing pinned what it was given
+    to do. So a schema-17 key added to ``extract`` and not added here would be compared
+    against a bank that has never heard of it -- ``proj[key]`` would raise on the first save
+    and the fix would look like adding a line to this list, which is exactly the reflex that
+    would have retired the key from the comparison for ever, silently, with no reviewer
+    seeing a decision being made.
+
+    Held against the committed fixture rather than against a live parse, so it runs on a
+    clone with no game install and no ``.sav`` -- which is the whole point: this has to fail
+    for the person who added the key, on their machine, in the same run that added it.
+
+    Both directions, and the second is not decoration. A key DROPPED from the projection
+    while its entry stays here would leave the filter removing something that is not there,
+    and the integration test below would report it as a missing key rather than as a stale
+    exception -- 31 saves late, and only on a machine that has them.
+    """
+    banked_keys = {key for entry in banked["saves"].values() for key in entry}
+    # The bank names the object count twice -- ``n_objects`` for the digest and
+    # ``n_objects_value`` for the integer beside it -- and only the first is a projection key.
+    banked_keys.discard("n_objects_value")
+
+    assert set(projection) - banked_keys == set(POST_11_ADDITIONS["keys"]), (
+        "a top-level projection key is outside the banked comparison without an entry in "
+        "POST_11_ADDITIONS -- decide whether it is a legitimate addition the deleted oracle "
+        "never saw, or a key this parser started emitting by mistake"
+    )
+    assert banked_keys <= set(projection), (
+        "the bank holds a key this projection no longer emits -- the agreement cannot be "
+        f"replayed for {sorted(banked_keys - set(projection))}"
     )
 
 

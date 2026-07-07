@@ -2,9 +2,9 @@
  *
  * `api-schema.d.ts` is generated from the server's own `/openapi.json` and is the authority
  * for the things FastAPI knows: which paths exist, which query parameters each takes, and
- * what a validation error looks like. It is NOT the authority for response bodies, because
- * every endpoint in `api.py` is annotated `-> dict`, and a bare dict carries no schema at
- * all -- so the generated file types all sixteen responses as `unknown`.
+ * what a validation error looks like. It is NOT the authority for most response bodies,
+ * because almost every endpoint in `api.py` is annotated `-> dict`, and a bare dict carries
+ * no schema at all -- so the generated file types those responses as `unknown`.
  *
  * The interfaces below fill that gap, and it matters where they came from: they were read
  * off real payloads from a real save, not from the server's source. That makes them an
@@ -19,7 +19,11 @@
  * data nothing here looks at. What is declared is what is read.
  *
  * The right fix is response models on `api.py`, which would make this file generated too.
- * That is a change to the server's public surface and belongs in its own commit.
+ * That is a change to the server's public surface and belongs in its own commit -- but it
+ * has started. `/api/floors` declares one, so its body is in `api-schema.d.ts` as
+ * `FloorsResponse` and there is deliberately NO floors interface below: a hand-written copy
+ * of a generated type is the second place to update, and it is always the one that goes
+ * stale. Anything converted after it should leave this file the same way.
  */
 
 /** A point in game metres, `[x, y]`. Latitude is `-y`; see `xy` in map.ts. */

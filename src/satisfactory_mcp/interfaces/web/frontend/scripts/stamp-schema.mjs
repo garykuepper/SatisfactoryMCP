@@ -24,11 +24,17 @@ const HEADER = `/**
  * also why \`npm run check\` needs no running server.
  *
  * READ WHAT THIS DOES AND DOES NOT SAY. Every endpoint in \`interfaces/web/api.py\` is
- * annotated \`-> dict\`, so FastAPI publishes no response schema and every \`200\` below is
+ * annotated \`-> dict\` and publishes no response schema, so almost every \`200\` below is
  * \`unknown\`. What this file is authoritative for is the other half: which paths exist,
- * which query parameters each takes, and what a validation error looks like. Response
- * bodies are declared by hand in \`api-types.ts\`, from observed payloads, and that file
- * says so at the top.
+ * which query parameters each takes, and what a validation error looks like. The rest of
+ * the response bodies are declared by hand in \`api-types.ts\`, from observed payloads, and
+ * that file says so at the top.
+ *
+ * ONE EXCEPTION, and it is the direction of travel: \`/api/floors\` declares a response
+ * model, so its whole body IS described here -- \`FloorsResponse\` and the six schemas under
+ * it. A client for the floor view should read them from this file and add nothing to
+ * \`api-types.ts\`; the point of doing that endpoint first is that it has no client yet, so
+ * there was no observed interface to reconcile with.
  */
 `;
 
