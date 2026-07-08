@@ -19,6 +19,32 @@ from pathlib import Path
 
 from .iostore import ContainerError, Decompressor, IoStore
 
+#: The module's surface, stated because ``tools/`` is the main caller and used to reach past
+#: a leading underscore for three of the property decoders. An underscore three importers
+#: ignore is not a boundary; this list is one, and anything not on it is genuinely internal
+#: (``_name_batch``, ``_owner_class``, the two rotation constants).
+__all__ = [
+    "LEVEL_CLASS",
+    "AssetIndex",
+    "ClassFacts",
+    "Package",
+    "PackageView",
+    "ScriptObjects",
+    "class_name_of",
+    "compose",
+    "local_transform",
+    "property_tags",
+    "quat_mul",
+    "quat_rotate",
+    "read_float",
+    "read_int32",
+    "read_triple",
+    "read_vector_array",
+    "root_component",
+    "rotator_to_quat",
+    "world_transform",
+]
+
 #: The class of the export every map actor hangs off. This, not a path prefix, is what makes
 #: an export an actor: a native class is a 62-bit hash rather than a path, so a ``/Game/``
 #: prefix test silently drops every natively-classed actor there is.
@@ -229,7 +255,15 @@ def property_tags(
     return out, pos
 
 
-def _triple(payload: bytes) -> tuple[float, float, float] | None:
+# The four property-payload decoders. Public, and named for what they read rather than
+# underscored, because ``tools/`` has always reached past the underscore for three of them
+# -- a leading underscore that three importers ignore is not a boundary, it is a note
+# nobody read. They belong to the module's surface: a caller with a raw ``bytes`` off
+# ``PackageView.props`` has nothing else to turn it into a number with.
+
+
+def read_triple(payload: bytes) -> tuple[float, float, float] | None:
+    """An ``FVector``/``FRotator`` payload: three doubles, or three floats in an old cook."""
     if len(payload) == 24:
         return struct.unpack("<3d", payload)
     if len(payload) == 12:
@@ -237,7 +271,8 @@ def _triple(payload: bytes) -> tuple[float, float, float] | None:
     return None
 
 
-def _float(payload: bytes) -> float | None:
+def read_float(payload: bytes) -> float | None:
+    """A ``FloatProperty`` or ``DoubleProperty`` payload, whichever width arrived."""
     if len(payload) == 4:
         return struct.unpack("<f", payload)[0]
     if len(payload) == 8:
@@ -245,11 +280,12 @@ def _float(payload: bytes) -> float | None:
     return None
 
 
-def _int32(payload: bytes) -> int | None:
+def read_int32(payload: bytes) -> int | None:
+    """An ``IntProperty`` payload."""
     return struct.unpack("<i", payload)[0] if len(payload) == 4 else None
 
 
-def _vector_array(payload: bytes | None) -> list[tuple[float, float, float]]:
+def read_vector_array(payload: bytes | None) -> list[tuple[float, float, float]]:
     """A ``TArray<FVector>``: uint32 count, then that many triples of double or float."""
     if not payload or len(payload) < 4:
         return []
@@ -408,9 +444,9 @@ class PackageView:
             elif kind in ("EnumProperty", "NameProperty"):
                 out[name] = self._fname(raw)
             elif kind == "IntProperty":
-                out[name] = _int32(raw)
+                out[name] = read_int32(raw)
             elif kind in ("FloatProperty", "DoubleProperty"):
-                out[name] = _float(raw)
+                out[name] = read_float(raw)
             elif kind == "BoolProperty":
                 out[name] = bool(value)
             else:
@@ -533,9 +569,15 @@ class ClassFacts:
                     props = view.props(export["slot"])
                     components[stem] = props
                     templates[stem] = (
-                        _triple(props["RelativeLocation"]) if "RelativeLocation" in props else None,
-                        _triple(props["RelativeRotation"]) if "RelativeRotation" in props else None,
-                        _triple(props["RelativeScale3D"]) if "RelativeScale3D" in props else None,
+                        read_triple(props["RelativeLocation"])
+                        if "RelativeLocation" in props
+                        else None,
+                        read_triple(props["RelativeRotation"])
+                        if "RelativeRotation" in props
+                        else None,
+                        read_triple(props["RelativeScale3D"])
+                        if "RelativeScale3D" in props
+                        else None,
                     )
                 elif name.startswith("Default__") and not defaults:
                     defaults = view.props(export["slot"])
@@ -575,7 +617,7 @@ class ClassFacts:
             if candidate == stem or candidate.startswith(stem):
                 value = props.get(name)
                 if value is not None:
-                    return _float(value)
+                    return read_float(value)
         return None
 
 
@@ -648,9 +690,9 @@ def local_transform(view: PackageView, slot: int, classes: ClassFacts) -> tuple:
         template = classes.templates(owner).get(view.exports[slot]["name"])
         if template:
             default_loc, default_rot, default_scale = template
-    loc = _triple(props["RelativeLocation"]) if "RelativeLocation" in props else default_loc
-    rot = _triple(props["RelativeRotation"]) if "RelativeRotation" in props else default_rot
-    scale = _triple(props["RelativeScale3D"]) if "RelativeScale3D" in props else default_scale
+    loc = read_triple(props["RelativeLocation"]) if "RelativeLocation" in props else default_loc
+    rot = read_triple(props["RelativeRotation"]) if "RelativeRotation" in props else default_rot
+    scale = read_triple(props["RelativeScale3D"]) if "RelativeScale3D" in props else default_scale
     loc = loc or (0.0, 0.0, 0.0)
     rot = rot or (0.0, 0.0, 0.0)
     return (loc, rotator_to_quat(*rot), scale or _UNIT_SCALE)

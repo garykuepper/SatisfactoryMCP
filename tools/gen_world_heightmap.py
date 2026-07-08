@@ -229,15 +229,17 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.levels import level_paths, walk_levels
 from satisfactory_mcp.core.gameassets.packages import (
     AssetIndex,
     ClassFacts,
     PackageView,
     ScriptObjects,
-    _int32,
     class_name_of,
     property_tags,
     quat_rotate,
+    read_int32,
+    root_component,
     world_transform,
 )
 from satisfactory_mcp.core.gameassets.provenance import (
@@ -484,7 +486,6 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
     material for stages 1 to 5 and nothing interpreted: the arithmetic that turns it into a
     field lives in the functions below, where it can be read next to the constants it uses.
     """
-    paths = sorted(p for p in store.paths.values() if p.endswith(LEVEL_SUFFIX) and LEVEL_DIR in p)
     components: list[tuple[int, int, np.ndarray]] = []
     proxies: list[tuple[float, float, float, float, float, float]] = []
     #: (mesh id, owner id, x, y, z, pitch, yaw, roll, sx, sy, sz)
@@ -500,22 +501,26 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
     malformed = 0
     started = time.time()
 
-    for index, path in enumerate(paths):
-        try:
-            view = PackageView(store.read_path(path), scripts)
-        except Exception:
-            unreadable += 1
-            continue
+    def count_unreadable(_path: str, _exc: Exception) -> None:
+        nonlocal unreadable
+        unreadable += 1
 
+    paths = level_paths(store, contains=LEVEL_DIR, suffix=LEVEL_SUFFIX)
+    for index, total, path, view in walk_levels(
+        store, scripts, paths=paths, on_unreadable=count_unreadable
+    ):
         # An actor names its own root; a StaticMeshComponent that is not one is a
         # decoration hanging off something else, and its transform is relative to a parent
         # this sweep does not walk. Built first so the placement loop can just look up.
+        #
+        # Through ``packages.root_component``, which this module already imported for the
+        # water stage, rather than the copy of its first branch that used to live here.
+        # Measured equivalent before the swap: over all 4,521 packages the two produce the
+        # same 60,296 (root, owner class) pairs, none added, none dropped, none disagreeing
+        # -- which is what makes this a deletion and not a change to what gets rasterised.
         root_owner: dict[int, str] = {}
         for slot, class_path in view.class_of.items():
-            reference = view.props(slot).get("RootComponent")
-            if reference is None:
-                continue
-            root = view.export_ref(reference)
+            root = root_component(view, slot)
             if root is not None:
                 root_owner[root] = class_name_of(class_path)
 
@@ -537,8 +542,8 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
                 proxies.append((section_x - lx / sx, section_y - ly / sy, lz, sx, sy, sz))
             elif name == "LandscapeComponent":
                 props = view.props(slot)
-                base_x = _int32(props.get("SectionBaseX", b"\0\0\0\0"))
-                base_y = _int32(props.get("SectionBaseY", b"\0\0\0\0"))
+                base_x = read_int32(props.get("SectionBaseX", b"\0\0\0\0"))
+                base_y = read_int32(props.get("SectionBaseY", b"\0\0\0\0"))
                 body = view.pkg.body(view.exports[slot])
                 _tags, end = property_tags(body, view.pkg.names)
                 heights = _grass_data_heights(body[end:])
@@ -585,7 +590,7 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
 
         if progress and index % 500 == 0:
             print(
-                f"  {index}/{len(paths)} packages, {len(components)} landscape components, "
+                f"  {index}/{total} packages, {len(components)} landscape components, "
                 f"{len(placements)} placements, {time.time() - started:.0f}s",
                 flush=True,
             )

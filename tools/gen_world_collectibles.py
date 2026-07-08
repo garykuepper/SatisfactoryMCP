@@ -179,14 +179,15 @@ from pioneersav import (
     read_object,
 )
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
+from satisfactory_mcp.core.gameassets.levels import level_paths, walk_levels
 from satisfactory_mcp.core.gameassets.packages import (
     AssetIndex,
     ClassFacts,
     PackageView,
     ScriptObjects,
-    _float,
-    _vector_array,
     class_name_of,
+    read_float,
+    read_vector_array,
     root_component,
     world_transform,
 )
@@ -578,7 +579,6 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
     index = AssetIndex(store)
     classes = ClassFacts(store, index)
     wanted = set(CATEGORIES)
-    packages = sorted(p for p in store.by_path if p.endswith(".umap") and MAP_PREFIX in p)
 
     placements: list[Placement] = []
     hazards: list[Hazard] = []
@@ -593,12 +593,16 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
     no_level = 0
     started = time.time()
 
-    for number, path in enumerate(packages):
-        try:
-            view = PackageView(store.read_path(path), scripts)
-        except Exception as exc:  # a package we cannot parse must not lose the other 4,520
-            unresolved[f"package failed to parse: {type(exc).__name__}"] += 1
-            continue
+    def unreadable(_path: str, exc: Exception) -> None:
+        # A package we cannot parse must not lose the other 4,520 -- and the exception TYPE
+        # is what says whether the container format moved or one asset is bad, so it is
+        # bucketed by type rather than merely counted.
+        unresolved[f"package failed to parse: {type(exc).__name__}"] += 1
+
+    packages = level_paths(store, contains=MAP_PREFIX)
+    for number, total, path, view in walk_levels(
+        store, scripts, paths=packages, on_unreadable=unreadable
+    ):
         leaf = path.rsplit("/", 1)[-1]
         cell = leaf[: -len(".umap")]
         if not view.level_slots:
@@ -675,7 +679,7 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
                     hazards.append(got)
         if progress and number % 1000 == 0:
             print(
-                f"  {number:>5}/{len(packages)} packages  {time.time() - started:>5.1f}s"
+                f"  {number:>5}/{total} packages  {time.time() - started:>5.1f}s"
                 f"  {len(placements)} collectibles  {len(hazards)} hazard actors",
                 flush=True,
             )
@@ -747,7 +751,7 @@ def _read_hazard(
     if cls == "BP_CreatureSpawner_C":
         creature = view.import_path(props.get("mCreatureClass", b""))
         spawn = props.get("mSpawnData")
-        radius = _float(props.get("mSpawnRadius", b"")) or _float(
+        radius = read_float(props.get("mSpawnRadius", b"")) or read_float(
             classes.defaults(class_package).get("mSpawnRadius", b"")
         )
         return Hazard(
@@ -765,7 +769,7 @@ def _read_hazard(
             position=position,
             label=class_package,
             count=1,
-            radius=_float(classes.defaults(class_package).get("mDetectionRadius", b"")),
+            radius=read_float(classes.defaults(class_package).get("mDetectionRadius", b"")),
         )
     if cls == "BP_SporeFlower_C":
         return Hazard(
@@ -778,7 +782,7 @@ def _read_hazard(
         # The volume names the pillars belonging to its own field, in world space. That is
         # the only statement the assets make about how far a gas field reaches, and it is
         # what the hazard block's reporting radius is sized against.
-        pillars = _vector_array(props.get("mProximityPillarWorldLocations"))
+        pillars = read_vector_array(props.get("mProximityPillarWorldLocations"))
         return Hazard(
             kind="gas_field",
             cls=cls,
@@ -886,7 +890,7 @@ class Radioactivity:
                 self.unreadable += 1
                 continue
             self.checked += 1
-            value = _float(classes.defaults(package).get("mRadioactiveDecay", b""))
+            value = read_float(classes.defaults(package).get("mRadioactiveDecay", b""))
             if value and value > 0:
                 self.decay[package] = value
 
