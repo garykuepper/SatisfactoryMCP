@@ -101,20 +101,38 @@ def installed_build_from_exe(game: Path) -> str | None:
     return None
 
 
-def read_str_path(sidecar: object, path: Iterable[str]) -> str | None:
-    """Walk nested dicts to a string, or ``None`` at the first thing that is not one.
+def read_path(sidecar: object, path: Iterable[str]) -> object:
+    """Walk nested dicts to whatever is at ``path``, or ``None`` the moment the walk fails.
 
-    What every staleness guard does to an artifact already on disk, and every one of them
-    used to do it with its own copy of this loop. It is deliberately incurious: a sidecar
-    written by an older generator, a truncated one, a JSON file that is not even an
-    object -- all of them are "this does not name a build", which is the answer that makes
-    the guard refuse rather than the answer that makes it crash.
+    The primitive under every staleness guard in ``tools/``, and the reason it is not typed
+    is that the guards do not all want a string: one wants the build tag, one wants a
+    boolean saying whether a pyramid was upscaled, one wants an integer recipe number, and
+    all three want the identical walk. They each had their own copy of this loop, and the
+    copies had already drifted -- the integer one breaks out of the loop instead of
+    returning, which is the same answer by a different route and one more shape to read.
+
+    Deliberately incurious about what it finds: a sidecar written by an older generator, a
+    truncated one, a JSON document that is not even an object -- all of them are "this path
+    is not there", which is the answer that makes a guard refuse rather than crash. What it
+    is NOT is a type check; that belongs to the caller, which is the only one that knows
+    what a plausible value looks like.
     """
     node: object = sidecar
     for key in path:
         if not isinstance(node, dict):
             return None
         node = node.get(key)
+    return node
+
+
+def read_str_path(sidecar: object, path: Iterable[str]) -> str | None:
+    """:func:`read_path`, refusing anything that is not a string.
+
+    The build tag's shape, which is what most guards want: a pin is a sentence and a pin
+    that arrived as a number or a nested object is a sidecar this reader does not
+    understand, which is the same refusal as one that names no build at all.
+    """
+    node = read_path(sidecar, path)
     return node if isinstance(node, str) else None
 
 

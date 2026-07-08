@@ -31,6 +31,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from ... import config
+from ...core.gameassets.pyramid import (
+    PYRAMID_TILE_2X_PX,
+    PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
+    TILES_DIR_NAME,
+    tile_relpath,
+)
 from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.saveio import projection as proj
 from ...core.saveio import rows as saverows
@@ -522,7 +529,14 @@ MAP_BOUNDS_NAME = "map.json"
 #: is zoomed; the pyramid is that sheet at one resolution per zoom, so a whole-world
 #: framing costs the 16 tiles of z2 and nothing else. ``tools/gen_map_image.py`` writes it,
 #: renaming the finished tree into place so this endpoint can never serve half of one.
-MAP_TILES_DIR_NAME = "tiles"
+#:
+#: Imported from the cutter rather than typed again, here and for the three below. These
+#: four names and the ``{z}/{x}_{y}.png`` layout are ONE fact about a directory on disk,
+#: shared by the tool that writes it and the endpoint that serves it, and a second copy is
+#: a second opinion waiting to happen -- which is why there used to be a pair of tests
+#: asserting the two agreed. The ``MAP_`` aliases stay, because the rest of this module
+#: reads better with the prefix; what is gone is the second DEFINITION.
+MAP_TILES_DIR_NAME = TILES_DIR_NAME
 
 #: ...and the same tile GRID at twice the pixels, for a display whose device pixel ratio is
 #: above one. Level z of ``tiles@2x/`` covers the identical squares of the world that level
@@ -534,8 +548,8 @@ MAP_TILES_DIR_NAME = "tiles"
 #: One level shallower than the 1x tree by arithmetic rather than by choice, since
 #: ``512 * 2**z`` runs out of sheet before ``256 * 2**z`` does -- so the probe advertises
 #: the two depths separately and a client past the @2x top asks for 1x tiles again.
-MAP_TILES_2X_DIR_NAME = "tiles@2x"
-MAP_TILE_2X_PX = 512
+MAP_TILES_2X_DIR_NAME = TILES_2X_DIR_NAME
+MAP_TILE_2X_PX = PYRAMID_TILE_2X_PX
 
 #: The query parameter that picks between them, and what it takes: the tile size the client
 #: wants in pixels. A number rather than a flag because it says what it means and because a
@@ -567,7 +581,7 @@ MAP_LAYERS = (MAP_LAYER_DEFAULT, *MAP_RENDER_LAYERS)
 #: one tile) through z5 (the full 8192 in 32x32). Both are read back from ``_meta.tiles``
 #: when it is there, so a pyramid cut at another size is served at that size rather than
 #: half-refused.
-MAP_TILE_PX = 256
+MAP_TILE_PX = PYRAMID_TILE_PX
 MAP_TILE_MAX_Z = 5
 
 #: The corners of the in-game map square, metres, game axes. The playable content is
@@ -698,9 +712,10 @@ def map_tile_path(
 ) -> Path | None:
     """Where one pyramid tile lives, or ``None`` if ``(z, x, y)`` is off the pyramid.
 
-    The only place this side writes the layout ``tiles/{z}/{x}_{y}.png`` down, and a test
-    holds it against the generator's own copy so the writer and the reader cannot drift
-    apart. Nothing here joins a string a caller supplied: the three coordinates arrive as
+    The layout itself is ``pyramid.tile_relpath``, the cutter's own function, so the
+    writer and the reader cannot hold two opinions about where a tile lives. What is this
+    side's job is the BOUNDS CHECK below, because only a server has requests to refuse.
+    Nothing here joins a string a caller supplied: the three coordinates arrive as
     ints -- FastAPI answers anything else with a 422 before this runs -- and are checked
     against the ``2**z`` grid of their own level before they become a filename, so no
     request can name a path outside the tree, whatever it is shaped like.
@@ -720,7 +735,7 @@ def map_tile_path(
     span = 1 << z
     if not (0 <= x < span and 0 <= y < span):
         return None
-    return directory / tree / str(z) / f"{x}_{y}.png"
+    return directory / tree / tile_relpath(z, x, y)
 
 
 def _tile_tree(request: Request, pyramid: dict[str, Any]) -> tuple[str, int]:

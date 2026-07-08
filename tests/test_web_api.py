@@ -28,7 +28,6 @@ from satisfactory_mcp import config
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
-    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     TILES_RETIRED,
     TILES_STAGING,
@@ -792,16 +791,17 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     assert gen_map_renders.BOUNDS_M == web_api.DEFAULT_MAP_BOUNDS_M
     # The tile grid is the cutter's, not this generator's: it hands its sheet to
     # ``core.gameassets.pyramid`` and the endpoint has to be configured for what THAT cuts.
-    # The default depth stays z5, which is what an 8192 sheet divides into and what a
-    # pyramid whose sidecar says nothing is assumed to be; the renders are 16384 and say so
-    # in their own sidecar, which is exactly the mechanism being asserted below.
-    assert PYRAMID_TILE_PX == web_api.MAP_TILE_PX
+    # The tile SIZE and the directory names are no longer asserted equal, because the
+    # endpoint imports them from the cutter and an assertion that a name equals itself
+    # cannot fail. What is still worth pinning is the arithmetic, which is a real claim
+    # about two different sheets: the default depth stays z5, which is what an 8192 sheet
+    # divides into and what a pyramid whose sidecar says nothing is assumed to be, while
+    # the renders are 16384 and say so in their own sidecar.
     assert pyramid_top_z(gen_map_renders.SHEET_PX) == web_api.MAP_TILE_MAX_Z == 5
     assert pyramid_top_z(gen_map_renders.RENDER_PX) == 6
     # And the @2x tree is the same grid one level shallower, by arithmetic rather than by
     # anybody's choice: 512 * 2**z runs out of sheet before 256 * 2**z does.
-    assert PYRAMID_TILE_2X_PX == web_api.MAP_TILE_2X_PX == 2 * PYRAMID_TILE_PX
-    assert TILES_2X_DIR_NAME == web_api.MAP_TILES_2X_DIR_NAME
+    assert PYRAMID_TILE_2X_PX == 2 * PYRAMID_TILE_PX
     assert pyramid_top_z(gen_map_renders.RENDER_PX, PYRAMID_TILE_2X_PX) == 5
 
     pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
@@ -1111,8 +1111,9 @@ def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
     # in ``core.gameassets.pyramid`` -- what the tool contributes is the sheet and the
     # record of what came out of it -- and the endpoint configures the page's tile grid
     # from that record, so the two cannot hold different opinions about what is served.
-    assert TILES_DIR_NAME == web_api.MAP_TILES_DIR_NAME
-    assert PYRAMID_TILE_PX == web_api.MAP_TILE_PX
+    # The names are now IMPORTED by the endpoint rather than retyped, so the two assertions
+    # that used to check them agreed have gone: they compared a name with itself. The
+    # arithmetic is the part that is still a claim.
     assert pyramid_top_z(gen_map_image.SHEET_PX) == web_api.MAP_TILE_MAX_Z
     assert tile_relpath(3, 5, 6) == "3/5_6.png"
     assert web_api.map_tile_path(3, 5, 6, 5) == local / TILES_DIR_NAME / tile_relpath(3, 5, 6)

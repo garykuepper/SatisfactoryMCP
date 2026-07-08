@@ -208,7 +208,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
-from satisfactory_mcp.core.gameassets.provenance import InstallNotFound, installed_build
+from satisfactory_mcp.core.gameassets.provenance import (
+    InstallNotFound,
+    installed_build,
+    read_path,
+    read_str_path,
+)
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_PX,
     TILES_DIR_NAME,
@@ -1367,12 +1372,7 @@ def enhance_levels(
 
 def pinned_build(sidecar: dict) -> str | None:
     """The build an existing sidecar names, or None if it names none."""
-    node: object = sidecar.get("_meta")
-    for key in PIN_PATH:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return node if isinstance(node, str) else None
+    return read_str_path(sidecar.get("_meta"), PIN_PATH)
 
 
 def pinned_enhanced(sidecar: dict) -> bool:
@@ -1382,12 +1382,7 @@ def pinned_enhanced(sidecar: dict) -> bool:
     never heard of the key -- which is every sidecar written before this stage existed, and
     they describe plain pyramids, so that is the right answer rather than a lenient one.
     """
-    node: object = sidecar.get("_meta")
-    for key in ENHANCED_PATH:
-        if not isinstance(node, dict):
-            return False
-        node = node.get(key)
-    return node is True
+    return read_path(sidecar.get("_meta"), ENHANCED_PATH) is True
 
 
 def pinned_recipe(sidecar: dict) -> int:
@@ -1399,12 +1394,7 @@ def pinned_recipe(sidecar: dict) -> int:
     number -- a string, a float, ``true`` itself, which ``bool`` makes an ``int`` in Python
     and is not one here -- falls back to the boolean rather than being believed.
     """
-    node: object = sidecar.get("_meta")
-    for key in RECIPE_PATH:
-        if not isinstance(node, dict):
-            node = None
-            break
-        node = node.get(key)
+    node = read_path(sidecar.get("_meta"), RECIPE_PATH)
     if isinstance(node, int) and not isinstance(node, bool) and node > 0:
         return node
     return UNNUMBERED_RECIPE if pinned_enhanced(sidecar) else 0

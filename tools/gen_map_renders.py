@@ -204,6 +204,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
 from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
+from satisfactory_mcp.core.gameassets.provenance import read_str_path
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
@@ -560,10 +561,6 @@ BAND_ROWS = 256
 #: every 256 rows -- which is the failure this constant exists to prevent, so it is sized
 #: against the widest kernel in the band rather than left at what used to be enough.
 BAND_HALO = 8
-
-
-class MissingField(RuntimeError):
-    """No heightfield. The one input this file cannot invent, and it says who writes it."""
 
 
 def load_imaging():
@@ -1501,14 +1498,15 @@ def layer_dir(out_dir: Path, layer: str) -> Path:
     return out_dir / RENDERS_DIR_NAME / layer
 
 
+#: Where a layer sidecar records the heightfield build it was drawn from. The same shape
+#: as ``gen_map_image.PIN_PATH`` and ``gen_world_heightmap.PIN_PATH``, read by the same
+#: walk -- three guards, three paths, one implementation.
+FIELD_PIN_PATH = ("sources", "heightfield", "game_version_pinned")
+
+
 def pinned_field_build(sidecar: dict) -> str | None:
     """The heightfield build an existing layer sidecar names, or None if it names none."""
-    node: object = sidecar.get("_meta")
-    for key in ("sources", "heightfield", "game_version_pinned"):
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return node if isinstance(node, str) else None
+    return read_str_path(sidecar.get("_meta"), FIELD_PIN_PATH)
 
 
 def build_sidecar(

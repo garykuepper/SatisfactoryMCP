@@ -350,22 +350,6 @@ def header_info(path: str) -> dict:
     }
 
 
-def _map_items(value) -> dict:
-    """Flatten a MapProperty of ObjectProperty->Int into {class: amount}."""
-    out: dict[str, float] = {}
-    if not isinstance(value, list):
-        return out
-    for entry in value:
-        try:
-            k, v = entry[0], entry[1]
-        except (IndexError, TypeError):
-            continue
-        name = ref_class(k) or (str(k) if isinstance(k, str) else None)
-        if name and isinstance(v, (int, float)):
-            out[name] = out.get(name, 0) + v
-    return out
-
-
 #: What a run threw away, keyed by a sentence that reads with a count in front of it.
 #: A plain ``Counter`` rather than a class: the only operations are ``+= 1`` at a dozen
 #: guards and one drain at the end, and the guards are the point.
