@@ -1,0 +1,132 @@
+"""Every number a comment in ``src`` quotes off the committed projection, asserted here.
+
+**The whole job of this file is to make the next fixture regeneration fail loudly**, and
+it is the only file in the suite whose failure is not a bug report. A dozen modules
+justify a design decision by citing a count measured on ``fixtures/save_projection.json``
+-- "11,664 material edges against 1,297 power edges, so the two graphs answer different
+questions", "6 of 570 machines are wired to nothing, which is why the actor list cannot
+come from the edges alone". Those sentences are the reasoning, not decoration: a reader
+deciding whether to keep the power graph separate is deciding on the strength of the
+ratio, and a reader who re-cuts the fixture from a newer save silently turns every one of
+them into a number that used to be true.
+
+That is not hypothetical. This file exists because a review found seven such counts stale
+at once -- material edges quoted at 11,554 where the fixture holds 11,664, the machine
+census at 566 where it is 570, the object count at 44,307 where it is 44,634 -- all of
+them fossils of an older save, all of them still reading as measurements.
+
+So: when this fails, nothing is broken. Re-measure, and update the comment the failing
+assertion names as well as the number here. Both, or the next reviewer finds the same
+thing again. The assertion messages carry the file and line to go and edit.
+
+Fixture only -- no game install, no save.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+#: The three record kinds that carry a placed building's own transform, and which every
+#: "N machines" count in the tree means when it says machines.
+PLACED = ("machines", "extractors", "generators")
+
+
+@pytest.fixture(scope="module")
+def proj() -> dict:
+    return json.loads((FIXTURES / "save_projection.json").read_text(encoding="utf-8"))
+
+
+def _records(projection: dict) -> list[dict]:
+    return [r for key in PLACED for r in projection[key]]
+
+
+def test_the_two_edge_counts_domain_factories_model_cites(proj):
+    """``domain/factories/model.py`` bullets 1 and 2.
+
+    The docstring's claim is not "there are edges" but that material over-fragments where
+    power does not, and the ratio is the evidence: nine times as many material edges as
+    power ones.
+    """
+    graph = proj["graph"]
+    assert len(graph["material"]) == 11_664, "domain/factories/model.py:9 quotes this"
+    assert len(graph["power"]) == 1_297, (
+        "domain/factories/model.py:12 and domain/planning/commission.py:63 both quote this"
+    )
+
+
+def test_the_machine_census_five_modules_cite(proj):
+    """570, spelled in ``commission.py``, ``build.py``, ``elevation.py`` and this file.
+
+    One number in four docstrings is exactly the failure mode this file is for: when the
+    fixture moves, three of the four get updated and the fourth reads as a measurement
+    for another year.
+    """
+    assert len(_records(proj)) == 570, (
+        "domain/planning/commission.py:53, domain/factories/build.py:29 and "
+        "domain/spatial/elevation.py:29,193 all quote this"
+    )
+    assert proj["n_objects"] == 44_634, "domain/planning/commission.py:67 quotes this"
+
+
+def test_the_six_machines_wired_to_nothing(proj):
+    """``domain/factories/build.py``: why the actor list cannot come from the edges alone.
+
+    The interned actor list is derived from edges, so a machine on no belt and no wire is
+    absent from it -- and an isolated machine is precisely what a coverage report exists
+    to surface. If this ever reaches zero the loop it justifies looks like dead code.
+    """
+    wired = set(proj["graph"]["actors"])
+    orphans = [r for r in _records(proj) if r["instance"].rsplit(".", 1)[-1] not in wired]
+    assert len(orphans) == 6, "domain/factories/build.py:29 quotes this"
+
+
+def test_the_lightweight_piece_count_four_modules_cite(proj):
+    """8,347, and the 4,631 of them that sit at a yaw off the 90-degree grid.
+
+    The second is the whole justification for the yaw column: a client without it draws
+    every one of those 4,631 pieces axis-aligned, which is how an angled platform came
+    out as a staircase.
+    """
+    rows = proj["structures"]["instances"]
+    assert len(rows) == 8_347, (
+        "core/saveio/extract.py:287,814,1071, core/saveio/rows.py:4, "
+        "domain/spatial/elevation.py:27,193 and interfaces/web/api.py:1062 quote this"
+    )
+    assert sum(1 for r in rows if r[4] % 90) == 4_631, "core/saveio/extract.py:1071 quotes this"
+
+
+def test_the_productivity_window_is_not_the_constant_it_looks_like(proj):
+    """``domain/factories/health.py``, and the one entry here that guards against a BUG.
+
+    The docstring used to say the window is 300.00 s on every carrier and so "needs no
+    normalisation", which is an invitation to divide by a literal 300. It is not constant
+    -- three distinct values across 524 carriers -- and ``health.build`` correctly divides
+    by each record's own ``window_s``. This asserts the fixture still disproves the
+    tempting version, so that nobody re-derives it from a sample that happens to agree.
+    """
+    live = [r["uptime"] for r in _records(proj) if r.get("uptime")]
+    assert len(live) == 524, "domain/planning/commission.py:53 and health.py:12 quote this"
+    windows = {u["window_s"] for u in live}
+    assert windows == {300.0, 300.01, 300.02}, (
+        "domain/factories/health.py:9 says this field is NOT a constant -- if the fixture "
+        "ever makes it one, say so there rather than deleting the per-record divisor"
+    )
+    assert sum(1 for u in live if not u["produce_s"]) == 231, (
+        "domain/factories/health.py:16 quotes this"
+    )
+
+
+def test_the_reference_projection_reports_no_losses(proj):
+    """``warnings`` empty, which is what makes every count above a count of the world.
+
+    A projection that dropped records is a projection whose numbers are about what read,
+    not about what is built -- so a fixture with warnings in it invalidates this whole
+    file rather than just one line of it. See ``core/saveio/extract._drop_notes``.
+    """
+    assert proj["warnings"] == []
+    assert proj["schema_version"] == 16

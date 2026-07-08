@@ -26,7 +26,7 @@ things whose Z is exact, scattered across the whole map:
   their Z *is* terrain, and they are available with no save at all.
 * **8,347 foundation and wall pieces**, from ``FGLightweightBuildableSubsystem`` as
   ``[class, x, y, z]``.
-* **566 production buildings**, from their actor transforms.
+* **570 production buildings**, from their actor transforms.
 
 So without a field the honest answer to "how high is it here" is still a *sample*, with its
 count and its spread, and never an interpolated surface. A single number invented from
@@ -191,7 +191,7 @@ def sample_points(node_table=None, state=None) -> list[Sample]:
             out.append(Sample("building", float(pos[0]), float(pos[1]), float(pos[2])))
 
     # Foundations arrive as flat [class_index, x, y, z] rows rather than as records, and
-    # they are by far the densest source -- 8,347 against 566 buildings on the reference
+    # they are by far the densest source -- 8,347 against 570 buildings on the reference
     # save. Decoded through ``core.saveio.rows``, which is where the guard that used to be
     # written out here now lives, once, for all ten readers of these three tables: a
     # malformed row still costs one sample rather than the whole probe.

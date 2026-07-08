@@ -50,7 +50,7 @@ wave says which stage the player is actually in without persisting anything.
 **Built and energised are different states, and the save distinguishes them only in one
 direction.** Measured on the reference save rather than assumed:
 
-* ``uptime`` -- the 300 s productivity monitor -- is present on 517 of 566 machines,
+* ``uptime`` -- the 300 s productivity monitor -- is present on 524 of 570 machines,
   extractors and generators, and ``produce_s > 0`` PROVES the machine ran, which proves
   it had power. That is the only positive evidence of energisation in the file.
 * ``produce_s == 0`` proves nothing. Unpowered, starved, blocked and merely idle are
@@ -60,11 +60,11 @@ direction.** Measured on the reference save rather than assumed:
 * ``paused`` (``mIsProductionPaused``, 16 actors here) is a DIFFERENT thing: the player
   switched the machine off, and it is recorded per machine whatever the grid is doing.
 * ``clock`` is a slider position, not a state, and does not move when power does.
-* Power wires ARE in the projection (1,287 edges), so "wired to nothing" is knowable --
+* Power wires ARE in the projection (1,297 edges), so "wired to nothing" is knowable --
   but wired is not energised.
 * The direct answers are not in the file at all. ``mHasPower`` and ``mCircuitID`` on
   ``UFGPowerInfoComponent`` carry no ``SaveGame`` specifier (checked in Headers.zip) and
-  appear zero times in 44,307 objects; ``BP_CircuitSubsystem`` saves an EMPTY property
+  appear zero times in all 44,634 objects; ``BP_CircuitSubsystem`` saves an EMPTY property
   set, so grid membership is rebuilt at load and never persisted. ``mIsSwitchOn`` IS a
   SaveGame property of ``AFGBuildableCircuitSwitch``, but this world has built no power
   switch at all and the projection does not read one.

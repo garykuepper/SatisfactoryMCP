@@ -64,8 +64,8 @@ __all__ = [
 NEIGHBOUR_RADIUS_M = 200.0
 
 #: A machine is worth reclocking only when ITS OWN clock is off 100%. Never compare
-#: against the plan's clock: 99.43% is a derived ratio (53 machines carrying 52.8
-#: machines' throughput), not an instruction, and comparing against it would render a
+#: against the plan's clock: 99.43% is a derived ratio (the reference plan's 176 Fuel
+#: Generators carrying 175 machines' throughput), not an instruction, and comparing against it would render a
 #: routine plan as hundreds of slider adjustments.
 RECLOCK_TOLERANCE = 0.02
 

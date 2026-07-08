@@ -1,20 +1,28 @@
 """Why a machine is not running, from what the save actually records.
 
-Every buildable that manufactures carries a **productivity monitor**: a fixed 300-second
-window and the seconds it spent producing inside it. Uptime is the ratio, and it is the
-only measured number in this whole MCP -- everything else is nameplate.
+Every buildable that manufactures carries a **productivity monitor**: a roughly
+300-second window and the seconds it spent producing inside it. Uptime is the ratio, and
+it is the only measured number in this whole MCP -- everything else is nameplate.
 
-Field semantics, verified on a 316-hour save rather than assumed:
+Field semantics, re-measured against the committed reference projection (524 carriers)
+rather than assumed:
 
-* ``mLastProductivityMeasurementDuration`` is **300.00 s on all 580** carriers, so the
-  ratio is clean and needs no normalisation.
+* ``mLastProductivityMeasurementDuration`` is **NOT a constant, and must not be treated
+  as one.** It reads 300.00 s on 261 carriers, 300.01 on 262 and 300.02 on 1 -- the game
+  closes the window on a tick boundary, not on the second. Dividing by a hard-coded 300
+  is therefore wrong by up to 70 ppm per record and, worse, invites the next reader to
+  drop the divisor entirely. ``build`` below divides by **each record's own window**,
+  which is the only thing that stays right when a patch moves the window at all.
+  ``tests/test_reference_counts.py`` fails if this stops being true of the fixture.
 * ``mLastProductivityMeasurementProduceDuration`` is **absent when zero**. UE omits
   SaveGame properties equal to their default, so a missing value is a real zero and not
-  missing data -- 377 of 580 are genuinely idle.
+  missing data -- 231 of the 524 are genuinely idle.
 * ``mCurrentProductivityMeasurement*`` is a *partial* window still filling. Mixing it
   with the last complete one would compare a 3-minute sample against a 5-minute one.
-* ``mTimeSinceStartStopProducing`` carries **FLT_MAX (3.4e38) on 256 of 580** as a
-  "never flipped" sentinel. It is not a duration and averaging it poisons any statistic,
+* ``mTimeSinceStartStopProducing`` carries **FLT_MAX (3.4e38)** on roughly half the
+  carriers as a "never flipped" sentinel -- 256 of the 580 on the 316-hour save this was
+  first measured on; the projection does not carry the field, so that count is the one
+  reading there has been. It is not a duration and averaging it poisons any statistic,
   so it is not used here at all.
 
 Uptime alone says a machine is stopped; it never says why, and starved and blocked need

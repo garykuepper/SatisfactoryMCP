@@ -27,7 +27,7 @@ def build_graph(projection: dict) -> FactoryGraph:
 
     cls = {a: class_of(a) for a in actors}
     # The interned actor list is derived from EDGES, so a machine wired to nothing --
-    # 6 of 563 on the reference save, mostly half-built assemblers -- would be absent
+    # 6 of 570 on the reference save, mostly half-built assemblers -- would be absent
     # from the graph entirely and so could never be reported as unlabelled. An
     # isolated machine is exactly the thing a coverage report exists to surface.
     for key in ("machines", "extractors", "generators"):

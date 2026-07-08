@@ -45,7 +45,7 @@ Region column *and* save coordinates — `Northern Forest` mean Y = −81,078 vs
 +205,386; joining those rows to `crashSites.py` matches **117/118 to sub-centimetre**, which also proves
 the wiki's coordinates *are* raw save coordinates and pins cm-per-metre at 100.
 
-Content extents (2,371 static objects): X −298,838…406,564; Y −314,104…304,196; Z −16,827…46,942.
+Content extents (2,688 static objects): X −298,838…406,564; Y −314,104…304,196; Z −16,827…46,942.
 
 Biome grid `[WIKI]`: `GRID_CELL = 102400`, `GRID_X0 = -319600` (west edge of X0),
 `GRID_Y0_SOUTH = 302800` (Y0 is southernmost). Emit the cell (`"X3Y4"`) on every node/site response —

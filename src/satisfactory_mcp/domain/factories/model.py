@@ -6,10 +6,10 @@ which each used to re-derive fragments of it.
 The three edge types answer different questions and must stay separate, because
 measurement showed no single one identifies a factory:
 
-* **material** -- 11,554 edges. What feeds what. Orientable, since a machine's
+* **material** -- 11,664 edges. What feeds what. Orientable, since a machine's
   connector role says whether it is an ``Output`` or an ``Input``. Over-fragments a
   mature base into ~35 pieces, because a grown-together base is one belt web.
-* **power** -- 1,276 edges, with poles and towers distinguished. Tower wires have a
+* **power** -- 1,297 edges, with poles and towers distinguished. Tower wires have a
   median length of 208 m against 34 m for pole wires and carry no machines, so they
   are a pure transmission backbone. Removing them separates outposts from the main
   base, but does NOT subdivide the base.
