@@ -329,7 +329,13 @@ def main() -> int:
     }
 
     dest = ROOT / "data" / "region_names.json"
-    dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    # The trailing newline is not cosmetic here: without it this generator rewrote the
+    # committed blob one byte SHORTER than the blob it was meant to reproduce, so "run the
+    # generator and check the diff is empty" -- the only check that says the committed
+    # artifact still matches the code that makes it -- reported a change on every run and
+    # therefore said nothing on any of them. `write_text` keeps translating it to the
+    # platform's line ending, which is what the committed file already carries.
+    dest.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {dest.relative_to(ROOT)}  {dest.stat().st_size} B  {len(regions)} regions")
     return 0
 

@@ -8,7 +8,10 @@ runs this file first, so re-exporting the formatters here would drag the whole
 planning package in behind every ``primitives.num`` call -- and the tool modules
 reach for ``primitives`` on every response.
 
-The ``from .. import render`` spelling this note used to warn about is gone from
-``src`` entirely: the interface layer imports ``presenters.text.primitives`` by name,
-and ``render.py`` survives only for the test files that still say ``render.table``.
+``render.py`` is gone, and so is every import of it. There is one spelling now and it is
+the same one everywhere: ``primitives`` imported under the local alias ``render``, in the
+eight MCP tool modules, in the nine formatter modules beside this one, and in the two test
+modules that format anything -- which is the mapping ``tests/test_architecture.py`` pins.
+The alias is kept because ``render.table`` reads better at a call site than
+``primitives.table`` does; what was removed is the second MODULE, not the second name.
 """

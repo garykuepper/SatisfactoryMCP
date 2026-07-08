@@ -1,4 +1,10 @@
-"""All response formatting. Nothing else in the package formats output.
+"""The formatting PRIMITIVES: tables, envelopes, footers, numbers and rates.
+
+The bottom layer of the package, not the whole of it. Nothing outside
+``presenters.text`` formats output, and inside it the split is one formatter module per
+concept -- ``bom``, ``diff``, ``layout``, ``plan_factory`` and the rest -- each of which
+composes what is here. So this file owns HOW a table looks and never WHICH table a tool
+returns, and a rule about layout belongs here exactly when it applies to all of them.
 
 Context budget is the binding design constraint: every response here is read by a
 model, and all 291 automatable recipes in the tightest possible TSV is already

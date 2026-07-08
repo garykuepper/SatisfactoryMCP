@@ -172,7 +172,7 @@ def cut_square(piece, dest: Path, z: int, ox: int, oy: int, tile_px: int) -> int
     return written
 
 
-def _encode_tile_row(job: tuple[str, str, int, int, int, str, int]) -> int:
+def _encode_tile_row(job: tuple[str, str, int, int, int, int, str, int]) -> int:
     """One row of tiles, cropped out of a shared block and deflated. Runs in a child.
 
     Top level and argument-shaped rather than a closure because Windows spawns its workers:

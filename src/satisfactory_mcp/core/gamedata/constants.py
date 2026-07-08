@@ -4,9 +4,11 @@ Every other rate, power figure and capacity is a cited Docs.json field. The valu
 here are not present in Docs.json at all, so they are pinned here, justified, and
 unit-tested. Do not add to this list without the same treatment.
 
-The two functions at the bottom are not extra constants: they are the *only* places
-POTENTIAL_SHARD_SLOTS is combined with data, kept here so the one game-knowledge
-number stays next to the arithmetic that depends on it.
+``max_clock`` and ``shards_for_clock`` are not extra constants: they are the *only*
+places POTENTIAL_SHARD_SLOTS is combined with data, and they sit directly beneath it --
+not at the bottom of the file -- so the one game-knowledge number stays next to the
+arithmetic that depends on it. Adding a constant below them is fine; moving them away
+from POTENTIAL_SHARD_SLOTS is the thing this note asks you not to do.
 """
 
 from __future__ import annotations
