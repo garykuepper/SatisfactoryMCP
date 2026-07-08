@@ -172,3 +172,37 @@ def test_build_costs_resolve_for_production_buildings(game):
         b = game.buildings[cls]
         assert b.descriptor, cls
         assert b.build_cost, cls
+
+
+def test_one_class_gets_one_name_on_every_surface(game):
+    """``GameData.building_name``: the dump's name where there is one, words where not.
+
+    There were four spellings of the fallback before this existed -- the web API's spaced
+    words, ``.replace("Build_", "").replace("_C", "")`` in two MCP tools, and one that left
+    the ``_C`` on -- so the map page and the tool describing the same machine could
+    disagree, and did, for 87 of the reference world's 90 built classes. No test caught it,
+    because nothing pinned those columns. This pins them.
+    """
+    # Listed in the dump: the docs name wins, and it is not a rendering of the id.
+    assert game.building_name("Build_AssemblerMk1_C") == "Assembler"
+    assert game.building_name("Build_ConveyorAttachmentSplitterSmart_C") == "Smart Splitter"
+    assert (
+        game.building_name("Build_GeneratorFuel_C") == game.buildings["Build_GeneratorFuel_C"].name
+    )
+
+    # Not in the dump -- the biomass burners and the map-placed actors, which is the whole
+    # reason a fallback exists. Words, in the same language the docs names are in.
+    for cls in ("Build_GeneratorIntegratedBiomass_C", "Build_HubTerminal_C", "BP_ResourceNode_C"):
+        assert cls not in game.buildings, f"{cls} is in the dump now -- re-pick this example"
+    assert (
+        game.building_name("Build_GeneratorIntegratedBiomass_C") == "Generator Integrated Biomass"
+    )
+    assert game.building_name("Build_HubTerminal_C") == "Hub Terminal"
+    assert game.building_name("BP_ResourceNode_C") == "Resource Node"
+
+    # Never a raw engine id, for anything the reference world actually has built.
+    assert not [c for c in game.buildings if "_C" in (game.building_name(c) or "")]
+
+    # ``None`` in, ``None`` out: an absent occupant is not a building with an unknown name.
+    assert game.building_name(None) is None
+    assert game.building_name("") is None

@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypedDict
@@ -39,6 +38,7 @@ from ...core.gameassets.pyramid import (
     tile_relpath,
 )
 from ...core.gamedata.footprint import FOUNDATION_M
+from ...core.gamedata.model import pretty_class
 from ...core.saveio import projection as proj
 from ...core.saveio import rows as saverows
 from ...domain.collectibles.service import collect_view
@@ -105,27 +105,6 @@ def _fail(message: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-
-
-def _pretty_cls(cls: str | None) -> str | None:
-    """An engine class id as words: ``Build_GeneratorIntegratedBiomass_C`` ->
-    ``Generator Integrated Biomass``.
-
-    The popups resolve every id they can against the docs dump; this is the fallback for
-    the ids the dump has no entry for (the biomass burners, the synthetic recipe strings).
-    A popup that prints a display name in one row and a raw ``Build_…_C`` in the next is
-    teaching the reader two vocabularies for one object, so the fallback at least speaks
-    the same language, even if it cannot know the official name.
-    """
-    if not cls:
-        return None
-    leaf = re.sub(r"^(Build|Desc|Recipe|BP)_", "", str(cls))
-    leaf = re.sub(r"_C$", "", leaf)
-    words = _CAMEL.sub(" ", leaf.replace("_", " ")).strip()
-    return words or str(cls)
-
-
 def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     """The world a request is asking about. Raises whatever the loader raises."""
     return request.app.state.load_state(save, world)
@@ -182,12 +161,12 @@ def _record_row(st: WorldState, row: dict) -> dict:
         "cls": row.get("cls"),
         # The docs name where the dump has one; readable words either way. The raw class
         # stays in ``cls`` for anything that needs the exact id.
-        "name": building.name if building else _pretty_cls(cls),
+        "name": st.game.building_name(cls),
         **_xyz(row.get("pos")),
         "recipe": recipe_id,
         # Same rule for the recipe: the row a player most wants to read must not be the
         # one row still speaking engine ids.
-        "recipe_name": recipe.name if recipe else _pretty_cls(recipe_id),
+        "recipe_name": recipe.name if recipe else pretty_class(recipe_id),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),
         "yaw": _yaw(row.get("yaw")),
@@ -292,7 +271,6 @@ def nodes(
     for n in rows:
         held = taken.get(n["instance"])
         occupant = held["extractor"] if held else None
-        building = game.buildings.get(occupant) if occupant else None
         out.append(
             {
                 "id": n["instance"],
@@ -303,7 +281,7 @@ def nodes(
                 **_xyz((n["x"], n["y"], n["z"])),
                 "occupied": held is not None,
                 "occupant_cls": occupant,
-                "occupant_name": building.name if building else _pretty_cls(occupant),
+                "occupant_name": game.building_name(occupant),
                 "region": _label_json(rmap.label_for_node(n)),
             }
         )
@@ -1117,7 +1095,7 @@ def _belt_class(st: WorldState, cls: str | None) -> dict[str, Any]:
     building = st.game.buildings.get(cls) if cls else None
     return {
         "cls": cls,
-        "name": building.name if building else _pretty_cls(cls),
+        "name": st.game.building_name(cls),
         # From the dump's native class, not from the class id -- see LIFT_NATIVE. ``None``
         # for a class the dump has no entry for: "not a lift" would be a guess, and the
         # map draws a lift and a belt as different things.
@@ -1184,7 +1162,7 @@ def _attachment_row(st: WorldState, row: dict) -> dict:
     return {
         "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
         "cls": row.get("cls"),
-        "name": building.name if building else _pretty_cls(cls),
+        "name": st.game.building_name(cls),
         **_xyz(row.get("pos")),
         "yaw": _yaw(row.get("yaw")),
         "w_m": round(footprint.width_m, 1) if footprint else None,
@@ -1284,7 +1262,7 @@ def _pipe_class(st: WorldState, cls: str | None) -> dict[str, Any]:
     building = st.game.buildings.get(cls) if cls else None
     return {
         "cls": cls,
-        "name": building.name if building else _pretty_cls(cls),
+        "name": st.game.building_name(cls),
         # The dump's own throughput for the tier -- 300 on Mk1, 600 on Mk2 -- rather than a
         # "Mk2" the page would have to parse back out of a display name, exactly as the belts
         # next door take `items_per_min`. ``null`` where the dump is silent.
@@ -1432,7 +1410,7 @@ def _storage_row(st: WorldState, row: dict) -> dict:
     out: dict[str, Any] = {
         "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
         "cls": row.get("cls"),
-        "name": building.name if building else _pretty_cls(cls),
+        "name": st.game.building_name(cls),
         **_xyz(row.get("pos")),
         "yaw": _yaw(row.get("yaw")),
         # Null for the four classes the dump carries no clearance for -- the HUB's built-in
@@ -1840,11 +1818,10 @@ def _run_json(run: ffloors.Run) -> FloorRun:
 
 def _placement_json(st: WorldState, placement: ffloors.Placement) -> FloorPlacement:
     """One thing that is NOT on a floor, and the reason it is not."""
-    building = st.game.buildings.get(placement.cls)
     return {
         "instance_leaf": placement.instance,
         "cls": placement.cls,
-        "name": building.name if building else _pretty_cls(placement.cls),
+        "name": st.game.building_name(placement.cls),
         "kind": placement.kind,
         **_xyz(placement.pos_cm),
         "above_terrain_m": (

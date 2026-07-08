@@ -232,8 +232,10 @@ def factory_query(
     g = st.game
 
     def bname(cls: str) -> str:
-        b = g.buildings.get(cls)
-        return b.name if b else cls.replace("Build_", "").replace("_C", "")
+        # ``GameData.building_name``, not a local mangling: this tool and the map page
+        # describe the same machines, and until this call they described them under
+        # different names whenever the dump had no entry for the class.
+        return g.building_name(cls) or cls
 
     for aspect in asked:
         if aspect == "summary":
@@ -497,7 +499,7 @@ def factory_health(
                         m.instance,
                         m.state,
                         "-" if m.uptime is None else f"{m.uptime:.0%}",
-                        m.recipe or m.building.replace("Build_", "").replace("_C", ""),
+                        m.recipe or st.game.building_name(m.building) or m.building,
                         ", ".join(m.cause),
                     )
                     for m in worst
@@ -673,7 +675,9 @@ def select_machines(
         ),
         "products: " + (", ".join(f"{k} {v}" for k, v in cand.products.most_common(10)) or "-"),
         "buildings: "
-        + ", ".join(f"{v}x {k.replace('Build_', '')}" for k, v in cand.buildings.most_common(8)),
+        + ", ".join(
+            f"{v}x {st.game.building_name(k) or k}" for k, v in cand.buildings.most_common(8)
+        ),
     ]
     if len(groups) > 1:
         sub = identity.describe(groups[0], st.graph, st.game, st.projection, "selector")

@@ -7,6 +7,7 @@ divided by 1000).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .footprint import Footprint
@@ -20,7 +21,37 @@ __all__ = [
     "Item",
     "Recipe",
     "Schematic",
+    "pretty_class",
 ]
+
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def pretty_class(cls: str | None) -> str | None:
+    """An engine class id as words: ``Build_GeneratorIntegratedBiomass_C`` ->
+    ``Generator Integrated Biomass``.
+
+    The LAST resort, for the ids the docs dump has no entry for -- the biomass burners,
+    the synthetic recipe strings. It is not a display name and cannot become one; what it
+    is, is the same language the display names are in. A response that prints
+    ``Fuel-Powered Generator`` in one row and ``Build_GeneratorIntegratedBiomass_C`` in
+    the next is teaching its reader two vocabularies for one kind of object, and the
+    reader -- a model, on this surface -- has to guess whether they are the same thing.
+
+    There were four spellings of this fallback in the tree before it moved here: this
+    one, ``cls.replace("Build_", "").replace("_C", "")`` in two places, and
+    ``k.replace("Build_", "")`` in a third, which left the ``_C`` on. So the same
+    unlisted building could appear in one tool's output as ``Generator Integrated
+    Biomass``, in another's as ``GeneratorIntegratedBiomass`` and in a third's as
+    ``GeneratorIntegratedBiomass_C``.
+    """
+    if not cls:
+        return None
+    leaf = re.sub(r"^(Build|Desc|Recipe|BP)_", "", str(cls))
+    leaf = re.sub(r"_C$", "", leaf)
+    words = _CAMEL.sub(" ", leaf.replace("_", " ")).strip()
+    return words or str(cls)
+
 
 #: The 11 classes that make a recipe automatable. Both natives are required --
 #: omitting FGBuildableManufacturerVariablePower silently loses the 43
@@ -272,6 +303,22 @@ class GameData:
     def item_name(self, cls: str) -> str:
         it = self.items.get(cls)
         return it.name if it else cls
+
+    def building_name(self, cls: str | None) -> str | None:
+        """The building's display name, or a readable rendering of its class id.
+
+        Beside ``item_name`` because it answers the same question about the other half of
+        the dump, and it exists at all because the two SURFACES were answering it
+        differently: the web API resolved the id and fell back to spaced words, the MCP
+        tools resolved the id and fell back to three different unspaced manglings. One
+        world, one name for a thing in it.
+
+        ``None`` in, ``None`` out -- an occupant that is not there is not a building with
+        an unknown name, and the callers that pass an optional id want to keep the
+        difference.
+        """
+        b = self.buildings.get(cls or "")
+        return b.name if b else pretty_class(cls)
 
     def clock_shards(self) -> dict[str, float]:
         """Item class -> max-clock added per unit slotted, for every shard that
