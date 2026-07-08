@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from dataclasses import replace as replace_scenario
 from typing import TYPE_CHECKING
 
+from ...core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 from ...core.gamedata.model import GameData
 from ..spatial import nodes as nodes_mod
 from ..spatial.select import Selection, select_nodes
@@ -53,8 +54,6 @@ _EXTRACTOR_PREFERENCE = (
     "Build_MinerMk2_C",
     "Build_MinerMk1_C",
 )
-
-from ...core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 
 
 def resolve_item(game: GameData, query: str) -> str | None:

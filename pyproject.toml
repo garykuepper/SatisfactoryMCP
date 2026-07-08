@@ -68,20 +68,44 @@ addopts = ["-m", "not integration"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["data/geo_reference.py"]
 
 [tool.ruff.lint]
+# MEASURED against ruff 0.16 before being written, because three of the four entries
+# below used to be a statement about a rule set this project does not select and one of
+# them was doing nothing at all. Counted by selecting each rule alone over src, tests and
+# tools: BLE001 70, C408 46, S110 2 -- all three are in ruff's default set and all three
+# ignores are load-bearing. E402 is NOT in that set (the only pycodestyle E rules it
+# carries are E722 and E902), so the E402 entry suppressed nothing and the comment above
+# it described a rule that was never running.
+#
+# So E402 is switched ON rather than deleted, because the sentence it was trying to make
+# is worth enforcing and the enforcement is what makes the exemption mean something. The
+# 32 hits split three ways: 19 in tools/, which is the documented case; 12 in
+# test_web_api.py behind a `pytest.importorskip`, which is the same case; and 1 in
+# domain/planning/scenario.py, which was a plain stray import sitting 40 lines below the
+# import block for no reason and is now at the top of it. That one defect is the whole
+# argument for selecting the rule instead of writing prose about it.
+extend-select = ["E402"]
 ignore = [
-    # tools/ generators set sys.path before importing the game container reader
-    "E402",
     # Broad excepts are deliberate at the save boundary: autosaves are rewritten in
     # place every ~5 minutes, so a parse can tear mid-write, and the vendored parser
     # raises freely. Degrading to "could not read save" beats crashing the server.
     "BLE001",
+    # try/except/pass, on the two best-effort reads in tools/spatial.py: a heightfield
+    # that is not on this machine costs the elevation column and nothing else.
     "S110",
-    # Cache writes and pickle reads are best-effort by design.
+    # `dict(a=1)` over `{"a": 1}`, in the payload builders where the keyword form is
+    # what the fields read as. This one is a house style, not a boundary.
     "C408",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# The two places a module-level import legitimately follows executable code, and the only
+# two: a generator that puts the repository root on sys.path before importing `tools`, and
+# a test module that asks `pytest.importorskip` whether the optional web stack is here at
+# all before importing from it. Anywhere else, E402 is a stray import and now says so.
+"tools/*.py" = ["E402"]
+"tests/test_web_api.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 # Stated rather than inferred. isort decides first-party by resolving the dotted name on
