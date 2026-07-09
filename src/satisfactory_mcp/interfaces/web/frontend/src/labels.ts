@@ -8,6 +8,7 @@
  */
 
 import { code, esc, popup } from "./dom";
+import { batch } from "./layercontrol";
 import { L } from "./leaflet";
 import { layer } from "./layers";
 import { map } from "./map";
@@ -33,14 +34,25 @@ import type { Row } from "./dom";
  * One function for the whole set, rather than one per layer, so the grammar cannot drift:
  * a layer that is factory-scale information is off at world scale and arrives with the
  * flight. One NOTE for the whole set too -- two toasts for one click would read as two
- * events, and the player made one gesture. */
+ * events, and the player made one gesture.
+ *
+ * ...and ONE RENDER for the whole set, which is what `batch` is doing here. Three
+ * `addTo(map)` calls outside it are three `overlayadd` events, and every one of them
+ * re-rendered the layer control (twice: Leaflet's own `_onLayerChange` and this page's
+ * decorator) and re-ran the declutter pass over every label on the map. Six renders and three
+ * full-layout passes, for one click, to reach a state that could be described once -- and the
+ * two intermediate declutters were measuring labels against a half-revealed map, so the "+n"
+ * badges were computed twice from views nobody was ever shown. `batch` ends with a single
+ * render and the settled passes, which is where the one declutter this gesture owes belongs. */
 export function reveal(names: string[]): void {
   var turned: string[] = [];
-  names.forEach(function (name) {
-    var group = state.layers[name];
-    if (!group || map.hasLayer(group)) return;
-    group.addTo(map);
-    turned.push(name);
+  batch(function () {
+    names.forEach(function (name) {
+      var group = state.layers[name];
+      if (!group || map.hasLayer(group)) return;
+      group.addTo(map);
+      turned.push(name);
+    });
   });
   if (!turned.length) return;
   note(
@@ -214,6 +226,33 @@ interface Kept {
   hidden: Entry[];
 }
 
+/** One label and the rectangle it was measured at, before anything was hidden. */
+interface Measured {
+  entry: Entry;
+  rect: DOMRect;
+}
+
+/* READ EVERYTHING, THEN WRITE, and the two halves below are separated for that alone.
+ *
+ * `getBoundingClientRect` is a synchronous question about layout, so it returns the geometry
+ * the browser would draw right now -- which means it cannot be answered while a style change
+ * is pending. Deciding and hiding inside the measuring loop therefore made every rectangle
+ * after the first hidden label cost a forced reflow: the previous iteration's
+ * `display: none` invalidated layout, and the next `getBoundingClientRect` had to flush it.
+ *
+ * On this world that is up to one reflow per label on every zoomend -- the pass runs on every
+ * zoom step and on every layer tick, and at the home view eight of fifteen labels are hidden,
+ * so eight of the fifteen reads were paying for the seven writes before them. Measuring all
+ * fifteen first costs exactly one flush (the class reset above it) and answers the same
+ * question with the same numbers: nothing in the overlap test depends on what the loop has
+ * already hidden, because a hidden label is never a cover -- only `kept` is, and `kept` holds
+ * the rectangles measured here. */
+function measureAll(entries: Entry[]): Measured[] {
+  return entries.map(function (entry): Measured {
+    return { entry: entry, rect: entry.node.getBoundingClientRect() };
+  });
+}
+
 export function declutter(): void {
   var entries: Entry[] = [];
   ["factory labels", "proposals"].forEach(function (name, groupRank) {
@@ -241,9 +280,12 @@ export function declutter(): void {
   entries.sort(function (a, b) {
     return a.rank - b.rank || b.weight - a.weight;
   });
+  // Sorted before measuring, so `kept` is built in rank order and `find` below can stop at
+  // the first overlap; measured before deciding, so the decisions cost no layout. See above.
+  var measured = measureAll(entries);
   var kept: Kept[] = [];
-  entries.forEach(function (entry) {
-    var r = entry.node.getBoundingClientRect();
+  measured.forEach(function (m) {
+    var r = m.rect;
     // `find`, because the highest-ranked cover owns the badge and `kept` is already in rank
     // order: it stops at the first overlap, which is what the loop this replaced achieved by
     // testing a flag on every later element and assigning to none of them.
@@ -252,10 +294,10 @@ export function declutter(): void {
       return r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom;
     });
     if (covered) {
-      L.DomUtil.addClass(entry.node, "label-hidden");
-      covered.hidden.push(entry);
+      L.DomUtil.addClass(m.entry.node, "label-hidden");
+      covered.hidden.push(m.entry);
     } else {
-      kept.push({ rect: r, entry: entry, hidden: [] });
+      kept.push({ rect: r, entry: m.entry, hidden: [] });
     }
   });
   kept.forEach(function (k) {

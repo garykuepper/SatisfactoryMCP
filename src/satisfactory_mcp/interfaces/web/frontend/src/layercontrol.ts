@@ -218,7 +218,16 @@ export function onSettled(pass: () => void): void {
   settled.push(pass);
 }
 
-function batch(action: () => void): void {
+/* Exported for the one caller outside this file that also changes several layers in one
+ * gesture: `reveal` in labels.ts, which turns three layers on for a single click on a factory
+ * label. It was doing that outside this guard, so a click cost six control renders and three
+ * declutter passes to reach one answer -- the same fourteen-for-one arithmetic the family box
+ * above was fixed for, at a fifth of the scale and on the page's most-used gesture.
+ *
+ * A function rather than a "please batch" flag, because the end of a batch is not just "stop
+ * suppressing": it is one `_update` and then the settled passes, and a caller that had to
+ * remember both would eventually remember one. */
+export function batch(action: () => void): void {
   batching = true;
   control._handlingClick = true;
   try {

@@ -11,7 +11,7 @@
 import { code, popup } from "./dom";
 import { L } from "./leaflet";
 import { layer } from "./layers";
-import { footprintCorners, pixelsPerMetre } from "./map";
+import { footprintCorners, map, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
 import { state } from "./state";
 
@@ -452,14 +452,26 @@ export function drawBelts(data: BeltsResponse): void {
  * There is no pop to debounce away, either -- the opposite. Leaflet scales the whole canvas
  * as one image during a zoom animation, so a belt already grows with the map mid-flight and
  * used to SNAP BACK to its fixed pixel width when the canvas was redrawn at the end. Landing
- * on the width the animation was already showing is what removes that snap. */
+ * on the width the animation was already showing is what removes that snap.
+ *
+ * A LAYER NOBODY IS LOOKING AT IS SKIPPED, and that is most zoomends: both of these start
+ * unticked, so the measurements above -- 3,933 pieces, 0.6 to 0.7 ms, up to 3 ms -- were being
+ * paid on every zoom step of the whole-world view where neither layer was drawn at all, and
+ * `retessellate` was rebuilding the geometry of curves nobody could see. The work is not
+ * merely deferred: a layer's pieces are styled for the scale they are DRAWN at, so a pass
+ * skipped at a zoom the layer was off for is a pass with no output to be wrong.
+ *
+ * What that costs is one call at the other end -- ticking a layer on at a zoom it was not
+ * drawn at has to restyle it, or a belt turned on at the factory view would arrive at the
+ * world view's hairline. main.ts's `overlayadd` handler already ran `sinkRoutes` for exactly
+ * these two layers, so it is the same handler and the same test, one line longer. */
 export function styleRoutes() {
   var ppm = pixelsPerMetre();
   var radius = liftRadius(ppm);
   var alpha = chevronOpacity(ppm);
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
-    if (!group) return;
+    if (!group || !map.hasLayer(group)) return;
     var weight = routeWeight(ROUTE_WIDTH_M[name]!, ppm);
     group.eachLayer(function (layer) {
       var piece = layer as L.Path & { setRadius?: (r: number) => void };

@@ -46,7 +46,8 @@ import { loadWorlds } from "./worlds";
  * consequence and not a hypothetical one.
  *
  *   zoomend            writeHash, styleRoutes, declutter
- *   overlayadd         (the control's own decorator), noteRegionChoice, sinkRoutes, declutter
+ *   overlayadd         (the control's own decorator), noteRegionChoice,
+ *                      styleRoutes + sinkRoutes, declutter
  *   overlayremove      (the control's own decorator), noteRegionChoice, declutter
  *
  * The control's decorator is not in this list because it is registered while the control is
@@ -60,10 +61,18 @@ map.on("layeradd layerremove", updateRegionBlend);
 map.on("overlayadd overlayremove", noteRegionChoice);
 map.on("zoomend", styleRoutes);
 
-// A layer added long after both fetches landed is appended to the canvas' draw list, i.e.
-// on top of everything -- so the sink has to run again when the player ticks the box.
+/* A layer added long after both fetches landed is appended to the canvas' draw list, i.e. on
+ * top of everything -- so the sink has to run again when the player ticks the box. And so
+ * does the restyle, for the mirror-image reason: styleRoutes skips a layer that is not on the
+ * map, so the pixel sizes of a layer ticked on are those of the zoom it was last drawn or
+ * styled at, which after a world-view pan is a hairline. Style first, then sink, which is the
+ * order both draw functions already end in -- size a piece, then decide what it sits under --
+ * and not a dependency: `sinkRoutes` reorders and `styleRoutes` mutates, neither undoes the
+ * other. Stated so the pair reads the same way in all three places. */
 map.on("overlayadd", function (event) {
-  if (ROUTE_LAYERS.some(function (n) { return state.layers[n] === event.layer; })) sinkRoutes();
+  if (!ROUTE_LAYERS.some(function (n) { return state.layers[n] === event.layer; })) return;
+  styleRoutes();
+  sinkRoutes();
 });
 
 /* Same batch guard as the control decorator, and for a heavier reason: this pass measures
