@@ -149,10 +149,12 @@ export function loadLive() {
       busy(false);
       drawPlayer(s.player);
       var power = s.power;
-      var measured =
-        power.measured_draw_mw === null || power.measured_draw_mw === undefined
-          ? power.draw_mw
-          : power.measured_draw_mw;
+      // No fallback to the nameplate any more, because there was never a case to fall back
+      // FROM: `PowerReport` starts the measured figure at 0.0 and charges an unmonitored
+      // machine in full, so it is always a number. The old `?? draw_mw` would have printed
+      // the nameplate total under the word "drawn" on the one save it could ever have fired
+      // for, which is the opposite of what the split exists to say.
+      var measured = power.measured_draw_mw;
       var parts = [s.header.session_name];
       var phase = phaseText(s.progression.game_phase);
       if (phase) parts.push(phase);

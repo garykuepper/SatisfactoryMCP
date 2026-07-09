@@ -107,7 +107,9 @@ export function drawNodes(data: NodesResponse): void {
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
 export function drawPlayer(p: SummaryResponse["player"]): void {
   var group = layer("player", true, PLAYER_COLOUR);
-  if (!p || p.x_m === null || p.y_m === null) return;
+  // The object is always sent; its fields are what go null on a save with no pawn. `!p` here
+  // was guarding a shape `/api/summary` has no branch for.
+  if (p.x_m === null || p.y_m === null) return;
   L.circleMarker(xy(p as { x_m: number; y_m: number }), {
     radius: 7,
     color: PLAYER_COLOUR,

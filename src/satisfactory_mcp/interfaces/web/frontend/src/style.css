@@ -1,8 +1,26 @@
-/* Flat colour, no imagery. There is no licensable map of this world to draw, so the
-   ground is painted from the project's own 256 m biome raster -- one muted colour per
-   region, in regions.ts -- and the sea is simply the background showing through the cells
-   the raster calls void. The only picture that can ever appear here is one the user put
-   in data/local/map.png themselves. */
+/* The page's own rules, over Leaflet's. main.ts imports Leaflet's stylesheet first and this
+   one second, and that order is the whole of why several selectors here win -- see the note
+   above `.leaflet-control-layers .layer-folded`.
+
+   What the ground looks like is NOT decided here, and that is the thing this preamble used
+   to get wrong. It said "flat colour, no imagery", which described a page that could only
+   ever paint the 256 m biome raster; the base map is now a MODE -- the game's own artwork,
+   a hypsometric terrain render, a biome-coloured satellite render, or plain -- each a tile
+   pyramid the server cuts, chosen by the radios in the layer control and swapped by
+   tiles.ts. Read that file for which pictures exist and how one is picked.
+
+   Two consequences land in this file, and they are the reason it needs to know at all:
+
+     * the `basemap` pane sits UNDER the region cells (map.ts pins the z-indices), so the
+       biome colours in regions.ts are a tint over a photograph as often as they are the
+       ground itself -- their alpha is the pane's, not the cells', and it changes with the
+       mode. REGION_BLEND in regions.ts owns that number.
+     * the sea is still just the background showing through the cells the raster calls void,
+       so --sea below is visible in plain mode and covered in every other. It is a colour for
+       the absence of data, not for water.
+
+   Everything else here is chrome: the header bar, the layer control's two folds, the popup
+   table, the toast, and the legend strip index.html spells out. */
 
 :root {
   --ink: #e8e6e1;

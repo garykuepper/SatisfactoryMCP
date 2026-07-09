@@ -14,6 +14,13 @@
  * value, because the guard IS the evidence: `m.clock === null ? null : ...` in placements.ts
  * is the page saying it has seen a null clock, and this file should not contradict it.
  *
+ * That rule has a second edge, and it is the one this file kept losing: a `| null` nobody can
+ * produce is as wrong as a missing one. It makes the drawing code carry a branch for a value
+ * the server has no way to send, and the branch is then untestable and untested -- so it is
+ * where the wrong fallback hides. Every nullable below has now been read back against the
+ * expression in `api.py` that fills it, and the ones that could not be null say WHICH
+ * expression, so the next reader checks the server rather than guessing from a sample again.
+ *
  * They are deliberately not exhaustive. `/api/summary` returns a large object of which this
  * page reads four branches, and typing the other twenty would be inventing a contract for
  * data nothing here looks at. What is declared is what is read.
@@ -62,7 +69,10 @@ export interface NodeRow {
 }
 
 export interface StructureRow {
-  cls: string;
+  /* Nullable, and it always was: `saveio.rows` types every piece's `cls` as `str | None`, and
+   * `/api/structures` passes `piece.cls` straight through. A torn row is still a real piece at
+   * a real place -- it is drawn, because the only thing this layer needs is the position. */
+  cls: string | null;
   // Nullable because drawStructures skips on it: a placement whose transform did not
   // decode has no position, and the projection sends the row anyway.
   x_m: number | null;
@@ -121,9 +131,19 @@ export interface RouteShape {
   steps: number[];
 }
 
+/* `cls` and `name`, on the four rows the server resolves a class for.
+ *
+ * Both are nullable and both for one reason: `_belt_class`, `_pipe_class` and the two
+ * placement builders in `api.py` all take `row.get("cls")`, which is `str | None` in
+ * `saveio.rows`, and hand it to `GameData.building_name`, which is `None` in, `None` out --
+ * in as many words: "an occupant that is not there is not a building with an unknown name".
+ *
+ * So a torn row reaches the page with no title at all, and `name || cls` is then `null`.
+ * popup() drops a null row, which would silently delete the one row naming the thing the
+ * reader just clicked -- see `titleRow` in routes.ts for what is printed instead. */
 export interface BeltRow {
   chain: number;
-  cls: string;
+  cls: string | null;
   name: string | null;
   /** True: vertical, so its top-down polyline is one point and it is drawn as a ring.
    *
@@ -141,7 +161,8 @@ export interface BeltRow {
 /** A splitter or a merger: a piece of the belt network, drawn by the belt layer. */
 export interface AttachmentRow {
   instance_leaf: string;
-  cls: string;
+  /** Nullable on the same terms as BeltRow's; see the note above it. */
+  cls: string | null;
   name: string | null;
   x_m: number | null;
   y_m: number | null;
@@ -154,14 +175,24 @@ export interface AttachmentRow {
 /** Which way the fluid goes, where the network settles it. */
 export type PipeDirection = "forward" | "reverse" | "unknown";
 
+/* What the direction was inferred from: the four values `domain/world/flow.py` defines, and
+ * there is no fifth. `/api/pipes` writes `flow.get("basis", "unresolved")`, so the field is
+ * always one of these and never null -- the missing-flow case defaults to the same
+ * `unresolved` the resolver itself sends when it declines.
+ *
+ * A closed union rather than `string | null`, because the page has to MAP it: PIPE_FLOW_BASIS
+ * in routes.ts is keyed by these, and typing that record by this union is what makes a fifth
+ * basis on the server a compile error here instead of an "→ inferred" that says nothing. */
+export type PipeFlowBasis = "machine port" | "pump" | "propagated" | "unresolved";
+
 export interface PipeRow {
   direction: PipeDirection;
-  /** What the direction was inferred from; keys PIPE_FLOW_BASIS in routes.ts. */
-  basis: string | null;
+  basis: PipeFlowBasis;
   network: number | null;
   fluid: string | null;
   fluid_name: string | null;
-  cls: string;
+  /** Nullable on the same terms as BeltRow's; see the note above it. */
+  cls: string | null;
   name: string | null;
   flow_m3_min: number | null;
   points_m: Point3M[];
@@ -213,7 +244,9 @@ export interface FactoryRow {
   centroid_m: PointM;
   bbox_m: BboxM | null;
   machines: number;
-  notes: string | null;
+  /** Never null: `Label.notes` is `str = ""` in the label store, so an unannotated factory
+   *  sends the empty string -- which popup() drops for the same reason it drops a null. */
+  notes: string;
 }
 
 export interface ProposalRow {
@@ -269,8 +302,10 @@ export interface NodesResponse extends ApiError {
 
 export interface StructuresResponse extends ApiError {
   structures: StructureRow[];
-  /** The grid edge every one of these classes snaps to; the page paints one tile per piece. */
-  tile_m: number | null;
+  /** The grid edge every one of these classes snaps to; the page paints one tile per piece.
+   *  Never null: `/api/structures` sends the `FOUNDATION_M` constant, which exists precisely
+   *  so the page does not hardcode 8. */
+  tile_m: number;
 }
 
 export interface BeltsResponse extends ApiError {
@@ -308,11 +343,18 @@ export interface SummaryResponse extends ApiError {
   power: {
     generation_mw: number;
     draw_mw: number;
-    /** Null on a save with no monitored buildings; the header falls back to the nameplate. */
-    measured_draw_mw: number | null;
+    /* Never null. `PowerReport` starts this at 0.0 and only ever adds to it, and a machine
+     * with no usable monitor is charged in FULL rather than skipped -- "no monitor is not
+     * evidence of idleness", so the figure can only be conservative, never absent. A save
+     * with nothing built reports 0.0, which is a measurement and not a missing one. */
+    measured_draw_mw: number;
   };
   progression: { game_phase: string | null };
-  player: { x_m: number | null; y_m: number | null; z_m: number | null } | null;
+  /* The object is always there; its three fields are what go null. `/api/summary` sends
+   * `_xyz(player_position())`, and `_xyz` answers `{x_m: null, y_m: null, z_m: null}` for a
+   * save with no pawn rather than dropping the branch -- so "no position" is three nulls, not
+   * a missing player. */
+  player: { x_m: number | null; y_m: number | null; z_m: number | null };
 }
 
 /** What the right-click inspector lays out. Every field here is read by elevationRows. */
@@ -359,10 +401,19 @@ export interface RegionsResponse extends ApiError {
   cell_m: number;
   x0_m: number;
   y0_m: number;
-  regions: Record<string, { centroid_m: PointM; bbox_m: BboxM; label_m: PointM | null }>;
+  /* `label_m` is never null: `_label_anchor` returns the centroid when the centroid's own cell
+   * carries the region's letter, the centre of the nearest cell that does when it does not,
+   * and the centroid again when the search finds nothing -- three branches, two floats each.
+   * What it can be is DIFFERENT from `centroid_m`, which is the whole reason it exists. */
+  regions: Record<string, { centroid_m: PointM; bbox_m: BboxM; label_m: PointM }>;
 }
 
+/* Both fields are always sent together, exactly like every other response above: `/api/worlds`
+ * ends `return {"worlds": rows, "unsupported": list(unsupported)}`, and the only path that
+ * omits them is the one that sends `error` instead -- which is the same bargain `nodes`,
+ * `belts` and the rest already make by declaring their payload required. Optional markers here
+ * bought nothing and cost two `|| []` guards in worlds.ts that read as evidence of a null. */
 export interface WorldsResponse extends ApiError {
-  worlds?: WorldRow[];
-  unsupported?: { filename: string; reason: string }[];
+  worlds: WorldRow[];
+  unsupported: { filename: string; reason: string }[];
 }

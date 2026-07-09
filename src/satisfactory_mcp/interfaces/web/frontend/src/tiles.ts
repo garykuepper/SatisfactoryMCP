@@ -26,6 +26,7 @@
  * already reaches the control through layers.ts -- an import the other way would be a ring.
  */
 
+import { tilePath } from "./api";
 import { onModePick, showModes } from "./layercontrol";
 import { L } from "./leaflet";
 import { MAP_SHEET_PX, MAP_SQUARE_M, map, writeHash } from "./map";
@@ -33,14 +34,18 @@ import { regionsUnderMode, updateRegionBlend } from "./regions";
 import { BOOT, state } from "./state";
 import { fail } from "./toast";
 
+import type { MapTileLayer } from "./api";
 import type { ModeChoice } from "./layercontrol";
 import type { BaseMode } from "./state";
 
 /** One base-map mode: a radio in the control, and at most one layer on the map. */
 interface ModeSpec {
   key: BaseMode;
-  /** The path segment `/api/maptiles/{layer}/` answers on. "" is Plain: no imagery. */
-  layer: string;
+  /* The path segment `/api/maptiles/{layer}/` answers on. "" is Plain: no imagery -- the one
+   * mode that is not a pyramid, which is why the type is a union with the empty string
+   * rather than an optional field. Everything else has to be a layer this server serves; see
+   * MapTileLayer in api.ts. */
+  layer: MapTileLayer | "";
   label: string;
   /** The row's tooltip when the mode can be picked: what this picture actually is. */
   about: string;
@@ -52,6 +57,15 @@ interface ModeSpec {
    * 404 on every clean load teaches the reader to ignore red lines. Asking for the message
    * would mean asking for the error the server went out of its way not to raise. */
   generator: string;
+}
+
+/* A mode that IS a pyramid: the same row with the "no imagery" half of `layer` ruled out.
+ * The two functions that build a tile URL take this rather than a `ModeSpec`, so "plain has
+ * no tiles" is a thing the compiler knows instead of a thing the call order arranges. */
+type PyramidSpec = ModeSpec & { layer: MapTileLayer };
+
+function isPyramid(spec: ModeSpec): spec is PyramidSpec {
+  return !!spec.layer;
 }
 
 var MODES: ModeSpec[] = [
@@ -207,7 +221,7 @@ function wantsDenseTiles(): boolean {
  * single-image fallback, which draws either of those correctly; for a render it means the
  * mode is not offered, because a render is only ever cut by the generator that pins this
  * frame, and a tile grid quietly offset from its own picture is worse than no picture. */
-function pyramidMaker(spec: ModeSpec, response: Response): (() => L.Layer) | null {
+function pyramidMaker(spec: PyramidSpec, response: Response): (() => L.Layer) | null {
   var b = mapImageBounds(response);
   var anchored = [
     MAP_SQUARE_M.x_min,
@@ -248,7 +262,7 @@ function pyramidMaker(spec: ModeSpec, response: Response): (() => L.Layer) | nul
   if (tag) query.push("v=" + encodeURIComponent(tag));
   if (dense) query.push("px=" + densePx);
   var url =
-    "/api/maptiles/" + spec.layer + "/{z}/{x}/{y}" + (query.length ? "?" + query.join("&") : "");
+    tilePath(spec.layer, "{z}", "{x}", "{y}") + (query.length ? "?" + query.join("&") : "");
   var bounds = mapImageLatLngBounds(b);
 
   return function () {
@@ -305,8 +319,8 @@ function overlayMaker(spec: ModeSpec, response: Response): () => L.Layer {
 
 /** One HEAD against one pyramid's z0 tile. Never rejects: a probe that fails is a mode
  *  that is not there, which is the ordinary state for all three of them. */
-function probePyramid(spec: ModeSpec): Promise<void> {
-  return fetch("/api/maptiles/" + spec.layer + "/0/0/0", { method: "HEAD" })
+function probePyramid(spec: PyramidSpec): Promise<void> {
+  return fetch(tilePath(spec.layer, 0, 0, 0), { method: "HEAD" })
     .then(function (r) {
       if (r.status !== 200) return; // 204: never generated, and that is not an error
       var make = pyramidMaker(spec, r);
@@ -400,11 +414,7 @@ export function loadBaseMap(): Promise<void> {
   onModePick(function (key) {
     setMode(key as BaseMode, true);
   });
-  return Promise.all(
-    MODES.filter(function (spec) {
-      return !!spec.layer;
-    }).map(probePyramid)
-  )
+  return Promise.all(MODES.filter(isPyramid).map(probePyramid))
     .then(function () {
       var artwork = specFor("artwork");
       if (!artwork || makers.artwork) return;

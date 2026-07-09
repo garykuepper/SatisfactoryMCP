@@ -15,9 +15,12 @@ import { footprintCorners, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
 import { state } from "./state";
 
+import type { Row } from "./dom";
+
 import type {
   BeltRow,
   BeltsResponse,
+  PipeFlowBasis,
   PipeRow,
   PipesResponse,
   Point3M,
@@ -25,6 +28,23 @@ import type {
   RouteCurveM,
   SpanCurveM,
 } from "./api-types";
+
+/* The row that names the thing the reader just clicked, for the three route popups whose
+ * subject is a resolved class.
+ *
+ * `name || cls` was the whole of this, and it has a hole at the bottom: both are nullable --
+ * `saveio.rows` types a piece's `cls` as `str | None` and `building_name` is `None` in, `None`
+ * out -- so a torn row evaluates to null, popup() drops a null row, and the card loses its
+ * TITLE while keeping every coordinate under it. A reader gets a belt popup that does not say
+ * "belt".
+ *
+ * The row is therefore always emitted, and the last branch is a statement rather than a
+ * fallback name: "the class was not recorded" is what the projection actually said, and
+ * inventing a name here would be indistinguishable from a resolved one -- the same rule the
+ * server follows when it sends null instead of guessing. */
+function titleRow(key: string, name: string | null, cls: string | null): Row {
+  return [key, name || cls || "class not recorded in this projection"];
+}
 
 /* The curve, drawn: how a spline becomes a polyline, and how many pieces that is worth.
  *
@@ -337,7 +357,7 @@ function beltKind(b: BeltRow, ring: boolean): string | null {
 
 function beltPopup(b: BeltRow, kind: string | null, first: Point3M, last: Point3M): string {
   return popup([
-    ["belt", b.name || b.cls],
+    titleRow("belt", b.name, b.cls),
     // Said out loud, because the glyph is the one encoding on this map that exists
     // because of a measurement rather than because of a preference.
     ["kind", kind],
@@ -396,7 +416,7 @@ export function drawBelts(data: BeltsResponse): void {
     })
       .bindPopup(
         popup([
-          ["belt part", a.name || a.cls],
+          titleRow("belt part", a.name, a.cls),
           ["facing", a.yaw === null || a.yaw === undefined ? null : Math.round(a.yaw) + "°"],
           ["at", a.x_m + ", " + a.y_m + " m"],
           ["instance", code(a.instance_leaf)],
@@ -543,29 +563,38 @@ function pipeWeight(ppm: number): number {
  * purpose: the row it replaces was a sentence explaining why there was nothing to say, and
  * the whole point of the change is that on 365 of 503 pipes there now is. The `from` and
  * `to` rows carry the direction itself, exactly as they do on a belt, so this row only has
- * to carry the WARRANT. */
-var PIPE_FLOW_BASIS: Record<string, string> = {
+ * to carry the WARRANT.
+ *
+ * EXHAUSTIVE, which is what `Record<PipeFlowBasis, …>` buys and `Record<string, …>` did not.
+ * The fourth key is `unresolved`, and it is in the table rather than left to fall through a
+ * `|| "→ inferred"`: that fallback was the one place a basis nobody had thought about could
+ * arrive and be printed as a claim about the network. Now a fifth basis in
+ * `domain/world/flow.py` is a missing key here and a compile error, and `unresolved` says the
+ * honest thing -- which is the sentence below, kept for the 138 the network genuinely does
+ * not settle: a pipe in a loop, or a trunk with producers and consumers on both sides. */
+var PIPE_FLOW_UNKNOWN = "not recorded, and the network does not imply it";
+
+var PIPE_FLOW_BASIS: Record<PipeFlowBasis, string> = {
   "machine port": "→ a typed machine port at one end",
   pump: "→ pump orientation",
   propagated: "→ inferred from the network",
+  unresolved: PIPE_FLOW_UNKNOWN,
 };
-
-/* And the honest refusal, kept for the 138 the network genuinely does not settle -- a pipe
- * in a loop, or a trunk with producers and consumers on both sides. Shorter than the
- * sentence it replaces, because it is now the exception rather than the rule. */
-var PIPE_FLOW_UNKNOWN = "not recorded, and the network does not imply it";
 
 function pipePopup(p: PipeRow, first: Point3M, last: Point3M): string {
   var known = p.direction === "forward" || p.direction === "reverse";
   var head = p.direction === "reverse" ? last : first;
   var tail = p.direction === "reverse" ? first : last;
   return popup([
-    ["pipe", p.name || p.cls],
+    titleRow("pipe", p.name, p.cls),
     // The thing a belt cannot say. It comes off the game's own FGPipeNetwork rather than
     // from what the pipe is plugged into, which is why it can be stated flatly.
     ["fluid", p.fluid_name],
     ["capacity", p.flow_m3_min ? p.flow_m3_min + " m³/min at 100%" : null],
-    ["flow", known ? PIPE_FLOW_BASIS[p.basis ?? ""] || "→ inferred" : PIPE_FLOW_UNKNOWN],
+    // The table answers for all four bases now, so `known` decides only whether a resolved
+    // basis is trusted -- a `forward` with an `unresolved` basis cannot happen (the resolver
+    // sends the two together) and would print the refusal rather than an invented warrant.
+    ["flow", known ? PIPE_FLOW_BASIS[p.basis] : PIPE_FLOW_UNKNOWN],
     // `from`/`to` where the direction is known, which is the belt popup's own wording and
     // means the same thing there; `ends` where it is not, so the two are never confused.
     ["from", known ? head[0] + ", " + head[1] + " m" : null],

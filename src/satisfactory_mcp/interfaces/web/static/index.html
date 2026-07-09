@@ -35,13 +35,27 @@
       <span id="live" class="dot" title="connecting to the save watcher&hellip;"></span>
     </header>
     <div id="map"></div>
-    <!-- The four encodings no checkbox can explain: purity is dot size, occupancy is a
-         hollow dot, a paused machine is dashed, and a conveyor lift is a ring because a
-         lift is vertical and its top-down route is a single point. Static, because they
-         never change. -->
+    <!-- The encodings no checkbox can explain, because they are inside a layer rather than
+         a layer of their own: purity is dot size, a conveyor lift is a ring because a lift is
+         vertical and its top-down route is a single point, a chevron is which way the fluid
+         goes on the pipes the network settled a direction for, and HOLLOW says two different
+         things.
+
+         Hollow is the trap, so the shape is named in front of it every time. A hollow DOT is
+         a node with an extractor standing on it -- drawn away, because the thing on top of it
+         is the news. A hollow BOX is a container with nothing in it -- drawn away, because an
+         empty box is a place with room in it. Those are opposite claims about presence, and
+         the only thing telling them apart is dot versus box, so neither ever appears here
+         unqualified. (A paused machine is hollow too and is not a third meaning: it is the
+         dashed outline that says so, and the fade only follows it.)
+
+         Static, because these never change -- and kept in step with three files by hand:
+         PURITY_RADIUS in palette.ts, the fillOpacity lines in markers.ts and placements.ts,
+         and ROUTE_CHEVRONS in routes.ts. -->
     <div id="legend" title="how the markers encode what they know">
-      dot size = purity (impure &lt; normal &lt; pure) &middot; hollow dot = extractor on it
-      &middot; dashed box = paused &middot; belt ring = conveyor lift
+      dot size = purity (impure &lt; normal &lt; pure) &middot; hollow dot = extractor on that
+      node &middot; hollow box = empty container &middot; dashed box = paused machine
+      &middot; belt ring = conveyor lift &middot; chevrons = which way the fluid goes
     </div>
     <div id="err"></div>
   </body>

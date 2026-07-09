@@ -93,7 +93,9 @@ export function loadWorlds(): Promise<void> {
     })
     .then(function (body) {
       if (body.error) throw new Error(body.error);
-      state.worlds = body.worlds || [];
+      // No `|| []`: the endpoint sends `worlds` and `unsupported` together or sends `error`
+      // instead, and the line above is what tells the two apart.
+      state.worlds = body.worlds;
       var picker = el<HTMLSelectElement>("world");
       fillWorldPicker(false);
       picker.onchange = function () {
@@ -108,7 +110,7 @@ export function loadWorlds(): Promise<void> {
         // The one state that must NOT end as a healthy-looking blank page: no world at
         // all. The server may still know exactly why each file was rejected, and that
         // diagnosis belongs on screen, permanently -- not in a toast that self-erases.
-        var reasons = (body.unsupported || [])
+        var reasons = body.unsupported
           .map(function (u) {
             return u.filename + ": " + u.reason;
           })
@@ -154,7 +156,10 @@ export function refreshWorlds(): void {
       return r.json() as Promise<WorldsResponse>;
     })
     .then(function (body) {
-      if (body.error || !body.worlds || !body.worlds.length) return;
+      // An empty list is the scan hiccup this function exists to survive, and it is a
+      // different thing from the absent field the `|| []` here used to imply: the endpoint
+      // either sends the list or sends `error`, so what is guarded is the CONTENT.
+      if (body.error || !body.worlds.length) return;
       state.worlds = body.worlds;
       fillWorldPicker(true);
       if (!state.world) {

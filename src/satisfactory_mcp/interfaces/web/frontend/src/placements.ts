@@ -48,7 +48,9 @@ var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built agai
 
 export function drawStructures(data: StructuresResponse): void {
   var group = layer("foundations", true, STRUCTURE_COLOUR);
-  var half = (data.tile_m || 8) / 2;
+  // No `|| 8`: `tile_m` is the server's FOUNDATION_M constant and is always sent, and the
+  // fallback was a second copy of the number the field exists to stop the page hardcoding.
+  var half = data.tile_m / 2;
   data.structures.forEach(function (s) {
     if (s.x_m === null || s.y_m === null) return;
     L.polygon(footprintCorners(s.x_m, s.y_m, half, half, s.yaw), {
