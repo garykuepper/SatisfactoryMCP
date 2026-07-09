@@ -266,6 +266,41 @@ def test_a_no_data_texel_and_an_off_grid_point_are_both_silence(tmp_path):
     assert field.at(FAKE_X0, FAKE_Y0 + 40 * FAKE_SPACING) is None, "off the south edge"
 
 
+def test_the_last_column_answers_and_the_one_past_it_does_not(tmp_path):
+    """The east edge, which is the bound nothing else in this file touches.
+
+    Both off-grid assertions above overshoot by ten and forty texels, so they pass whether the
+    guard reads ``col < width`` or ``col <= width`` -- and the ``<=`` version is a real
+    mistake to make, because a vertex-aligned grid genuinely has ``width`` vertices numbered 0
+    to ``width - 1`` and the fencepost is one character. Mutating the comparison leaves the
+    whole module green today.
+
+    What it would cost is not an exception. ``_height_dm`` is a numpy array and ``[row, width]``
+    raises, but the FIRST thing an out-of-range column does on a C-ordered raster is nothing
+    visible at all in the row direction, and the failure a reader would see is the map's east
+    edge answering with the west edge of the row below. So the pair is asserted directly: the
+    last real column is a measurement, and one spacing further east is silence.
+
+    Row 0 is the landscape row, so the answer is the one texel value it was built with.
+    """
+    field = hf.load_field(build_field(tmp_path))
+    east = FAKE_X0 + (FAKE_W - 1) * FAKE_SPACING
+
+    assert field.texel(east, FAKE_Y0) == (0, FAKE_W - 1), "the last column is not addressable"
+    last = field.at(east, FAKE_Y0)
+    assert last is not None, "the last column reads as off the grid"
+    assert (last.z_m, last.source) == (12.3, "landscape")
+
+    assert field.texel(east + FAKE_SPACING, FAKE_Y0) is None, "one column past the east edge"
+    assert field.at(east + FAKE_SPACING, FAKE_Y0) is None, "off the east edge read as a height"
+
+    # ...and the same fencepost on the other axis, for the same reason: the two bounds are one
+    # ``and`` apart and a test that pins only one of them pins neither against a copy-paste.
+    south = FAKE_Y0 + (FAKE_H - 1) * FAKE_SPACING
+    assert field.texel(FAKE_X0, south) == (FAKE_H - 1, 0), "the last row is not addressable"
+    assert field.texel(FAKE_X0, south + FAKE_SPACING) is None, "one row past the south edge"
+
+
 def test_the_grid_is_vertex_aligned_so_a_reading_snaps_to_the_nearest_measurement(tmp_path):
     """Rounded, not floored. A texel IS the point ``x0 + col*spacing``, not a cell round it.
 

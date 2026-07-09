@@ -30,6 +30,7 @@ recording too, because it is why these four are the only ones here:
 
 from __future__ import annotations
 
+import json
 import struct
 import zlib
 from pathlib import Path
@@ -248,3 +249,89 @@ def test_a_body_region_with_no_chunks_at_all_says_so():
     with pytest.raises(ParseError) as exc:
         decompress_body(b"", 0)
     assert "no chunk at 0" in str(exc.value)
+
+
+# ----------------------------------------------------- what the sidecar SAYS about all this
+
+# Everything above pins the parser's refusals. These two pin the only surface anything else
+# ever sees them through: ``extract.main`` is what the projection layer runs as a subprocess,
+# and its whole contract is two things -- the exit code, and a single JSON object on STDOUT.
+# Called in-process rather than through ``subprocess``: the contract is `argv in, exit code
+# and stdout out`, and spawning an interpreter to check it would add a second thing that can
+# fail (the environment) to a test about neither.
+
+
+def _run_cli(argv: list[str]) -> tuple[int, str]:
+    """``extract.main`` with stdout captured. Returns (exit code, what it printed)."""
+    import io
+    from contextlib import redirect_stdout
+
+    from satisfactory_mcp.core.saveio import extract
+
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = extract.main(argv)
+    return code, out.getvalue()
+
+
+def test_a_torn_save_leaves_the_cli_saying_parse_error_on_stdout(tmp_path):
+    """The refusal a caller can branch on, and the detail a reader can act on.
+
+    ``projection.py`` runs this as a subprocess and reads its stdout as JSON, so a parse
+    failure has to arrive as a well-formed object rather than as a traceback: a torn autosave
+    is the ROUTINE case here, not the exceptional one, and the caller's job is to say "not
+    yet" and try again. Three things are therefore load-bearing at once and none of them is
+    checked by the ParseError tests above -- stdout stays parseable, ``error`` is the stable
+    token ``parse_error`` rather than a Python class name, and the exit code is 1.
+
+    The stderr traceback is deliberately not asserted: it is what ``main``'s bare
+    ``except Exception`` does for the UNEXPECTED failures, and reaching it for a torn file is
+    the bug (``{"error": "RecursionError"}`` -- true, useless, no offset), which is exactly
+    what ``error == "parse_error"`` below rules out.
+    """
+    if not HEADER_FIXTURE.is_file():
+        pytest.skip("header fixture not committed")
+    torn = tmp_path / "Han Solo_autosave_0.sav"
+    torn.write_bytes(HEADER_FIXTURE.read_bytes()[:40])
+
+    code, printed = _run_cli([str(torn)])
+    assert code == 1
+    body = json.loads(printed)
+    assert body["error"] == "parse_error", printed
+    assert body["path"] == str(torn)
+    # The offset is the whole value of the detail line: it is what tells a torn file from a
+    # corrupt one, and it is what ``--list`` prints beside the filename.
+    assert "runs past end" in body["detail"]
+
+
+def test_the_list_scan_buckets_every_unreadable_file_instead_of_aborting(tmp_path):
+    """One bad save must not cost the reader the other sixty-two.
+
+    This is the endpoint the world picker is built on, and the directory it scans is the
+    player's real one: of 63 files there, 35 are pre-1.0 and cannot be parsed at all. A scan
+    that stopped at the first failure would report no worlds on a machine that has several,
+    and the web page's "no readable saves found" line would be a lie with a reason attached.
+
+    So: a directory of nothing but junk still exits 0, still emits a complete document, and
+    every file lands in ``unsupported`` carrying the reason it landed there -- which is the
+    string ``worlds.ts`` prints when it has nothing else to show.
+    """
+    (tmp_path / "wrong-magic.sav").write_bytes(b"not a save at all, not even close")
+    (tmp_path / "empty.sav").write_bytes(b"")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "cut-short.sav").write_bytes(b"\x0e\x00\x00\x00<\x00\x00\x00")
+    (tmp_path / "not-a-save.txt").write_bytes(b"ignored: the scan is .sav only")
+
+    code, printed = _run_cli(["--list", str(tmp_path)])
+    assert code == 0, printed
+    body = json.loads(printed)
+    assert body["saves"] == [], "junk was accepted as a save"
+    bucketed = {row["filename"]: row for row in body["unsupported"]}
+    assert set(bucketed) == {"wrong-magic.sav", "empty.sav", "cut-short.sav"}, (
+        "the scan aborted, or it walked past the nested directory"
+    )
+    for name, row in sorted(bucketed.items()):
+        assert row["reason"].strip(), f"{name} was rejected without saying why"
+        # mtime and size ride along because the picker sorts and de-duplicates on them, and
+        # a file that cannot be parsed still has both.
+        assert row["mtime_ns"] > 0 and row["size"] >= 0, name
