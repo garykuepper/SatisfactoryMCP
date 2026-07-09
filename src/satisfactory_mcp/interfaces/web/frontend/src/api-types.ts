@@ -380,7 +380,17 @@ export interface Elevation {
   fill_note: string | null;
 }
 
+/* One of the five nodes nearest a right-clicked point.
+ *
+ * `id` and `name` were left out of this interface, not out of the payload: `_nearest_nodes`
+ * in api.py has always sent both -- the full instance path, and the leaf that IS the `node:`
+ * selector every dot's own popup prints. Declaring them is what lets the inspector offer the
+ * copyable selector too, so the two surfaces answering "what is here" answer it in the same
+ * spellable form. See markers.ts, which builds the same row from the same field. */
 export interface NearestNode {
+  id: string;
+  /** The instance's leaf, which is what `node:<name>` selects. */
+  name: string;
   resource: string;
   purity: string;
   distance_m: number;

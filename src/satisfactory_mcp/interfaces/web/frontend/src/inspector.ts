@@ -7,7 +7,7 @@
  */
 
 import { get } from "./api";
-import { esc, html, popup } from "./dom";
+import { code, esc, html, popup } from "./dom";
 import { regionLine, shortResource } from "./format";
 import { L } from "./leaflet";
 import { map } from "./map";
@@ -93,6 +93,15 @@ function inspectHtml(d: InspectResponse): string {
   var rows: Row[] = ([["region", regionLine(d.region)]] as Row[]).concat(
     elevationRows(d.elevation)
   );
+  /* Each nearest node carries the same `node:` selector its own dot's popup prints, and it is
+   * the row this panel existed without: the whole point of the inspector is that a player
+   * right-clicks a spot and asks what is here, and the answer's next step is an MCP tool call
+   * naming one of these nodes. Without the selector the reader had a resource and a distance
+   * and no way to say WHICH node -- a world has 44 impure copper nodes -- so the copyable
+   * name had to be hunted for by clicking the dot the inspector had just told them about.
+   *
+   * On the same line rather than a row of its own: five nodes are five rows already, and the
+   * selector is what the reader copies out of the line they have decided on. */
   d.nearest.forEach(function (n, i) {
     rows.push([
       i ? "" : "nearest",
@@ -100,7 +109,9 @@ function inspectHtml(d: InspectResponse): string {
         esc(shortResource(n.resource) + " " + n.purity) +
           " &middot; " +
           esc(n.distance_m + " m") +
-          (n.occupied ? " (occupied)" : "")
+          (n.occupied ? " (occupied)" : "") +
+          " &middot; " +
+          code("node:" + n.name).html
       ),
     ]);
   });

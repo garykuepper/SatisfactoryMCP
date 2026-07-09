@@ -104,12 +104,30 @@ export function drawNodes(data: NodesResponse): void {
 }
 
 /* The player's last known position: the map's only you-are-here, and the reference every
- * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node. */
+ * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node.
+ *
+ * NO ROW WHEN THERE IS NO POSITION, and the two lines that arrange it are not the same line.
+ *
+ * `layer()` both creates the control row and clears the group, so asking for the layer before
+ * the guard gave every save a "player" checkbox -- including a dedicated-server save, which
+ * has no pawn at all. That box ticked and unticked nothing, which is worse than a missing row:
+ * the control is the map's legend, and a legend entry is a claim that the thing exists.
+ *
+ * Moving the call below the guard is only half of it, and the missing half is why this is a
+ * branch rather than a reordering. The clear was riding on that same call, so a switch FROM a
+ * world with a pawn TO one without would have left the previous world's dot on the map under
+ * the previous world's row -- a you-are-here pointing at a place in a different save. So the
+ * empty case reaches the registry directly: it clears a group that exists and creates nothing
+ * if one does not.
+ */
 export function drawPlayer(p: SummaryResponse["player"]): void {
+  // The object is always sent; its fields are what go null on a save with no pawn.
+  if (p.x_m === null || p.y_m === null) {
+    var stale = state.layers["player"];
+    if (stale) stale.clearLayers();
+    return;
+  }
   var group = layer("player", true, PLAYER_COLOUR);
-  // The object is always sent; its fields are what go null on a save with no pawn. `!p` here
-  // was guarding a shape `/api/summary` has no branch for.
-  if (p.x_m === null || p.y_m === null) return;
   L.circleMarker(xy(p as { x_m: number; y_m: number }), {
     radius: 7,
     color: PLAYER_COLOUR,

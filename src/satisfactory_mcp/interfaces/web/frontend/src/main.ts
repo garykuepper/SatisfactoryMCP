@@ -22,6 +22,7 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 
+import { listenToFragment } from "./fragment";
 import { inspect } from "./inspector";
 import { declutter } from "./labels";
 import { isBatching, onSettled } from "./layercontrol";
@@ -86,6 +87,12 @@ map.on("zoomend overlayadd overlayremove", function () {
 onSettled(declutter);
 
 map.on("contextmenu", inspect);
+
+/* The one listener here that is not the map's: the address bar. Registered beside the map's
+ * because it is the same kind of fact -- an event the page reacts to, wired where a reader can
+ * see the whole set -- and registered BEFORE the loaders below, so a fragment edited during
+ * the first fetch is not dropped on the floor. */
+listenToFragment();
 
 /* -------------------------------------------------------------------- boot */
 

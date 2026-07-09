@@ -154,7 +154,23 @@ export function writeHash(): void {
   var c = map.getCenter();
   parts.push("z=" + map.getZoom());
   parts.push("c=" + Math.round(c.lng * 10) / 10 + "," + Math.round(-c.lat * 10) / 10);
-  history.replaceState(null, "", "#" + parts.join("&"));
+  wrote = "#" + parts.join("&");
+  history.replaceState(null, "", wrote);
+}
+
+/* The exact string the page last put in the address bar.
+ *
+ * Kept because the fragment is now READ as well as written -- see fragment.ts -- and a reader
+ * has to be able to tell the page's own handwriting from a human's. `replaceState` does not
+ * itself fire `hashchange`, so this is not load-bearing against a loop today; what it is, is
+ * the honest test for "nothing about this fragment is news", which is also what a Back button
+ * onto a fragment we already applied looks like. Comparing the STRING rather than re-parsing
+ * and diffing four fields is deliberate: writeHash is the only thing that produces this
+ * spelling, so equality is exactly the question being asked. */
+var wrote = "";
+
+export function writtenHash(): string {
+  return wrote;
 }
 
 /* The four corners of a footprint placed at (x, y) and turned by `yaw`, as latlngs.

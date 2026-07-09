@@ -79,10 +79,15 @@ export var state: PageState = {
 /* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a
  * bookmark or a pasted link lands on the same world, save and viewport instead of
  * silently teleporting to the newest world at the whole-world zoom. replaceState, not
- * assignment: panning must not grow the browser history by one entry per drag. */
-export var BOOT: Record<string, string> = (function () {
+ * assignment: panning must not grow the browser history by one entry per drag.
+ *
+ * The parse is a FUNCTION and not just the constant below it, because the fragment is read
+ * more than once: `BOOT` is the one the page opened on, and fragment.ts re-reads it whenever
+ * the address bar changes under an open tab. One parser, so a hand-typed fragment is read
+ * exactly the way a bookmarked one is. */
+export function parseHash(hash: string): Record<string, string> {
   var out: Record<string, string> = {};
-  location.hash
+  hash
     .replace(/^#/, "")
     .split("&")
     .forEach(function (piece) {
@@ -90,7 +95,9 @@ export var BOOT: Record<string, string> = (function () {
       if (eq > 0) out[piece.slice(0, eq)] = decodeURIComponent(piece.slice(eq + 1));
     });
   return out;
-})();
+}
+
+export var BOOT: Record<string, string> = parseHash(location.hash);
 
 export function currentWorld(): WorldRow | null {
   var found: WorldRow | null = null;
@@ -100,12 +107,27 @@ export function currentWorld(): WorldRow | null {
   return found;
 }
 
+/* The two halves of the same lookup, and they are a pair on purpose: the fragment carries a
+ * save's FILENAME (short, readable, and the thing a human editing the address bar would
+ * type) while `state.save` is its PATH (unambiguous when two worlds hold a "save 1.sav").
+ * Whoever writes the fragment converts one way and whoever reads one converts back. */
 export function pinnedFilename(): string {
   var name = "";
   var w = currentWorld();
   if (!state.save || !w) return name;
-  (w.saves || []).forEach(function (s) {
+  w.saves.forEach(function (s) {
     if ((s.path || s.filename) === state.save) name = s.filename;
   });
   return name;
+}
+
+/** A filename out of the fragment, as the pin `state.save` holds; "" if this world has no
+ *  such save, which is how both callers say "follow the newest" without a second flag. */
+export function pinnedPath(filename: string, w: WorldRow | null): string {
+  var found = "";
+  if (!filename || !w) return found;
+  w.saves.forEach(function (s) {
+    if (s.filename === filename) found = s.path || s.filename;
+  });
+  return found;
 }

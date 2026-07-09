@@ -12,7 +12,7 @@ import { el } from "./dom";
 import { reload } from "./load";
 import { writeHash } from "./map";
 import { drawNodes } from "./markers";
-import { BOOT, currentWorld, state } from "./state";
+import { BOOT, currentWorld, pinnedPath, state } from "./state";
 import { fail, friendly } from "./toast";
 
 import type { NodesResponse, WorldRow, WorldsResponse } from "./api-types";
@@ -86,6 +86,18 @@ function fillSavePicker(): void {
   };
 }
 
+/* Both pickers, re-pointed at whatever `state.world` and `state.save` now say.
+ *
+ * Exported for the one caller that changes the selection without touching a <select>: the
+ * fragment listener in fragment.ts, where the gesture is typing in the address bar. A picker
+ * still showing the previous world's name while the map draws the new one is the same lie
+ * this module already exists to prevent on a rescan -- and the two rebuilds are cheap enough
+ * that doing them unconditionally beats a second code path that decides which one moved. */
+export function syncPickers(): void {
+  fillWorldPicker(true);
+  fillSavePicker();
+}
+
 export function loadWorlds(): Promise<void> {
   return fetch("/api/worlds")
     .then(function (r) {
@@ -123,7 +135,19 @@ export function loadWorlds(): Promise<void> {
         el("summary").title = text; // the span ellipsises; the full diagnosis survives hover
         // Geography needs no save. The node table still draws -- the same table the
         // right-click inspector reads, so the two surfaces agree even with no world.
-        get<NodesResponse>("/api/nodes").then(drawNodes).catch(function () {});
+        //
+        // Epoch-guarded like every loader in load.ts, and it was the only one that was not.
+        // "No readable saves" is precisely the state a player fixes while the tab is open --
+        // point SATISFACTORY_SAVES somewhere real, or let the game write one -- and
+        // refreshWorlds then adopts the world and reloads. This fetch outlives that switch,
+        // so without the guard the world-less table lands on top of the world's own and the
+        // occupancy every dot carries silently reverts to "no extractor known here".
+        var epoch = state.epoch;
+        get<NodesResponse>("/api/nodes")
+          .then(function (d) {
+            if (epoch === state.epoch) drawNodes(d);
+          })
+          .catch(function () {});
         return;
       }
 
@@ -132,12 +156,9 @@ export function loadWorlds(): Promise<void> {
           ? BOOT.world
           : state.worlds[0]!.world_id;
       picker.value = state.world;
-      if (BOOT.save) {
-        var w = currentWorld();
-        ((w && w.saves) || []).forEach(function (s) {
-          if (s.filename === BOOT.save) state.save = s.path || s.filename;
-        });
-      }
+      // The fragment names a save by FILENAME; the pin is a path. Same conversion the
+      // hashchange path makes, which is why it is one function in state.ts.
+      state.save = pinnedPath(BOOT.save || "", currentWorld());
       fillSavePicker();
       writeHash();
     })
