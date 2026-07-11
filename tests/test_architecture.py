@@ -44,6 +44,15 @@ second half of the rule -- no ``importlib``, no ``__import__``, no ``sys.path`` 
 inside that package -- is not a separate preference but the thing that makes the first half
 mean anything.
 
+The sixth is ``tools/``, which until now no ratchet walked at all -- it is outside ``src``,
+outside the wheel, and outside every loop in this file. That is precisely why it needed one:
+the generators are the only code in the repository that reads the installed game, and the
+cheapest way to make the server depend on a game install is to let an import drift the wrong
+way through a file nothing checks. It is treated as a pseudo-layer, like the SDK: it may see
+``core``, the ``gen`` extra, the standard library and itself, plus four things measured to be
+there already and whitelisted by name below. And nothing under ``src`` may see IT, which falls
+out of the layer table for free.
+
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
 load-bearing for reasons that have nothing to do with layering -- crash isolation,
@@ -56,11 +65,17 @@ the parser, because everything else reaches it through the subprocess.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "src"
+REPO = Path(__file__).resolve().parents[1]
+SRC = REPO / "src"
 PKG = SRC / "satisfactory_mcp"
+
+#: The generators. Outside ``src`` and outside the wheel -- ``pyproject.toml`` ships two
+#: packages and this is not one of them -- because they read the reader's own game install.
+TOOLS = REPO / "tools"
 
 #: The parser package, and the one module in the application allowed to import it.
 PARSER = "pioneersav"
@@ -81,6 +96,11 @@ _LAYERS: tuple[tuple[str, str], ...] = (
     ("satisfactory_mcp.interfaces", "interfaces"),
     ("satisfactory_mcp.config", "core"),
     ("satisfactory_mcp.server", "interfaces"),
+    # The generators, as a layer above everything: they may read the application, and no
+    # part of the application may read them. Safe beside the prefixes above because the
+    # match is exact-or-dotted -- ``satisfactory_mcp.interfaces.mcp.tools`` neither equals
+    # ``tools`` nor starts with ``tools.``, and is covered by its own longer prefix anyway.
+    ("tools", "tools"),
 )
 
 #: Third-party packages that belong to the outside world. They form a pseudo-layer
@@ -102,11 +122,18 @@ _GEN_EXTRA_ROOTS = frozenset({"ooz", "pyooz", "texture2ddecoder", "PIL"})
 GAMEASSETS = "satisfactory_mcp.core.gameassets"
 
 #: Who may import whom. A layer always may import itself.
+#:
+#: ``tools`` is the one entry that is not part of the shipped package, and the interesting
+#: half of its row is what is NOT in any other row: no layer lists ``tools``, so the moment
+#: anything under ``src`` imports a generator the edge walker calls it a violation. That is
+#: the direction that matters -- a generator reading the application is the arrangement, and
+#: the application reading a generator would make a game install a runtime dependency.
 ALLOWED: dict[str, frozenset[str]] = {
     "core": frozenset({"core"}),
     "domain": frozenset({"domain", "core"}),
     "presenters": frozenset({"presenters", "domain", "core"}),
     "interfaces": frozenset({"interfaces", "presenters", "domain", "core", "sdk"}),
+    "tools": frozenset({"tools", "core", "domain"}),
 }
 
 #: Empty, and it stays that way. It held five render leakages at the start of the
@@ -199,6 +226,51 @@ BUILT_FILES: tuple[str, ...] = ("index.html", "app.js", "app.css", "vendor/LEAFL
 #: copied through verbatim by the build, and stamping a banner into a licence text would be
 #: modifying the notice it exists to reproduce.
 COPIED_VERBATIM = "vendor/LEAFLET-LICENSE"
+
+#: The frontend's claim about which base layers the server serves, and the server's own list.
+#: The tile path is built from a hand-written union in ``api.ts`` because the generated
+#: OpenAPI schema cannot supply it -- ``layer`` is a plain ``str`` path parameter, so the names
+#: live only in ``MAP_LAYERS`` in ``api.py`` and never reach the document ``npm run typegen``
+#: reads. Two lists in two languages with nothing between them is exactly the drift this file
+#: exists to catch, and the cost of getting it wrong is a 404 per tile with a map that simply
+#: stays blank.
+FRONTEND_API_TS = FRONTEND / "src" / "api.ts"
+MAP_LAYER_UNION = "export type MapTileLayer ="
+WEB_API_PY = WEB / "api.py"
+
+# --------------------------------------------------------------------- the generators
+
+#: What ``tools/`` may import, beyond the standard library, the ``gen`` extra and itself.
+#:
+#: ``core`` is the point of the arrangement: ``core/gameassets`` exists to be read by these
+#: generators, and ``core`` may import only ``core``, so the whole reachable set stays small.
+TOOLS_ALLOWED_PREFIXES: tuple[str, ...] = ("tools", "satisfactory_mcp.core")
+
+#: MEASURED, not assumed. Walking every import in ``tools/`` found exactly four things
+#: outside the set above, and each is here by name with the reason it is allowed to stay:
+#:
+#: * ``numpy``, ``scipy`` and ``platformdirs`` are not optional at all -- they are in
+#:   ``[project] dependencies``, so every install of this package already has them and a
+#:   generator naming one adds nothing to what a clone must have. (They are NOT in the ``gen``
+#:   extra, which is why they do not come in through ``_GEN_EXTRA_ROOTS``.)
+#: * ``pioneersav`` is the parser, and ``gen_world_collectibles.py`` reads a ``.sav`` with it
+#:   directly. The subprocess boundary the application keeps in front of it is not being
+#:   broken here: that boundary exists for crash isolation, for handing a 2.9 MB parse's
+#:   memory back to the OS, and for a projection small enough to commit -- three properties of
+#:   a long-lived SERVER process. A generator is a one-shot CLI that exits when it is done, so
+#:   it is the caller the boundary was built to protect, not one it applies to.
+#:
+#: Anything else is a real failure: it either makes the server depend on a generation-time
+#: package, or points a generator at a layer above ``core``.
+TOOLS_EXTRA_ROOTS = frozenset({"numpy", "scipy", "platformdirs", "pioneersav"})
+
+#: The fifth measured exception, and a prefix rather than a root because it is one package of
+#: one layer. ``gen_map_renders.py`` and ``gen_world_heightmap.py`` import
+#: ``domain.spatial.heightfield`` -- the generator that WRITES the field, reading the module
+#: that reads it, so that the two cannot disagree about the format. Kept narrow on purpose: a
+#: generator has no business in ``domain.planning`` or ``domain.factories``, and widening this
+#: to ``satisfactory_mcp.domain`` would let it have one without anybody noticing.
+TOOLS_EXTRA_PREFIXES: tuple[str, ...] = ("satisfactory_mcp.domain.spatial",)
 
 
 def _layer(module: str) -> str | None:
@@ -294,6 +366,30 @@ def _edges(root: Path = PKG) -> set[tuple[str, str]]:
                 for target in _targets(node, package):
                     edges.add((importer, target))
     return edges
+
+
+def _tools_edges() -> set[tuple[str, str]]:
+    """Every (importer, target) pair in ``tools/``, named as the package it imports as.
+
+    A walker of its own rather than ``_edges(TOOLS)``, because ``_module_name`` derives a
+    dotted name by relative path from ``SRC`` and these files live outside it. ``tools`` is a
+    real package -- it has an ``__init__.py`` and ``conftest.py`` puts the repository root on
+    ``sys.path`` so the suite can ``from tools import gen_map_image`` -- so the names built
+    here are the names Python uses.
+    """
+    edges: set[tuple[str, str]] = set()
+    for path in _sources(TOOLS):
+        importer = "tools" if path.name == "__init__.py" else f"tools.{path.stem}"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for target in _targets(node, "tools"):
+                    edges.add((importer, target))
+    return edges
+
+
+def _covers(target: str, prefixes: tuple[str, ...]) -> bool:
+    return any(target == prefix or target.startswith(prefix + ".") for prefix in prefixes)
 
 
 def _violations() -> set[tuple[str, str]]:
@@ -618,6 +714,55 @@ def test_the_served_page_is_build_output_and_nothing_else():
     )
 
 
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """The identity of every docstring node, so prose can be told from a value.
+
+    A docstring is a string literal in the AST and nothing else marks it, so the only way to
+    exclude one is to find it where it is allowed to be: first statement of a module, a class
+    or a function.
+    """
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not body or not isinstance(body[0], ast.Expr):
+            continue
+        value = body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            found.add(id(value))
+    return found
+
+
+def _names_in_code(path: Path, needle: str) -> bool:
+    """Whether ``needle`` appears anywhere this module could USE it.
+
+    Every string constant that is not a docstring, and every import target. Deliberately not
+    the file's raw text: a ``#`` comment and a docstring cannot become a path, cannot be
+    passed to ``open`` and cannot be imported, so a grep over the whole file makes it
+    impossible to EXPLAIN the rule in the module the rule is about -- which is where the
+    explanation is most useful and where the next reader will look for it.
+
+    An f-string is covered: its literal halves are ``Constant`` nodes inside a ``JoinedStr``,
+    which ``ast.walk`` reaches, so ``f"{root}/frontend/src"`` is caught exactly as the plain
+    string would be. What this cannot see is a name assembled at runtime out of pieces --
+    which is the same limit every other rule in this file has, and the reason
+    ``test_gameassets_never_imports_dynamically`` exists next door.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    prose = _docstring_ids(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(needle in target for target in _targets(node, _package_of(path))):
+                return True
+            continue
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) not in prose and needle in node.value:
+            return True
+    return False
+
+
 def test_the_frontend_sources_are_not_reachable_from_python():
     """The seam is the built directory, and it is the only seam.
 
@@ -626,18 +771,143 @@ def test_the_frontend_sources_are_not_reachable_from_python():
     inside ``frontend/`` -- to serve a ``.ts`` file, to parse ``package.json`` for a version,
     to find ``src/main.ts`` -- would make the npm project a runtime dependency of the server
     and put a machine with no ``node_modules`` one import away from a 500.
+
+    Read off the AST rather than off the raw text, which is what this used to do. Grepping the
+    bytes makes the rule bite its own documentation: ``app.py`` cannot say "the frontend
+    sources are next door and are not served from here" in the comment above the mount without
+    failing the test that enforces exactly that. A rule nobody may explain in place is a rule
+    the next reader has to rediscover, so what is checked is what a module could USE -- string
+    values and import targets -- and prose is left alone.
     """
-    named = sorted(
-        _module_name(path)
-        for path in _sources(PKG)
-        if "frontend" in path.read_text(encoding="utf-8")
-    )
+    named = sorted(_module_name(path) for path in _sources(PKG) if _names_in_code(path, "frontend"))
     assert not named, (
-        "these modules name the frontend sources -- the server serves the BUILT directory "
-        "and nothing reaches past it:\n" + "\n".join(f"  {name}" for name in named)
+        "these modules name the frontend sources in code -- the server serves the BUILT "
+        "directory and nothing reaches past it:\n" + "\n".join(f"  {name}" for name in named)
     )
     assert not _sources(FRONTEND), (
         "the npm project has grown Python -- it is a TypeScript build, and a .py file in "
         "it is either in the wrong tree or a build step that belongs in package.json:\n"
         + "\n".join(f"  {path}" for path in _sources(FRONTEND))
+    )
+
+
+def _literal_strings(tree: ast.AST, name: str) -> list[str] | None:
+    """The string members of a module-level ``NAME = (...)`` tuple or list, by AST.
+
+    By AST because importing ``interfaces/web/api.py`` would need FastAPI, and this module's
+    first promise is that it runs on stdlib alone.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            continue
+        if not isinstance(node.value, (ast.Tuple, ast.List)):
+            return None
+        return [
+            e.value
+            for e in node.value.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+    return None
+
+
+def test_the_page_and_the_server_agree_on_the_base_layer_names():
+    """``MapTileLayer`` in api.ts against ``MAP_LAYERS`` in api.py, which nothing else joins.
+
+    Every other response shape the page claims is checked by ``npm run typegen`` against the
+    server's own OpenAPI document. This one cannot be: ``layer`` is a plain ``str`` path
+    parameter, so the generated schema says ``string`` and the three names exist only in a
+    Python tuple the document never sees. The frontend therefore hand-writes the union, and
+    two hand-written lists in two languages with nothing between them is the exact drift this
+    file exists to catch.
+
+    Getting it wrong is quiet: a layer renamed server-side leaves the radio in the control,
+    the probe answers 404 rather than 204 -- "not generated" and "no such layer" stop being
+    told apart -- and the mode simply greys out with a tooltip naming a generator that would
+    not fix it.
+    """
+    served = _literal_strings(
+        ast.parse(WEB_API_PY.read_text(encoding="utf-8"), filename=str(WEB_API_PY)),
+        "MAP_RENDER_LAYERS",
+    )
+    assert served is not None, "MAP_RENDER_LAYERS is no longer a literal tuple in api.py"
+    # ``MAP_LAYERS = (MAP_LAYER_DEFAULT, *MAP_RENDER_LAYERS)`` -- the default is the artwork
+    # and is spelled separately there because it is the path the three-segment alias serves.
+    default = _literal_strings(
+        ast.parse(WEB_API_PY.read_text(encoding="utf-8"), filename=str(WEB_API_PY)),
+        "MAP_LAYERS",
+    )
+    assert default is None or default == [], (
+        "MAP_LAYERS is now a literal list -- read it directly instead of rebuilding it here"
+    )
+
+    line = next(
+        (
+            row
+            for row in FRONTEND_API_TS.read_text(encoding="utf-8").splitlines()
+            if row.startswith(MAP_LAYER_UNION)
+        ),
+        None,
+    )
+    assert line is not None, f"{MAP_LAYER_UNION} is gone from api.ts"
+    claimed = re.findall(r'"([^"]+)"', line)
+    assert claimed[1:] == served, (
+        "the page's MapTileLayer union has drifted from MAP_LAYERS in api.py:\n"
+        f"  api.py serves: map, {', '.join(served)}\n"
+        f"  api.ts claims: {', '.join(claimed)}"
+    )
+    assert claimed[0] == "map", f"the artwork layer is not first in the union: {claimed}"
+
+
+def test_the_generators_reach_down_and_nothing_reaches_up_to_them():
+    """``tools/`` as a pseudo-layer: stdlib, the ``gen`` extra, ``core``, and itself.
+
+    Nothing walked this directory before. It is outside ``src``, outside the wheel and outside
+    every other loop in this file, which made it the one place an import could drift without a
+    test noticing -- and it is also the only code here that reads the installed game, so the
+    drift that matters is cheap to make: one convenience import from ``domain.planning`` or
+    ``presenters`` and a generator has quietly become an application module that happens to
+    live outside the package.
+
+    The five exceptions are measured rather than assumed and each carries its reason where it
+    is declared; see ``TOOLS_EXTRA_ROOTS`` and ``TOOLS_EXTRA_PREFIXES``.
+    """
+    stray = []
+    for importer, target in sorted(_tools_edges()):
+        root = _root(target)
+        allowed = (
+            root in sys.stdlib_module_names
+            or root in _GEN_EXTRA_ROOTS
+            or root in TOOLS_EXTRA_ROOTS
+            or _covers(target, TOOLS_ALLOWED_PREFIXES)
+            or _covers(target, TOOLS_EXTRA_PREFIXES)
+        )
+        if not allowed:
+            stray.append(f"  {importer} -> {target}")
+    assert not stray, (
+        "a generator may read the standard library, the `gen` extra, satisfactory_mcp.core "
+        "and itself -- anything else either makes the server depend on a generation-time "
+        "package or points a generator at a layer above core. Fix the import, or add it to "
+        "TOOLS_EXTRA_ROOTS / TOOLS_EXTRA_PREFIXES with the reason:\n" + "\n".join(stray)
+    )
+
+
+def test_nothing_in_the_package_imports_a_generator():
+    """The other direction, and the one that would actually break a clone.
+
+    ``_violations`` already covers it -- no layer's allowed set contains ``tools`` -- so this
+    spells the consequence rather than adding a rule: the generators are not in the wheel
+    (``pyproject.toml`` ships ``satisfactory_mcp`` and ``pioneersav``, and nothing else), so an
+    import of one from inside the package is an ImportError on every installed copy, and a
+    working import in this repository right up until someone installs it.
+    """
+    reaching = {
+        (importer, target)
+        for importer, target in _edges() | _edges(PARSER_PKG)
+        if _covers(target, ("tools",))
+    }
+    assert not reaching, (
+        "the generators are not shipped -- nothing in the package or the parser may import "
+        "them, and whatever is wanted belongs in core:\n" + _describe(reaching)
     )
