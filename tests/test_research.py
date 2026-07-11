@@ -16,10 +16,25 @@ looks exactly like a world that never did the research.
 The tests below pin that, and that the planner refuses to be silent when a plan spends a
 capability the player has not got.
 
-They read the `live` fixture rather than `state`, and here that is not a preference: the
-committed projection is a schema-5 one from BEFORE Production Amplifier was researched, so
-judging a tool's output -- which reads the newest save on this machine -- against it would be
-comparing two different worlds.
+They read the `live` fixture rather than `state` where they judge a tool's OUTPUT, and here
+that is not a preference: the tools read the newest save on this machine, so judging their
+answers against the committed projection would be comparing two different worlds.
+
+THE THREE TESTS ABOUT THE LOCKED STATE BUILD THAT STATE, and this is the point of the
+`locked` fixture below. They used to branch on `live.has_capability("production_boost")` --
+one with `pytest.skip`, two with a bare `return` -- and every one of those branches is now
+taken: the reference world researched Production Amplifier, and the committed projection has
+carried `mIsBuildingProductionBoostUnlocked: True` since it was re-cut at schema 11. So the
+three tests that exist to check what the tools say when a capability is LOCKED had not
+executed a single one of their assertions in a long time, and the two written with `return`
+did not even leave a skip in the report to say so. A test that reports success without
+asserting anything is worse than a missing test, because it is counted.
+
+The state a save cannot supply on this machine is therefore constructed: the flag turned off
+and the gating schematic removed from the purchased set, which is exactly the pair of things
+the game writes when the research has not been done. Nothing else is touched -- the recipes
+stay unlocked, because that is a different gate and the plan still has to be computable for
+the warning to be about anything.
 """
 
 from __future__ import annotations
@@ -31,8 +46,74 @@ import pytest
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.core.gamedata.constants import CAPABILITY_SCHEMATICS
 from satisfactory_mcp.domain.world.state import WorldState
+from satisfactory_mcp.interfaces.mcp.tools import planning as planning_tools
+from satisfactory_mcp.interfaces.mcp.tools import progression as progression_tools
 
 pytestmark = pytest.mark.integration
+
+#: The capability every gate test below is about, and the one the register has a flag for.
+BOOST = "production_boost"
+
+
+def _unresearched(game, projection: dict) -> WorldState:
+    """The same world with Production Amplifier not yet researched.
+
+    Both halves are needed and they are not redundant: `has_capability` reads the unlock flag
+    when the projection carries one and falls back to the purchased-schematic set when it does
+    not, so clearing only one of them leaves the other answering "researched". Clearing both
+    is what a save from before the research actually looks like -- UE omits a SaveGame property
+    still at its default, so the flag is absent rather than false, and the schematic is simply
+    not in the purchased list.
+
+    Nothing else is touched. The available-recipe set in particular is left alone, because it
+    is a different gate: the plan still has to be computable for the warning to be about
+    anything, and a state with no recipes would pass these tests for the wrong reason.
+    """
+    copy = deepcopy(projection)
+    copy.setdefault("unlock_flags", {}).pop("mIsBuildingProductionBoostUnlocked", None)
+    progression = copy.setdefault("progression", {})
+    gate = CAPABILITY_SCHEMATICS[BOOST]
+    progression["purchased_schematics"] = [
+        s for s in progression.get("purchased_schematics") or () if s != gate
+    ]
+    st = WorldState(projection=copy, game=game)
+    assert not st.has_capability(BOOST), (
+        "the constructed state still reports the capability as researched -- "
+        "has_capability now reads something this helper does not clear"
+    )
+    assert st.research_gate(BOOST) is not None, "a locked capability must have a gate to clear"
+    return st
+
+
+@pytest.fixture
+def locked(game, live, monkeypatch) -> WorldState:
+    """This machine's world, un-researched, and the two tool modules pointed at it.
+
+    Built from `live` rather than from the committed projection because the tools it feeds
+    print a PLAN, and a plan is judged against the world the reader is playing.
+
+    The two tool modules are patched by name. `_state` is looked up in the module that calls
+    it, so patching `app._state` would leave both of these holding the original -- and the two
+    are patched together because `mam_research` and `plan_factory` have to be answering about
+    the same world for their two halves of the same warning to line up.
+    """
+    st = _unresearched(game, live.projection)
+    for module in (planning_tools, progression_tools):
+        monkeypatch.setattr(module, "_state", lambda save=None, world=None, _st=st: _st)
+    return st
+
+
+@pytest.fixture
+def locked_fixture(game, projection) -> WorldState:
+    """The committed projection, un-researched. No save and no monkeypatch needed.
+
+    The fourth dead branch in this file used the `state` fixture and skipped when its gate came
+    back `None` -- which it always does now: the committed projection has carried
+    `mIsBuildingProductionBoostUnlocked: True` since it was re-cut at schema 11, so the test
+    that prices a gate had no gate to price. Nothing about pricing needs the newest save, so
+    this one is built from the fixture and the test runs everywhere the suite does.
+    """
+    return _unresearched(game, projection)
 
 
 # ------------------------------------------------------- the register
@@ -95,14 +176,18 @@ def test_a_researched_capability_has_no_gate(game, state):
             assert state.research_gate(capability) is None
 
 
-def test_a_gate_prices_itself_against_spendable_stock(game, state):
-    gate = state.research_gate("production_boost")
-    if gate is None:
-        pytest.skip("production boost already researched on this save")
+def test_a_gate_prices_itself_against_spendable_stock(locked_fixture):
+    """What a gate says: the schematic, the bill, and what the player already holds.
+
+    The stock is the LOCKED state's own, which is the same stock the researched one has --
+    turning the flag off does not spend anything -- so the last loop is still comparing the
+    gate's numbers against the world's, and not against numbers this test invented.
+    """
+    gate = locked_fixture.research_gate(BOOST)
     assert gate["schematic_name"] == "Production Amplifier"
     assert gate["cost"] and all("need" in r and "have" in r for r in gate["cost"])
     assert gate["affordable"] == (not gate["short"])
-    stock = state.stock()
+    stock = locked_fixture.stock()
     for row in gate["cost"]:
         assert row["have"] == stock.get(row["item"], 0.0)
 
@@ -110,38 +195,48 @@ def test_a_gate_prices_itself_against_spendable_stock(game, state):
 # ------------------------------------------------------- the planner gate
 
 
-def test_spending_sloops_without_the_research_is_called_out(game, live):
+PLAN_KW = dict(
+    sources=["region:Spire Coast"],
+    objective="max_mw",
+    exports=["MW"],
+    extractor_clocks=[1, 1.5, 2, 2.5],
+    limit=2,
+)
+
+
+def test_spending_sloops_without_the_research_is_called_out(locked):
     """The same class of check as the unlocked recipe set: a plan using a locked
     capability is not a plan. It warns rather than refusing, because planning ahead of
     cheap research is legitimate — but silence would print an unbuildable plan."""
-    kw = dict(
-        sources=["region:Spire Coast"],
-        objective="max_mw",
-        exports=["MW"],
-        extractor_clocks=[1, 1.5, 2, 2.5],
-        limit=2,
-    )
-    out = srv.plan_factory(sloops=16, **kw)
-    if live.has_capability("production_boost"):
-        assert "NOT RESEARCHED" not in out
-        return
+    out = srv.plan_factory(sloops=16, **PLAN_KW)
     assert "PRODUCTION AMPLIFIER IS NOT RESEARCHED" in out
     assert "not buildable as printed" in out
     # And it says what to do about it, with the bill.
     assert "SAM Fluctuator" in out
 
 
-def test_the_gate_only_fires_when_sloops_are_actually_budgeted(game):
+def test_the_same_plan_is_silent_once_the_research_is_done(game, live):
+    """The other side of the branch this file used to be stuck on, kept as its own test.
+
+    Reading the real world rather than a constructed one, because "the warning does not fire
+    when it should not" is a claim about the ordinary case and the ordinary case is whatever
+    is on this machine. It skips on the state instead of asserting the opposite of the test
+    above, so the two never both pass by being the same assertion twice.
+    """
+    if not live.has_capability(BOOST):
+        pytest.skip("this machine's save has not researched Production Amplifier")
+    assert "NOT RESEARCHED" not in srv.plan_factory(sloops=16, **PLAN_KW)
+
+
+def test_the_gate_only_fires_when_sloops_are_actually_budgeted(locked):
     """It is about SPENDING them. A plan that spends none is buildable today, and a
-    warning there would be noise on every single call."""
-    out = srv.plan_factory(
-        sources=["region:Spire Coast"],
-        objective="max_mw",
-        exports=["MW"],
-        extractor_clocks=[1, 1.5, 2, 2.5],
-        limit=2,
-    )
-    assert "NOT RESEARCHED" not in out
+    warning there would be noise on every single call.
+
+    Run against the LOCKED world now, which is the only world where it says anything: on a
+    machine that has done the research, "no warning" was true for the wrong reason and the
+    test could not have failed.
+    """
+    assert "NOT RESEARCHED" not in srv.plan_factory(**PLAN_KW)
 
 
 # ------------------------------------------------------- the tool
@@ -154,21 +249,23 @@ def test_mam_research_lists_outstanding_nodes(game):
     assert "outstanding" in out
 
 
-def test_it_marks_which_research_gates_a_capability(game, live):
+def test_it_marks_which_research_gates_a_capability(locked):
     """The point of the column: 'LOCKS production_boost' is why a reader should care about
     that row rather than treating the MAM as a pile of optional recipes."""
     # Narrowed with `search` rather than a big limit: Limit is schema-capped at 25 and
     # there are 120 MAM nodes, so the row would fall off the bottom of an unfiltered call.
     out = srv.mam_research(status="all", search="Production Amplifier")
-    if live.has_capability("production_boost"):
-        pytest.skip("already researched, so the row is not listed as a gate to clear")
     assert "LOCKS production_boost" in out
 
 
-def test_a_locked_capability_gets_a_note_with_its_bill(game, live):
+def test_a_locked_capability_gets_a_note_with_its_bill(locked):
+    """The note under the table, which is where a reader who did not search for the row
+    finds out that the capability they are planning around is not theirs yet.
+
+    This is the test that used to `return` rather than skip when the machine had done the
+    research: it reported PASS having asserted nothing at all.
+    """
     out = srv.mam_research()
-    if live.has_capability("production_boost"):
-        return
     line = next(x for x in out.splitlines() if "production_boost is NOT researched" in x)
     assert "Production Amplifier" in line
     assert "Somersloop" in line

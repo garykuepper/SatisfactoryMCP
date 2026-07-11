@@ -72,10 +72,56 @@ def live(game) -> WorldState:
         pytest.skip(f"needs a readable save: {exc}")
 
 
+#: What ``save_projection.json`` was cut from, so that re-cutting it is a recipe rather than
+#: a reconstruction. Both halves are read straight out of the fixture's own ``header`` block,
+#: which is where the next reader should check them rather than trusting this comment.
+FIXTURE_SAVE = "Han Solo_280726-230847.sav"
+FIXTURE_WORLD = "X2faPVKjX06VaRzClNv5KQ"
+
+
 @pytest.fixture(scope="session")
 def projection() -> dict:
-    """The committed sidecar projection: no game install and no .sav needed."""
-    return json.loads((FIXTURES / "save_projection.json").read_text(encoding="utf-8"))
+    """The committed sidecar projection: no game install and no .sav needed.
+
+    1.4 MB of one real save, committed because the 2.9 MB ``.sav`` is not, and it is what
+    makes most of this suite reproducible on a machine with neither the game nor a save.
+
+    HOW TO REGENERATE IT. One command, run from the repository root, writing over the file::
+
+        uv run python -m satisfactory_mcp.core.saveio.extract \\
+            "<saves>/Han Solo_280726-230847.sav" > tests/fixtures/save_projection.json
+
+    ``-m``, not a path to ``extract.py``: that is how ``projection._run_sidecar`` invokes it
+    in production, so the fixture is cut by exactly the code path the server uses. There is no
+    flag and no post-processing -- the sidecar's stdout IS the fixture.
+
+    FROM THE SAME WORLD, and this is the part that is not a formality. The save above is
+    ``save_identifier`` ``X2faPVKjX06VaRzClNv5KQ`` ("Han Solo"), and a projection cut from any
+    other world is a different factory: different machine counts, different node occupancy,
+    different graph. A dozen modules in ``src`` justify a design decision by quoting a number
+    measured on THIS fixture, and ``test_reference_counts.py`` exists solely to fail loudly
+    when a re-cut moves one -- so a regeneration from a newer save of the same world is a
+    normal thing to do and is expected to break that file, while a regeneration from a
+    different world silently invalidates the reasoning rather than the numbers.
+
+    So, after re-cutting: run ``uv run pytest -q``, expect ``test_reference_counts.py`` to
+    fail, and update both the assertion there and the comment in ``src`` it names. Both.
+
+    The world rule is asserted rather than only written down, because the failure it guards
+    against does not look like a failure -- a fixture from another world produces a suite that
+    fails in twenty places for twenty apparently unrelated reasons, and this says the one
+    thing that explains all of them. The FILENAME is deliberately not asserted: a newer save
+    of the same world is the ordinary, expected regeneration.
+    """
+    body = json.loads((FIXTURES / "save_projection.json").read_text(encoding="utf-8"))
+    found = (body.get("header") or {}).get("save_identifier")
+    assert found == FIXTURE_WORLD, (
+        f"save_projection.json was cut from world {found!r}, not {FIXTURE_WORLD!r} -- this "
+        f"suite measures one factory, and the reference save is {FIXTURE_SAVE}. Re-cut it "
+        "from that world, or change both constants in conftest.py and re-measure every count "
+        "test_reference_counts.py pins."
+    )
+    return body
 
 
 @pytest.fixture(scope="session")

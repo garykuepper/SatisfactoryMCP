@@ -24,6 +24,10 @@ pytestmark = pytest.mark.integration
 
 PLASTIC, RUBBER = "Desc_Plastic_C", "Desc_Rubber_C"
 
+#: The saved plan the tool test reads. Named once, so the skip predicate and the call it
+#: guards cannot drift apart.
+REFERENCE_PLAN = "spire-coast-full"
+
 
 @pytest.fixture
 def coupled(game, state):
@@ -117,17 +121,29 @@ def test_naming_the_loop_is_the_design(game, state, coupled):
 # ------------------------------------------------------------ the tool
 
 
-def test_the_tool_takes_a_pattern(game):
+def test_the_tool_takes_a_pattern(game, live):
+    """The skip is decided by looking for the plan, not by reading the tool's answer.
+
+    ``if free.startswith("! ") or once.startswith("! ")`` skipped on ANY refusal, and
+    ``recycle_once`` has refusals of its own -- a pattern matching nothing is one, and the
+    test two functions down exists because it must be. So a regression that made the pattern
+    stop matching would have turned this test into a skip announcing that the plan was not
+    saved, on a machine where it plainly was. A skip claims something about the machine; this
+    one now asks the machine, the same way ``test_modules.py`` does, and the refusals are
+    asserted against instead of tolerated.
+    """
+    if live.plans.find(REFERENCE_PLAN) is None:
+        pytest.skip(f"the {REFERENCE_PLAN} plan is not saved on this machine")
     kw = dict(
-        plan="spire-coast-full",
+        plan=REFERENCE_PLAN,
         exclude_recipes=["Turbofuel", "Alternate: Compacted Coal", "Coal-Powered Generator"],
         export_minimums={"Plastic": 2000, "Rubber": 300},
         limit=2,
     )
     free = srv.plan_factory(**kw)
     once = srv.plan_factory(recycle_once=["Recycled"], **kw)
-    if free.startswith("! ") or once.startswith("! "):
-        pytest.skip("the reference plan is not saved on this machine")
+    assert not free.startswith("! "), free
+    assert not once.startswith("! "), once
 
     def mw(out: str) -> float:
         return float(next(x for x in out.split() if x.startswith("net_MW=")).split("=")[1])

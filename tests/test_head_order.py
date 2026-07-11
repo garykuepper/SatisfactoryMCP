@@ -21,6 +21,11 @@ pytestmark = pytest.mark.integration
 
 MK2_HEAD = 50.0
 
+#: The saved plan the two tool tests read. Named once, because it is also what the skip
+#: predicate has to look up -- and a plan name spelled twice is a skip that can stop matching
+#: the call it is guarding.
+REFERENCE_PLAN = "spire-coast-full"
+
 
 @pytest.fixture
 def plan(game, state):
@@ -129,19 +134,38 @@ def test_an_unknown_pump_head_reports_no_count(plan, game):
     assert all(d["pumps"] == 0 for d in fluid_head(lay, 0.0))
 
 
-def test_the_bill_now_charges_the_risers(game):
+# The two tool tests below need the reference plan, and they used to skip on the TOOL'S
+# ANSWER: any string starting with "! " was read as "not saved on this machine". That
+# predicate is far wider than the condition it names. ``plan_layout`` refuses with "! " for a
+# plan whose solution will not load, for an unknown ``detail``, for a layout it cannot build --
+# so a real regression in any of those turned this file green with a reassuring skip reason
+# instead of red, which is the one outcome a test must never have. A skip is a claim about the
+# MACHINE, so it has to be decided by asking the machine.
+#
+# Skip on the plan store, exactly as ``test_modules.py`` does, and then assert the call did not
+# refuse. The ``live`` fixture is what holds that store -- a plan is saved beside the world it
+# was planned for -- which is also why ``game`` alone could never have answered the question.
+
+
+def _needs_reference_plan(live) -> None:
+    stored = live.plans.find(REFERENCE_PLAN)
+    if stored is None:
+        pytest.skip(f"the {REFERENCE_PLAN} plan is not saved on this machine")
+
+
+def test_the_bill_now_charges_the_risers(game, live):
     """They were missing entirely, so a fluid-heavy plan understated its own build."""
-    out = srv.plan_layout(plan="spire-coast-full", detail="materials", order_floors_by="head")
-    if out.startswith("! "):
-        pytest.skip("the reference plan is not saved on this machine")
+    _needs_reference_plan(live)
+    out = srv.plan_layout(plan=REFERENCE_PLAN, detail="materials", order_floors_by="head")
+    assert not out.startswith("! "), out
     assert "for the fluid risers" in out
     assert "Pipeline Pump" in out
 
 
-def test_the_tool_quotes_a_pump_tier_it_can_build(game):
-    out = srv.plan_layout(plan="spire-coast-full", limit=3)
-    if out.startswith("! "):
-        pytest.skip("the reference plan is not saved on this machine")
+def test_the_tool_quotes_a_pump_tier_it_can_build(game, live):
+    _needs_reference_plan(live)
+    out = srv.plan_layout(plan=REFERENCE_PLAN, limit=3)
+    assert not out.startswith("! "), out
     assert "risers need at least" in out
     assert "Pipeline Pump Mk.2" in out
     assert "LOWER bound" in out
