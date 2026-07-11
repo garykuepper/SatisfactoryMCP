@@ -1,4 +1,4 @@
-"""The shared decoders for the projection's three interned tables.
+"""The shared decoders for the projection's five interned tables.
 
 ``core/saveio/rows.py`` exists because ten call sites were each decoding these rows by hand,
 with guards copied from one another and already drifting apart. Two things therefore have
@@ -9,7 +9,7 @@ to be tested that neither the endpoints' tests nor the domain's cover:
   promise every one of those ten call sites makes in prose and none of them can now keep
   on its own;
 * **the drift tripwire**, which is the one below that is not about correctness at all. A
-  schema-17 column added to any of these three tables would be silently ignored by every
+  schema-18 column added to any of these five tables would be silently ignored by every
   iterator here, and the projection would go on decoding, so nothing would fail. Holding
   ``*_ROW_WIDTH`` against the widest row the committed projection actually contains turns
   that silence into a failing test in the module that would have to be changed.
@@ -38,6 +38,15 @@ def _belts(segments, classes=("Build_ConveyorBeltMk3_C",)):
 
 def _pipes(segments, classes=("Build_Pipeline_C",)):
     return {"pipes": {"classes": list(classes), "segments": segments}}
+
+
+def _power(poles=(), wires=(), classes=("Build_PowerPoleMk1_C", "Build_PowerTowerPlatform_C")):
+    return {
+        "power": {
+            "poles": {"classes": list(classes), "instances": list(poles)},
+            "wires": list(wires),
+        }
+    }
 
 
 # ------------------------------------------------------------------- structures
@@ -228,18 +237,102 @@ def test_a_projection_with_no_pipes_at_all_yields_nothing():
         assert rows.pipe_segment_count(projection) == 0
 
 
+# ------------------------------------------------------------------------ power
+
+
+def test_a_pole_row_decodes_to_raw_centimetres_its_class_and_its_actor():
+    (pole,) = rows.iter_power_poles(_power(poles=[[1, 1200.0, -3400.0, 55.0, -20.0, 42]]))
+    assert pole == rows.PowerPole(
+        class_index=1,
+        cls="Build_PowerTowerPlatform_C",
+        x=1200.0,
+        y=-3400.0,
+        z=55.0,
+        yaw=-20.0,
+        actor_index=42,
+    )
+
+
+def test_a_pole_no_wire_names_still_stands_somewhere():
+    """2 of the reference world's 701, both tower platforms nobody strung a line to."""
+    (pole,) = rows.iter_power_poles(_power(poles=[[0, 1, 2, 3, 0.0, -1]]))
+    assert pole.actor_index == -1
+    assert (pole.x, pole.y, pole.z) == (1.0, 2.0, 3.0)
+
+
+def test_a_torn_pole_row_costs_that_pole_and_nothing_after_it():
+    projection = _power(
+        poles=[
+            "not a row",
+            None,
+            [0, 1, 2],  # three columns: no Z, so no place
+            [0, "x", 2, 3, 0.0, 0],  # a coordinate that is not a number
+            ["nope", 1, 2, 3, 0.0, 0],  # a class index that is not a number
+            [0, 1, 2, 3, "sideways", 3.5],  # an unreadable yaw and a non-index actor
+            [1, 10, 20, 30, 90.0, 7],
+        ]
+    )
+    decoded = list(rows.iter_power_poles(projection))
+    assert len(decoded) == 2
+    assert (decoded[0].yaw, decoded[0].actor_index) == (None, -1)
+    assert (decoded[1].x, decoded[1].yaw, decoded[1].actor_index) == (10.0, 90.0, 7)
+
+
+def test_a_wire_decodes_to_its_two_ends_and_carries_its_ordinal():
+    (wire,) = rows.iter_wires(_power(wires=[[1, 2, 3, 4, 5, 6]]))
+    assert wire == rows.Wire(index=0, a=[1.0, 2.0, 3.0], b=[4.0, 5.0, 6.0])
+
+
+def test_a_wire_with_no_geometry_leaves_a_HOLE_in_the_ordinals():
+    """``null`` is what the writer emits for a wire that published no span.
+
+    The ordinal is the row's place in ``power["wires"]``, which is its place in
+    ``graph["power"]`` -- so a wire that cannot be drawn must not renumber the ones that can,
+    or every drawn span after it would be joined to the wrong pair of actors.
+    """
+    projection = _power(wires=[[0, 0, 0, 100, 0, 0], None, "not a wire", [1, 2, 3, 4, 5]])
+    decoded = list(rows.iter_wires(projection))
+    assert [w.index for w in decoded] == [0]
+    assert rows.wire_count(projection) == 4
+
+
+def test_a_projection_with_no_power_at_all_yields_nothing():
+    """Every schema before 17, which had no such key, plus every way of it being empty."""
+    for projection in (
+        {},
+        {"power": None},
+        {"power": {}},
+        {"power": {"poles": None, "wires": None}},
+        {"power": {"poles": {"instances": []}, "wires": []}},
+    ):
+        assert list(rows.iter_power_poles(projection)) == []
+        assert list(rows.iter_wires(projection)) == []
+        assert rows.wire_count(projection) == 0
+
+
+def test_the_wires_are_positionally_aligned_with_the_power_edges(projection):
+    """The one promise this key is built around, held against a real save.
+
+    ``extract._power`` writes both lists in a single pass so that ``wires[i]`` is the span of
+    ``graph["power"][i]``. Nothing in the row shape enforces that -- a wire row carries no
+    actor index of its own, deliberately, because ``graph["power"]`` is the connectivity and a
+    second copy could disagree -- so the alignment is a claim, and this is where it is checked.
+    """
+    assert rows.wire_count(projection) == len(projection["graph"]["power"])
+
+
 # ------------------------------------------------------------------- the tripwire
 
 
 def _widths(table: dict, key: str) -> set[int]:
-    return {len(row) for row in table[key]}
+    return {len(row) for row in table[key] if row is not None}
 
 
 def test_the_iterators_read_every_column_the_writer_emits(projection):
     """The drift tripwire, and the only test here that is about a FUTURE change.
 
     ``extract`` decides these rows' shape and this module decides how much of it is read.
-    Nothing connects the two: adding a sixth structure column in schema 17 would leave every
+    Nothing connects the two: adding a sixth structure column in schema 18 would leave every
     iterator working, every endpoint answering and every test passing, with the new column
     reaching no reader at all -- which is the failure mode this whole module was written to
     stop happening one call site at a time.
@@ -253,12 +346,19 @@ def test_the_iterators_read_every_column_the_writer_emits(projection):
     fixture has not been regenerated for is a second thing worth failing on.
     """
     checks = (
-        ("structures", "instances", rows.STRUCTURE_ROW_WIDTH),
-        ("belts", "segments", rows.BELT_ROW_WIDTH),
-        ("pipes", "segments", rows.PIPE_ROW_WIDTH),
+        ("structures", projection["structures"], "instances", rows.STRUCTURE_ROW_WIDTH),
+        ("belts", projection["belts"], "segments", rows.BELT_ROW_WIDTH),
+        ("pipes", projection["pipes"], "segments", rows.PIPE_ROW_WIDTH),
+        # Two more since schema 17, and the wires are the odd one: ``power["wires"]`` is a
+        # bare list rather than a ``{classes, rows}`` table, and its rows may be null -- so
+        # the widths are taken off the rows that are there. A fixture of nothing but nulls
+        # would trip the "empty" assertion below, which is the right failure: it would mean
+        # this save recorded no wire geometry and the tripwire is measuring nothing.
+        ("power.poles", projection["power"]["poles"], "instances", rows.POWER_POLE_ROW_WIDTH),
+        ("power", projection["power"], "wires", rows.WIRE_ROW_WIDTH),
     )
-    for key, sub, width in checks:
-        widths = _widths(projection[key], sub)
+    for key, table, sub, width in checks:
+        widths = _widths(table, sub)
         assert widths, f"{key} is empty in the fixture, so this test proves nothing"
         assert max(widths) == width, (
             f"{key}[{sub!r}] rows are up to {max(widths)} columns wide and "
@@ -282,3 +382,7 @@ def test_every_row_of_the_reference_projection_decodes(projection):
     assert len(list(rows.iter_structures(projection))) == len(projection["structures"]["instances"])
     assert len(list(rows.iter_belt_segments(projection))) == rows.belt_segment_count(projection)
     assert len(list(rows.iter_pipe_segments(projection))) == rows.pipe_segment_count(projection)
+    assert len(list(rows.iter_power_poles(projection))) == len(
+        projection["power"]["poles"]["instances"]
+    )
+    assert len(list(rows.iter_wires(projection))) == rows.wire_count(projection)

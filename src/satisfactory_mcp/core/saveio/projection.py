@@ -31,7 +31,12 @@ from ... import config
 #: written under 15 is not merely thinner than what this code expects, it disagrees with it:
 #: ``inventories`` bucketed eight containers' contents as unspendable machine buffers, and a
 #: placement whose rotation would not read claimed to be axis-aligned instead of saying nothing.
-SCHEMA_VERSION = 16
+#: 17 added ``power`` -- the poles, and the endpoints of every wire between them. Geometry
+#: only, and that is the shape of the change: the CONNECTIVITY has been in ``graph["power"]``
+#: since schema 11, so the new key is that edge list's positional twin (``wires[i]`` is the
+#: span of ``graph["power"][i]``) rather than a second, disagreeable copy of who is wired to
+#: whom.
+SCHEMA_VERSION = 17
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

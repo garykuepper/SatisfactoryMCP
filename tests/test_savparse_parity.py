@@ -88,7 +88,17 @@ POST_11_ADDITIONS = {
     #: tangents need no entry, and the reason is not "they are new" (everything in this list is
     #: new) but "the key that carries them was already outside the oracle's scope". The
     #: ``storage`` key beside them is a genuinely new top-level name and IS listed.
-    "keys": ("belts", "pipes", "attachments", "storage"),
+    #:
+    #: **Schema 17's ``power`` is a new top-level name and is listed, and the interesting part
+    #: is what is NOT listed beside it.** That key carries the poles and the drawn span of
+    #: every wire -- but not who is wired to whom, which has been ``graph["power"]`` since
+    #: schema 11 and is one of the twenty keys the deleted oracle was banked on. So ``graph``
+    #: stays inside the comparison, unfiltered, and a schema-17 sidecar that changed the ORDER
+    #: of the power edges (which is what ``wires`` is positionally joined to) or dropped one
+    #: would move that digest on all 31 saves and fail here. That is the intended reading: the
+    #: geometry is new and outside the oracle's scope, the connectivity is not new and is
+    #: still being checked against it.
+    "keys": ("belts", "pipes", "attachments", "storage", "power"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
     #: schema-11 number; leaving the current number here would report drift on every save on
@@ -273,8 +283,8 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    sixteen = {
-        "schema_version": 16,
+    seventeen = {
+        "schema_version": 17,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -296,6 +306,12 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
             "classes": ["Build_Pipeline_C"],
             "networks": [{"id": 3, "fluid": "Desc_Water_C"}],
             "segments": [[0, 0, [[1, 2, 3], [4, 5, 6]], 4, [[7, 8, 9, 1, 2, 3]]]],
+        },
+        # Schema 17. A pole and a wire, so the key being dropped whole is actually populated:
+        # a filter tested against an empty ``power`` would pass while dropping nothing.
+        "power": {
+            "poles": {"classes": ["Build_PowerPoleMk1_C"], "instances": [[0, 1, 2, 3, 0.0, 0]]},
+            "wires": [[1, 2, 703, 40, 50, 703]],
         },
         # Two containers, and the second is the one schema 16 moved. Its 60 Iron Plate are in
         # ``storage`` below and were in ``machine`` before, which is exactly what _unfix_16
@@ -326,14 +342,14 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    filtered = as_schema_11(sixteen)
+    filtered = as_schema_11(seventeen)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(sixteen)
-    moved["machines"] = [{**sixteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(seventeen)
+    moved["machines"] = [{**seventeen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
     )
@@ -342,13 +358,13 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
     # that RESTORES a value rather than dropping one: a reconstruction that simply copied the
     # bank's shape would pass the equality above and hide every stack in the key for ever. A
     # container the two parsers would have read differently still has to move the digest.
-    misread = dict(sixteen)
+    misread = dict(seventeen)
     misread["storage"] = [
-        {**sixteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
-        sixteen["storage"][1],
+        {**seventeen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
+        seventeen["storage"][1],
     ]
     misread["inventories"] = {
-        **sixteen["inventories"],
+        **seventeen["inventories"],
         "storage": {"Desc_IronPlate_C": 101},
     }
     assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
@@ -361,7 +377,7 @@ def test_a_new_top_level_key_cannot_escape_the_comparison(banked, projection):
 
     **The list of exceptions is hand-maintained, and a hand-maintained list fails by
     omission.** Everything above pins what the filter DOES; nothing pinned what it was given
-    to do. So a schema-17 key added to ``extract`` and not added here would be compared
+    to do. So a schema-18 key added to ``extract`` and not added here would be compared
     against a bank that has never heard of it -- ``proj[key]`` would raise on the first save
     and the fix would look like adding a line to this list, which is exactly the reflex that
     would have retired the key from the comparison for ever, silently, with no reviewer
@@ -412,7 +428,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             continue
         proj = _projection(path)
         assert "error" not in proj, (name, proj.get("detail"))
-        assert proj["schema_version"] == 16, (name, "unexpected schema for the filter")
+        assert proj["schema_version"] == 17, (name, "unexpected schema for the filter")
         proj = as_schema_11(proj)
         for key, want in entry.items():
             if key == "n_objects_value":

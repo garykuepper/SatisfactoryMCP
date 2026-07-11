@@ -192,22 +192,22 @@ def test_a_schema_bump_makes_every_cached_projection_miss(monkeypatch):
     """The cache is keyed on the schema, so old pickles are never served to new code.
 
     A projection is cached on disk under a hash of the save's identity, and the identity has
-    to include the shape it was written in. Without that, schema 16 would hand out a schema-15
-    pickle -- one that buckets eight containers' contents as unspendable machine buffers and
-    calls an unreadable rotation axis-aligned -- as 15 would have handed out a 14 with every
-    route segment carrying its corners and no tangents and no ``storage`` key at all, and 13 a
-    12 with no ``pipes`` key at all. The stale answer is the dangerous one precisely because it
-    is well-formed: it looks like a world that is poorer than it is and squarer than it is.
-    Every field of the key is asserted so that dropping one is a failure here rather than a
-    stale answer months later.
+    to include the shape it was written in. Without that, schema 17 would hand out a schema-16
+    pickle -- one with no ``power`` key at all, so a map that draws wires would draw none and
+    look like a base nobody has wired up -- as 16 would have handed out a 15 that buckets eight
+    containers' contents as unspendable machine buffers and calls an unreadable rotation
+    axis-aligned, and 15 a 14 with every route segment carrying its corners and no tangents.
+    The stale answer is the dangerous one precisely because it is well-formed: it looks like a
+    world that is poorer than it is and squarer than it is. Every field of the key is asserted
+    so that dropping one is a failure here rather than a stale answer months later.
     """
     header = {"path": "C:/saves/Han Solo.sav", "mtime_ns": 1785272928137058500, "size": 2935845}
     now = proj._cache_key(header)
 
-    monkeypatch.setattr(proj, "SCHEMA_VERSION", 15)
-    assert proj._cache_key(header) != now, "a schema 15 pickle would be served to schema 16"
-
     monkeypatch.setattr(proj, "SCHEMA_VERSION", 16)
+    assert proj._cache_key(header) != now, "a schema 16 pickle would be served to schema 17"
+
+    monkeypatch.setattr(proj, "SCHEMA_VERSION", 17)
     assert proj._cache_key(header) == now
     for field, other in (("path", "C:/saves/Other.sav"), ("mtime_ns", 1), ("size", 1)):
         assert proj._cache_key({**header, field: other}) != now, field

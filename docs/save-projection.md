@@ -680,6 +680,54 @@ saves** even though `removed_actors("mercer_sphere")["actors"]` returns 27 entri
 98, so nothing is lost, but the census and the listing disagree about whether the split exists.
 Details in `docs/savparse-notes.md`.
 
+### 6.12 Power wires — the save publishes the drawn line, not just the pair
+
+Schema 17. `graph["power"]` has carried this world's **1,297 power edges** as interned actor-index
+pairs since schema 11, and it says who is joined to whom and nothing about where. The obvious way
+to draw them — a line from one actor's origin to the other's — is wrong, because a wire is strung
+between CONNECTORS and a connector is a component at a fixed offset on its owner: the endpoint on
+a Mk1 pole is 7 m above the pole's origin, the endpoint on a constructor is 2.1 m forward and 4.7 m
+to one side of its centre. Origin-to-origin puts every wire through the middle of the machine it
+feeds.
+
+**It does not have to be reconstructed.** `Build_PowerLine_C` carries `mWireInstances`, an array of
+`FWireInstance`, and each one holds `Locations[2]` — the two endpoints **in absolute world
+coordinates** — beside `CachedRelativeLocations[2]`. So schema 17 needs no table of per-class
+connector offsets at all; it reads the two points the game itself drew between.
+
+That these are the wire is measured rather than assumed, against `mCachedLength`, which the actor
+also stores and which nothing in the projection derives:
+
+| check | n | result |
+|---|---|---|
+| `\|dist(loc0, loc1) − mCachedLength\|`, single-instance lines | 1,162 | median **0.000031 cm**, max **0.000484 cm** |
+| `\|dist(poleA.origin, poleB.origin) − mCachedLength\|`, Mk1↔Mk1 wires | 399 | max **0.000484 cm** |
+| `\|endpoint − (pole origin + 700 cm z)\|`, every Mk1 endpoint | 1,166 | max **0.000000 cm** |
+
+The third row has no free parameter and is what settles the frame: world, unrotated, unscaled. Mk2
+is +760 cm, Mk3 +885, the wall outlet −80, each with zero spread. Rotated back into each owner's own
+body frame the same measurement gives a fixed local offset per class with **zero spread** across
+hundreds of instances — 205 constructors at (210, −470, 687.2), 93 smelters at (220, −310, 480) —
+which incidentally verifies the yaw convention of [§ `yaw_of`] at the same time, since a flipped
+sign would scatter them.
+
+Two details the reference save forced:
+
+- **135 lines carry two `FWireInstance`s**, and every one of them is a Power Tower strung to another
+  Power Tower. The second is the parallel conductor: two strands 12.2 m apart spanning the same two
+  towers, each `mCachedLength` long. The projection takes the first — one real strand, rather than
+  an average line neither occupies.
+- **The save's endpoint order is not the edge's.** Over the 1,297 wires, the order the two
+  `PowerConnection` components were serialised in agrees with the order the two `Locations` are
+  stored in **687 times and disagrees 608** — a coin flip. `extract._power` therefore assigns each
+  end to the nearer of the two actors in plan, and the evidence that the assignment is right is
+  that only under it do the per-class offsets above collapse to a constant.
+
+The key is `power` = `{poles: {classes, instances}, wires}`, geometry only, and `wires[i]` is the
+span of `graph["power"][i]` — **one pass writes both**, which is the only thing making the
+positional join true. **+78,671 bytes on the reference projection, +5.27%** (poles 24.3 KB over 701
+rows, wires 54.4 KB over 1,297).
+
 ---
 
 ## 13a. Replacing the vendored parser

@@ -1,9 +1,10 @@
-"""The three interned tables of the projection, decoded in one place.
+"""The interned tables of the projection, decoded in one place.
 
-``extract`` emits three tables as bare positional rows rather than as records, because a
-record per piece would be megabytes: 8,347 lightweight buildables, 3,085 belt pieces and
-503 pipes on the reference world, each row a short list of numbers with its class held once
-in a ``classes`` list beside it. That shape is right, and it has a cost -- **every reader
+``extract`` emits five tables as bare positional rows rather than as records, because a
+record per piece would be megabytes: 8,347 lightweight buildables, 3,085 belt pieces, 503
+pipes, 701 power poles and 1,297 wires on the reference world, each row a short list of
+numbers with its class held once in a ``classes`` list beside it. That shape is right, and
+it has a cost -- **every reader
 has to decode it**, and until this module existed ten sites in five modules did, each with
 its own hand-written ``isinstance``/``len``/``int()``/``float()`` guards copied from a
 neighbour:
@@ -48,7 +49,7 @@ it at ``record.index``.
 
 Finally, ``*_ROW_WIDTH`` names how many columns each iterator reads. ``test_saveio_rows``
 holds those numbers against the widest row the committed projection actually contains, so a
-schema-17 column added to any of these three tables fails a test here until somebody has
+schema-18 column added to any of these five tables fails a test here until somebody has
 decided whether these readers want it.
 """
 
@@ -60,15 +61,22 @@ from typing import Any, NamedTuple
 __all__ = [
     "BELT_ROW_WIDTH",
     "PIPE_ROW_WIDTH",
+    "POWER_POLE_ROW_WIDTH",
     "STRUCTURE_ROW_WIDTH",
+    "WIRE_ROW_WIDTH",
     "BeltSegment",
     "PipeSegment",
+    "PowerPole",
     "Structure",
+    "Wire",
     "belt_segment_count",
     "iter_belt_segments",
     "iter_pipe_segments",
+    "iter_power_poles",
     "iter_structures",
+    "iter_wires",
     "pipe_segment_count",
+    "wire_count",
 ]
 
 #: Columns of ``structures["instances"]``: ``[classIndex, x, y, z, yaw]``. The fifth arrived
@@ -84,6 +92,16 @@ BELT_ROW_WIDTH = 4
 #: The fourth arrived in schema 14 and the fifth in schema 15, the latter again only where the
 #: pipe bends.
 PIPE_ROW_WIDTH = 5
+
+#: Columns of ``power["poles"]["instances"]``: ``[classIndex, x, y, z, yaw, actorIndex]``.
+#: Schema 17, and all six arrived together, so there is no short form of this row to be
+#: tolerant of yet -- the length guard below is the one every other table already has, kept so
+#: that a schema-18 reader predating a seventh column reads six and keeps working.
+POWER_POLE_ROW_WIDTH = 6
+
+#: Columns of ``power["wires"]``: ``[x0, y0, z0, x1, y1, z1]``, both ends of one span, in the
+#: order of the ``graph["power"]`` edge the row sits opposite. Schema 17.
+WIRE_ROW_WIDTH = 6
 
 
 class Structure(NamedTuple):
@@ -142,6 +160,43 @@ class PipeSegment(NamedTuple):
     points: list[list[float]]
     actor_index: int
     spans: Any | None
+
+
+class PowerPole(NamedTuple):
+    """One power pole, wall outlet or tower: where it stands, and what it is joined to.
+
+    ``yaw`` is ``None`` on the same two terms a ``Structure``'s is. ``actor_index`` points
+    into ``graph["actors"]`` and is ``-1`` for a pole no wire names -- 2 of the reference
+    world's 701, both unstrung tower platforms -- exactly as a ``PipeSegment``'s is. It is
+    the join a caller counts a pole's wires with: this table carries no degree, because
+    ``graph["power"]`` already is the connectivity and a second copy could disagree with it.
+    """
+
+    class_index: int
+    cls: str | None
+    x: float
+    y: float
+    z: float
+    yaw: float | None
+    actor_index: int
+
+
+class Wire(NamedTuple):
+    """One power wire's drawn span: its two endpoints in world centimetres.
+
+    ``index`` is the row's position in ``power["wires"]``, which is also its position in
+    ``graph["power"]`` -- the two lists are written in one pass for exactly that reason, so
+    ``wire.index`` is how a caller reaches the pair of actors this span joins. Like a pipe's
+    ordinal, a row that will not decode leaves a HOLE rather than shifting its neighbours up.
+
+    ``a`` is the end at ``graph["power"][index][0]`` and ``b`` the end at ``[1]``: the
+    extractor measures which published endpoint is nearer which actor, because the save's own
+    order agrees with the edge's only about half the time. See ``extract._power``.
+    """
+
+    index: int
+    a: list[float]
+    b: list[float]
 
 
 def _table(projection: dict, key: str) -> dict:
@@ -306,3 +361,75 @@ def iter_pipe_segments(projection: dict) -> Iterator[PipeSegment]:
             actor_index=actor if isinstance(actor, int) and actor >= 0 else -1,
             spans=_column(row, 4),
         )
+
+
+def iter_power_poles(projection: dict) -> Iterator[PowerPole]:
+    """Every power pole in ``power``, decoded, in the table's own order.
+
+    Dropped on a ``Structure``'s terms exactly -- not a sequence, shorter than four columns,
+    or a class index or coordinate that will not read -- because a pole IS a placement and
+    nothing here has ever wanted a different bar for one. The trailing two columns are read
+    through the same length check as everything else additive: a projection cut before schema
+    17 has no ``power`` key at all and yields nothing, and a hypothetically shorter row still
+    gives a place.
+    """
+    table = _table(_table(projection, "power"), "poles")
+    classes = _classes(table)
+    for row in _rows(table, "instances"):
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        try:
+            class_index = int(row[0])
+            x, y, z = float(row[1]), float(row[2]), float(row[3])
+        except (TypeError, ValueError):
+            continue
+        raw_yaw = _column(row, 4)
+        try:
+            yaw = None if raw_yaw is None else float(raw_yaw)
+        except (TypeError, ValueError):
+            yaw = None
+        actor = _column(row, 5)
+        yield PowerPole(
+            class_index=class_index,
+            cls=_class_at(classes, class_index),
+            x=x,
+            y=y,
+            z=z,
+            yaw=yaw,
+            # The pipes' rule, for the pipes' reason: an index into a list this projection
+            # also carries is an integer or it is nothing.
+            actor_index=actor if isinstance(actor, int) and actor >= 0 else -1,
+        )
+
+
+def wire_count(projection: dict) -> int:
+    """How many rows ``power["wires"]`` holds, decodable or not.
+
+    The length a positional array over the wires has to be sized with, and the number a
+    caller checks against ``len(graph["power"])`` before joining the two: the extractor
+    promises they are equal on every save, and a projection where they are not is one to
+    refuse rather than to index into.
+    """
+    payload = _table(projection, "power").get("wires")
+    return len(payload) if isinstance(payload, list) else 0
+
+
+def iter_wires(projection: dict) -> Iterator[Wire]:
+    """Every power wire's span in ``power``, decoded, in the table's own order.
+
+    A row is dropped when it is not a sequence of six readable numbers, and ``null`` is
+    exactly that case: it is what the writer emits for a wire that published no geometry, so
+    a projection from a save older than the property yields no wires at all while
+    ``graph["power"]`` still carries every edge. **That is the honest degradation** -- the
+    connections are known and where they run is not -- and it is why the ordinal is carried:
+    a caller that wants the actor pair for a drawn span reads ``graph["power"][wire.index]``,
+    and a hole costs one span rather than renumbering the rest.
+    """
+    for index, row in enumerate(_rows(_table(projection, "power"), "wires")):
+        if not isinstance(row, (list, tuple)) or len(row) < WIRE_ROW_WIDTH:
+            continue
+        try:
+            ends = [float(v) for v in row[:WIRE_ROW_WIDTH]]
+        except (TypeError, ValueError):
+            continue
+        yield Wire(index=index, a=ends[:3], b=ends[3:])

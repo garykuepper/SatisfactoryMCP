@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-16 projection is this project's shape, versioned with this project's cache,
+the schema-17 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -63,7 +63,46 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
+
+#: The classes drawn as POLES by the power layer: where a wire can end at something the
+#: player placed for the purpose of ending wires at it. Schema 17; see `_power`.
+#:
+#: **Listed rather than matched on "PowerPole", for the reason PIPE_CLASSES and
+#: STORAGE_CLASSES both give.** ``Build_ConveyorPole_C`` and ``Build_PipelineSupport_C`` are
+#: poles by every naming test and carry no power at all -- 795 and 215 of them on the
+#: reference world, which a substring rule would draw as power infrastructure. In the other
+#: direction ``Build_PowerTowerPlatform_C`` carries no "Pole" in its name and is the biggest
+#: piece of transmission this world has.
+#:
+#: What the reference save actually holds, and why each entry is here:
+#:
+#: * ``Build_PowerPoleMk1_C`` (426), ``Mk2`` (105), ``Mk3`` (7) -- the poles, 1,571 of the
+#:   world's 2,594 wire endpoints between them.
+#: * ``Build_PowerPoleWall_C`` (4), ``Build_PowerPoleWall_Mk2_C`` (19),
+#:   ``Build_PowerPoleWallDouble_Mk2_C`` (3) -- the wall outlets. Included because they are
+#:   wire endpoints and nothing else is: 130 endpoints land on these 26 pieces, and leaving
+#:   them out would draw 130 wires ending in mid-air.
+#: * ``Build_PowerTowerPlatform_C`` (137) -- the Power Tower. 290 endpoints, and the only
+#:   thing on this world carrying a wire more than a kilometre.
+#:
+#: **Three classes are deliberately absent and the reason is that this world has none.** A
+#: Power Switch, a Priority Power Switch and a Power Storage are all wire endpoints in the
+#: game and the reference save contains zero of each (a full class census of its 9,778
+#: ``Build_`` actors), so nothing here can say what one's connector offset is, what it should
+#: be drawn as, or whether "pole" is even the right word for it. Their wires still DRAW --
+#: the geometry comes off the wire actor and not off what it lands on, which is the whole
+#: point of `_power`'s design -- so a world with a switch in it loses the switch's glyph and
+#: not the line running to it. That is a smaller wrong answer than a guess.
+POWER_POLE_CLASSES = (
+    "Build_PowerPoleMk1_C",
+    "Build_PowerPoleMk2_C",
+    "Build_PowerPoleMk3_C",
+    "Build_PowerPoleWall_C",
+    "Build_PowerPoleWall_Mk2_C",
+    "Build_PowerPoleWallDouble_Mk2_C",
+    "Build_PowerTowerPlatform_C",
+)
 
 #: The four pipeline classes that carry an ``mSplineData`` -- the fluid pipes, Mk1 and Mk2,
 #: each in the ordinary and the ``NoIndicator`` variant a player gets when the flow indicator
@@ -410,6 +449,10 @@ def extract(path: str) -> dict:
         "belts": {"classes": [], "segments": []},
         # Fluid pipe routing, as polylines. Schema 13; see `_pipes`.
         "pipes": {"classes": [], "networks": [], "segments": []},
+        # The poles and the wires between them. Schema 17; see `_power`. Geometry ONLY: the
+        # connectivity is ``graph["power"]`` and has been since schema 11, and ``wires`` is
+        # that list's own positional twin rather than a second opinion about it.
+        "power": {"poles": {"classes": [], "instances": []}, "wires": []},
         "machines": [],
         "extractors": [],
         "generators": [],
@@ -461,6 +504,17 @@ def extract(path: str) -> dict:
     #: buffer's fluid comes off its pipe NETWORK, which may be written after either.
     storage_actors: list[tuple] = []
     held: dict[str, tuple] = {}
+    #: (class, instanceName, pos, yaw) per pole, and shortName -> (endA, endB) for every actor
+    #: that carries an ``mWireInstances``. Both held rather than emitted in the walk because a
+    #: wire's two ENDS are the two power connection components that name it, and a component
+    #: is written after -- and often long after -- the wire actor itself. See `_power`.
+    pole_actors: list[tuple] = []
+    wire_geom: dict[str, tuple] = {}
+    #: Every ``Build_`` actor's world position, short name to (x, y, z). Held for one job and
+    #: it is `_power`'s: a wire publishes its two endpoints in an order unrelated to the order
+    #: its two connections were serialised, so pairing the drawn ends with the joined actors
+    #: means measuring which end is nearer which actor. Positions the walk already computed.
+    actor_at: dict[str, tuple] = {}
 
     # --- connectivity interning -------------------------------------------
     actor_ix: dict[str, int] = {}
@@ -575,6 +629,23 @@ def extract(path: str) -> dict:
                     (instance.rsplit(".", 2)[-2], instance.rsplit(".", 1)[-1])
                 )
 
+        # A drawn wire's own geometry, keyed on the PROPERTY rather than on the class: what
+        # makes an actor a wire here is that it carries the endpoints of one, which is the
+        # same test `mWires` above applies to a connection. All 1,297 carriers on the
+        # reference world are ``Build_PowerLine_C``, and a future ``Build_PowerLineHighSpeed``
+        # or a modded one would be read by this and skipped by a class list. See `_wire_span`.
+        #
+        # NOT counted as a drop when it will not read, and that is a deliberate difference
+        # from every other guard in this file. A wire whose geometry is missing is not a wire
+        # this run lost: it keeps its edge in ``graph["power"]`` and it keeps its ROW in
+        # ``power["wires"]``, holding null, which is the record. Counting it would also put a
+        # warning on every save older than this property -- see `_power` on what an all-null
+        # wires list means.
+        if "mWireInstances" in p:
+            span = _wire_span(p["mWireInstances"])
+            if span is not None:
+                wire_geom[str(instance).rsplit(".", 1)[-1]] = span
+
         if not cls:
             continue
 
@@ -688,6 +759,21 @@ def extract(path: str) -> dict:
             continue
         counts[cls] = counts.get(cls, 0) + 1
 
+        # Every buildable's place, for `_power`'s endpoint pairing and nothing else. Cheap --
+        # one tuple per actor, 9,778 of them on the reference world -- and it has to be every
+        # one of them rather than only the poles, because a wire ends on a machine as often as
+        # on a pole: 700 of this world's 2,594 endpoints are a smelter, a refinery or a miner.
+        at = pos_of(header)
+        if at is not None:
+            actor_at[str(instance).rsplit(".", 1)[-1]] = tuple(at)
+
+        # Held, not `continue`d past, for the reason the pipes and containers below are: a
+        # pole is a Build_ actor and still owes ``building_counts`` its tally.
+        if cls in POWER_POLE_CLASSES:
+            pole_actors.append(
+                (cls, instance, pos_of(header), yaw_of(getattr(header, "rotation", None)))
+            )
+
         # Held, not `continue`d past: a pipe is still a Build_ actor and still owes
         # `building_counts` its tally, which is a schema-11 key that predates all of this.
         if cls in PIPE_CLASSES:
@@ -768,12 +854,13 @@ def extract(path: str) -> dict:
 
     # A power wire always joins exactly two connections; anything else is a
     # half-built or orphaned line and is dropped rather than guessed at.
-    power_edges = [
-        [actor_id(a[0]), actor_id(b[0])]
-        for ends in wire_ends.values()
-        if len(ends) == 2
-        for a, b in [ends]
-    ]
+    #
+    # The edges and the drawn spans come out of ONE pass over ``wire_ends``, which is what
+    # makes ``power["wires"][i]`` the geometry of ``graph["power"][i]``. Two passes would be
+    # two chances to drop a different wire. See `_power`.
+    power_edges, out["power"] = _power(
+        wire_ends, wire_geom, pole_actors, actor_at, actor_id, actor_ix, drops
+    )
     out["graph"] = {
         "actors": [name for name, _ in sorted(actor_ix.items(), key=lambda kv: kv[1])],
         "roles": [name for name, _ in sorted(role_ix.items(), key=lambda kv: kv[1])],
@@ -798,12 +885,20 @@ def extract(path: str) -> dict:
     # null yaws a reader can go and find. Silent on a healthy save -- all 8,347 lightweight
     # pieces and all 9,153 actors on the reference world read -- and the point is that a
     # header decode going wrong stops looking like a world built on the grid.
-    unread = sum(
-        1
-        for key in ("machines", "extractors", "generators", "attachments", "storage")
-        for record in out[key]
-        if record.get("yaw") is None
-    ) + sum(1 for row in out["structures"]["instances"] if len(row) > 4 and row[4] is None)
+    unread = (
+        sum(
+            1
+            for key in ("machines", "extractors", "generators", "attachments", "storage")
+            for record in out[key]
+            if record.get("yaw") is None
+        )
+        + sum(1 for row in out["structures"]["instances"] if len(row) > 4 and row[4] is None)
+        # Schema 17's poles, counted here for the same reason the five record lists are: a
+        # pole's yaw is read by exactly the same `yaw_of` and means exactly the same thing,
+        # so leaving 701 more placements out of this census would make the number a count of
+        # some of the world rather than of the world.
+        + sum(1 for row in out["power"]["poles"]["instances"] if row[4] is None)
+    )
     if unread:
         out["warnings"].append(
             f"{unread} placement(s) carry a rotation this parser could not read; "
@@ -1526,6 +1621,191 @@ def _pipes(actors: list, networks: list, actor_ix: dict, drops: Drops) -> dict:
         )
 
     return {"classes": classes, "networks": nets, "segments": segments}
+
+
+def _wire_span(raw) -> tuple[list, list] | None:
+    """The two ends of one power wire, in WORLD centimetres, or None if it has no pair.
+
+    ``mWireInstances`` is an array of ``FWireInstance``, and each one carries a two-element
+    ``Locations`` and a two-element ``CachedRelativeLocations``. **The absolute pair is what
+    is taken**, so nothing here has to know where a connector sits on the thing it is bolted
+    to -- which is the reason schema 17 needed no table of per-class connector offsets.
+
+    THE EVIDENCE THAT ``Locations`` IS THE WIRE, measured on the reference save's 1,297
+    lines. The actor also stores ``mCachedLength``, the game's own figure for the wire, and
+    it is not derived from these numbers by anything this code can see:
+
+    * over the 1,162 single-instance lines, ``|dist(loc0, loc1) - mCachedLength|`` has a
+      **median of 0.000031 cm and a maximum of 0.000484 cm** -- float32 noise, on a quantity
+      ranging up to 300 m;
+    * with no free parameter at all: over the 399 wires strung between two
+      ``Build_PowerPoleMk1_C``, the distance between the two POLES' OWN header positions
+      matches ``mCachedLength`` to a maximum of 0.000484 cm, and every one of the 1,166 Mk1
+      endpoints sits at exactly ``origin + (0, 0, 700)`` -- **maximum error 0.000000 cm**.
+      Mk2 is +760, Mk3 is +885, the wall outlet is -80, each with zero spread.
+
+    So the frame is the world's, unrotated and unscaled, and the two published points are the
+    ends of the drawn line. (The same measurement done in each owner's BODY frame gives a
+    fixed local offset per class with zero spread across hundreds of instances -- 205
+    constructors at (210, -470, 687.2), 93 smelters at (220, -310, 480) -- which is the
+    connector table this key does not have to carry.)
+
+    **The first pair, and 135 lines have two.** Every one of those is a Power Tower strung to
+    another Power Tower, and the second instance is the PARALLEL CONDUCTOR: two strands
+    12.2 m apart spanning the same two towers, each of them ``mCachedLength`` long. Taking
+    the first is taking one real strand rather than averaging two into a line neither of them
+    occupies; drawing both would put a 12 m ladder on a map where 12 m is a fifth of a pixel
+    at the world view. The reference save's other 1,162 lines carry exactly one instance.
+
+    Walked rather than indexed, because the decoded property nests the values beside their
+    type descriptors and the nesting is the serialiser's business, not this key's. Document
+    order is preserved, which is what makes "the first two" the first STRAND: on the
+    four-location lines the first two points are the two ENDS of strand one (they land at
+    opposite towers), not the two strands' starts.
+    """
+    found: list[list] = []
+
+    def walk(node) -> None:
+        if len(found) >= 2 or not isinstance(node, (list, tuple)):
+            return
+        if len(node) == 2 and node[0] == "Locations":
+            point = node[1]
+            if isinstance(point, (list, tuple)) and len(point) == 3:
+                try:
+                    found.append(
+                        [round(float(point[0])), round(float(point[1])), round(float(point[2]))]
+                    )
+                except (TypeError, ValueError):
+                    pass
+                return
+        for child in node:
+            walk(child)
+
+    walk(raw)
+    return (found[0], found[1]) if len(found) == 2 else None
+
+
+def _power(
+    wire_ends: dict,
+    wire_geom: dict,
+    poles: list,
+    actor_at: dict,
+    actor_id,
+    actor_ix: dict,
+    drops: Drops,
+) -> tuple[list, dict]:
+    """The power network's GEOMETRY, and the edge list it is the twin of.
+
+    Returns ``(power_edges, power)``, and returning both is the design rather than an
+    inconvenience: ``graph["power"]`` has carried this world's 1,297 power edges as interned
+    actor-index pairs since schema 11, and schema 17 adds where those edges are DRAWN. Two
+    functions building two lists from the same dict would be two chances to skip a different
+    wire and leave the reader joining lists that no longer line up.
+
+    So there is one pass and one rule::
+
+        len(power["wires"]) == len(graph["power"])
+        power["wires"][i] is the span of graph["power"][i]
+
+    always, on every save. ``wires[i]`` is ``[x0, y0, z0, x1, y1, z1]`` in world centimetres
+    or **null** where that wire published no geometry -- a torn ``mWireInstances``, or a save
+    older than the property, in which case every row is null and the invariant still holds.
+    An empty ``wires`` list therefore means "no power edges at all", never "no geometry".
+
+    **Why the geometry is not simply the two actors' positions.** A wire is strung between
+    CONNECTORS, and a connector is a component sitting at a fixed offset on its owner: the
+    endpoint of a wire on a Mk1 pole is 7 m above the pole's origin, the endpoint on a
+    constructor is 2.1 m forward and 4.7 m to one side of its centre. Drawing pole-origin to
+    machine-origin would put every wire through the middle of the machine it feeds. The save
+    publishes the true endpoints and `_wire_span` reads them.
+
+    **The pair is ORDERED to match the edge, and it is ordered by measurement.** The save's
+    own order is not the edge's: over the reference world's 1,297 wires the order the two
+    connection components were serialised in agrees with the order the two ``Locations`` are
+    stored in **687 times and disagrees 608 times** -- a coin flip, so a consumer joining
+    ``wires[i][0:3]`` to ``graph["power"][i][0]`` would be wrong about half the world. Each
+    end is therefore assigned to the nearer of the two actors, in plan. That this is the
+    right assignment is not assumed: under it the offset from each endpoint to its owner's
+    origin collapses to a per-class CONSTANT -- 0.0 cm planar on all 1,166 Mk1 endpoints,
+    514.8 cm on all 205 constructor endpoints, zero spread on 14 of the 16 commonest classes
+    -- which a wrong assignment cannot produce. Where the two are equidistant (2 wires on this
+    world, both strung between two poles at the same range) the save's order is kept, because
+    there is nothing to measure.
+
+    **Poles are the other half and are a plain interned table**, the shape ``structures`` uses
+    -- ``[classIndex, x, y, z, yaw, actorIndex]``, whole centimetres. The sixth column is the
+    pole's index in ``graph["actors"]`` and is the same join schema 14 gave a pipe: with it a
+    reader counts a pole's wires off the edge list, and without it "how many things are
+    plugged into this pole" would need a second copy of the connectivity in this key.
+    ``-1`` for a pole no wire names -- 2 of this world's 701, both Power Tower platforms
+    someone built and never strung.
+
+    ``actor_id`` interns and ``actor_ix`` only reads, which is the whole reason both are
+    passed. The wire pass MINTS actor indices exactly as it always has (it is where most of
+    ``graph["actors"]`` comes from); the pole pass must not, because a pole with no wire would
+    otherwise be added to a list that has already been snapshotted -- see the note in
+    `extract` above the ``_pipes`` call, which is the same hazard.
+    """
+    edges: list[list[int]] = []
+    wires: list[list | None] = []
+    for path, ends in wire_ends.items():
+        # Exactly two connections or it is not a wire: a half-built or orphaned line is
+        # dropped rather than guessed at, which is what schema 11 has always done here.
+        if len(ends) != 2:
+            continue
+        a_owner, b_owner = ends[0][0], ends[1][0]
+        edges.append([actor_id(a_owner), actor_id(b_owner)])
+        wires.append(
+            _wire_row(wire_geom.get(str(path).rsplit(".", 1)[-1]), a_owner, b_owner, actor_at)
+        )
+
+    classes: list[str] = []
+    index: dict[str, int] = {}
+    instances: list[list] = []
+    for cls, instance, at, yaw in poles:
+        if at is None:
+            drops["pole(s) dropped: the actor position would not read"] += 1
+            continue
+        ci = index.get(cls)
+        if ci is None:
+            ci = index[cls] = len(classes)
+            classes.append(cls)
+        instances.append(
+            [
+                ci,
+                round(at[0]),
+                round(at[1]),
+                round(at[2]),
+                yaw,
+                actor_ix.get(str(instance).rsplit(".", 1)[-1], -1),
+            ]
+        )
+
+    return edges, {"poles": {"classes": classes, "instances": instances}, "wires": wires}
+
+
+def _wire_row(span, a_owner: str, b_owner: str, actor_at: dict) -> list | None:
+    """One wire's six numbers, with the ends put in the edge's own order. See `_power`.
+
+    The plan distance decides, not the 3D one: the two candidates differ by hundreds of
+    metres horizontally and by a few metres vertically, so height contributes nothing to the
+    choice and a wire dropping to a machine below would only add noise to it.
+    """
+    if span is None:
+        return None
+    a, b = span
+    at_a, at_b = actor_at.get(a_owner), actor_at.get(b_owner)
+    if at_a is not None and at_b is not None:
+        straight = _plan_gap(a, at_a) + _plan_gap(b, at_b)
+        crossed = _plan_gap(b, at_a) + _plan_gap(a, at_b)
+        if crossed < straight:
+            a, b = b, a
+    return [*a, *b]
+
+
+def _plan_gap(point, at) -> float:
+    """Horizontal distance between a wire endpoint and an actor's origin, centimetres."""
+    return math.hypot(point[0] - at[0], point[1] - at[1])
 
 
 def _storage(actors: list, held: dict, networks: list) -> list:

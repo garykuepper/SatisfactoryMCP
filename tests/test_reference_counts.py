@@ -59,6 +59,33 @@ def test_the_two_edge_counts_domain_factories_model_cites(proj):
     )
 
 
+def test_the_power_geometry_extract_and_the_map_cite(proj):
+    """Schema 17's counts, and the invariant the whole key is built around.
+
+    ``power["wires"]`` carries no connectivity of its own on purpose -- ``graph["power"]``
+    is that, and has been since schema 11 -- so the two lists are joined by POSITION and
+    nothing enforces it but the single pass in ``extract._power`` that writes both. A
+    regeneration that dropped one wire from either list and not the other would leave every
+    span after it drawn between the wrong two actors, and would break no other test.
+    """
+    power = proj["power"]
+    assert len(power["wires"]) == len(proj["graph"]["power"]) == 1_297, (
+        "core/saveio/extract.py's `_power` states this equality as the key's one promise"
+    )
+    assert sum(1 for w in power["wires"] if w is None) == 0, (
+        "every wire on this world publishes its span; a null here means mWireInstances "
+        "stopped reading and core/saveio/rows.py:iter_wires quotes the zero"
+    )
+    poles = power["poles"]["instances"]
+    assert len(poles) == 701, "core/saveio/extract.py's POWER_POLE_CLASSES quotes this"
+    assert sum(1 for r in poles if r[5] < 0) == 2, (
+        "core/saveio/extract.py's `_power` quotes the two unstrung tower platforms"
+    )
+    assert sum(1 for r in poles if r[4] is None) == 0, (
+        "every pole's rotation reads, which is what makes the warning in `extract` silent"
+    )
+
+
 def test_the_machine_census_five_modules_cite(proj):
     """570, spelled in ``commission.py``, ``build.py``, ``elevation.py`` and this file.
 
@@ -129,4 +156,4 @@ def test_the_reference_projection_reports_no_losses(proj):
     file rather than just one line of it. See ``core/saveio/extract._drop_notes``.
     """
     assert proj["warnings"] == []
-    assert proj["schema_version"] == 16
+    assert proj["schema_version"] == 17
