@@ -261,6 +261,14 @@ class Band:
     share: float = 1.0
     machines: list[str] = field(default_factory=list)
     attachments: list[str] = field(default_factory=list)
+    #: Which pieces of the ``structures`` table this deck is made of, by POSITION in it.
+    #:
+    #: A lightweight buildable has no instance name -- that is the whole point of the
+    #: subsystem -- so a deck cannot be listed by id the way a band lists its machines. What
+    #: it can be listed by is the one join a consumer of ``structures`` already has: the row's
+    #: place in the table, which every reader gets from the same ``saveio.rows`` iterator in
+    #: the same order. It is the positional key ``pipes`` already uses, for the same reason.
+    rows: list[int] = field(default_factory=list)
 
     @property
     def minor(self) -> bool:
@@ -460,28 +468,36 @@ def _single_linkage(values: list[float], tol: float) -> list[list[float]]:
     return clusters
 
 
-def foundation_tops(projection: dict) -> list[tuple[float, float, float, str]]:
-    """``(x, y, top, class)`` for every foundation piece, centimetres.
+def foundation_tops(projection: dict) -> list[tuple[int, float, float, float, str]]:
+    """``(row, x, y, top, class)`` for every foundation piece, centimetres.
 
     ``top`` is the surface a machine stands on: ``z + thickness/2``, because a lightweight's
     stored Z is its vertical centre. Decoded through ``core.saveio.rows``, which holds the
     ``len``/``isinstance`` guard this used to spell out for itself -- a malformed row still
     costs one piece rather than the decomposition.
 
+    ``row`` is the piece's POSITION in the decoded ``structures`` table, and it is carried
+    because it is the only name a lightweight buildable has: the subsystem stores no
+    instance ids, so a deck can be handed to a consumer of ``structures`` by position and by
+    nothing else. Every reader walks the same iterator in the same order, which is what
+    makes the position a join rather than a coincidence -- the argument ``pipes`` already
+    makes for its own row index. Counted over the pieces the iterator YIELDS, so a
+    malformed row it drops is dropped from both sides of the join at once.
+
     ``cls`` is ``""`` rather than ``None`` for a class index the table cannot resolve,
     because what follows asks whether a hint is a substring of it and an unnamed piece is
     simply not a foundation.
     """
-    out: list[tuple[float, float, float, str]] = []
-    for piece in saverows.iter_structures(projection):
+    out: list[tuple[int, float, float, float, str]] = []
+    for row, piece in enumerate(saverows.iter_structures(projection)):
         cls = piece.cls or ""
         if not any(hint in cls for hint in FOUNDATION_HINTS):
             continue
-        out.append((piece.x, piece.y, piece.z + thickness_cm(cls) / 2.0, cls))
+        out.append((row, piece.x, piece.y, piece.z + thickness_cm(cls) / 2.0, cls))
     return out
 
 
-def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platform], dict]:
+def _platforms(tops: list[tuple[int, float, float, float, str]]) -> tuple[list[Platform], dict]:
     """Flood-fill the tops into platforms and cluster each platform's own levels.
 
     Returns the platforms and the cell index every assignment goes through: an 8 m cell to
@@ -490,14 +506,14 @@ def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platfo
     floor that is not under it.
     """
     by_cell: dict[tuple[int, int], list[int]] = defaultdict(list)
-    for i, (x, y, _top, _cls) in enumerate(tops):
+    for i, (_row, x, y, _top, _cls) in enumerate(tops):
         by_cell[cell_of(x, y)].append(i)
 
     platforms: list[Platform] = []
     index: dict[tuple[int, int], list[Deck]] = defaultdict(list)
     for order, component in enumerate(_flood(set(by_cell))):
         members = [i for cell in sorted(component) for i in by_cell[cell]]
-        levels = [tops[i][2] for i in members]
+        levels = [tops[i][3] for i in members]
         bands: list[Band] = []
         for cluster in _single_linkage(levels, CLUSTER_TOL_CM):
             if len(cluster) < MIN_BAND_PIECES:
@@ -505,8 +521,8 @@ def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platfo
             # The most common exact top, not the mean: a band has its own level and a mean
             # would smear it by however many pieces happen to sit at the edge of the eps.
             level = Counter(cluster).most_common(1)[0][0]
-            inside = [i for i in members if abs(tops[i][2] - level) <= BAND_EPS_CM]
-            cells = {cell_of(tops[i][0], tops[i][1]) for i in inside}
+            inside = [i for i in members if abs(tops[i][3] - level) <= BAND_EPS_CM]
+            cells = {cell_of(tops[i][1], tops[i][2]) for i in inside}
             bands.append(
                 Band(
                     ordinal=0,
@@ -515,6 +531,9 @@ def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platfo
                     high_cm=max(cluster),
                     pieces=len(cluster),
                     cells=len(cells),
+                    # Sorted, so the list is the same list on two runs over one save and a
+                    # client can binary-search it rather than build a set from it.
+                    rows=sorted(tops[i][0] for i in inside),
                 )
             )
         bands.sort(key=lambda b: b.top_cm)
@@ -529,8 +548,8 @@ def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platfo
             for z in levels
             if min((abs(z - level) for level in levels_only), default=1e9) <= BAND_EPS_CM
         )
-        xs = [tops[i][0] for i in members]
-        ys = [tops[i][1] for i in members]
+        xs = [tops[i][1] for i in members]
+        ys = [tops[i][2] for i in members]
         platforms.append(
             Platform(
                 index=order,
@@ -545,8 +564,8 @@ def _platforms(tops: list[tuple[float, float, float, str]]) -> tuple[list[Platfo
         )
         for band in bands:
             for i in members:
-                if abs(tops[i][2] - band.top_cm) <= BAND_EPS_CM:
-                    index[cell_of(tops[i][0], tops[i][1])].append(
+                if abs(tops[i][3] - band.top_cm) <= BAND_EPS_CM:
+                    index[cell_of(tops[i][1], tops[i][2])].append(
                         Deck(platform=order, ordinal=band.ordinal, top_cm=band.top_cm)
                     )
     return platforms, {

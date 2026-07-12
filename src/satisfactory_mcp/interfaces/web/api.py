@@ -150,6 +150,13 @@ def _record_row(st: WorldState, row: dict) -> dict:
     ``yaw`` is which way the building faces, and it is what turns ``w_m``/``l_m`` from an
     axis-aligned box into the rectangle the player actually placed -- the two are one
     answer and are read together or not at all.
+
+    ``h_m`` is the third side of the same box, and it is the one dimension a top-down map
+    cannot show: it is here because a FLOOR view needs it. A Refinery is 15 m tall standing
+    on a 12 m storey, so it comes three metres through the deck above and is physically in
+    the way of anything built there -- a fact about the floor above that can only be read
+    off the floor below. Null on exactly the same terms as ``w_m``/``l_m``, from the same
+    ``mClearanceData``, and a client that has no height draws no such claim.
     """
     cls = row.get("cls") or ""
     building = st.game.buildings.get(cls)
@@ -173,6 +180,7 @@ def _record_row(st: WorldState, row: dict) -> dict:
         # Footprint is already metres; the projection's coordinates are not.
         "w_m": round(footprint.width_m, 1) if footprint else None,
         "l_m": round(footprint.depth_m, 1) if footprint else None,
+        "h_m": round(footprint.height_m, 1) if footprint else None,
     }
 
 
@@ -1348,6 +1356,11 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
         flow = flows[seg.index] if 0 <= seg.index < len(flows) else {}
         rows.append(
             {
+                # The join, and the reason it is a field rather than the row's place in this
+                # list: ``seg.index`` is the position in the RAW table, so a torn row leaves
+                # a gap here that counting would silently close. ``/api/floors`` keys a pipe
+                # run by exactly this number, and a client cannot line the two up without it.
+                "row": seg.index,
                 "direction": flow.get("direction", "unknown"),
                 "basis": flow.get("basis", "unresolved"),
                 # The game's own network id, not the index into the list above: the index is
@@ -1640,8 +1653,10 @@ class FloorBand(TypedDict):
     minor: bool
     machines: list[str]
     attachments: list[str]
+    deck_rows: list[int]
     machine_count: int
     attachment_count: int
+    deck_row_count: int
 
 
 class FloorPlatform(TypedDict):
@@ -1745,6 +1760,19 @@ def _band_json(band: ffloors.Band) -> FloorBand:
     cannot work out for itself is which floor each one is on. Re-serialising the positions
     here would ship the same 700 KB a second time so that a filter could be applied to it.
 
+    ``deck_rows`` is the same idea for the concrete, by the only name a lightweight
+    buildable has. The subsystem stores no instance ids at all -- that is what makes it
+    lightweight -- so a deck is listed by its pieces' POSITIONS in ``/api/structures``,
+    which every reader of that payload already has and which both sides derive from one
+    ``saveio.rows`` walk in one order. Without it a client can only re-derive a deck from
+    heights, and this world's 1 m and 2 m half-steps are exactly where that goes wrong.
+
+    ``deck_rows`` is the pieces at the band's own LEVEL and ``pieces`` is the size of the
+    cluster it was found in. Those are different questions and could differ where a cluster
+    is wider than ``BAND_EPS_CM``; on the reference world they agree on all 93 bands, which
+    is the same "the bands are exact" the epsilon sweep measured. Both are reported rather
+    than reconciled, and a client that draws a deck wants ``deck_rows``.
+
     ``span_m`` is how much the band's own level is spread, which is 0.0 for every band on
     the reference world -- a band is a level, not a cluster. It is not the storey height:
     the distance to the floor above is the next band's ``top_m``, and a client that wants a
@@ -1766,8 +1794,10 @@ def _band_json(band: ffloors.Band) -> FloorBand:
         "minor": band.minor,
         "machines": band.machines,
         "attachments": band.attachments,
+        "deck_rows": band.rows,
         "machine_count": len(band.machines),
         "attachment_count": len(band.attachments),
+        "deck_row_count": len(band.rows),
     }
 
 

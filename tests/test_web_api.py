@@ -1487,9 +1487,25 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
         "yaw",
         "w_m",
         "l_m",
+        "h_m",
     }
     assert row["name"] != row["cls"], "the class id was not joined to a building name"
     assert "." not in row["instance_leaf"]
+
+
+def test_a_machine_carries_the_height_a_top_down_map_cannot_draw(client):
+    """``h_m`` is the third side of the clearance box, and it is the floor view's evidence.
+
+    All three sides come from one ``mClearanceData`` and go null together, so a row with a
+    width and no height would mean the extractor had read two thirds of a measurement.
+    """
+    rows = [row for kind in client.get("/api/machines").json().values() for row in kind]
+    for row in rows:
+        assert (row["h_m"] is None) == (row["w_m"] is None) == (row["l_m"] is None)
+    tall = {row["name"]: row["h_m"] for row in rows if row["h_m"] and row["h_m"] >= 12}
+    # The case the floor view exists for: taller than this world's 12 m storey module, so
+    # it is physically through the deck above and only the deck below can say so.
+    assert tall.get("Refinery") == 15.0, tall
 
 
 def test_machine_popup_rows_never_degrade_to_engine_ids(client):
@@ -1880,6 +1896,7 @@ def test_pipes_are_the_plumbing_as_it_was_actually_routed(client, state):
 
     row = body["pipes"][0]
     assert set(row) == {
+        "row",
         "network",
         "fluid",
         "fluid_name",
@@ -1891,6 +1908,10 @@ def test_pipes_are_the_plumbing_as_it_was_actually_routed(client, state):
         "direction",
         "basis",
     }
+    # The join /api/floors keys a pipe run by. It is the position in the raw table, which is
+    # the position in this list only for as long as nothing is torn -- which is exactly why
+    # it is sent rather than counted.
+    assert [r["row"] for r in body["pipes"]] == list(range(len(raw["segments"])))
     # The class legend is resolved here, or the page would have to carry it.
     assert row["cls"] == raw["classes"][raw["segments"][0][1]]
     assert {r["cls"] for r in body["pipes"]} <= set(raw["classes"])
@@ -2015,7 +2036,13 @@ def test_a_malformed_pipe_segment_costs_one_piece_not_the_plumbing(game):
     with TestClient(app) as c:
         body = c.get("/api/pipes").json()
     assert body["count"] == 5
+    # And the join survives the tearing, which is the whole reason `row` is a field rather
+    # than this list's index: the five that decoded sat at 0, 3, 4, 5 and 6 in the raw table,
+    # so counting would have renumbered four of them -- and `/api/floors` keys a pipe run by
+    # that number, so four runs would have been drawn on somebody else's floor.
+    assert [r["row"] for r in body["pipes"]] == [0, 3, 4, 5, 6]
     assert body["pipes"][0] == {
+        "row": 0,
         "network": 7,
         "fluid": "Desc_Water_C",
         "fluid_name": "Water",
@@ -2433,11 +2460,14 @@ def test_a_band_carries_instance_ids_rather_than_a_second_copy_of_the_geometry(b
         "minor",
         "machines",
         "attachments",
+        "deck_rows",
         "machine_count",
         "attachment_count",
+        "deck_row_count",
     }
     assert band["machine_count"] == len(band["machines"]) > 0
     assert band["attachment_count"] == len(band["attachments"]) > 0
+    assert band["deck_row_count"] == len(band["deck_rows"]) > 0
 
     # Every id resolves against a payload the page already has, which is the whole point.
     known = {
@@ -2453,6 +2483,35 @@ def test_a_band_carries_instance_ids_rather_than_a_second_copy_of_the_geometry(b
         i for p in body["platforms"] for b in p["bands"] for i in b["machines"] + b["attachments"]
     ]
     assert len(everywhere) == len(set(everywhere))
+
+
+def test_a_deck_is_listed_by_position_because_concrete_has_no_instance_id(blind_floors):
+    """The one join the concrete can carry, checked against the payload it points into.
+
+    A lightweight buildable has no instance name, so ``deck_rows`` indexes
+    ``/api/structures`` -- and this is the test that the two walks really are one order.
+    Every row named must be a foundation whose top surface is the band's own level, which
+    would break the moment either side started or stopped skipping a piece.
+    """
+    body = blind_floors.get("/api/floors").json()
+    pieces = blind_floors.get("/api/structures").json()["structures"]
+    tower = next(p for p in body["platforms"] if p["index"] == 1)
+
+    seen: set[int] = set()
+    for band in tower["bands"]:
+        assert band["deck_rows"], "a band with no deck is not a band"
+        for row in band["deck_rows"]:
+            piece = pieces[row]
+            assert "Foundation" in piece["cls"] or "Platform" in piece["cls"], piece["cls"]
+            # z is the piece's CENTRE, so the deck is half a thickness up -- the stage-0
+            # correction, read here from the other end of the wire.
+            thickness = 4.0 if "8x4" in piece["cls"] else 2.0 if "8x2" in piece["cls"] else 1.0
+            assert piece["z_m"] + thickness / 2 == pytest.approx(
+                band["top_m"], abs=body["rules"]["band_eps_m"]
+            )
+        seen |= set(band["deck_rows"])
+    # One piece, one floor: overlapping decks would draw a storey twice.
+    assert sum(len(b["deck_rows"]) for b in tower["bands"]) == len(seen) == 949
 
 
 def test_a_mezzanine_is_reported_minor_rather_than_merged_away(blind_floors):
