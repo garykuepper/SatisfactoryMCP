@@ -35,6 +35,15 @@ is written to ``tiles.incoming`` and **renamed** into place, so ``tiles/`` is ei
 or absent; a run interrupted halfway leaves a staging directory nothing serves rather than
 a tree missing the levels it had not reached.
 
+``tiles@2x/`` is that identical GRID at twice the density -- level z is still ``2**z`` tiles
+a side, each 512 px instead of 256 -- for a display whose device pixel ratio is above one.
+One level shallower by arithmetic rather than by choice, since ``512 * 2**z`` runs out of
+sheet before ``256 * 2**z`` does, and a client past its top asks for the 1x tile again. It
+is cut and renamed into place on its own, so the pair is never half-swapped. The renders
+have written both trees since the endpoint learned to serve them; this tool wrote only the
+1x one until now, which meant the game's own artwork was the one layer a hi-dpi display saw
+soft. ``--no-tiles-2x`` skips it.
+
 **The ``.ubulk`` length is the integrity check.** Each is exactly 11,182,080 bytes, which
 is the mip chain 4096 down to 128 stored largest-first -- ``MIP_SIZES`` derives that total
 rather than quoting it, so the constant cannot drift from the arithmetic. Mip 0 is
@@ -215,7 +224,9 @@ from satisfactory_mcp.core.gameassets.provenance import (
     read_str_path,
 )
 from satisfactory_mcp.core.gameassets.pyramid import (
+    PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     PyramidError,
     cut_square,
@@ -1428,6 +1439,7 @@ def build_sidecar(
     calibration: dict,
     versions: dict[str, str],
     tiles: dict | None = None,
+    tiles_2x: dict | None = None,
 ) -> dict:
     """The file the web API reads, plus the provenance a reader needs to date it.
 
@@ -1476,6 +1488,12 @@ def build_sidecar(
             },
             "image": image,
             "tiles": tiles or {"absent": "this run wrote no pyramid; map.png is the whole map"},
+            # ABSENT rather than a record saying "absent", and that is what the endpoint
+            # reads: `_map_pyramid` answers `max_2x_z: None` for a layer with no such block,
+            # which is how `_tile_tree` knows to serve the 1x tile to every client. A block
+            # here saying the tree is missing would be a block, and a block means there is a
+            # tree. Same shape gen_map_renders.py writes, for the same reason.
+            **({"tiles_2x": tiles_2x} if tiles_2x else {}),
             "integrity": integrity,
             "layout": layout,
             "calibration": calibration,
@@ -1553,6 +1571,15 @@ def main() -> int:
             f"add z6 and z7 by upscaling the sheet {ENHANCE_SCALE}x with {ENHANCE_MODEL} on "
             "the GPU. Off by default: it downloads a 45 MB binary once and needs a Vulkan "
             "device. See the module docstring"
+        ),
+    )
+    parser.add_argument(
+        "--no-tiles-2x",
+        action="store_true",
+        help=(
+            f"skip the {TILES_2X_DIR_NAME}/ tree. On by default because a hi-dpi display is "
+            "the ordinary case and the tree costs about a third again; a client that cannot "
+            "find it asks for the 1x tile it already had"
         ),
     )
     parser.add_argument(
@@ -1765,6 +1792,38 @@ def main() -> int:
         f"{tiles['bytes']} B  ({tiles['bytes'] / 1e6:.1f} MB)"
     )
 
+    # The same grid at twice the density, which the renders have cut since the day the
+    # endpoint learned to serve two trees and the artwork has not. One more call with two
+    # arguments changed -- the renders' own pattern, install_layer in gen_map_renders.py --
+    # and it is installed on its own, so a failure here leaves the 1x tree a reader is
+    # already being served from exactly where it was.
+    #
+    # NO ENHANCEMENT on this tree, deliberately, and it costs nothing. @2x level z holds the
+    # same pixels as 1x level z+1 in tiles twice the size, so an --enhance run's upscaled z6
+    # and z7 are already reachable: the @2x tree simply tops out a level sooner and the
+    # client asks for the 1x tile above it, which is the fallback ``_tile_tree`` was written
+    # around. Cutting @2x from upscaled pixels would be a second pass over the GPU stage for
+    # resolution the reader can already get.
+    tiles_2x = None
+    if not args.no_tiles_2x:
+        try:
+            tiles_2x = install_pyramid(
+                sheet,
+                image_mod,
+                out_dir,
+                tile_px=PYRAMID_TILE_2X_PX,
+                dir_name=TILES_2X_DIR_NAME,
+            )
+        except PyramidError as exc:
+            print(exc)
+            return 1
+        tiles_2x["game_version_pinned"] = build_pin
+        print(
+            f"wrote {out_dir / TILES_2X_DIR_NAME}  {tiles_2x['count']} tiles over "
+            f"z0..z{tiles_2x['max_z']}  {tiles_2x['bytes']} B  "
+            f"({tiles_2x['bytes'] / 1e6:.1f} MB)"
+        )
+
     image = {
         "file": IMAGE_NAME,
         "width_px": args.size,
@@ -1800,6 +1859,7 @@ def main() -> int:
         calibration=calibration,
         versions=versions,
         tiles=tiles,
+        tiles_2x=tiles_2x,
     )
     sidecar_path.write_text(json.dumps(sidecar, indent=1), encoding="utf-8")
     print(f"wrote {sidecar_path}  {sidecar_path.stat().st_size} B")

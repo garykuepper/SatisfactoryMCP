@@ -28,6 +28,7 @@ from satisfactory_mcp import config
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_2X_PX,
     PYRAMID_TILE_PX,
+    TILES_2X_DIR_NAME,
     TILES_DIR_NAME,
     TILES_RETIRED,
     TILES_STAGING,
@@ -720,16 +721,21 @@ def test_a_hi_dpi_client_asks_for_the_same_tile_and_gets_twice_the_pixels(
 
     Three things have to hold, and each of them is a way the feature could be quietly wrong.
     The probe has to advertise BOTH depths, because a client builds its layer from that one
-    response and cannot ask for a tree it has not been told about. A layer with no @2x tree --
-    the artwork, cut by a tool that writes none -- has to serve the 1x tile rather than a 404,
-    or asking for density on the wrong layer takes the base map down. And the @2x tree's own
-    depth has to be the one enforced, since it is one level shallower and a request past its
-    top must be refused against ITS grid rather than the 1x one's.
+    response and cannot ask for a tree it has not been told about. A layer with no @2x tree
+    has to serve the 1x tile rather than a 404, or asking for density on the wrong layer takes
+    the base map down. And the @2x tree's own depth has to be the one enforced, since it is one
+    level shallower and a request past its top must be refused against ITS grid rather than the
+    1x one's.
+
+    The @2x-less layer here is the ARTWORK, and it is now a pyramid cut before that tree
+    existed or with ``--no-tiles-2x`` rather than one no tool can write -- ``gen_map_image.py``
+    cuts both trees today. The case it stands for is the one that outlives the tool: a
+    directory on somebody's disk from an older run.
     """
     monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
     local = tmp_path / web_api.LOCAL_DIR_NAME
     local.mkdir()
-    _fake_pyramid(local, max_z=2)  # the artwork: 1x only, like the tool that writes it
+    _fake_pyramid(local, max_z=2)  # an artwork pyramid with no @2x tree beside it
     directory = local / web_api.MAP_RENDERS_DIR_NAME / "terrain"
     _fake_layer(
         local,
@@ -1132,6 +1138,103 @@ def test_the_generated_sidecar_is_read_by_the_server_provenance_and_all(
     (local / web_api.MAP_BOUNDS_NAME).write_text("{}", encoding="utf-8")
     bare = web_api._map_pyramid()
     assert (bare["tile_px"], bare["max_z"]) == (web_api.MAP_TILE_PX, web_api.MAP_TILE_MAX_Z)
+
+
+def test_the_artwork_tool_writes_the_dense_tree_the_endpoint_serves(client, tmp_path, monkeypatch):
+    """``gen_map_image.py`` cuts ``tiles@2x/`` now, and the endpoint reads its record of it.
+
+    The renders have written both trees since ``/api/maptiles`` learned to serve two, and the
+    artwork tool wrote only the 1x one -- so the game's own map was the single layer a hi-dpi
+    display saw soft, on a client that had been density-aware for a day. This holds the join
+    the same way the sidecar test above does: against the tool's OWN output, because the two
+    sides agree by a key name in a JSON file and nothing else.
+
+    Both directions are asserted. A run that cut the tree must produce a block the endpoint
+    turns into a second depth; a run that did not -- ``--no-tiles-2x``, or any pyramid from
+    before this -- must produce NO block at all, because ``_map_pyramid`` reads the key's
+    absence as "serve every client the 1x tile" and a block saying "absent" is still a block.
+    """
+    pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
+    common = {
+        "build_pin": pin,
+        "build_raw": {"Changelist": 495413},
+        "image": {"file": gen_map_image.IMAGE_NAME, "width_px": gen_map_image.SHEET_PX},
+        "integrity": {},
+        "layout": {},
+        "calibration": {},
+        "versions": {},
+        "tiles": {
+            "tile_px": PYRAMID_TILE_PX,
+            "max_z": pyramid_top_z(gen_map_image.SHEET_PX),
+            "count": 1365,
+            "bytes": 21_000_000,
+            "game_version_pinned": pin,
+        },
+    }
+
+    # The arithmetic the tool leans on rather than typing in: the same sheet, cut into tiles
+    # twice the size, is exactly one level shallower.
+    dense_top = pyramid_top_z(gen_map_image.SHEET_PX, PYRAMID_TILE_2X_PX)
+    assert dense_top == pyramid_top_z(gen_map_image.SHEET_PX) - 1 == 4
+
+    monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
+    local = tmp_path / web_api.LOCAL_DIR_NAME
+    local.mkdir()
+    _fake_pyramid(local, max_z=0)  # something for the probe to answer about
+
+    with_dense = gen_map_image.build_sidecar(
+        **common,
+        tiles_2x={
+            "tile_px": PYRAMID_TILE_2X_PX,
+            "max_z": dense_top,
+            "count": 341,
+            "bytes": 20_000_000,
+            "game_version_pinned": pin,
+        },
+    )
+    (local / web_api.MAP_BOUNDS_NAME).write_text(json.dumps(with_dense), encoding="utf-8")
+    read_back = web_api._map_pyramid()
+    assert (read_back["tile_px"], read_back["max_z"]) == (PYRAMID_TILE_PX, 5)
+    assert (read_back["tile_2x_px"], read_back["max_2x_z"]) == (PYRAMID_TILE_2X_PX, 4)
+    assert client.head("/api/maptiles/0/0/0").headers["x-map-tile-2x-max-z"] == "4"
+
+    # ...and the same run with the tree skipped writes no key, which is what makes the
+    # endpoint fall back rather than advertise a depth for a directory that is not there.
+    without = gen_map_image.build_sidecar(**common, tiles_2x=None)
+    assert "tiles_2x" not in without["_meta"]
+    (local / web_api.MAP_BOUNDS_NAME).write_text(json.dumps(without), encoding="utf-8")
+    bare = web_api._map_pyramid()
+    assert bare["max_2x_z"] is None and bare["tile_2x_px"] is None
+    assert "x-map-tile-2x-px" not in client.head("/api/maptiles/0/0/0").headers
+
+    # The two trees' numbers ride in one cache tag, so re-cutting either moves every URL.
+    assert read_back["build"] != bare["build"]
+
+
+def test_the_artwork_tool_offers_the_opt_out_it_documents(tmp_path):
+    """The flag is spelled one way in the help and one way in ``main``, and they must agree.
+
+    Run as ``--help`` in a child, which is the only place argparse's own answer lives: the
+    parser is built inside ``main`` and there is no object to interrogate from here. It is
+    also the cheapest possible run of the tool -- argparse exits before ``require_gen``, so
+    this needs neither the ``gen`` extra nor a game install.
+    """
+    import subprocess
+    import sys
+
+    from conftest import REPO_ROOT
+
+    out = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "gen_map_image.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert "--no-tiles-2x" in out.stdout
+    # Named after the directory it skips rather than after a spelling of its own.
+    assert TILES_2X_DIR_NAME in out.stdout
 
 
 def test_the_enhanced_pyramid_is_two_levels_deeper_and_the_server_follows_it_there(
