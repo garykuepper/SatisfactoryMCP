@@ -143,6 +143,11 @@ class Package:
 
     EXPORT_SIZE = 72
 
+    #: Where ``PublicExportHash`` sits inside one 72-byte ``FExportMapEntry``: after the
+    #: cooked offset and size, the object name, and the outer, class, super and template
+    #: indices -- seven 8-byte fields.
+    EXPORT_PUBLIC_HASH_AT = 56
+
     def __init__(self, blob: bytes) -> None:
         self.blob = blob
         words = struct.unpack_from("<15I", blob, 0)
@@ -150,6 +155,17 @@ class Package:
         import_offset, export_offset = words[7], words[8]
         self.export_offset = export_offset
         self.names, _ = _name_batch(blob, 60)
+        # ``ImportedPublicExportHashes``: the array a PackageImport's low 32 bits INDEX.
+        # Without it a cross-package reference resolves only as far as the package NAME,
+        # which is not an identity -- this build ships thirty-five map-area assets sharing
+        # eighteen package names, so a name alone cannot say which object was meant. It runs
+        # from its own offset to the import map's, both in the summary.
+        self.imported_public_export_hashes: list[int] = []
+        if words[6] and import_offset > words[6]:
+            count = (import_offset - words[6]) // 8
+            self.imported_public_export_hashes = list(
+                struct.unpack_from(f"<{count}Q", blob, words[6])
+            )
         # The summary carries no export count: the map ends where the next section starts.
         after = min([w for w in words[9:] if w > export_offset] or [self.header_size])
         self.export_count = (after - export_offset) // self.EXPORT_SIZE
@@ -183,6 +199,7 @@ class Package:
             offset, size = struct.unpack_from("<QQ", self.blob, pos)
             name_index, name_number = struct.unpack_from("<II", self.blob, pos + 16)
             outer, class_index = struct.unpack_from("<2Q", self.blob, pos + 24)
+            (public_hash,) = struct.unpack_from("<Q", self.blob, pos + self.EXPORT_PUBLIC_HASH_AT)
             out.append(
                 {
                     "slot": slot,
@@ -191,6 +208,9 @@ class Package:
                     "name": self.name(name_index, name_number),
                     "outer": outer,
                     "class": class_index,
+                    # What another package's import refers to this export BY. Unique across
+                    # the container, where the package name is not.
+                    "public_hash": public_hash,
                 }
             )
         return out
@@ -421,6 +441,31 @@ class PackageView:
         if index >= len(self.pkg.imports):
             return None
         return self.object_path(self.pkg.imports[index])
+
+    def import_export_hash(self, payload: bytes) -> int | None:
+        """The ``PublicExportHash`` an outward ``FPackageIndex`` names, or ``None``.
+
+        The other half of :meth:`import_path`, and the half that is an IDENTITY. A
+        ``PackageImport`` packs an imported-package slot and an index into this package's
+        ``ImportedPublicExportHashes``; the slot yields a package name, which this build
+        proves is not unique -- thirty-five ``Area_*`` assets share eighteen names -- while
+        the hash names one export in the whole container. Matched against
+        ``exports()[...]["public_hash"]`` on the far side, it says exactly which object.
+        """
+        if len(payload) != 4:
+            return None
+        value = struct.unpack("<i", payload)[0]
+        if value >= 0:
+            return None
+        index = -value - 1
+        if index >= len(self.pkg.imports):
+            return None
+        packed = self.pkg.imports[index]
+        if packed >> 62 != 2:
+            return None
+        slot = packed & 0xFFFFFFFF
+        hashes = self.pkg.imported_public_export_hashes
+        return hashes[slot] if slot < len(hashes) else None
 
     def decode_struct(self, payload: bytes) -> dict:
         """A nested tagged struct as plain values, one level of types deep.

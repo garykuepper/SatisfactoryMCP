@@ -983,9 +983,30 @@ def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():
     neutral and quietly vanish into the coast) and that it really is a satellite palette
     rather than the legend under another name: nothing saturated, nothing at full white.
     """
-    assert set(gen_map_renders.REGION_PAIRS.values()) <= set(gen_map_renders.BIOME_COLOURS), (
-        "every game area this file checks against the region grid must also have a colour"
-    )
+    # Pinned by name rather than against a subset. The old form compared this table with
+    # ``REGION_PAIRS``, a list of wiki names that meant the same place as a game area; that
+    # list is gone with the wiki trace, and what replaces it is the stronger claim: these
+    # are the seventeen area stems build 495413 names, and every one of them has a colour.
+    # ``tests/test_gameassets_maparea.py`` pins the same seventeen against the container.
+    assert set(gen_map_renders.BIOME_COLOURS) == {
+        "Area_AbyssCliffs",
+        "Area_DesertCanyons",
+        "Area_DuneDesert",
+        "Area_GrassFields",
+        "Area_LakeForest",
+        "Area_MazeCanyons",
+        "Area_NorthernForest",
+        "Area_RedBambooFields",
+        "Area_RedJungle",
+        "Area_RockyDesert",
+        "Area_Savanna",
+        "Area_SouthernForest",
+        "Area_SpireCoast",
+        "Area_Swamp",
+        "Area_TitanForest",
+        "Area_WesternDuneForest",
+        "Area_crater",
+    }
     for name, colour in gen_map_renders.BIOME_COLOURS.items():
         assert len(colour) == 3 and all(0 <= c <= 255 for c in colour), name
         assert max(colour) - min(colour) <= 110, f"{name} is more saturated than imagery gets"
