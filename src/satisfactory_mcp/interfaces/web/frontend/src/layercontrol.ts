@@ -94,7 +94,12 @@ var MODE_SECTION = "modes";
 /** The radio group's name, which is the whole of what makes the four exclusive. */
 var MODE_GROUP = "basemap-mode";
 
-state.panel = { open: true, sections: { modes: true, nodes: false, pickups: false } };
+state.panel = {
+  open: true,
+  // `floors` starts open and normally has no section to open: the picker exists only while
+  // the page is slicing a factory, and arriving there is a gesture that should show it.
+  sections: { floors: true, modes: true, nodes: false, pickups: false },
+};
 
 function sectionFor(name: string): Section | null {
   var found: Section | null = null;
@@ -482,6 +487,200 @@ function renderModes(): void {
   );
 }
 
+/* ------------------------------------------------------------------ the floors */
+
+/* The floor picker: the MODE radios' sibling, and deliberately not the same code.
+ *
+ * It is the same GRAMMAR -- one question with one answer, radios in a folded section at the
+ * top of the control, drawn here and decided elsewhere through a registered callback -- and
+ * that is why it lives in this file rather than in the module that knows what a storey is.
+ * §18's split is the whole reason the modes are radios; which floor to look at is the same
+ * kind of question about the same map.
+ *
+ * What it is not is another `showModes`, and the differences are all in what a row has to
+ * say. A mode is a word; a floor is a word plus a measurement -- `+42.2 m · 175 cells · 35
+ * machines` -- and a MINOR band has to read as subordinate to the storey it is a mezzanine
+ * of, which is a class rather than a label. The section also carries two things the modes
+ * have no use for: the name of what is being sliced, and a way out. Folding those into the
+ * mode machinery would have meant four optional parameters on every call and two branches
+ * in every row, to save a fold head and a radio group that are eight lines each.
+ *
+ * The section only exists while the page is in floor mode. `hideFloors` removes the box
+ * outright rather than emptying it, because an empty floor picker over a world map is a
+ * control asking a question that has no subject.
+ */
+/** One row of the FLOOR section: a storey, and what makes it worth picking. */
+export interface FloorChoice {
+  key: string;
+  label: string;
+  /** The measurement under the name: height, area, and what stands on it. */
+  detail: string;
+  /** A mezzanine rather than a storey, by its share of its platform's largest band. */
+  minor: boolean;
+  note: string;
+}
+
+var FLOOR_SECTION = "floors";
+var FLOOR_GROUP = "floor-band";
+
+var floorChoices: FloorChoice[] = [];
+var floorTitle = "";
+var floorActive = "";
+/** What to say instead of rows when there are none. The API's own sentence, never a blank. */
+var floorMessage = "";
+
+var pickFloor: (key: string) => void = function () {};
+var leaveFloor: () => void = function () {};
+
+export function onFloorPick(pick: (key: string) => void): void {
+  pickFloor = pick;
+}
+
+export function onFloorExit(leave: () => void): void {
+  leaveFloor = leave;
+}
+
+var floorBox: HTMLElement | null = null;
+var floorHead: HTMLElement | null = null;
+var floorRows: Record<string, HTMLElement> = {};
+var floorInputs: Record<string, HTMLInputElement> = {};
+var floorBuilt = "";
+
+/** The rows, the subject they are of, and which one is drawn. `message` replaces the rows
+ *  when the answer is a sentence rather than a list -- a save too old to carry foundations,
+ *  or a factory that stands on no deck at all. */
+export function showFloors(
+  title: string,
+  rows: FloorChoice[],
+  active: string,
+  message: string
+): void {
+  floorTitle = title;
+  floorChoices = rows;
+  floorActive = active;
+  floorMessage = message;
+  state.panel.sections[FLOOR_SECTION] = true; // arriving in floor mode opens the picker
+  renderFloors();
+}
+
+export function hideFloors(): void {
+  floorChoices = [];
+  floorMessage = "";
+  floorBuilt = "";
+  if (floorBox && floorBox.parentNode) floorBox.parentNode.removeChild(floorBox);
+  floorBox = null;
+  floorHead = null;
+  floorRows = {};
+  floorInputs = {};
+}
+
+function buildFloors(list: HTMLElement): HTMLElement {
+  var box = L.DomUtil.create("div", "layer-floors");
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", "floor");
+  var head = L.DomUtil.create("div", "layer-section", box);
+  floorHead = L.DomUtil.create("span", "layer-fold", head);
+  onActivate(floorHead, function () {
+    state.panel.sections[FLOOR_SECTION] = !state.panel.sections[FLOOR_SECTION];
+    renderFloors();
+  });
+  // The way out, on the head itself: leaving is not one of the floors, so it must not be a
+  // row in the group of them -- the same reason the family box is not a member of its own
+  // family. ESC does the same thing and is not discoverable, which is why this is here too.
+  var out = L.DomUtil.create("button", "layer-floor-exit", head) as HTMLButtonElement;
+  out.type = "button";
+  out.innerHTML = "&#10005;";
+  out.title = "leave floor mode (Esc) — the whole world again";
+  out.setAttribute("aria-label", "leave floor mode");
+  L.DomEvent.on(out, "click", function (event) {
+    L.DomEvent.stop(event);
+    leaveFloor();
+  });
+
+  floorRows = {};
+  floorInputs = {};
+  if (floorMessage) {
+    // A sentence, not an empty list. The two cases that reach here -- a save too old to
+    // record foundations at all, and a factory standing on bare terrain -- are answers,
+    // and an empty picker would read as a failure to load.
+    var said = L.DomUtil.create("div", "layer-floor-note", box);
+    said.textContent = floorMessage;
+  }
+  floorChoices.forEach(function (choice) {
+    var row = L.DomUtil.create("label", "layer-floor", box);
+    if (choice.minor) L.DomUtil.addClass(row, "layer-floor-minor");
+    var holder = L.DomUtil.create("span", "", row);
+    var input = L.DomUtil.create("input", "", holder) as HTMLInputElement;
+    input.type = "radio";
+    input.name = FLOOR_GROUP;
+    input.value = choice.key;
+    var text = L.DomUtil.create("span", "", holder);
+    text.innerHTML =
+      " " +
+      esc(choice.label) +
+      '<span class="layer-floor-detail">' +
+      esc(choice.detail) +
+      "</span>";
+    // `change` rather than `click`, exactly as the modes do it: inside a radio group an
+    // arrow key moves the selection and that is a pick like any other.
+    L.DomEvent.on(input, "change", function () {
+      if (input.checked) pickFloor(choice.key);
+    });
+    floorRows[choice.key] = row;
+    floorInputs[choice.key] = input;
+  });
+  list.insertBefore(box, list.firstChild);
+  return box;
+}
+
+function floorContainer(): HTMLElement | null {
+  var container = control.getContainer();
+  if (!container) return null;
+  var list = container.querySelector<HTMLElement>(".leaflet-control-layers-list");
+  if (!list) return null;
+  var keys =
+    floorTitle +
+    "|" +
+    floorMessage +
+    "|" +
+    floorChoices
+      .map(function (choice) {
+        return choice.key + ":" + choice.detail;
+      })
+      .join(",");
+  if (floorBox && floorBox.parentNode === list && floorBuilt === keys) return floorBox;
+  if (floorBox && floorBox.parentNode) floorBox.parentNode.removeChild(floorBox);
+  floorBuilt = keys;
+  floorBox = buildFloors(list);
+  return floorBox;
+}
+
+function renderFloors(): void {
+  if (!floorChoices.length && !floorMessage) return; // not in floor mode: no section at all
+  var box = floorContainer();
+  if (!box || !floorHead) return;
+  var open = state.panel.sections[FLOOR_SECTION];
+  var active = "";
+  floorChoices.forEach(function (choice) {
+    var row = floorRows[choice.key];
+    var input = floorInputs[choice.key];
+    if (!row || !input) return;
+    input.checked = choice.key === floorActive;
+    row.title = choice.note;
+    fold(row, !open);
+    if (choice.key === floorActive) active = choice.label;
+  });
+  var said = box.querySelector<HTMLElement>(".layer-floor-note");
+  if (said) fold(said, !open);
+  foldHead(
+    floorHead,
+    open,
+    floorTitle,
+    active,
+    active ? "showing " + active : "nothing to show one floor of"
+  );
+}
+
 /* Which half of which section head holds the keyboard, as a value that can outlive the
  * element holding it.
  *
@@ -545,6 +744,7 @@ function decorateControl(): void {
     }
   });
   panelHead(rows);
+  renderFloors();
   renderModes();
   fold(container.querySelector<HTMLElement>(".leaflet-control-layers-list"), !state.panel.open);
 }

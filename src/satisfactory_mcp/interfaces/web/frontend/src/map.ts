@@ -136,10 +136,15 @@ map.getPane("regions")!.style.zIndex = "350";
 map.createPane("foundations");
 map.getPane("foundations")!.style.zIndex = "360";
 
-/* The fragment is the page's whole address: what is being looked at (world, save), what it
- * is drawn on (mode), and where the eye is (z, c). A link pins all three, in that order --
- * subject, then picture, then viewport -- so the two halves a human might edit by hand stay
- * at the ends.
+/* The fragment is the page's whole address: what is being looked at (world, save), how much
+ * of it (floor), what it is drawn on (mode), and where the eye is (z, c). A link pins all
+ * four, in that order -- subject, then how much of the subject, then picture, then viewport --
+ * so the two halves a human might edit by hand stay at the ends.
+ *
+ * `floor` is `<platform>/<band>`, the platform index `/api/floors` hands out and either a
+ * band's ordinal or `ground`. Absent when the page is showing the whole world, which is the
+ * ordinary state -- and absent, not `none`, because the address should say what is being
+ * looked at rather than enumerate what is not.
  *
  * `mode` is omitted while `state.mode` is "", which is the window between the page loading
  * and tiles.ts' probes answering. A pan in that window must not pin a mode the page has not
@@ -150,6 +155,7 @@ export function writeHash(): void {
   if (state.world) parts.push("world=" + encodeURIComponent(state.world));
   var pinned = pinnedFilename();
   if (pinned) parts.push("save=" + encodeURIComponent(pinned));
+  if (state.floor) parts.push("floor=" + state.floor.platform + "/" + state.floor.band);
   if (state.mode) parts.push("mode=" + state.mode);
   var c = map.getCenter();
   parts.push("z=" + map.getZoom());

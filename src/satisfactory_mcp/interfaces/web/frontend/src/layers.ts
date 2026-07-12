@@ -66,7 +66,13 @@ export function layer(name: string, on?: boolean, colour?: string): L.LayerGroup
     control.addOverlay(group, title);
     if (on) group.addTo(map);
   }
-  return state.layers[name]!.clearLayers();
+  var group = state.layers[name]!;
+  // The floor filter's undo goes with the contents it is an undo OF. `_floorAll` is a
+  // snapshot of what this group held, and a refetch is exactly the moment that snapshot
+  // stops being about anything -- keeping it would let a later exit restore a world that
+  // has been replaced. floors.ts takes a fresh one on its next pass.
+  delete group._floorAll;
+  return group.clearLayers();
 }
 
 /* Layers whose names are data-driven (one per resource, one per pickup category) can go

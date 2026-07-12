@@ -33,6 +33,22 @@ export interface PanelState {
  * this file, which imports nothing, import the module that fetches tiles. */
 export type BaseMode = "artwork" | "terrain" | "satellite" | "plain";
 
+/* Which storey of which platform the page is slicing, and nothing else about it.
+ *
+ * The ADDRESS lives here and the floor decomposition itself does not, which is the same
+ * split `mode` makes: this file holds what the page is currently showing so that a world
+ * switch can change all of it at once, and `map.ts` can write the fragment without importing
+ * the module that fetches. Everything else about the view -- which ids are on which band,
+ * which runs leave it -- is `floors.ts`'s, because it is a payload rather than a selection.
+ *
+ * `band` is a band's ordinal as a string, or "ground": the pseudo-floor for what the
+ * decomposition measured as standing on no band at all. A string because those are one
+ * choice among the picker's rows and the fragment spells both the same way. */
+export interface FloorAddress {
+  platform: number;
+  band: string;
+}
+
 export interface PageState {
   world: string;
   /** A pinned save's path; "" means "the newest, refetched on save events". */
@@ -54,6 +70,8 @@ export interface PageState {
    *  region tint has to know, and the reason it is a flag here rather than a question
    *  regions.ts asks tiles.ts (which would be a cycle: tiles.ts already imports it). */
   imagery: boolean;
+  /** The storey being sliced, or null for the whole world. See FloorAddress. */
+  floor: FloorAddress | null;
 }
 
 export var state: PageState = {
@@ -74,6 +92,8 @@ export var state: PageState = {
   // writeHash must not pin one it has not chosen.
   mode: "",
   imagery: false,
+  // Whole world until somebody asks for a storey; the fragment can ask for one at boot.
+  floor: null,
 };
 
 /* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a
