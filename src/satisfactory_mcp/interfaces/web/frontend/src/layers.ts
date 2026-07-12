@@ -32,6 +32,7 @@ var LAYER_ORDER = [
   "foundations",
   "belts",
   "pipes",
+  "power",
   "machines",
   "extractors",
   "generators",

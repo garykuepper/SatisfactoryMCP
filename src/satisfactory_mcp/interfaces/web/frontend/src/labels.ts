@@ -90,6 +90,14 @@ export function reveal(names: string[]): void {
  * There is a cost argument too and it is the weaker one, so it is second: revealing a fourth
  * layer means a click the reader did not make changes four things, and the toast that has to
  * list them gets longer than the note it is trying to be.
+ *
+ * POWER IS NOT THE FOURTH EITHER, and for the opposite reason to storage's: it is already on.
+ * `reveal` turns on what is off, so a layer that starts ticked would either be a no-op here or
+ * -- in the one case where it is not, a reader who unticked it -- would re-tick a box the
+ * reader had just turned off, which is the one thing this function must never do. The wires
+ * are on at world scale because unlike the three above they READ at world scale: 1,297 lines
+ * with a median span of 21 m draw the spine joining this world's bases, where 3,588 routes and
+ * 438 rectangles draw a smear. See drawPower in power.ts.
  */
 var FACTORY_LAYERS = ["machines", "belts", "pipes"];
 

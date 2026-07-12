@@ -17,6 +17,7 @@ import { L } from "./leaflet";
 import { map, writeHash } from "./map";
 import { drawCollectibles, drawNodes, drawPlayer } from "./markers";
 import { drawMachines, drawStorage, drawStructures } from "./placements";
+import { drawPower } from "./power";
 import { drawRegions } from "./regions";
 import { drawBelts, drawPipes } from "./routes";
 import { state } from "./state";
@@ -29,6 +30,7 @@ import type {
   MachinesResponse,
   NodesResponse,
   PipesResponse,
+  PowerResponse,
   StorageResponse,
   StructuresResponse,
   SummaryResponse,
@@ -99,6 +101,17 @@ export function loadStatic() {
       if (!live()) return;
       clearPrefixed(["pipes"]);
       fail("pipes: " + friendly(e));
+    });
+  // Static, and it belongs in this wave rather than the live one for the reason the belts do:
+  // a wire changes when the player builds, not when the game autosaves.
+  get<PowerResponse>("/api/power")
+    .then(function (d) {
+      if (live()) drawPower(d);
+    })
+    .catch(function (e) {
+      if (!live()) return;
+      clearPrefixed(["power"]);
+      fail("power: " + friendly(e));
     });
   get<StorageResponse>("/api/storage")
     .then(function (d) {

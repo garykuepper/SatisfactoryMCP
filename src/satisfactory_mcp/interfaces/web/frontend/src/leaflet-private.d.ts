@@ -31,6 +31,12 @@ declare module "leaflet" {
   interface Path {
     /** A direction mark rather than a route: styled by opacity, never by weight. */
     _chevron?: boolean;
+    /** A glyph whose radius is a fixed pixel size rather than one derived from the scale.
+     *
+     * Set on the power poles, which are marks in the node dots' grammar and not objects drawn
+     * at their footprint. Read twice in routes.ts: styleRoutes leaves such a piece's radius
+     * alone, and sinkRoutes puts it above the runs it terminates rather than under them. */
+    _fixed?: boolean;
     /** The route this polyline was tessellated FROM, kept so it can be tessellated again.
      *
      * A curved route is drawn at whatever subdivision the current scale earns, so the piece

@@ -6,6 +6,14 @@
  * stealing a machine's click, and the width table that is the only thing telling them apart.
  * Two files would be two copies of each pass, and they would drift the first time a third
  * network arrives.
+ *
+ * A THIRD NETWORK HAS ARRIVED, and it is drawn by `power.ts` rather than here -- but by these
+ * same three passes, which is what that paragraph was written to buy. `power` is in
+ * ROUTE_LAYERS and in ROUTE_WIDTH_M at the bottom of this file, so a wire is floored at the
+ * same hairline a belt and a pipe are and is sunk under the machines by the same rule. What
+ * lives in `power.ts` is only what is specific to it: two colours, a pole glyph, and a popup.
+ * The import goes one way -- power.ts reads `sinkRoutes` from here and nothing here reads
+ * power.ts -- so the shared passes stay in the file that owns them.
  */
 
 import { code, popup } from "./dom";
@@ -299,10 +307,14 @@ var LIFT_MIN_RADIUS_PX = 2;
  * the pieces snap to, which is also what makes a run read as continuous through one. */
 var ATTACHMENT_FALLBACK_M = 4;
 
-/* A route's stroke width, in pixels, from its width in the world. The one place the two
- * network layers agree completely: a belt is two metres and a pipe is 1.3, and past the
- * floor each is drawn at whatever that is worth on screen right now. */
-function routeWeight(width_m: number, ppm: number): number {
+/* A route's stroke width, in pixels, from its width in the world. The one place the three
+ * network layers agree completely: a belt is two metres, a pipe is 1.3 and a wire is 0.2, and
+ * past the floor each is drawn at whatever that is worth on screen right now.
+ *
+ * Exported for `power.ts`, together with the width table below, so that the wires are drawn at
+ * their first width by the same expression the zoom pass restyles them with. Two copies of it
+ * would be a layer that changed thickness the first time anybody touched the map. */
+export function routeWeight(width_m: number, ppm: number): number {
   return Math.max(ROUTE_MIN_PX, width_m * ppm);
 }
 
@@ -482,8 +494,15 @@ export function styleRoutes() {
       // it is not its size but whether it is drawn at all: it is the one piece here that has
       // a zoom BELOW which it is noise rather than information.
       if (piece._chevron) piece.setStyle({ opacity: alpha });
-      else if (piece.setRadius) piece.setRadius(radius);
-      else if (!(piece instanceof L.Polygon)) {
+      // A round glyph, and the branch has two answers now. A lift's ring is a two-metre belt
+      // seen end-on, so it is sized from the scale like everything else here. A power pole's
+      // disc is not a size at all -- it is a MARK, the same grammar the node dots use, drawn
+      // at a fixed pixel radius that says which mark it is -- so it is left exactly as it was
+      // created. `_fixed` is the piece saying which of the two it is, rather than this pass
+      // guessing from a layer name.
+      else if (piece.setRadius) {
+        if (!piece._fixed) piece.setRadius(radius);
+      } else if (!(piece instanceof L.Polygon)) {
         piece.setStyle({ weight: weight });
         // And the geometry, not just the stroke: a curve is subdivided for the scale it is
         // seen at, so the zoom that changes the width is the zoom that changes how many
@@ -781,12 +800,27 @@ export function drawPipes(data: PipesResponse): void {
  * square hidden beneath a 2 m line is still visible at its corners and is not CLICKABLE,
  * and the popup naming the piece is the whole reason it has one. The pipes layer holds no
  * polygons, so for it the partition is a no-op and the loop is the same loop.
+ *
+ * A POWER POLE IS THE SAME CASE AS A SPLITTER and is in that same middle bucket, which is
+ * what `_fixed` buys here beyond the restyle above: a pole is a 3 px disc sitting where four
+ * wires meet, so a pole sunk with the runs would be a mark under every line it terminates and
+ * a popup nobody can open. Partitioned on the mark rather than on the draw order, because
+ * draw order is `power.ts`'s business and this rule is not.
  */
-export var ROUTE_LAYERS = ["belts", "pipes"];
+export var ROUTE_LAYERS = ["belts", "pipes", "power"];
 
-/* What each route layer is worth in metres. The one place the two differ, so the one place
- * the shared passes above have to look. */
-var ROUTE_WIDTH_M: Record<string, number> = { belts: BELT_WIDTH_M, pipes: PIPE_WIDTH_M };
+/* What each route layer is worth in metres. The one place the three differ, so the one place
+ * the shared passes above have to look.
+ *
+ * A power wire's 0.2 m is the thinnest thing on this map and is a real measurement rather than
+ * a taste: a wire is a cable, not a conveyor. It reaches ROUTE_MIN_PX two zoom steps before a
+ * pipe does, which is the whole reason the floor exists -- past it every wire in the world is
+ * the same hairline, and inside a factory it is visibly finer than the belts it runs beside. */
+export var ROUTE_WIDTH_M: Record<string, number> = {
+  belts: BELT_WIDTH_M,
+  pipes: PIPE_WIDTH_M,
+  power: 0.2,
+};
 
 /* Which route layers carry direction chevrons. A BELT HAS A DIRECTION TOO -- its points are
  * in travel order, which is the one thing the belts have always been able to say and the
@@ -802,16 +836,21 @@ export function sinkRoutes() {
     var group = state.layers[name];
     if (!group) return;
     var chevrons: L.Path[] = [];
-    var squares: L.Path[] = [];
+    var glyphs: L.Path[] = [];
     var runs: L.Path[] = [];
     group.eachLayer(function (layer) {
       var piece = layer as L.Path;
-      (piece._chevron ? chevrons : piece instanceof L.Polygon ? squares : runs).push(piece);
+      (piece._chevron
+        ? chevrons
+        : piece instanceof L.Polygon || piece._fixed
+          ? glyphs
+          : runs
+      ).push(piece);
     });
-    // Sunk FIRST is left highest, per the note above, so the chevrons go before the squares
+    // Sunk FIRST is left highest, per the note above, so the chevrons go before the glyphs
     // and the runs: a direction mark under the line it marks would not be a mark.
     chevrons
-      .concat(squares)
+      .concat(glyphs)
       .concat(runs)
       .forEach(function (piece) {
         if (piece.bringToBack) piece.bringToBack();

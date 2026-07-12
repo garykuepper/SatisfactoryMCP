@@ -571,6 +571,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/power": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Power
+         * @description Every power pole and tower, and the span of every wire between them.
+         *
+         *     New in schema 17, and the half of the power network that was never drawable. The
+         *     CONNECTIVITY has been in the projection since schema 11 -- ``graph["power"]``, 1,297
+         *     interned actor pairs on the reference world, which is what ``/api/summary``'s draw and
+         *     generation figures are computed over -- and it says who is joined to whom and nothing
+         *     about where. This endpoint is the geometry beside it, joined by position: the projection
+         *     writes both lists in one pass so that ``wires[i]`` is the span of ``graph["power"][i]``,
+         *     and this is the one place the two are put back together.
+         *
+         *     **The endpoints are the game's own, not a line between two buildings.** A wire ends at a
+         *     CONNECTOR, and a connector sits at a fixed offset on its owner -- 7 m above a Mk1 pole,
+         *     2.1 m forward and 4.7 m to one side of a constructor's centre -- so origin-to-origin would
+         *     draw every wire through the middle of the machine it feeds. ``Build_PowerLine_C`` stores
+         *     both endpoints in world coordinates and the projection reads them; verified against the
+         *     game's own ``mCachedLength`` to a median of 0.000031 cm over 1,162 lines, and against two
+         *     pole origins with no free parameter at all. See ``extract._wire_span``.
+         *
+         *     **``span_m`` is the CHORD and says so.** A wire hangs as a catenary and this is the
+         *     straight line between its ends, which is shorter -- ``mCachedLength`` is the same chord, so
+         *     the sag is not a number the save carries either. Three-dimensional, because a tower span
+         *     climbs 24 m and that is real cable. It is what a top-down map draws and what a "how far is
+         *     that run" question wants; it is not the length of hanging wire.
+         *
+         *     **``from`` and ``to`` are named where the projection can name them.** 40 of the reference
+         *     world's 2,594 endpoints land on an actor no record list carries -- a hypertube entrance, a
+         *     drop pod, the AWESOME Sink -- and those come out ``null`` rather than as the engine id the
+         *     graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
+         *     it only about half the time, so the projection measures which end is which.
+         *
+         *     **A pole carries its connection count**, off the edge list rather than out of a second copy
+         *     of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
+         *     Tower platforms -- and 2 of them are strung to nothing at all, which is a real answer and
+         *     not a torn row.
+         *
+         *     Small beside its neighbours: 1,297 spans and 701 poles against the 3,085 pieces of
+         *     ``/api/belts``, and 78 KB of projection against that layer's 562 KB.
+         */
+        get: operations["power_api_power_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/factories": {
         parameters: {
             query?: never;
@@ -1386,6 +1442,38 @@ export interface operations {
         };
     };
     storage_api_storage_get: {
+        parameters: {
+            query?: {
+                save?: string | null;
+                world?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    power_api_power_get: {
         parameters: {
             query?: {
                 save?: string | null;

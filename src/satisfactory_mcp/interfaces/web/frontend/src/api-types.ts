@@ -239,6 +239,40 @@ export interface StorageRow {
   fill?: number | null;
 }
 
+/** A power pole, wall outlet or tower platform.
+ *
+ * `cls` and `name` are nullable on the same terms as a BeltRow's; see the note above it. The
+ * three coordinates are NOT: `/api/power` builds them from `saveio.rows.iter_power_poles`,
+ * which drops a row whose position will not read, so a pole that reaches this page has one.
+ *
+ * `connections` is a count off `graph["power"]` and is never null -- a pole nothing is wired to
+ * reports 0, which is a measurement: the pole is in the geometry table and in no edge. */
+export interface PoleRow {
+  cls: string | null;
+  name: string | null;
+  x_m: number;
+  y_m: number;
+  z_m: number;
+  yaw: number | null;
+  connections: number;
+}
+
+/** One power wire, as the straight line between the two connectors it is strung between.
+ *
+ * `from` and `to` are the buildings at each end, in the same order as the two points, and are
+ * null where the projection carries no record naming that actor -- 40 of the reference world's
+ * 2,594 endpoints, which land on a hypertube entrance, a drop pod or the AWESOME Sink.
+ *
+ * `span_m` is the three-dimensional CHORD, which is what the save records too: a wire hangs as
+ * a catenary and nothing in the file carries its sag. */
+export interface WireRow {
+  a_m: Point3M;
+  b_m: Point3M;
+  from: string | null;
+  to: string | null;
+  span_m: number;
+}
+
 export interface FactoryRow {
   name: string;
   centroid_m: PointM;
@@ -319,6 +353,20 @@ export interface PipesResponse extends ApiError {
 
 export interface StorageResponse extends ApiError {
   storage: StorageRow[];
+}
+
+/** `edge_count` is the one field here that is not a length of a list beside it.
+ *
+ * It is how many power EDGES the projection holds, and `wire_count` how many of them published
+ * a span. They are equal on every save cut by a sidecar new enough to read the geometry, and a
+ * projection from an older one answers with every edge and no wire at all -- so the pair is the
+ * page's evidence for "there is nothing to draw" against "there is nothing here". */
+export interface PowerResponse extends ApiError {
+  poles: PoleRow[];
+  pole_count: number;
+  wires: WireRow[];
+  wire_count: number;
+  edge_count: number;
 }
 
 export interface FactoriesResponse extends ApiError {
