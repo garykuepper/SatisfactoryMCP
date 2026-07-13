@@ -14,6 +14,7 @@ every pump's `mExtractableResource`, which the sidecar had been storing in `node
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 
@@ -77,7 +78,7 @@ def test_commissioning_defaults_to_the_safe_bound_but_names_the_other(game, live
     real one would make a 4-wave answer look mandatory when it is not."""
     out = srv.commission_plan(
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
         limit=4,
@@ -93,7 +94,7 @@ def test_a_bigger_headroom_really_does_mean_fewer_waves(game, live):
     """The reason the note is worth printing at all."""
     kw = dict(
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
         limit=4,
@@ -134,7 +135,7 @@ def test_sea_level_is_measured_rather_than_asserted(live):
 
 def test_the_water_warning_reports_the_bodies_and_the_level(game):
     out = srv.plan_factory(
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         objective="max_mw",
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],

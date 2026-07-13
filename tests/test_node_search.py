@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.factories.labels import LabelStore
@@ -169,7 +170,7 @@ def test_a_fluid_field_reports_its_head_span(game):
     """The number that decides pump counts. Reported as a SPAN, never as a pump count:
     head per pump is a game rule this project has no data for."""
     out = srv.search_resource_nodes(
-        resource="Crude Oil", sources=["region:Spire Coast"], mode="nodes", limit=1
+        resource="Crude Oil", sources=list(REFERENCE_FIELD), mode="nodes", limit=1
     )
     assert "elevation" in out
     assert "span 40m" in out, out.splitlines()[2]
@@ -186,7 +187,7 @@ def test_no_pump_count_is_invented(game):
     """The tool must not turn a head span into a number of pumps until head-per-pump is
     sourced. Naming the cost is the deliverable; guessing it is not."""
     out = srv.search_resource_nodes(
-        resource="Crude Oil", sources=["region:Spire Coast"], mode="nodes", limit=1
+        resource="Crude Oil", sources=list(REFERENCE_FIELD), mode="nodes", limit=1
     )
     header = out[: out.index("node_id")]
     assert "pumps needed" not in header

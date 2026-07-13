@@ -263,7 +263,7 @@ def test_every_raster_cell_lies_inside_its_regions_bbox(rm):
                 assert x1 <= cx <= x2 and y1 <= cy <= y2, f"{name} cell ({i},{j})"
 
 
-# ------------------------------------------- defect 3: confidence and overrides
+# ------------------------------------------- defect 3: confidence, now measured
 
 
 def test_boundary_cells_are_flagged_not_hidden(rm):
@@ -272,30 +272,60 @@ def test_boundary_cells_are_flagged_not_hidden(rm):
     assert "l" in codes  # interior cells exist too
 
 
-def test_hand_verified_override_beats_the_raster(rm, table):
-    """These two nodes are really in Western Beaches; the raster puts them in Jungle
-    Spires. The override table is authoritative and reports 'verified'."""
+def test_a_node_is_named_by_where_it_stands_and_nothing_else(rm, table):
+    """The override table is gone, and this is what replaced it.
+
+    It held 48 oil nodes whose region a human had read off the wiki's biome image and which
+    were trusted over the raster, reported as ``verified``. Two of them are checked here:
+    ``BP_ResourceNode86`` and ``BP_ResourceNode88``, which the override called Western
+    Beaches while the trace's own raster said Jungle Spires -- two readings of the same wiki
+    disagreeing about the same node.
+
+    The game names neither. Its own map areas put those two on Rocky Desert and No Man's
+    Land, and a position lookup is now the whole answer: ``label_for_node`` agrees with
+    ``label_for`` at the same coordinates, by construction.
+    """
+    got = {}
     for short in ("BP_ResourceNode86", "BP_ResourceNode88"):
         node = next(n for n in table.nodes if n["instance"].endswith("." + short))
         raster = rm.label_for(node["x"], node["y"])
         final = rm.label_for_node(node)
-        assert raster.name == "Jungle Spires"
-        assert final.name == "Western Beaches"
-        assert final.confidence == "verified"
+        assert (final.name, final.confidence) == (raster.name, raster.confidence)
+        got[short] = final.name
+    assert got == {"BP_ResourceNode86": "Rocky Desert", "BP_ResourceNode88": "No Man's Land"}
+    assert "verified" not in {rm.label_for_node(n).confidence for n in table.nodes}
 
 
-def test_western_beaches_finds_all_ten_oil_nodes(rm, table):
-    """Raster alone found 8 of 10; the override table recovers the other two."""
-    hits = rm.filter_nodes(table.by_resource("Desc_LiquidOil_C"), "Western Beaches")
-    assert len(hits) == 10
+def test_the_wiki_only_region_names_are_gone(rm):
+    """Three names the retired trace carried that the game puts nowhere on the map.
+
+    Western Beaches and Snaketree Forest are not the game's words at all. Eastern Dune
+    Forest is: an ``Area_EasternDuneForest_1`` asset exists and states that display name,
+    and the map-area raster never references it, so the game has the name and no ground
+    under it. All three must fail to resolve, or a selector would match nothing and read as
+    "no nodes there".
+    """
+    for name in ("Western Beaches", "Snaketree Forest", "Eastern Dune Forest"):
+        assert rm.resolve(name) is None, name
+        assert rm.filter_nodes([], name) == []
 
 
 def test_oil_bearing_regions(rm, table):
+    """13 crude nodes were Spire Coast under the wiki trace and 6 are under the game's.
+
+    The trace drew one coastal ring across the whole north; the game draws a much smaller
+    Spire Coast and gives the rest of that ring to Rocky Desert, Desert Canyons, Dune Desert
+    and Swamp. Six of the thirteen stayed, six became Rocky Desert and one Desert Canyons --
+    measured, and the reason this suite plans over a box rather than a region name.
+    """
     oil = table.by_resource("Desc_LiquidOil_C")
     named = {rm.label_for_node(n).name for n in oil}
     named.discard(None)
     assert "Spire Coast" in named
-    assert len(rm.filter_nodes(oil, "Spire Coast")) == 13
+    assert len(rm.filter_nodes(oil, "Spire Coast")) == 6
+    # And the crude that left it is accounted for rather than merely absent.
+    assert len(rm.filter_nodes(oil, "Rocky Desert")) == 12
+    assert len(rm.filter_nodes(oil, "Desert Canyons")) == 1
 
 
 # --------------------------------------------------------- name resolution
@@ -319,7 +349,7 @@ def test_no_spec_means_whole_map(table):
 def test_region_selector(table):
     sel = select_nodes(["region:Spire Coast", "resource:Desc_LiquidOil_C"], table.nodes)
     assert not sel.whole_map
-    assert len(sel.nodes) == 13
+    assert len(sel.nodes) == 6  # see test_oil_bearing_regions for where the other seven went
     assert not sel.errors
 
 

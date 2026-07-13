@@ -28,6 +28,29 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+#: The node field every planner test in this suite plans over, and the reason it is a BOX.
+#:
+#: It used to be ``["region:Spire Coast"]``, and the reference plans -- 99,729.62 MW over 787
+#: buildings, table B's 9,200 Fuel on 16 pipes -- were verified by hand against exactly the
+#: nodes that selector returned. Then the region layer was re-derived from the game's own
+#: ``FGMapAreaTexture``, and the game's Spire Coast turns out to be a 1.6 km2 coastal strip
+#: rather than the 8.5 km2 ring the retired wiki trace drew across the whole north: 51 nodes
+#: became 18, and 13 crude became 6. Nothing about the planner changed and every number in
+#: thirty-three tests moved, which is the definition of a fixture depending on the wrong
+#: thing. A region NAME is advisory by design -- ``domain.spatial.regions`` says so in its
+#: first paragraph -- and a regression suite must not be built on one.
+#:
+#: So the field is stated geographically, once, and can never move again. The box is the
+#: bounding box of the nodes the retired selector returned, in metres. It holds all 51 of
+#: them and 17 more: 8 Limestone, 5 Iron, 2 Copper, 2 Raw Quartz -- measured, and every one
+#: of them irrelevant to these plans, which maximise MW out of crude and coal and export
+#: Plastic and Rubber. No extra crude, no extra coal, no extra nitrogen, no extra water. That
+#: is why the hand-verified numbers reproduce unchanged over it rather than being re-baselined
+#: against whatever the software now says, which would have thrown away the human measurement
+#: the whole regression rests on.
+REFERENCE_FIELD = ("bbox:-649.63,-3140.09,2465.02,-1080.3",)
+
+
 def _docs_available() -> bool:
     return config.docs_path().is_file()
 

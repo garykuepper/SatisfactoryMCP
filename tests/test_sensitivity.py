@@ -11,6 +11,7 @@ and "you are not missing anything here" is the decision the hand-walk was produc
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.scenario import build_scenario
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.integration
 
 SPIRE = dict(
     objective="max_mw",
-    sources=["region:Spire Coast"],
+    sources=list(REFERENCE_FIELD),
     exports=["MW"],
     extractor_clocks=[1.0, 1.5, 2.0, 2.5],
 )

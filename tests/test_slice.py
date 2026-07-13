@@ -6,13 +6,14 @@ The primitive behind the shard bill, and the inner loop a commissioning planner 
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.domain.planning.prepare import prepare
 from satisfactory_mcp.domain.planning.slice import slice_of
 
 pytestmark = pytest.mark.integration
 
-SPIRE = dict(sources=["region:Spire Coast"], objective="max_mw", exports=["MW"])
+SPIRE = dict(sources=list(REFERENCE_FIELD), objective="max_mw", exports=["MW"])
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +79,7 @@ def test_a_shard_raises_the_maximum_clock_not_the_clock(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW", "Plastic", "Rubber"],
             export_minimums={"Plastic": 2000, "Rubber": 300},

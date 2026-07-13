@@ -10,6 +10,7 @@ from __future__ import annotations
 from itertools import pairwise
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M, extract_footprint
 from satisfactory_mcp.domain.planning.layout import LOGISTICS_FLOOR_M, build_layout
@@ -217,7 +218,7 @@ def test_the_two_tools_agree_on_the_same_request(game, state):
     from satisfactory_mcp import server as srv
 
     kw = dict(
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         objective="max_mw",
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
@@ -245,7 +246,7 @@ def test_fluid_head_names_what_the_floor_order_costs(game, state):
     req = build_scenario(
         game,
         state,
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         objective="max_mw",
         exports=["MW", "Plastic", "Rubber"],
         export_minimums={"Plastic": 2000, "Rubber": 300},
@@ -325,7 +326,7 @@ def test_prepare_is_usable_without_the_mcp_layer(game, state):
     from satisfactory_mcp.domain.planning.prepare import prepare
 
     good = prepare(
-        game, state, {"objective": "max_mw", "sources": ["region:Spire Coast"], "exports": ["MW"]}
+        game, state, {"objective": "max_mw", "sources": list(REFERENCE_FIELD), "exports": ["MW"]}
     )
     assert good.ok and good.solution.net_mw > 0
 
@@ -347,7 +348,7 @@ def oil_solution(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW", "Plastic", "Rubber"],
             export_minimums={"Plastic": 2000, "Rubber": 300},
@@ -425,7 +426,7 @@ def test_a_block_is_packed_not_multiplied(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW"],
             extractor_clocks=[1, 1.5, 2, 2.5],
@@ -453,7 +454,7 @@ def test_packing_shrank_the_site_rather_than_the_machine_count(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW"],
             extractor_clocks=[1, 1.5, 2, 2.5],

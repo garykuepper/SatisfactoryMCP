@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.domain.planning.optimize import (
     Scenario,
@@ -25,7 +26,7 @@ def test_extractor_clocks_apply_only_to_extractors(game, state):
     req = build_scenario(
         game,
         state,
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         extractor_clocks=[1.0, 2.5],
     )
     sol = solve(req.scenario)
@@ -41,7 +42,7 @@ def test_extractor_clocks_apply_only_to_extractors(game, state):
 def test_overclocking_nodes_raises_output_because_nodes_are_the_cap(game, state):
     """A node set is fixed, so running it faster is the only way to get more from it.
     This is the whole reason the option exists."""
-    kwargs = dict(sources=["region:Spire Coast"], objective="max_mw", exports=["MW"])
+    kwargs = dict(sources=list(REFERENCE_FIELD), objective="max_mw", exports=["MW"])
     base = solve(build_scenario(game, state, **kwargs).scenario)
     fast = solve(
         build_scenario(game, state, extractor_clocks=[1.0, 1.5, 2.0, 2.5], **kwargs).scenario
@@ -87,8 +88,8 @@ def test_a_clock_beyond_the_buildings_maximum_is_not_offered(game):
 
 
 def test_extractor_clocks_change_the_plan_id(game, state):
-    a = build_scenario(game, state, sources=["region:Spire Coast"])
-    b = build_scenario(game, state, sources=["region:Spire Coast"], extractor_clocks=[1.0, 2.5])
+    a = build_scenario(game, state, sources=list(REFERENCE_FIELD))
+    b = build_scenario(game, state, sources=list(REFERENCE_FIELD), extractor_clocks=[1.0, 2.5])
     assert a.plan_id != b.plan_id
 
 
@@ -121,7 +122,7 @@ def test_scenario_normalises_on_construction(game):
 
 @pytest.mark.parametrize("word", ["MW", "mw", "power", "Power"])
 def test_power_is_accepted_as_an_export_in_any_spelling(game, state, word):
-    req = build_scenario(game, state, sources=["region:Spire Coast"], exports=[word])
+    req = build_scenario(game, state, sources=list(REFERENCE_FIELD), exports=[word])
     from satisfactory_mcp.domain.planning.optimize import MW
 
     assert MW in req.scenario.exports

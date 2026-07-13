@@ -771,11 +771,18 @@ def regions() -> Any:
         there flatly contradicts the same page's own right-click inspector. If the
         centroid's cell already carries the region's letter it is used as-is;
         otherwise the anchor moves to the centre of the nearest cell that does.
+
+        Against the PUBLISHED grid, not against ``label_for``. The two answer at different
+        resolutions -- ``label_for`` reads the region table's finer 64 m grid, and this
+        endpoint serves the 256 m one -- so asking the finer question here would place a
+        label on a cell this payload paints as somebody else's, which is the exact
+        contradiction the anchor exists to prevent, moved one level down.
         """
         cx, cy = centroid
-        if rmap.label_for(cx, cy).name == name:
-            return [_m(cx), _m(cy)]
         ch = letters.get(name)
+        at = rmap.cell_of(cx, cy)
+        if at is not None and rmap.grid[at[1]][at[0]] == ch:
+            return [_m(cx), _m(cy)]
         best: tuple[float, float, float] | None = None
         for j, row in enumerate(rmap.grid):
             for i, cell_ch in enumerate(row):

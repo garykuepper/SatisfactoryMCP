@@ -96,26 +96,44 @@ export var PLAYER_COLOUR = "#f5f0e8";
 //
 // Transparency over the map render is therefore NOT done here -- see REGION_BLEND in regions.ts, which
 // fades the finished composite once, at the pane.
+/* Keyed by the legend letter `data/region_names.json` assigns, which is alphabetical by
+ * region name -- so the letters moved when the region layer was re-derived from the game's
+ * own map areas and three wiki-only names went with it. Every colour below is the one that
+ * region already had; what changed is which letter it hangs on, plus one new entry.
+ *
+ * Gone: Eastern Dune Forest (#4e5c3d), Snaketree Forest (#415037), Western Beaches
+ * (#736d56). The game names none of those three anywhere on the map.
+ */
 export var REGION_COLOUR: Record<string, string> = {
   A: "#3e3e3c", // Abyss Cliffs
   B: "#284e5a", // Blue Crater
   C: "#2e5348", // Crater Lakes
   D: "#654e37", // Desert Canyons
   E: "#726443", // Dune Desert
-  F: "#4e5c3d", // Eastern Dune Forest
-  G: "#3b5a3b", // Grass Fields
-  H: "#294834", // Jungle Spires
-  I: "#32544d", // Lake Forest
-  J: "#594a37", // Maze Canyons
+  F: "#3b5a3b", // Grass Fields
+  G: "#294834", // Jungle Spires
+  H: "#32544d", // Lake Forest
+  I: "#594a37", // Maze Canyons
+  /* No Man's Land: the game's own name for the outer coast and the ocean, and 287 of the
+   * 768 painted cells -- so it is the largest thing on this layer and the one that must NOT
+   * read as a biome. Bare, pale and desaturated, one step brighter than any ground here.
+   *
+   * Measured like the rest of this file. In CIE Lab it is dE 17.1 from its nearest
+   * neighbour (Rocky Desert, which it borders for most of the west coast), 18.4 from Dune
+   * Desert and 20.6 from Western Dune Forest -- above the ~15.6 step the belts use and
+   * comfortably above the pipes' 15.7. The alternatives measured beside it were all worse
+   * against that same Rocky Desert border: the render's own no-man's-land tone (#7c7a6c)
+   * lands at dE 12.6, a warm sand (#807a68) at 13.3, and anything darker collapses onto it
+   * (#5a5750 is dE 3.9). Cool greys were rejected for the other end: #46484a is dE 5.1
+   * from Abyss Cliffs. */
+  J: "#8a8478", // No Man's Land
   K: "#2e4637", // Northern Forest
   L: "#65423b", // Red Bamboo Fields
   M: "#4e3937", // Red Jungle
   N: "#5c5b4e", // Rocky Desert
-  O: "#415037", // Snaketree Forest
-  P: "#335041", // Southern Forest
-  Q: "#295258", // Spire Coast
-  R: "#374232", // Swamp
-  S: "#294233", // Titan Forest
-  T: "#736d56", // Western Beaches
-  U: "#585d40", // Western Dune Forest
+  O: "#335041", // Southern Forest
+  P: "#295258", // Spire Coast
+  Q: "#374232", // Swamp
+  R: "#294233", // Titan Forest
+  S: "#585d40", // Western Dune Forest
 };

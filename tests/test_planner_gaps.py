@@ -8,13 +8,14 @@ and a build instruction for a machine at 2% clock.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.domain.planning.optimize import build_processes, solve
 from satisfactory_mcp.domain.planning.scenario import build_scenario
 
 pytestmark = pytest.mark.integration
 
-SPIRE = ["region:Spire Coast"]
+SPIRE = list(REFERENCE_FIELD)
 
 
 # ------------------------------------------- 1. excluding a generator burn
