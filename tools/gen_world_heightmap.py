@@ -168,9 +168,11 @@ of one number quoted for the whole map.
 the recipe could come apart without looking wrong. Dry-node false positives over
 ``WATER_FP_MAX`` mean the colour classifier drifted or the sheet moved. Spire Coast recall
 under ``WATER_SPIRE_RECALL_MIN`` -- measured against the artwork over the ``Spire Coast``
-cells of ``data/region_names.json``, which is an independent hand trace of the wiki's map
-and therefore not this file marking its own homework -- means the region that exposed the
-old detector is being missed again. An ocean level more than ``WATER_OCEAN_TOLERANCE_M``
+cells of ``data/region_names.json``, which is the game's own map areas and therefore not
+this file marking its own homework -- means the region that exposed the old detector is
+being missed again. Those cells moved when that table was re-derived: the game's Spire Coast
+is a 1.6 km2 strip where the wiki trace drew a ring across the whole north, so the stencil
+is smaller and sharper than the one the recorded 99.85% was measured over. An ocean level more than ``WATER_OCEAN_TOLERANCE_M``
 from the median top of the ocean-spline boxes means the level is coming from the wrong
 boxes. And artwork water not standing over any box at all, past ``WATER_UNCOVERED_MAX``,
 means the mask and the volumes have stopped describing the same world -- which is what a
@@ -1373,9 +1375,11 @@ def water_box_tops(boxes: list[tuple[str, tuple[float, ...]]]) -> tuple[np.ndarr
 def region_mask(name: str) -> np.ndarray | None:
     """One named region of ``data/region_names.json``, on this grid. Independent evidence.
 
-    That table is a hand trace of the community wiki's biome map at 256 m, so it was made
-    without reference to anything in this pipeline -- which is the only reason a recall
-    measured against it means something. ``None`` if the table or the name is missing,
+    That table is derived from the game's own ``FGMapAreaTexture`` -- exact area boundaries
+    at 1.83 m, downsampled to 256 m -- so it is made without reference to anything in this
+    pipeline, which is the only reason a recall measured against it means something. It was
+    a hand trace of a wiki image when this gate was written; the independence argument is
+    unchanged and the stencil is sharper. ``None`` if the table or the name is missing,
     because a gate that cannot find its own reference must say so rather than pass.
     """
     if not REGION_TABLE.is_file():
@@ -1499,7 +1503,7 @@ def validate_water(surface: dict, mask: np.ndarray, boxes: list) -> dict:
             "artwork_texels": region_truth,
             "recall": None if recall is None else round(recall, 6),
             "gate_min": WATER_SPIRE_RECALL_MIN,
-            "against": "data/region_names.json, a hand trace of the wiki's biome map",
+            "against": ("data/region_names.json, the game's own map areas downsampled to 256 m"),
             "why": (
                 "this region is where the flatness detector this stage replaced scored "
                 "worst -- 35.8% recall against the artwork -- so it is the one that says "

@@ -26,9 +26,10 @@ from ..app import (
 def list_regions(with_resource: str | None = None) -> str:
     """Named map regions, optionally only those containing a given resource.
 
-    Region names are ADVISORY: boundaries come from a hand-derived 256 m raster, since
-    the game ships no biome geometry. Use them to talk about places, not to compute
-    with -- every node row also carries an exact grid cell.
+    Region names are ADVISORY: the boundaries are the game's own map areas, downsampled
+    to a 256 m grid to publish and a 64 m one to look up in, so a name near a boundary can
+    be one cell out. Use them to talk about places, not to compute with -- every node row
+    also carries an exact grid cell.
     """
     g = game()
     rm = regions_mod.load_regions()

@@ -179,8 +179,8 @@ second toolchain while two independent sources agree to 0.69 cm.
 SatisfactoryMcp/
   pyproject.toml   README.md   DESIGN.md   docs/
   data/
-    satisfactory_regions.json     # SOURCE material for the region layer (hand-derived)
-    region_names.json             # GENERATED layer 2: label raster + confidence + overrides
+    region_names.json             # GENERATED layer 2: label rasters + confidence, from
+                                  # the game's own map areas (256 m served, 64 m for lookups)
     resource_nodes.json           # GENERATED: 607 nodes, type/purity/position, with provenance
     world_resource_nodes.mit.json # SOURCE: the MIT node set §3.4 merges from
     world_collectibles.json       # GENERATED: map placements + per-instance collected state

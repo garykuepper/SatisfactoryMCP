@@ -40,8 +40,11 @@ GRID_CELL = 102_400.0
 GRID_X0 = -319_600.0  # west edge of column X0
 GRID_Y0_SOUTH = 302_800.0  # south edge of row Y0
 
-#: Content extents measured over 2,688 static world objects, as
-#: ``data/satisfactory_regions.json`` records under ``_meta.provenance``.
+#: Content extents measured over the 2,688 static world objects of
+#: ``data/world_resource_nodes.mit.json`` and ``data/world_collectibles.json`` -- the same
+#: set ``tools/gen_region_names.py`` builds its land mask from, and the six numbers are
+#: reproducible from those two files alone. (They used to be quoted from
+#: ``data/satisfactory_regions.json``, which is deleted along with the wiki trace it held.)
 CONTENT_BBOX = (-298_838.0, -314_104.0, 406_564.0, 304_196.0)  # minx, miny, maxx, maxy
 
 #: Compass bearings in degrees, clockwise from north.
