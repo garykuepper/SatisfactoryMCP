@@ -348,6 +348,136 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+/* The FLOOR section: which storey of one factory the map is showing.
+
+   Above the modes, and that order is the question order: which slice of the world, then what
+   picture it is drawn on, then what is ticked over it. It carries the same rule underneath
+   for the same reason the modes do -- one answer out of n, against a list of independent
+   yes/nos -- and it is only in the document at all while the page is slicing something, so
+   the extra rule never appears over a world map. */
+.layer-floors {
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Leaflet's own rows are `display: block` labels and these sit in the same column, so they
+   are too -- the same reason the mode rows are. */
+.layer-floor {
+  display: block;
+}
+
+/* The measurement under the name: `+42.2 m · 175 cells · 35 machines`. Its own element and
+   its own weight, because the NAME is what is being picked and the numbers are what make the
+   pick informed -- a row where both read at the same weight is a row a reader has to parse. */
+.layer-floor-detail {
+  display: block;
+  padding-left: 20px;
+  color: #7b828c;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A mezzanine, subordinate BY ITS CELL SHARE -- which is the measurement that makes it one.
+   Indented and dimmed rather than renamed or hidden: a six-cell ledge is a real band that a
+   machine can stand on, and stage 0 measured that merging it into the storey below would put
+   machines on a floor they are not on. It reads as minor and stays pickable. */
+.layer-floor-minor {
+  padding-left: 12px;
+  opacity: 0.72;
+}
+
+.layer-floor-minor .layer-floor-detail {
+  padding-left: 20px;
+}
+
+/* The way out, on the section head. Not a row in the radio group: leaving is not one of the
+   floors, and a fifth radio that meant "none of these" would make the group answer two
+   questions. */
+.layer-floor-exit {
+  flex: none;
+  order: 99;
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: #9aa0a8;
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.layer-floor-exit:hover {
+  color: #fff;
+  border-color: #7b828c;
+}
+
+/* What the picker says when there is nothing to pick: the API's own sentence -- a save too
+   old to record foundations, or a factory standing on bare terrain. A message rather than an
+   empty list, because an empty list reads as a failure to load. */
+.layer-floor-note {
+  max-width: 240px;
+  padding: 4px 0 2px 8px;
+  color: #9aa0a8;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* A floor connector's glyph: which way a lift or riser leaves this storey.
+
+   The box is REAL and is set by GLYPH_PX in floors.ts, unlike the factory anchors, which are
+   0x0 on purpose because their tooltip is what a reader clicks. Here the arrow is what a
+   reader clicks, so the icon has to be as big as the arrow -- an overflowing character on a
+   zero-size icon looks the same and cannot be hit, which makes the popup saying where the
+   connector goes unreachable.
+
+   The colour is the belts' own steel, because a connector is a piece of the network it
+   belongs to rather than a fifth thing on the page. The shadow is what keeps it readable over
+   both the pale deck and the dark ground under it. */
+.floor-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cfd8e0;
+  font-size: 12px;
+  line-height: 1;
+  text-shadow: 0 0 3px #12161a, 0 0 3px #12161a;
+  cursor: pointer;
+}
+
+/* Up is lighter than down, which is the one thing a reader has to be able to tell across a
+   floor plan full of them without opening a popup. */
+.floor-connector-up {
+  color: #eef4f8;
+}
+
+.floor-connector-down {
+  color: #93a5b4;
+}
+
+/* The one ACTION on a popup card, and the only button inside one. Full width and under the
+   rows, so it reads as what the card offers rather than as one more row of what it says. */
+.card-action {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: #cfd8e0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.card-action:hover {
+  color: #fff;
+  border-color: #7b828c;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .leaflet-control-attribution {
   background: var(--panel) !important;
   color: #9aa0a8;

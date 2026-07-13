@@ -51,9 +51,9 @@ export function drawStructures(data: StructuresResponse): void {
   // No `|| 8`: `tile_m` is the server's FOUNDATION_M constant and is always sent, and the
   // fallback was a second copy of the number the field exists to stop the page hardcoding.
   var half = data.tile_m / 2;
-  data.structures.forEach(function (s) {
+  data.structures.forEach(function (s, row) {
     if (s.x_m === null || s.y_m === null) return;
-    L.polygon(footprintCorners(s.x_m, s.y_m, half, half, s.yaw), {
+    var piece = L.polygon(footprintCorners(s.x_m, s.y_m, half, half, s.yaw), {
       color: STRUCTURE_COLOUR,
       weight: 1,
       opacity: 0.9,
@@ -61,7 +61,13 @@ export function drawStructures(data: StructuresResponse): void {
       fillOpacity: 0.9,
       interactive: false,
       pane: "foundations",
-    }).addTo(group);
+    });
+    // The only name a lightweight buildable has is its place in this list, so that is what
+    // the floor filter joins on -- `deck_rows` in `/api/floors` indexes exactly this. The
+    // index is taken from the payload rather than from a counter, so a row skipped by the
+    // guard above does not shift every piece after it by one. See floors.ts.
+    piece._floor = { row: row, x_m: s.x_m, y_m: s.y_m, z_m: s.z_m === null ? undefined : s.z_m };
+    piece.addTo(group);
   });
 }
 
@@ -91,28 +97,38 @@ export function drawMachines(data: MachinesResponse): void {
       if (m.x_m === null) return;
       var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
       var l = (m.l_m || MACHINE_FALLBACK_M) / 2;
-      L.polygon(footprintCorners(m.x_m, m.y_m!, w, l, m.yaw), {
+      var piece = L.polygon(footprintCorners(m.x_m, m.y_m!, w, l, m.yaw), {
         color: KIND_COLOUR[kind],
         weight: 1,
         fillOpacity: m.paused ? 0.15 : 0.65,
         dashArray: m.paused ? "2,2" : undefined,
-      })
-        .bindPopup(
-          popup([
-            ["building", m.name],
-            ["recipe", m.recipe_name || m.recipe],
-            ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
-            ["paused", m.paused ? "yes" : null],
-            ["footprint", m.w_m && m.l_m ? m.w_m + " x " + m.l_m + " m" : null],
-            // Degrees about world Z, positive turning +X towards +Y -- the same number
-            // the drawing is turned by, so a reader can check the picture against it.
-            // Absent, not "0", when the projection carries no facing at all.
-            ["facing", m.yaw === null || m.yaw === undefined ? null : Math.round(m.yaw) + "°"],
-            ["at", m.x_m + ", " + m.y_m + " m"],
-            ["instance", code(m.instance_leaf)],
-          ])
-        )
-        .addTo(group);
+      }).bindPopup(
+        popup([
+          ["building", m.name],
+          ["recipe", m.recipe_name || m.recipe],
+          ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
+          ["paused", m.paused ? "yes" : null],
+          // All three sides of the clearance box, because the third is now sent: a
+          // Refinery being 15 m tall is why a floor view can say it comes through the
+          // ceiling, and a reader looking at the ghost should find the number here.
+          ["footprint", m.w_m && m.l_m ? m.w_m + " x " + m.l_m + " m" : null],
+          ["height", m.h_m ? m.h_m + " m" : null],
+          // Degrees about world Z, positive turning +X towards +Y -- the same number
+          // the drawing is turned by, so a reader can check the picture against it.
+          // Absent, not "0", when the projection carries no facing at all.
+          ["facing", m.yaw === null || m.yaw === undefined ? null : Math.round(m.yaw) + "°"],
+          ["at", m.x_m + ", " + m.y_m + " m"],
+          ["instance", code(m.instance_leaf)],
+        ])
+      );
+      // What the floor filter joins a machine by, and what it needs to know to tell whether
+      // one on a lower deck comes up through this floor. See floors.ts.
+      piece._floor = {
+        id: m.instance_leaf,
+        z_m: m.z_m === null ? undefined : m.z_m,
+        h_m: m.h_m,
+      };
+      piece.addTo(group);
     });
   });
   raiseNodeDots();
@@ -217,7 +233,7 @@ export function drawStorage(data: StorageResponse): void {
     var colour = s.kind === "fluid" ? STORAGE_FLUID_COLOUR : STORAGE_COLOUR;
     var w = (s.w_m || STORAGE_FALLBACK_M) / 2;
     var l = (s.l_m || STORAGE_FALLBACK_M) / 2;
-    L.polygon(footprintCorners(s.x_m, s.y_m, w, l, s.yaw), {
+    var box = L.polygon(footprintCorners(s.x_m, s.y_m, w, l, s.yaw), {
       color: colour,
       weight: 1,
       fillColor: colour,
@@ -225,9 +241,12 @@ export function drawStorage(data: StorageResponse): void {
       // warehouse a reader wants at a glance and the map can say without being asked: an empty
       // box is a place with room in it. Same device the machines use for `paused`.
       fillOpacity: s.kind === "fluid" ? (s.fill ? 0.7 : 0.15) : s.total ? 0.7 : 0.15,
-    })
-      .bindPopup(popup(storagePopup(s)))
-      .addTo(group);
+    }).bindPopup(popup(storagePopup(s)));
+    // WHERE it stands, and deliberately no instance id: `/api/floors` does not decompose
+    // storage, so there is no band listing this box and a mark carrying an id would be a
+    // join that always misses. Position is the honest one, and floors.ts says so.
+    box._floor = { x_m: s.x_m, y_m: s.y_m, z_m: s.z_m === null ? undefined : s.z_m };
+    box.addTo(group);
   });
   raiseNodeDots();
 }

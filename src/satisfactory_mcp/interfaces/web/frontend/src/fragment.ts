@@ -21,6 +21,7 @@
  * already has, not a second way of changing the page.
  */
 
+import { applyFloorFragment } from "./floors";
 import { reload } from "./load";
 import { map, writeHash, writtenHash } from "./map";
 import { parseHash, pinnedPath, state } from "./state";
@@ -100,13 +101,21 @@ function apply(hash: string): void {
   if (hash === writtenHash()) return; // the page's own handwriting; see writtenHash
   var asked = parseHash(hash);
   var moved = applySubject(asked);
+  // How much of the subject, before the picture and before the viewport: entering floor mode
+  // flies the map, so a `#floor=…&z=…&c=…` that applied the viewport first would have its own
+  // viewport thrown away by the flight. Same reasoning, one level down, as the world switch
+  // coming before the flight.
+  var floored = applyFloorFragment(asked.floor);
   var mode = askedMode(asked.mode);
   // `false`: not because a typed mode is unpinned, but because the write it would do here is
   // the write two lines down, and one normalising write beats two.
   if (mode && mode !== state.mode) setMode(mode, false);
-  applyView(asked);
+  // Not while the floor half is still moving: `enterFloors` is a fetch and a flight, and it
+  // writes the fragment itself when it lands. Applying a stale `z` and `c` over it would
+  // undo the flight the same request just asked for.
+  if (!floored) applyView(asked);
   if (moved) reload("following the address bar…");
-  else writeHash();
+  else if (!floored) writeHash();
 }
 
 export function listenToFragment(): void {

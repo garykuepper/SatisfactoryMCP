@@ -811,10 +811,14 @@ export interface components {
             machines: string[];
             /** Attachments */
             attachments: string[];
+            /** Deck Rows */
+            deck_rows: number[];
             /** Machine Count */
             machine_count: number;
             /** Attachment Count */
             attachment_count: number;
+            /** Deck Row Count */
+            deck_row_count: number;
         };
         /**
          * FloorCounts

@@ -97,9 +97,14 @@ export interface PlacementRow {
   paused: boolean;
   yaw: number | null;
   // Null for the classes the docs dump carries no clearance data for; the page falls back
-  // to MACHINE_FALLBACK_M and says so.
+  // to MACHINE_FALLBACK_M and says so. All three go null TOGETHER -- one clearance box,
+  // read whole or not at all -- which is what lets the floor view read a null `h_m` as
+  // "never recorded" rather than as "not tall".
   w_m: number | null;
   l_m: number | null;
+  /** How tall it stands above its own deck. The one dimension a top-down map cannot draw,
+   *  and the evidence behind the floor view's ghost outlines. */
+  h_m: number | null;
 }
 
 
@@ -186,6 +191,10 @@ export type PipeDirection = "forward" | "reverse" | "unknown";
 export type PipeFlowBasis = "machine port" | "pump" | "propagated" | "unresolved";
 
 export interface PipeRow {
+  /** This pipe's position in the RAW segments table, and the join `/api/floors` keys a pipe
+   *  run by. Sent rather than counted: a torn row leaves a gap here that this list's own
+   *  index would silently close, which is the case the field exists for. */
+  row: number;
   direction: PipeDirection;
   basis: PipeFlowBasis;
   network: number | null;

@@ -22,10 +22,51 @@
 import type * as L from "leaflet";
 import "leaflet";
 
+/* What the floor view needs to know about one drawn piece, hung on the piece.
+ *
+ * A mark rather than a lookup table, for the reason every other mark here is one: the filter
+ * walks tens of thousands of drawn pieces and the alternative is a WeakMap probe apiece. What
+ * is in it is the JOIN, never the answer -- which floor a piece is on is `/api/floors`'
+ * business, and this is only enough to ask it.
+ *
+ * Every field is optional and the four are alternatives, because the four layers this filters
+ * are joined four different ways: a machine by its instance id, a run by the chain or row
+ * `/api/floors` keys it with, a foundation piece by its position in `/api/structures` (the
+ * only name a lightweight buildable has), and the two layers the decomposition says nothing
+ * about at all by where they stand. */
+export interface FloorMark {
+  /** An instance leaf: how a band lists its machines and its belt attachments. */
+  id?: string;
+  /** A belt CHAIN or a pipe row, and which of the two number spaces it is in. */
+  run?: { kind: "belt" | "pipe"; key: number };
+  /** The two ends of this piece in game metres, so a connector's glyph can be put on the
+   *  end that is actually on this floor. `[x, y, z]`, the payload's own order. */
+  ends?: [import("./api-types").Point3M, import("./api-types").Point3M];
+  /** A piece's position in `/api/structures`, which is what `deck_rows` indexes. */
+  row?: number;
+  /** Where it stands, in game metres. For storage, which no band lists, and for the
+   *  height a machine occupies above its own deck. */
+  x_m?: number;
+  y_m?: number;
+  z_m?: number;
+  /** How tall it is, from the same clearance box as its footprint. Absent where the docs
+   *  dump carries none, which is where no claim about piercing a ceiling can be made. */
+  h_m?: number | null;
+}
+
 declare module "leaflet" {
   interface Layer {
     /** Sort key for the control's row order: [group, index, name]. See layerRank. */
     _rank?: [number, number, string];
+    /** What the floor filter joins this piece by. See FloorMark. */
+    _floor?: FloorMark;
+    /** Everything a LayerGroup held before the floor filter took some of it away.
+     *
+     * On the GROUP, not on a piece: the filter replaces a group's contents and leaving is
+     * putting them back, so the undo has to live where the contents do. Cleared by
+     * `layer()` along with the contents themselves -- a snapshot of data that has been
+     * refetched is a claim about a world that is gone. */
+    _floorAll?: L.Layer[];
   }
 
   interface Path {
@@ -37,6 +78,23 @@ declare module "leaflet" {
      * at their footprint. Read twice in routes.ts: styleRoutes leaves such a piece's radius
      * alone, and sinkRoutes puts it above the runs it terminates rather than under them. */
     _fixed?: boolean;
+    /** How this path was drawn before it was ghosted, so unghosting is exact rather than
+     *  a second guess at the drawing module's own options. Its presence IS "this path is
+     *  ghosted right now". See ghost() in floors.ts. */
+    _floorStyle?: L.PathOptions;
+    /** ...and the CONTENT of the card it was carrying, for the same reason and at the same
+     *  time: a ghost says something different about the same machine, and a machine that
+     *  stops being a ghost must stop saying it.
+     *
+     *  The content and not the popup, and that is the whole of the bug this fixes: Leaflet's
+     *  `bindPopup` REUSES an existing `L.Popup` when it is handed a string, so keeping the
+     *  popup object keeps a reference to the very thing the ghost is about to overwrite.
+     *
+     *  Narrower than Leaflet's own `Content`, which also allows a FUNCTION of the layer:
+     *  every popup on this page is a string built by `popup()` or -- for the factory card --
+     *  an element, and declaring a case the page cannot produce would put an untestable
+     *  branch in the one place that has to put a card back exactly as it found it. */
+    _floorCard?: string | HTMLElement | null;
     /** The route this polyline was tessellated FROM, kept so it can be tessellated again.
      *
      * A curved route is drawn at whatever subdivision the current scale earns, so the piece

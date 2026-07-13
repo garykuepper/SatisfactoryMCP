@@ -32,9 +32,10 @@ const HEADER = `/**
  *
  * ONE EXCEPTION, and it is the direction of travel: \`/api/floors\` declares a response
  * model, so its whole body IS described here -- \`FloorsResponse\` and the six schemas under
- * it. A client for the floor view should read them from this file and add nothing to
- * \`api-types.ts\`; the point of doing that endpoint first is that it has no client yet, so
- * there was no observed interface to reconcile with.
+ * it. The floor view in \`floors.ts\` reads them from this file and \`api-types.ts\` declares
+ * nothing about floors at all, which is the arrangement that endpoint was converted to get:
+ * one description of the body, generated from the server, with no hand-written twin to go
+ * stale beside it.
  */
 `;
 

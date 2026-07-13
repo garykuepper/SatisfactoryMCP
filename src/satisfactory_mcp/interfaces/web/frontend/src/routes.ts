@@ -414,27 +414,35 @@ export function drawBelts(data: BeltsResponse): void {
         opacity: 0.85,
       });
     }
+    // The join the floor filter uses: a belt is keyed by its CHAIN, which is the unit
+    // `/api/floors` reasons about -- consecutive pieces of a chain join at a median 0.00 cm,
+    // so a chain is one run and a piece is a fragment of one. The two ends ride along so a
+    // connector's glyph can be put on the end that is actually on the floor being looked at.
+    piece._floor = { run: { kind: "belt", key: b.chain }, ends: [first, last] };
     piece.bindPopup(beltPopup(b, beltKind(b, ring), first, last)).addTo(group);
   });
   (data.attachments || []).forEach(function (a) {
     if (a.x_m === null || a.y_m === null) return;
     var w = (a.w_m || ATTACHMENT_FALLBACK_M) / 2;
     var l = (a.l_m || ATTACHMENT_FALLBACK_M) / 2;
-    L.polygon(footprintCorners(a.x_m, a.y_m, w, l, a.yaw), {
+    var junction = L.polygon(footprintCorners(a.x_m, a.y_m, w, l, a.yaw), {
       color: BELT_COLOUR,
       weight: 1,
       fillColor: BELT_COLOUR,
       fillOpacity: 0.85,
-    })
-      .bindPopup(
-        popup([
-          titleRow("belt part", a.name, a.cls),
-          ["facing", a.yaw === null || a.yaw === undefined ? null : Math.round(a.yaw) + "°"],
-          ["at", a.x_m + ", " + a.y_m + " m"],
-          ["instance", code(a.instance_leaf)],
-        ])
-      )
-      .addTo(group);
+    }).bindPopup(
+      popup([
+        titleRow("belt part", a.name, a.cls),
+        ["facing", a.yaw === null || a.yaw === undefined ? null : Math.round(a.yaw) + "°"],
+        ["at", a.x_m + ", " + a.y_m + " m"],
+        ["instance", code(a.instance_leaf)],
+      ])
+    );
+    // A splitter is placed like a machine and is listed like one: by instance id, in the
+    // band it stands on. It rides in the belts layer and is joined the machines' way, which
+    // is exactly the split `/api/floors` makes between its runs and its placements.
+    junction._floor = { id: a.instance_leaf, z_m: a.z_m === null ? undefined : a.z_m };
+    junction.addTo(group);
   });
   sinkRoutes();
 }
@@ -486,6 +494,11 @@ export function styleRoutes() {
     if (!group || !map.hasLayer(group)) return;
     var weight = routeWeight(ROUTE_WIDTH_M[name]!, ppm);
     group.eachLayer(function (layer) {
+      // Not everything in these groups is drawn GEOMETRY any more: floor mode puts a
+      // connector's up/down glyph in the layer its run belongs to, and that glyph is a
+      // marker with an icon rather than a path. It has no stroke to size, and asking it for
+      // one threw -- so the test is what a piece IS rather than what it is not.
+      if (!(layer instanceof L.Path)) return;
       var piece = layer as L.Path & { setRadius?: (r: number) => void };
       // Four kinds of piece share these layers now and only two of them are sized in pixels:
       // a lift's ring by its radius, a run by its weight. A splitter is a polygon in map
@@ -747,13 +760,17 @@ export function drawPipes(data: PipesResponse): void {
   var alpha = chevronOpacity(ppm);
   data.pipes.forEach(function (p) {
     if (p.points_m.length < 2) return; // a route with one point is not a route
-    routePolyline(p.points_m, p.curve_m, ppm, {
+    var first = p.points_m[0]!;
+    var last = p.points_m[p.points_m.length - 1]!;
+    var run = routePolyline(p.points_m, p.curve_m, ppm, {
       color: pipeColour(p.flow_m3_min),
       weight: pipeWeight(ppm),
       opacity: 0.85,
-    })
-      .bindPopup(pipePopup(p, p.points_m[0]!, p.points_m[p.points_m.length - 1]!))
-      .addTo(group);
+    }).bindPopup(pipePopup(p, first, last));
+    // `row`, not this list's index: it is the pipe's position in the RAW table, which is
+    // what `/api/floors` keys a pipe run by and what stays right when a row is torn.
+    run._floor = { run: { kind: "pipe", key: p.row }, ends: [first, last] };
+    run.addTo(group);
     if (!ROUTE_CHEVRONS.pipes) return;
     if (p.direction !== "forward" && p.direction !== "reverse") return;
     routeChevrons(p.points_m, p.direction === "reverse").forEach(function (mark) {
@@ -769,6 +786,10 @@ export function drawPipes(data: PipesResponse): void {
         }
       );
       piece._chevron = true;
+      // Marked with its pipe's key and with no ends, so a floor filter keeps a direction
+      // mark exactly when it keeps the pipe under it -- and never mistakes the mark for a
+      // run whose end could carry a connector glyph.
+      piece._floor = { run: { kind: "pipe", key: p.row } };
       piece.addTo(group);
     });
   });
@@ -839,6 +860,10 @@ export function sinkRoutes() {
     var glyphs: L.Path[] = [];
     var runs: L.Path[] = [];
     group.eachLayer(function (layer) {
+      // Paths only, for the reason styleRoutes states: a floor connector's glyph is a marker
+      // and lives in the marker pane, which is above this canvas and is not part of the
+      // stacking question this pass answers.
+      if (!(layer instanceof L.Path)) return;
       var piece = layer as L.Path;
       (piece._chevron
         ? chevrons

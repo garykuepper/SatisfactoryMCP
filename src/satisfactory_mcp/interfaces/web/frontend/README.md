@@ -49,32 +49,33 @@ production — in production it is the same origin, in dev the proxy makes it lo
 
 | file | what it is | lines |
 | --- | --- | --- |
-| `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 40 |
-| `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 95 |
+| `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 55 |
+| `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 129 |
 | `src/leaflet.ts` | the one `import`, and where the private-field declarations attach | 19 |
-| `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 111 |
+| `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 153 |
 | `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 67 |
 | `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
 | `src/format.ts` | resource short name, region line, phase name | 37 |
-| `src/palette.ts` | every colour chosen against the others, in one table | 89 |
-| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 45 |
-| `src/api-types.ts` | the response shapes, hand-written from observed payloads | 276 |
-| `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1058 |
-| `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 74 |
-| `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 197 |
-| `src/layers.ts` | named layer groups, kept across a refetch | 80 |
-| `src/layercontrol.ts` | the folded control: base-map modes, legend, filter, tri-state families, focus | 571 |
+| `src/palette.ts` | every colour chosen against the others, in one table | 121 |
+| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 94 |
+| `src/api-types.ts` | the response shapes, hand-written from observed payloads | 438 |
+| `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1545 |
+| `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 124 |
+| `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 219 |
+| `src/layers.ts` | named layer groups, kept across a refetch | 87 |
+| `src/layercontrol.ts` | the folded control: floor picker, base-map modes, legend, filter, tri-state families, focus | 784 |
 | `src/regions.ts` | the biome raster, how it shares the screen with a render, and whose choice it is | 176 |
-| `src/tiles.ts` | the base map: four modes, one tile layer, and the probing behind both | 379 |
-| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 563 |
-| `src/placements.ts` | the floor plan and the machines standing on it | 106 |
-| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 175 |
-| `src/labels.ts` | factory labels, the flight, and the declutter pass | 277 |
-| `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 126 |
-| `src/load.ts` | who fetches what and when; the epoch guard | 192 |
-| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 174 |
+| `src/tiles.ts` | the base map: four modes, one tile layer, and the probing behind both | 426 |
+| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 846 |
+| `src/placements.ts` | the floor plan and the machines standing on it | 252 |
+| `src/floors.ts` | floor mode: one storey at a time, by filtering what is already drawn | 896 |
+| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 195 |
+| `src/labels.ts` | factory labels, the flight, the card's one action, and the declutter pass | 364 |
+| `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 155 |
+| `src/load.ts` | who fetches what and when; the epoch guard | 231 |
+| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 200 |
 | `src/sse.ts` | one EventSource, and what a save write means | 61 |
-| `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 424 |
+| `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 604 |
 | `public/vendor/LEAFLET-LICENSE` | copied verbatim into the build; BSD-2-Clause requires it | |
 | `vite.config.ts` | where the build writes, the banner it stamps, the dev proxy | |
 | `scripts/stamp-schema.mjs` | re-applies the generated schema's provenance header | |
@@ -97,6 +98,13 @@ draws the four base-map radios and `tiles.ts` registers what a click on one mean
 `onModePick`. The arrow can only point that way — `tiles.ts` reaches the control through
 `layers.ts` already — and the seam is what keeps "which picture is the base map" out of a
 widget that otherwise knows nothing about pyramids.
+
+`layercontrol.ts` does not import `floors.ts` for the third time round the same shape:
+`onFloorPick` and `onFloorExit` are the seam, and the control draws a floor picker without
+knowing what a storey is. `floors.ts` is imported by `labels.ts` (the card's action),
+`fragment.ts` and `main.ts` (the address bar and the Esc key) and `load.ts` (a redraw replaces
+a layer's contents, and the floor filter is a fact about contents) — so it must import none of
+those four, and does not.
 
 Leaflet is the `leaflet` npm package pinned to **1.9.4** — the exact version that used to sit
 in `static/vendor/leaflet.js` — and it is compiled into the bundle together with its own
@@ -126,6 +134,10 @@ Two files carry the API, and they are authoritative for different halves.
   `api.py` is annotated `-> dict`, so FastAPI publishes no response schema and all sixteen
   `200`s come out as `unknown`. Regenerating rewrites the file whole, so its provenance header
   is re-stamped by `scripts/stamp-schema.mjs`, which `typegen` chains.
+  `/api/floors` is the one exception and now has a client: `floors.ts` reads `FloorsResponse`
+  and the six schemas under it straight out of this file, and `api-types.ts` says nothing about
+  floors at all. Adding a field to that endpoint therefore means running `typegen`, not editing
+  two files.
 - **`src/api-types.ts` is hand-written**, from payloads observed against a real save. It is the
   frontend's claim about the API, not the API's claim about itself, and it says so at the top.
   The proper fix is response models on `api.py`, which would make this file generated too —

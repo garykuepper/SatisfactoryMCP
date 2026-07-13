@@ -8,6 +8,7 @@
  */
 
 import { code, esc, popup } from "./dom";
+import { cardWithFloors } from "./floors";
 import { batch } from "./layercontrol";
 import { L } from "./leaflet";
 import { layer } from "./layers";
@@ -146,11 +147,23 @@ function factoryBounds(bbox_m: BboxM | null | undefined): L.LatLngBounds | null 
   );
 }
 
+/* The card, and the one action on it.
+ *
+ * `factory` is a NAME when the card is a named factory's and null when it is a proposal's,
+ * and that is the whole of the difference: a floor view is asked for by selector, and a
+ * proposal is a cluster this page invented rather than something the player named. So the
+ * action is on the labels and not on the proposals, and the two go through one builder so
+ * that the rest of the card cannot drift between them. */
+function cardFor(rows: Row[], factory: string | null): string | HTMLElement {
+  return factory === null ? popup(rows) : cardWithFloors(rows, factory);
+}
+
 function factoryAnchor(
   row: FactoryRow | ProposalRow,
   text: string,
   className: string,
-  rows: Row[]
+  rows: Row[],
+  factory: string | null
 ): L.Marker {
   var marker = anchorMarker(row.centroid_m);
   marker._labelWeight = row.machines || 0; // declutter priority: big factories win
@@ -162,7 +175,7 @@ function factoryAnchor(
   });
   // autoPan off: the card would otherwise shove the map sideways mid-flight, and the
   // flight already puts the factory in view.
-  marker.bindPopup(popup(rows), { autoPan: false });
+  marker.bindPopup(cardFor(rows, factory), { autoPan: false });
   var bounds = factoryBounds(row.bbox_m);
   if (bounds) {
     var to = bounds;
@@ -178,25 +191,37 @@ function factoryAnchor(
 export function drawFactories(data: FactoriesResponse): void {
   var named = layer("factory labels", true);
   data.labels.forEach(function (f) {
-    factoryAnchor(f, f.name, "factory-label", [
-      ["factory", f.name],
-      ["machines", f.machines],
-      ["notes", f.notes],
-      ["at", f.centroid_m[0] + ", " + f.centroid_m[1] + " m"],
-      ["selector", code("label:" + f.name)],
-    ]).addTo(named);
+    factoryAnchor(
+      f,
+      f.name,
+      "factory-label",
+      [
+        ["factory", f.name],
+        ["machines", f.machines],
+        ["notes", f.notes],
+        ["at", f.centroid_m[0] + ", " + f.centroid_m[1] + " m"],
+        ["selector", code("label:" + f.name)],
+      ],
+      f.name
+    ).addTo(named);
   });
   var proposed = layer("proposals", false);
   data.proposals.forEach(function (p) {
     var title = "#" + p.index + " " + p.label;
     // No cohesion row: the clusterer does not compute the score yet (every proposal
     // reports 0.0), and a constant 0 reads as "this cluster scored zero".
-    factoryAnchor(p, title + " (" + p.machines + ")", "factory-label proposal", [
-      ["proposal", title],
-      ["machines", p.machines],
-      ["spread", p.spread_m + " m"],
-      ["selector", code("proposal:" + p.index)],
-    ]).addTo(proposed);
+    factoryAnchor(
+      p,
+      title + " (" + p.machines + ")",
+      "factory-label proposal",
+      [
+        ["proposal", title],
+        ["machines", p.machines],
+        ["spread", p.spread_m + " m"],
+        ["selector", code("proposal:" + p.index)],
+      ],
+      null
+    ).addTo(proposed);
   });
   declutter();
 }

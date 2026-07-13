@@ -22,6 +22,7 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 
+import { applyFloorFragment, escapeLeavesFloorMode, noteFloorChoice } from "./floors";
 import { listenToFragment } from "./fragment";
 import { inspect } from "./inspector";
 import { declutter } from "./labels";
@@ -31,7 +32,7 @@ import { map, writeHash } from "./map";
 import { noteRegionChoice, updateRegionBlend } from "./regions";
 import { ROUTE_LAYERS, sinkRoutes, styleRoutes } from "./routes";
 import { listen } from "./sse";
-import { state } from "./state";
+import { BOOT, state } from "./state";
 import { loadBaseMap } from "./tiles";
 import { loadWorlds } from "./worlds";
 
@@ -47,9 +48,10 @@ import { loadWorlds } from "./worlds";
  * consequence and not a hypothetical one.
  *
  *   zoomend            writeHash, styleRoutes, declutter
- *   overlayadd         (the control's own decorator), noteRegionChoice,
+ *   overlayadd         (the control's own decorator), noteRegionChoice, noteFloorChoice,
  *                      styleRoutes + sinkRoutes, declutter
- *   overlayremove      (the control's own decorator), noteRegionChoice, declutter
+ *   overlayremove      (the control's own decorator), noteRegionChoice, noteFloorChoice,
+ *                      declutter
  *
  * The control's decorator is not in this list because it is registered while the control is
  * being built, which is the only moment it can be, and it therefore always comes first --
@@ -60,6 +62,11 @@ map.on("layeradd layerremove", updateRegionBlend);
 // Which of the region box's ticks were the player's, which is what makes the base map's
 // default for it a default rather than an override. See regionsUnderMode.
 map.on("overlayadd overlayremove", noteRegionChoice);
+/* The same question for floor mode, and it runs AFTER the region one because the two are
+ * independent and this is the order a reader should find them in: the older rule first.
+ * A layer floor mode turned on stops being floor mode's the moment the reader touches its
+ * box -- and a layer ticked on mid-mode owes the floor filter a pass, which this does too. */
+map.on("overlayadd overlayremove", noteFloorChoice);
 map.on("zoomend", styleRoutes);
 
 /* A layer added long after both fetches landed is appended to the canvas' draw list, i.e. on
@@ -88,11 +95,17 @@ onSettled(declutter);
 
 map.on("contextmenu", inspect);
 
-/* The one listener here that is not the map's: the address bar. Registered beside the map's
- * because it is the same kind of fact -- an event the page reacts to, wired where a reader can
- * see the whole set -- and registered BEFORE the loaders below, so a fragment edited during
- * the first fetch is not dropped on the floor. */
+/* The two listeners here that are not the map's: the address bar, and the one key this page
+ * binds. Registered beside the map's because they are the same kind of fact -- events the
+ * page reacts to, wired where a reader can see the whole set -- and the fragment one is
+ * registered BEFORE the loaders below, so a fragment edited during the first fetch is not
+ * dropped on the floor.
+ *
+ * ESC on the document rather than on the map, because floor mode is a state of the PAGE: the
+ * key has to work with the keyboard in the layer control's floor picker, which is where a
+ * reader who has just walked six storeys is most likely to be. */
 listenToFragment();
+document.addEventListener("keydown", escapeLeavesFloorMode);
 
 /* -------------------------------------------------------------------- boot */
 
@@ -106,6 +119,11 @@ loadWorlds().then(function () {
   if (state.worlds.length) {
     loadStatic();
     loadLive();
+    /* ...and the fragment's floor half, which is the one part of the address that cannot be
+     * applied before there is a world to apply it to. Fired here rather than waiting for the
+     * two waves to land: `/api/floors` is its own request and the view owes a flight until
+     * the concrete arrives, which the redraw pass then makes for it. */
+    applyFloorFragment(BOOT.floor);
   }
   listen();
 });

@@ -10,6 +10,7 @@
 
 import { get } from "./api";
 import { el } from "./dom";
+import { inFloorMode, leaveFloors, refilterFloors, refreshFloors } from "./floors";
 import { phaseText } from "./format";
 import { drawFactories } from "./labels";
 import { clearPrefixed } from "./layers";
@@ -59,6 +60,22 @@ export function loadRegions() {
  * The catch paths clear their layers before tosting: a failed switch must leave those
  * layers empty, not showing the previous world under the new world's header. */
 
+/* Every draw goes through here, and it says two things at once.
+ *
+ * The epoch guard is the older one: a reply that comes back for a world nobody is looking at
+ * any more is dropped rather than drawn. What is new is the line after the draw -- a redraw
+ * replaces a layer's CONTENTS, and the floor filter is a fact about contents, so a layer
+ * refetched during floor mode would arrive holding every storey at once. Spelled once here
+ * rather than eight times below, because eight copies is eight chances to forget the second
+ * half in the ninth. */
+function drew<T>(live: () => boolean, draw: (data: T) => void): (data: T) => void {
+  return function (data) {
+    if (!live()) return;
+    draw(data);
+    refilterFloors();
+  };
+}
+
 export function loadStatic() {
   // Nodes and factory shapes change only when the player builds, so they are refetched
   // on a world switch rather than on every save write.
@@ -67,36 +84,28 @@ export function loadStatic() {
     return epoch === state.epoch;
   };
   get<NodesResponse>("/api/nodes")
-    .then(function (d) {
-      if (live()) drawNodes(d);
-    })
+    .then(drew(live, drawNodes))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["node: "]);
       fail("nodes: " + friendly(e));
     });
   get<StructuresResponse>("/api/structures")
-    .then(function (d) {
-      if (live()) drawStructures(d);
-    })
+    .then(drew(live, drawStructures))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["foundations"]);
       fail("structures: " + friendly(e));
     });
   get<BeltsResponse>("/api/belts")
-    .then(function (d) {
-      if (live()) drawBelts(d);
-    })
+    .then(drew(live, drawBelts))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["belts"]);
       fail("belts: " + friendly(e));
     });
   get<PipesResponse>("/api/pipes")
-    .then(function (d) {
-      if (live()) drawPipes(d);
-    })
+    .then(drew(live, drawPipes))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["pipes"]);
@@ -114,18 +123,14 @@ export function loadStatic() {
       fail("power: " + friendly(e));
     });
   get<StorageResponse>("/api/storage")
-    .then(function (d) {
-      if (live()) drawStorage(d);
-    })
+    .then(drew(live, drawStorage))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["storage"]);
       fail("storage: " + friendly(e));
     });
   get<FactoriesResponse>("/api/factories")
-    .then(function (d) {
-      if (live()) drawFactories(d);
-    })
+    .then(drew(live, drawFactories))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["factory labels", "proposals"]);
@@ -139,8 +144,13 @@ export function loadLive() {
     return epoch === state.epoch;
   };
   get<MachinesResponse>("/api/machines")
-    .then(function (d) {
-      if (live()) drawMachines(d);
+    .then(drew(live, drawMachines))
+    .then(function () {
+      // A save write changes what is BUILT, so it changes the decomposition -- and the ids a
+      // band lists are what the floor filter runs on. Without this a machine placed since the
+      // view was opened would be drawn by /api/machines, listed by no band, and therefore
+      // silently missing from every floor rather than visibly new on one.
+      if (live()) refreshFloors();
     })
     .catch(function (e) {
       if (!live()) return;
@@ -148,9 +158,7 @@ export function loadLive() {
       fail("machines: " + friendly(e));
     });
   get<CollectiblesResponse>("/api/collectibles?mode=remaining")
-    .then(function (d) {
-      if (live()) drawCollectibles(d);
-    })
+    .then(drew(live, drawCollectibles))
     .catch(function (e) {
       if (!live()) return;
       clearPrefixed(["pickup: "]);
@@ -219,6 +227,10 @@ function busy(on: boolean): void {
 export function reload(note?: string): void {
   state.epoch += 1;
   map.closePopup(); // an open card is a claim about the previous world/save
+  // ...and so is an open floor view, twice over: a platform index is what ONE decomposition
+  // handed out, and the ids on its bands name machines in the save being left. Leaving the
+  // mode is the honest move; re-entering on the new world is one click and one link.
+  if (inFloorMode()) leaveFloors();
   // Same reason the popup is closed one line up, and the same reason the two branches in
   // loadLive() set both: a tooltip is a claim about the previous world too, and this one
   // outlives the switch by the whole length of a 3 s parse if it is not replaced here.
