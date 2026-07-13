@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ... import config
+from .. import atomic
 
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
 #: every pickle written by an older schema misses rather than being served without its new
@@ -299,7 +300,16 @@ def load_projection(
                 _remember(key, payload)
                 return payload
             except Exception:
-                disk.unlink(missing_ok=True)  # corrupt or stale pickle format
+                # Corrupt, or a stale pickle format, or -- the case that made this cache
+                # directory a shared one -- a file `prune_cache` deleted between the
+                # `is_file` above and the read. The unlink is itself best-effort for the
+                # same reason: on Windows it raises `PermissionError` while any other
+                # process holds the file open, and this used to be the one line in the
+                # whole read path that could take a caller down over a cache.
+                try:
+                    disk.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     payload = _run_sidecar([header["path"]])
     if payload.get("schema_version") != SCHEMA_VERSION:
@@ -308,7 +318,12 @@ def load_projection(
         )
     _remember(key, payload)
     try:
-        (config.cache_dir() / f"save-{key}.pkl").write_bytes(pickle.dumps(payload))
+        # `atomic.write_bytes`, not `Path.write_bytes`, because this directory has more than
+        # one writer: the web server, any CLI invocation and -- under `pytest-xdist` -- a
+        # test worker per core, all of which resolve the same newest save and miss the same
+        # key at the same moment. A plain write is create-then-fill, so a concurrent reader
+        # gets a prefix of a pickle; `core/atomic.py` argues the whole case.
+        atomic.write_bytes(config.cache_dir() / f"save-{key}.pkl", pickle.dumps(payload))
         # Prune on write, because autosaves rotate every ~5 minutes and each one is a
         # new cache key: without this the directory grows by ~500 kB per autosave for
         # ever. Globbing a dozen files is far cheaper than the 4 s parse we just did.
@@ -328,10 +343,32 @@ def _remember(key: str, payload: dict) -> None:
 
 
 def prune_cache(keep: int = 12) -> int:
-    """Drop all but the newest ``keep`` cached projections."""
-    files = sorted(
-        config.cache_dir().glob("save-*.pkl"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    """Drop all but the newest ``keep`` cached projections.
+
+    **Every filesystem call here is best-effort, because another process is deleting the
+    same files.** The directory is shared by the server, by the CLI and by a test worker per
+    core, all of which prune on every write, and the folder sits at exactly ``keep`` entries
+    in normal use -- so a prune racing another prune is the ordinary case rather than the
+    unlucky one. The ``unlink`` was already guarded; the ``stat`` inside the sort key was
+    not, and a file that vanished between the glob and the sort raised ``FileNotFoundError``
+    out of ``sorted`` -- from the ``cache_prune`` tool, which calls this directly and has no
+    outer guard to swallow it.
+
+    A file whose ``stat`` fails sorts as if it were infinitely old. It is a file this call
+    can no longer see, so ranking it last means the loop below tries to delete it and finds
+    it already gone, which is exactly what happened.
+    """
+
+    def _mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return float("-inf")
+
+    try:
+        files = sorted(config.cache_dir().glob("save-*.pkl"), key=_mtime, reverse=True)
+    except OSError:
+        return 0
     removed = 0
     for f in files[keep:]:
         try:

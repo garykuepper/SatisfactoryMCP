@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 from pathlib import Path
 
 import pytest
 
 from satisfactory_mcp import config
 from satisfactory_mcp.core import atomic
+from satisfactory_mcp.core.saveio import projection as projection_mod
 from satisfactory_mcp.domain.collectibles import table as collectibles_table
 from satisfactory_mcp.domain.factories.labels import LabelStore
 from satisfactory_mcp.domain.planning.store import PlanStore
@@ -90,6 +92,122 @@ def test_a_first_write_to_a_missing_file_still_lands(tmp_path):
     path = atomic.write_text(tmp_path / "new.json", '{"ok": true}')
     assert json.loads(path.read_text(encoding="utf-8")) == {"ok": True}
     assert sorted(p.name for p in tmp_path.iterdir()) == ["new.json"]
+
+
+# ------------------------------------------------- the same guarantee, for the cache
+
+#: ``write_bytes`` exists for the projection cache, which this module's own docstring used to
+#: name as the file that did NOT need it. What changed is not the file, it is how many
+#: processes write it: the cache directory is shared by the web server, by every CLI
+#: invocation and by the eight ``pytest-xdist`` workers the suite now runs on, all of which
+#: resolve the same newest save and miss the same key at the same moment. A plain
+#: ``Path.write_bytes`` is create-then-fill, so the window that used to need a crash to be
+#: observed is now simply a concurrent reader.
+
+
+def test_the_cache_write_is_bytes_and_not_text(tmp_path):
+    """The reason ``write_bytes`` is not ``write_text`` with an encode in front of it.
+
+    What goes through here is a pickle, and a pickle is full of bytes that a text mode would
+    take an interest in -- ``0x0a`` above all, which on Windows would come back as ``0x0d
+    0x0a`` and turn a cache entry into an ``UnpicklingError``. This pins the one property
+    that matters: what comes back is what went in, byte for byte, newlines and all.
+    """
+    payload = pickle.dumps({"segments": [1, 2, 3], "note": "a\nb\r\nc"})
+    assert b"\n" in payload, "the fixture stopped testing the thing it was chosen to test"
+    path = atomic.write_bytes(tmp_path / "save-abc.pkl", payload)
+    assert path.read_bytes() == payload
+    assert pickle.loads(path.read_bytes())["note"] == "a\nb\r\nc"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["save-abc.pkl"]
+
+
+def test_a_reader_never_sees_a_partial_cache_entry(tmp_path, monkeypatch):
+    """The concurrency property, tested where it is decidable: nothing is at the name yet.
+
+    A real torn read needs two processes and a lucky schedule, which is not a test. What IS
+    testable is the invariant that makes the torn read impossible -- the target name never
+    holds anything but a complete file, because the content is built under a different name
+    and moved. So: fail at the rename, having written a whole payload, and demand that the
+    destination does not exist at all. Under ``Path.write_bytes`` it would exist and be
+    short.
+    """
+    target = tmp_path / "save-def.pkl"
+
+    def boom(src, dst):
+        # The temp is complete on disk at this instant -- that is what makes the assertion
+        # below meaningful rather than vacuous.
+        assert Path(src).stat().st_size > 0
+        raise OSError("the rename lost the race")
+
+    monkeypatch.setattr(atomic.os, "replace", boom)
+    with pytest.raises(OSError, match="lost the race"):
+        atomic.write_bytes(target, pickle.dumps(list(range(10_000))))
+
+    assert not target.exists(), "a half-written cache entry was published under its real name"
+    assert list(tmp_path.iterdir()) == [], "the failed write left its temp behind"
+
+
+def test_two_writers_in_one_process_do_not_share_a_temp(tmp_path, monkeypatch):
+    """Why the temp name carries a counter and not only the process id.
+
+    The pid separates two servers; it does not separate two threads of one server, nor the
+    pooled whole-folder passes in the integration suite, which run in one process and can
+    have several writes to one directory in flight. Two temps for one target had the same
+    name before the counter, so one writer's ``os.replace`` would move the other's
+    half-finished file into place -- the exact failure this module exists to prevent,
+    reintroduced by the fix for it.
+    """
+    target = tmp_path / "save-ghi.pkl"
+    seen: list[Path] = []
+    real_replace = atomic.os.replace
+
+    def record(src, dst):
+        seen.append(Path(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(atomic.os, "replace", record)
+    atomic.write_bytes(target, b"first")
+    atomic.write_bytes(target, b"second")
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1], f"both writes used the temp {seen[0].name}"
+    assert target.read_bytes() == b"second"
+
+
+def test_pruning_survives_a_file_another_pruner_already_deleted(tmp_path, monkeypatch):
+    """``prune_cache`` runs concurrently with itself, so every syscall in it is best-effort.
+
+    The cache directory sits at exactly ``keep`` entries in normal use and every writer
+    prunes, so two prunes overlapping is the ordinary case rather than the unlucky one. The
+    ``unlink`` was already guarded. The ``stat`` inside the sort key was not, and a file that
+    vanished between the glob and the sort raised ``FileNotFoundError`` straight out of
+    ``sorted`` -- reaching the ``cache_prune`` tool, which calls this directly and has no
+    outer guard to swallow it.
+
+    Simulated at the one instruction that can lose the race, because that is what a rival
+    pruner looks like from in here: the glob has already listed the file and it is gone by
+    the time its mtime is asked for.
+    """
+    monkeypatch.setattr(config, "cache_dir", lambda: tmp_path)
+    for i in range(5):
+        (tmp_path / f"save-{i}.pkl").write_bytes(b"x")
+
+    doomed = tmp_path / "save-2.pkl"
+    real_stat = Path.stat
+
+    def vanishing(self, *args, **kwargs):
+        if self == doomed:
+            doomed.unlink(missing_ok=True)  # a rival pruner got there first
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", vanishing)
+    removed = projection_mod.prune_cache(keep=2)
+
+    monkeypatch.undo()
+    survivors = sorted(p.name for p in tmp_path.glob("save-*.pkl"))
+    assert len(survivors) == 2, survivors
+    assert "save-2.pkl" not in survivors
+    assert removed >= 2
 
 
 @pytest.mark.parametrize(
