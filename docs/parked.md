@@ -4,11 +4,12 @@ Part of the [SatisfactoryMcp design spec](../DESIGN.md). Three kinds of thing, i
 order they were written in rather than sorted by kind:
 
 * **Open questions** — §14, the register, most of it closed and kept closed rather than deleted.
-* **Parked** — §15b, §16, §16b: decided in principle and not built, with the measurements that
-  would otherwise have to be redone. §16b carries the stage-0 results, which are a GO.
-* **Done, kept as a record** — §15 (the build order it was built in) and §19 (the container
-  reader and the `gen` extra). Neither is a plan any more; both explain why the tree is shaped
-  the way §4 describes.
+* **Parked** — §15b and §16: decided in principle and not built, with the measurements that
+  would otherwise have to be redone.
+* **Done, kept as a record** — §15 (the build order it was built in), §16b (the floor view,
+  parked for a day and then built through its own stages) and §19 (the container reader and
+  the `gen` extra). None is a plan any more; each explains why the tree is shaped the way §4
+  describes.
 
 Section numbers are continuous with the rest of the spec; [DESIGN.md](../DESIGN.md) indexes it.
 
@@ -155,7 +156,11 @@ a user data directory, not the repo.
 **Still not derivable, and would be invention:** world placement, belt routing, terrain
 fitting, foundation alignment to the world grid.
 
-## 16b. Parked: floor-wise factory view (Lukas, 2026-07-31 — "only think about that idea")
+## 16b. Built: floor-wise factory view (Lukas, 2026-07-31 — "only think about that idea")
+
+**Kept as a record, not as a plan.** What follows is the idea as it was parked, then the four
+stages that built it, in the order they ran — the kill-switch measurement first, because every
+correction it made is why the shipped constants are what they are.
 
 Show what is *built*, one floor at a time — the save-side twin of §16's plan-per-floor view.
 The two should share a renderer, which argues for doing the groundwork once, for both.
@@ -260,9 +265,90 @@ the oldest lightweight-capable save (Oct 2025): 99.82%. What the measurement cor
   "this world has no floors".
 
 Stage 1 was already shipped by the map work (yaw + belts + pipes + attachments, schemas
-12-14); the stage-0 slice image was drawn from the projection alone. Remaining: stage 2
-(the `floor_decomposition` domain service + the corrected checks as tests) and stage 3
-(the floor view-state in the frontend).
+12-14); the stage-0 slice image was drawn from the projection alone. Stage 2 shipped as
+`domain/factories/floors.py` and `/api/floors`, stage 3 as the section below. **§16b is no
+longer parked: it is built.**
+
+### Stage 3 shipped, 2026-07-31: the floor view is a FILTER, not a renderer
+
+The page draws one storey of one factory by taking four fifths of itself away. Nothing on
+screen in floor mode is drawn by new code — `placements.ts` still draws the concrete and the
+machines and `routes.ts` still draws the belts and the pipes — and `floors.ts` decides only
+which of those already-drawn pieces are on the floor being looked at. A second renderer
+would have been four more places for the map to disagree with itself, and the reference
+picture to beat was `floor0-floor-slice.png`, which was drawn from the same projection.
+
+**Four joins, because there are four and they are all different.** A machine, extractor,
+generator or splitter joins **by instance id** — a band lists them. A belt run joins **by
+chain** and a pipe run **by its row** — the numbers those payloads already carry. A
+foundation piece joins **by its position in `/api/structures`**, because a lightweight
+buildable has no instance name at all; that is what the new `deck_rows` on a band is, and it
+is the same positional-key argument `pipes` already made for itself. Storage joins **by where
+it stands**, because the decomposition does not decompose it — the one geometric rule in the
+client, written down as one rather than buried in a filter.
+
+**Three fields were added to the server, all additive, all because the client could not
+otherwise be right.**
+
+* `FloorBand.deck_rows` — 4,972 ints, 25 KB over the whole reference world, 4.8 KB narrowed
+  to the tower. Without it a client can only re-derive a deck from heights, and this world's
+  1 m and 2 m half-steps are exactly where that goes wrong: a z-window rule reproduces the
+  API's own per-band piece counts on 14 of 17 real platforms and gets three of them wrong at
+  the boundary. `pieces` and `deck_row_count` agree on all 93 bands, which is "the bands are
+  exact" read from the other end of the wire.
+* `h_m` on a machine row — the clearance box's third side, from the same `mClearanceData` as
+  `w_m` and `l_m`, and null with them. It is the evidence for the ghost outlines: **49 of the
+  390 band-assigned buildings with clearance data come up through the deck above**, a
+  Refinery being 15 m tall on a 12 m storey and overshooting by 13 m. §16b asked for this
+  "if the data supports it cheaply" — it does, and the ghost is a RESTYLE of the machine
+  already drawn rather than a second polygon, so there is no outline that can end up
+  somewhere the machine is not.
+* `row` on a pipe row — the position in the raw segments table, which `/api/floors` already
+  keyed a pipe run by and which no client could reach. Pinned against a torn projection: five
+  pipes that decode from nine rows come back as 0, 3, 4, 5, 6, and counting the list instead
+  would have drawn four runs on somebody else's floor.
+
+**`centre_m` and `extent_m` are not a bounding box**, which is why the flight is computed
+from the drawn deck instead. The centre a platform reports is the MEAN of its pieces, and on
+the tower that sits **30.2 m** from the middle of its own box; flying to a mean and a span
+clips the deck at one edge.
+
+**The interaction.** The factory card gains a `floors` action (an HTMLElement popup, so the
+handler is bound once instead of re-bound on every open). The picker is the MODE radios'
+sibling in the layer control — same grammar, own code, because a floor row is a name plus a
+measurement and a mezzanine has to read as subordinate: `Floor 2 · +42.2 m · 175 cells · 35
+machines`, minor bands indented and dimmed by their cell share. Exactly one band is active.
+Esc and an × on the section head both leave, and leaving puts back only the layers this mode
+turned on and that the reader has not since taken ownership of — regions.ts's rule about
+defaults, applied to a second thing. The fragment gains `floor=<platform>/<band>`, between
+`save` and `mode`: subject, then how much of the subject, then picture, then viewport.
+
+**Two decisions the data made.**
+
+* **The ground is a pseudo-floor, not the lowest band.** The API's `exempt`, `terrain` and
+  `off-deck` groups plus the runs that never reach a deck. A miner stands on a resource node
+  up to 28 m off any deck and plumbing hugs the ground; putting either on floor zero would
+  be the map claiming a measurement it does not have. The row says WHICH claim it is, because
+  `terrain_measured` is false on a machine with no heightfield and "on terrain, measured"
+  and "off-deck — no heightfield here to measure against" are different sentences.
+* **The top band's slab is open upwards and the bottom band's is not.** A roof on the highest
+  deck is on the highest deck; there is no floor above it to belong to instead.
+
+**Measured, at 1600x1000 on the reference world:** the six-storey platform walks all seven
+rows (Ground plus Floor 0-5) with **zero console errors**; connectors appear on every floor
+that has one — 6, 14, 3, 20 and 5 on floors 1 to 5, none on floor 0, which holds no machines
+and no belts and is the concrete the tower stands on. Frame band in floor mode with all 38
+layer boxes ticked, sampled over 200 frames while panning and zooming: **16.7 ms median, 16.8
+ms p95, 16.8 ms worst**. A pasted `#floor=1/4` link in a cold tab enters the mode, flies to
+the platform and lands on Floor 4; Esc puts the three revealed layers back and leaves the
+other seven exactly as they were.
+
+**Both refusals render as sentences.** A factory on bare terrain gets `no platform matches
+factory 'label:temporary oil setup'` in the picker with a way out; a pre-U8 save gets the
+API's own "this save predates lightweight buildables… This is not a world without floors."
+Neither is an empty picker, and neither is a toast that disappears over a map that did not
+change. Both arrive as a 4xx, which the browser logs — that line is the honest answer being
+delivered, and it is the only console line the feature produces.
 
 ### Schema 12 landed the geometry (2026-07-31)
 
