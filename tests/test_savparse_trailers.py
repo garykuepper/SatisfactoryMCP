@@ -30,9 +30,11 @@ from __future__ import annotations
 import math
 import os
 import struct
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pytest
+from _pool import fanout_width, in_order
 
 from pioneersav import ParsedObject, ParseError, Reader, read_full_save, read_trailer
 from pioneersav.trailers import (
@@ -300,6 +302,52 @@ def _chord_length(points):
     return sum(math.dist(points[i][0], points[i + 1][0]) for i in range(len(points) - 1))
 
 
+#: What one save contributes to the whole-folder measurement below: the five counts and the
+#: worst reconstruction error, or ``None`` for a file this parser refuses.
+#:
+#: A module-level function taking a string rather than the loop body it was, because it now
+#: runs in a child process and both of those are what that costs. ``read_full_save`` is
+#: pure Python, so threads would have serialised on the GIL and bought nothing; processes
+#: are the only fan-out that is really a fan-out here. The child is handed a path and hands
+#: back six numbers, so nothing large crosses the pipe -- a parsed save is tens of megabytes
+#: of objects and pickling one per save would have cost more than the parse it saved.
+def _measure_save(path: str) -> tuple[int, int, int, int, int, float] | None:
+    try:
+        save = read_full_save(path)
+    except ParseError:
+        return None  # pre-1.0 saves and the dedicated-server file; not this test's business
+    chord_wrong = rescued = chords = curves = segments = 0
+    worst_curve = 0.0
+    for level in save.levels:
+        headers = getattr(level, "actorAndComponentObjectHeaders", None) or []
+        for header, obj in zip(headers, getattr(level, "objects", None) or []):
+            type_path = getattr(header, "typePath", "") or ""
+            if not type_path.startswith(CONVEYOR_CHAIN):
+                continue
+            try:
+                info = obj.actorSpecificInfo
+            except ParseError:
+                continue
+            for seg in info[2]:
+                points, no_spline, start, end = seg[2], seg[3], seg[4], seg[5]
+                if len(points) < 2:
+                    continue
+                declared = (end - start) - no_spline
+                curve = abs(_hermite_length(points) - declared)
+                chord = abs(_chord_length(points) - declared)
+                segments += 1
+                curves += curve < 1.0
+                chords += chord < 1.0
+                # The discriminating population: the segments where reading the points as
+                # a polyline gives the wrong length. Every one of them has to be a segment
+                # the curve gets right, or the tangents are not what this claims.
+                if chord >= 1.0:
+                    chord_wrong += 1
+                    rescued += curve < 1.0
+                worst_curve = max(worst_curve, curve)
+    return segments, curves, chords, chord_wrong, rescued, worst_curve
+
+
 def test_the_two_tangents_are_the_hermite_tangents_and_the_save_says_so(chains):
     """What the second and third vector of a spline point MEAN, checked against arc length.
 
@@ -324,6 +372,7 @@ def test_the_two_tangents_are_the_hermite_tangents_and_the_save_says_so(chains):
 
 
 @pytest.mark.integration
+@pytest.mark.whole_folder
 def test_the_hermite_curve_is_the_length_the_save_declares_and_the_chords_are_not():
     """The measurement schema 15 rests on, over every chain on the machine.
 
@@ -337,44 +386,35 @@ def test_the_hermite_curve_is_the_length_the_save_declares_and_the_chords_are_no
     Asserted as a comparison rather than as those totals: the numbers move every time the
     player builds, and a test that pinned them would fail for the wrong reason. What cannot
     move is which of the two readings agrees with the game.
+
+    **The saves are parsed in child processes and folded in sorted order**, which keeps the
+    "enough evidence" break below meaning exactly what it meant when this took 36 s. The
+    break is what makes the order load-bearing: it stops after the first saves that between
+    them carry 20,000 segments, so a pool that folded results as they finished would measure
+    a different set of saves on every run, and the totals in the docstring above would stop
+    being reproducible. ``in_order`` keeps at most ``width`` parses in flight and still hands
+    them back sorted, so the population folded here is the population the serial loop folded
+    -- the only difference is that a few saves past the cut may have been parsed
+    speculatively, and those results are dropped unread.
     """
     root = _saves_root()
     chord_wrong = rescued = chords = curves = segments = 0
     worst_curve = 0.0
-    for path in sorted(root.rglob("*.sav")):
-        try:
-            save = read_full_save(str(path))
-        except ParseError:
-            continue  # pre-1.0 saves and the dedicated-server file; not this test's business
-        for level in save.levels:
-            headers = getattr(level, "actorAndComponentObjectHeaders", None) or []
-            for header, obj in zip(headers, getattr(level, "objects", None) or []):
-                type_path = getattr(header, "typePath", "") or ""
-                if not type_path.startswith(CONVEYOR_CHAIN):
-                    continue
-                try:
-                    info = obj.actorSpecificInfo
-                except ParseError:
-                    continue
-                for seg in info[2]:
-                    points, no_spline, start, end = seg[2], seg[3], seg[4], seg[5]
-                    if len(points) < 2:
-                        continue
-                    declared = (end - start) - no_spline
-                    curve = abs(_hermite_length(points) - declared)
-                    chord = abs(_chord_length(points) - declared)
-                    segments += 1
-                    curves += curve < 1.0
-                    chords += chord < 1.0
-                    # The discriminating population: the segments where reading the points as
-                    # a polyline gives the wrong length. Every one of them has to be a segment
-                    # the curve gets right, or the tangents are not what this claims.
-                    if chord >= 1.0:
-                        chord_wrong += 1
-                        rescued += curve < 1.0
-                    worst_curve = max(worst_curve, curve)
-        if segments > 20_000:
-            break  # enough evidence; the whole folder is 83,389 segments and minutes of parsing
+    paths = [str(p) for p in sorted(root.rglob("*.sav"))]
+    width = fanout_width()
+    with ProcessPoolExecutor(max_workers=width) as pool:
+        for _path, measured in in_order(pool, paths, _measure_save, width=width):
+            if measured is None:
+                continue
+            got_segments, got_curves, got_chords, got_wrong, got_rescued, got_worst = measured
+            segments += got_segments
+            curves += got_curves
+            chords += got_chords
+            chord_wrong += got_wrong
+            rescued += got_rescued
+            worst_curve = max(worst_curve, got_worst)
+            if segments > 20_000:
+                break  # enough evidence; the folder is 83,389 segments and minutes of parsing
     if not segments:
         pytest.skip("no readable save with a conveyor chain on this machine")
     assert curves > chords, (curves, chords, segments)

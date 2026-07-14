@@ -51,9 +51,11 @@ from the fixture with its references emptied, exactly the way the game wrote the
 from __future__ import annotations
 
 import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pytest
+from _pool import fanout_width, in_order
 
 from pioneersav import (
     ObjectReference,
@@ -347,7 +349,7 @@ def _saves_root() -> Path:
     raise AssertionError("unreachable")
 
 
-def _subsystem_blob(path: Path) -> list | None:
+def _subsystem_blob(path: str | Path) -> list | None:
     """The buildable blob out of one save, without decoding the other 44,000 objects.
 
     A full parse is ~2.5 s a save and 87 s for the folder, nearly all of it property bodies
@@ -357,7 +359,7 @@ def _subsystem_blob(path: Path) -> list | None:
     ``None`` for a save with no such actor: on the 35 pre-1.0 saves the subsystem does not
     exist, because in 2021-2023 every foundation was an actor of its own.
     """
-    data = path.read_bytes()
+    data = Path(path).read_bytes()
     info = read_info_bytes(data)
     body = decompress_body(data, info.body_offset, old=info.save_version < FIRST_MODERN_BODY)
     for level in read_body(body, info.save_version).levels:
@@ -368,7 +370,39 @@ def _subsystem_blob(path: Path) -> list | None:
     return None
 
 
+#: One save's contribution to the whole-folder split below, computed in a child process.
+#:
+#: The tallying moved in here with the parse rather than staying in the caller, and that is
+#: the point of the shape: what crosses the pipe is three integers and a short list of names,
+#: not the subsystem blob, which is a quarter of a million records on this disk. The parse is
+#: pure Python, so this is a process rather than a thread for the same reason
+#: ``test_savparse_trailers`` is.
+#:
+#: Always a triple, and the first slot being ``None`` is the "nothing to count" answer: a save
+#: this parser refused (the refusal rides in the third slot) or a save with no lightweight
+#: subsystem at all. A folder that stops parsing must not pass as a folder with nothing to
+#: say, so the refusals are carried back rather than swallowed.
+def _split_one(path: str) -> tuple[dict[str, int] | None, list[str], str | None]:
+    name = Path(path).name
+    try:
+        blob = _subsystem_blob(path)
+    except ParseError as exc:
+        return None, [], f"{name}: {exc}"
+    if blob is None:
+        return None, [], None
+    counts = {"both": 0, "neither": 0, "one": 0}
+    disagreements: list[str] = []
+    for _cls, items in blob[1:]:
+        for inst in items:
+            named = sum(1 for i in (3, 10) if str(inst[i]))
+            counts[("neither", "one", "both")[named]] += 1
+            if _placed(inst) != (named == 2):
+                disagreements.append(f"{name}: {inst[1]}")
+    return counts, disagreements, None
+
+
 @pytest.mark.integration
+@pytest.mark.whole_folder
 def test_no_save_on_disk_holds_a_record_with_one_asset_of_the_two():
     """The premise the guard rests on, re-measurable as the player keeps playing.
 
@@ -384,25 +418,31 @@ def test_no_save_on_disk_holds_a_record_with_one_asset_of_the_two():
     ``SaveGames/ServerManager_V2.sav`` is 105 bytes of dedicated-server bookkeeping that sits
     beside the worlds and is not one, and the refusals are asserted on below so that a folder
     which stops parsing cannot pass as a folder with nothing to say.
+
+    **Parsed in child processes, folded in sorted order.** Nothing here stops early, so the
+    order does not decide which saves are measured -- but it decides what a failure SAYS.
+    ``disagreements[:5]`` and ``refused`` are both asserted by their contents, so folding in
+    whatever order the pool finished would have made those five names a different five on
+    every run, and a report that changes between two runs of an unchanged parser is not a
+    report.
     """
     counts = {"both": 0, "neither": 0, "one": 0}
     disagreements: list[str] = []
     saves, refused = 0, []
-    for path in sorted(_saves_root().rglob("*.sav")):
-        try:
-            blob = _subsystem_blob(path)
-        except ParseError as exc:
-            refused.append(f"{path.name}: {exc}")
-            continue
-        if blob is None:
-            continue
-        saves += 1
-        for _cls, items in blob[1:]:
-            for inst in items:
-                named = sum(1 for i in (3, 10) if str(inst[i]))
-                counts[("neither", "one", "both")[named]] += 1
-                if _placed(inst) != (named == 2):
-                    disagreements.append(f"{path.name}: {inst[1]}")
+    paths = [str(p) for p in sorted(_saves_root().rglob("*.sav"))]
+    width = fanout_width()
+    with ProcessPoolExecutor(max_workers=width) as pool:
+        for _path, (got_counts, got_disagreements, got_refused) in in_order(
+            pool, paths, _split_one, width=width
+        ):
+            if got_refused is not None:
+                refused.append(got_refused)
+            if got_counts is None:
+                continue
+            saves += 1
+            for bucket, n in got_counts.items():
+                counts[bucket] += n
+            disagreements.extend(got_disagreements)
     if not saves:
         pytest.skip(f"no save with a lightweight subsystem here; {len(refused)} refused")
 

@@ -52,9 +52,12 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from _pool import fanout_width, in_order
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / "fixtures" / "vendor_parity.json"
@@ -235,8 +238,18 @@ def saves_root() -> Path:
 
 
 def _projection(path: Path) -> dict:
+    """One save through the sidecar, as a subprocess, exactly as the server invokes it.
+
+    ``sys.executable``, not ``uv run python``. The interpreter is identical -- pytest is
+    already running inside the environment ``uv run`` would have selected -- so this drops a
+    ``uv`` process per save for nothing given up, which over 31 saves was measurable. It also
+    removes two ways for this test to mean something other than what it says: ``uv run``
+    re-resolves the environment unless ``UV_NO_SYNC`` is set, so a bare ``pytest`` invocation
+    used to fire 31 syncs, and it needs ``uv`` on ``PATH``, which the thing under test does
+    not.
+    """
     out = subprocess.run(
-        ["uv", "run", "python", str(SIDECAR), str(path)],
+        [sys.executable, str(SIDECAR), str(path)],
         cwd=str(REPO),
         capture_output=True,
         check=False,  # a refusal is data here: the caller asserts on the payload, not the code
@@ -409,6 +422,7 @@ def test_a_new_top_level_key_cannot_escape_the_comparison(banked, projection):
 
 
 @pytest.mark.integration
+@pytest.mark.whole_folder
 def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
     """The replayed acceptance test, and the reason the bank exists.
 
@@ -418,30 +432,45 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
 
     Compared through ``as_schema_11``: what the oracle never saw cannot be part of an
     agreement with it.
+
+    **The 31 sidecar runs go out in parallel and the comparison stays serial**, which is the
+    split that matters. Each save is its own subprocess and always was, so nothing here
+    shares state and the pool is a thread pool: the threads only wait on children, and
+    Windows process-spawn cost is a thing to avoid paying twice. What is deliberately NOT
+    parallel is the loop below -- it runs over ``in_order``, in the bank's own order, so
+    ``drift`` accumulates the same pairs in the same sequence and the ``assert`` that names
+    the first eight names the same eight it named when this took 88 s. A pool that reported
+    the first failure it happened to see would have turned "``Han solo`` drifted on
+    ``inventories``" into whichever save lost the race.
     """
     by_name = {p.name: p for p in saves_root.rglob("*.sav")}
+    present = [
+        (name, entry, by_name[name]) for name, entry in banked["saves"].items() if name in by_name
+    ]
+    if not present:
+        pytest.skip("none of the banked saves is on this machine")
+
     checked = 0
     drift: list[tuple[str, str]] = []
-    for name, entry in banked["saves"].items():
-        path = by_name.get(name)
-        if path is None:
-            continue
-        proj = _projection(path)
-        assert "error" not in proj, (name, proj.get("detail"))
-        assert proj["schema_version"] == 17, (name, "unexpected schema for the filter")
-        proj = as_schema_11(proj)
-        for key, want in entry.items():
-            if key == "n_objects_value":
-                assert proj["n_objects"] == want, (name, key)
-                continue
-            value = (
-                {k: v for k, v in proj["header"].items() if k not in VOLATILE}
-                if key == "header"
-                else proj[key]
-            )
-            if _digest(value) != want:
-                drift.append((name, key))
-        checked += 1
-    if not checked:
-        pytest.skip("none of the banked saves is on this machine")
+    width = fanout_width()
+    with ThreadPoolExecutor(max_workers=width) as pool:
+        for (name, entry, _path), proj in in_order(
+            pool, present, lambda item: _projection(item[2]), width=width
+        ):
+            assert "error" not in proj, (name, proj.get("detail"))
+            assert proj["schema_version"] == 17, (name, "unexpected schema for the filter")
+            proj = as_schema_11(proj)
+            for key, want in entry.items():
+                if key == "n_objects_value":
+                    assert proj["n_objects"] == want, (name, key)
+                    continue
+                value = (
+                    {k: v for k, v in proj["header"].items() if k not in VOLATILE}
+                    if key == "header"
+                    else proj[key]
+                )
+                if _digest(value) != want:
+                    drift.append((name, key))
+            checked += 1
+    assert checked, "the banked saves are on this machine but none was compared"
     assert not drift, f"drifted from the banked agreement on {len(drift)} key(s): {drift[:8]}"
