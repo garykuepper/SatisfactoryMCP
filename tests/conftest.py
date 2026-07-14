@@ -28,6 +28,55 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+#: The tests that walk the reader's whole save folder, hoisted to the front of the run.
+#:
+#: **Why order suddenly matters.** ``addopts`` carries ``-n 8``, so the suite runs on eight
+#: worker processes and the wall clock is whenever the LAST one finishes. ``xdist``'s default
+#: ``load`` scheduler has no idea how long anything takes: it deals tests out in collection
+#: order, which is alphabetical by filename, and the three whole-folder tests live in
+#: ``test_savparse_parity``, ``test_savparse_trailers`` and ``test_sidecar_placed`` -- all in
+#: the last third of the alphabet. Dealt in that order the longest test in the suite starts
+#: when the run is already most of the way done, and every other worker then sits idle
+#: waiting for it.
+#:
+#: **The win is real and it is small, and both halves of that are worth recording**, because
+#: the obvious version of this reasoning predicts a much bigger one. Paired runs on the
+#: integration set, alternating, at the settings this suite actually ships: 26.05 / 26.58 /
+#: 25.87 s dealt alphabetically against 25.35 / 25.36 / 25.17 s dealt whole-folder first.
+#: Three out of three, about 0.9 s, and it is free. It is not the ten seconds a "the longest
+#: test starts last" story would promise -- because these three fan out internally now
+#: (``tests/_pool.py``), so the longest of them is ~12 s of a ~25 s run rather than the 88 s
+#: it once was, and a tail that short overlaps the rest of the suite either way.
+#:
+#: **Hoisting first was tried at the WRONG fan-out and looked like a regression**: with the
+#: whole-folder tests fanning out 8 wide it measured 31.7 / 32.8 / 33.1 s against 30.0 s
+#: alphabetical, because starting all three at once put 3x8 children plus 8 workers on the
+#: machine at the moment every worker was also booting and collecting. The order was not the
+#: problem; the width was. Recorded because the natural next edit is to re-narrow the fan-out
+#: and this ordering would then be a pessimisation again.
+#:
+#: **Why a hook rather than ``--dist loadgroup``.** Grouping controls WHICH worker a test
+#: lands on, and nothing here needs that -- these three share no state and each already fans
+#: out internally. What the run needs is for the long pole to be raised FIRST, which is a
+#: question about order, not about placement. Measured at ``-n 8``: ``load`` 30.0 s,
+#: ``worksteal`` 29.6 s, ``loadfile`` 28.3 s -- a spread inside this machine's run-to-run
+#: noise, because no scheduler can recover from starting the longest test last. Reordering is
+#: the fix; the scheduler stays the default.
+#:
+#: Deterministic, and it has to be: every ``xdist`` worker collects independently and they
+#: must agree item for item, so this is a stable partition of the list rather than a sort on
+#: anything measured at runtime.
+WHOLE_FOLDER = "whole_folder"
+
+
+def pytest_collection_modifyitems(items):
+    """Deal the ``whole_folder`` tests first, keeping every other test's relative order."""
+    hoisted = [i for i in items if i.get_closest_marker(WHOLE_FOLDER)]
+    if hoisted:
+        rest = [i for i in items if not i.get_closest_marker(WHOLE_FOLDER)]
+        items[:] = hoisted + rest
+
+
 def _docs_available() -> bool:
     return config.docs_path().is_file()
 

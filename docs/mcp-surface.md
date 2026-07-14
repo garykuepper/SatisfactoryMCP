@@ -386,14 +386,32 @@ parse that just completed. Keeps the 12 newest.
 - Mark real-file tests `@pytest.mark.integration`, skipped when `SATISFACTORY_DOCS` is unset, so CI is
   green with no game install.
 - **Two commands, and the default is the one a clone can run.** `uv run pytest -q` carries
-  `addopts = ["-m", "not integration"]`, so it selects the 616 tests that read only committed
-  fixtures — green on a machine with no game and no saves, 9 s. `uv run pytest -q -m integration`
-  is the other 803 and needs both. That split is enforced rather than assumed: before it, the
-  documented command on a bare clone gave 20 failures and 61 errors, because a tool reaches game
-  data through the lru_cache'd `app.game()` rather than through the suite's fixture, and eight
-  modules built a live `WorldState` with no guard. The `live` fixture in `tests/conftest.py` is
-  now the single place that turns "no readable save" into a skip.
+  `addopts = ["-m", "not integration", "-n", "8"]`, so it selects the 694 tests that read only
+  committed fixtures — green on a machine with no game and no saves, **5.8 s**.
+  `uv run pytest -q -m integration` is the other 805, needs both, and takes **25 s**. That split
+  is enforced rather than assumed: before it, the documented command on a bare clone gave 20
+  failures and 61 errors, because a tool reaches game data through the lru_cache'd `app.game()`
+  rather than through the suite's fixture, and eight modules built a live `WorldState` with no
+  guard. The `live` fixture in `tests/conftest.py` is now the single place that turns "no
+  readable save" into a skip.
+- **The suite is parallel at two levels, and the second one is where the integration run was
+  won.** `-n 8` is `pytest-xdist`; on top of it, three tests marked `whole_folder` walk the
+  reader's entire save directory and fan out into subprocesses of their own. Those three were
+  146 s of a 198 s run — 74% of the wall clock in 3 tests out of 805 — and are 22 s now:
+  `test_savparse_parity` 88.1 → 12.3 s, `test_savparse_trailers` 36.5 → 7.3 s,
+  `test_sidecar_placed` 21.3 → 2.5 s. Every number in this bullet is reproducible with
+  `--durations=25`, and the settings that produced them carry their own measurement tables:
+  the worker count in `[tool.pytest.ini_options]`, the fan-out width in `tests/_pool.py`, and
+  the collection order in `tests/conftest.py`.
+- **Parallel changed what "shared state" costs, and two things had to be fixed for it.** The
+  projection disk cache is written through `core/atomic.py` rather than `Path.write_bytes` —
+  eight workers resolve the same newest save and miss the same key at the same moment, so
+  create-then-fill let one read another's prefix — and `prune_cache` no longer raises when a
+  rival pruner deletes a file between its glob and its sort. Both are production fixes rather
+  than test-only isolation, deliberately: the cache directory is already shared by the web
+  server and every CLI invocation, and giving each worker its own would have replaced a 0.10 s
+  warm load with a 3.17 s parse, eight times over.
 
 Deps: `mcp[cli]>=1.28`, `pydantic>=2.13`, `platformdirs`, `scipy>=1.11`, `numpy`; dev `pytest`,
-`pytest-cov`, `ruff`. `requires-python = ">=3.11"`.
+`pytest-cov`, `pytest-xdist>=3.6,<4`, `ruff`. `requires-python = ">=3.11"`.
 

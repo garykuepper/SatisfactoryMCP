@@ -20,11 +20,26 @@ uv run python tools/gen_region_names.py     # builds data/region_names.json (21 
 uv run pytest -q
 ```
 
-`pytest` runs the 616 tests that need nothing but this checkout — they read a committed save
+`pytest` runs the 694 tests that need nothing but this checkout — they read a committed save
 projection and committed game-data slices, so a clone with no Satisfactory install and no saves
-passes them. The other 803 are marked `integration` and are deselected by default; run them with
+passes them. The other 805 are marked `integration` and are deselected by default; run them with
 `uv run pytest -q -m integration` on a machine that has the game and at least one save, and
 individual tests will still skip if the world they measure is not the one you are playing.
+
+**Both commands are parallel.** `addopts` carries `-n 8` (`pytest-xdist`), and the three tests
+that walk your entire save folder fan out into subprocesses of their own on top of that. On a
+16-core machine, measured:
+
+| command | tests | before | now |
+|---|---|---|---|
+| `uv run pytest -q` | 694 | 11.3 s | **5.8 s** |
+| `uv run pytest -q -m integration` | 805 | 198.0 s | **25 s** |
+
+`-n 8` is a measured number, not `auto` — `auto` is 32 workers here and is the *worst* setting
+tried, because every worker is a fresh interpreter that collects the whole suite before running
+anything. The arithmetic is in `[tool.pytest.ini_options]`, and the fan-out width the whole-folder
+tests use is in `tests/_pool.py`; both say how to re-measure. To debug one test without any of
+it: `uv run pytest -q -n 0 <nodeid>`.
 
 Register with Claude Code at **user scope**, so it loads in any directory rather than only inside
 this repo — you will usually be asking about the game, not about this code:
