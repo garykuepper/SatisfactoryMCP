@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.optimize import build_processes, solve
@@ -36,7 +37,7 @@ def coupled(game, state):
         game,
         state,
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW", "Plastic", "Rubber"],
         export_minimums={"Plastic": 2000, "Rubber": 300},
         extractor_clocks=[1, 1.5, 2, 2.5],
@@ -136,6 +137,7 @@ def test_the_tool_takes_a_pattern(game, live):
         pytest.skip(f"the {REFERENCE_PLAN} plan is not saved on this machine")
     kw = dict(
         plan=REFERENCE_PLAN,
+        sources=list(REFERENCE_FIELD),
         exclude_recipes=["Turbofuel", "Alternate: Compacted Coal", "Coal-Powered Generator"],
         export_minimums={"Plastic": 2000, "Rubber": 300},
         limit=2,
@@ -158,7 +160,7 @@ def test_a_pattern_matching_nothing_is_refused(game, state):
         game,
         state,
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         recycle_once=["No Such Recipe"],
     )
@@ -166,7 +168,7 @@ def test_a_pattern_matching_nothing_is_refused(game, state):
 
 
 def test_it_changes_the_plan_id(game, state):
-    kw = dict(objective="max_mw", sources=["region:Spire Coast"], exports=["MW"])
+    kw = dict(objective="max_mw", sources=list(REFERENCE_FIELD), exports=["MW"])
     plain = build_scenario(game, state, **kw)
     once = build_scenario(game, state, recycle_once=["Recycled"], **kw)
     assert plain.plan_id != once.plan_id

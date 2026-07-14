@@ -149,9 +149,12 @@ def test_nodes_can_be_filtered_by_resource(client):
 def test_nodes_carry_the_region_they_sit_in(client):
     """Joined server-side, so the raster -- and its orientation trap -- lives in one place.
 
-    ``label_for_node``, not ``label_for``: the hand-verified override table is the reason
-    ``verified`` shows up at all, and a plain cell lookup would silently downgrade every
-    node someone actually checked to a 256 m guess.
+    ``verified`` used to appear here and does not any more. It meant "a human read this
+    node's region off the wiki's biome image", which was the best answer available while the
+    region geometry was a trace of that image; the geometry is the game's own map areas now,
+    so the override table it justified is gone and every node is named by where it stands.
+    ``unnamed`` is the word that replaced it in this set: the game leaves the outer coast to
+    ``No Man's Land``, and nodes stand there.
     """
     rows = client.get("/api/nodes").json()["nodes"]
     named = [r for r in rows if r["region"]]
@@ -160,14 +163,14 @@ def test_nodes_carry_the_region_they_sit_in(client):
     assert {r["region"]["name"] for r in named} <= known
     # The confidence word travels with the name, or a boundary guess reads as a fact.
     assert {r["region"]["confidence"] for r in named} <= {
-        "sparse",
+        "unnamed",
         "boundary",
         "interior",
-        "verified",
     }
-    assert any(r["region"]["confidence"] == "verified" for r in named), (
-        "the override table is what verified means, and it was not consulted"
+    assert "verified" not in {r["region"]["confidence"] for r in named}, (
+        "verified was a claim about a wiki image and there is no wiki image any more"
     )
+    assert any(r["region"]["confidence"] == "interior" for r in named)
 
 
 # ---------------------------------------------------------------- inspector
@@ -187,10 +190,12 @@ def test_inspect_answers_the_three_questions_a_site_starts_with(client):
     assert set(body) >= {"region", "elevation", "nearest"}
     assert body["at"] == {"x_m": x_m, "y_m": y_m}
 
-    # Advisory, and never separable from how far it can be trusted.
+    # Advisory, and never separable from how far it can be trusted. 64 m rather than 256:
+    # the region table publishes a 256 m grid and carries a 64 m one, and a lookup reads the
+    # finer of the two, so the accuracy travelling with the name is the finer cell.
     assert body["region"]["name"] == "Spire Coast"
     assert body["region"]["confidence"] == "interior"
-    assert body["region"]["accuracy_m"] == 256
+    assert body["region"]["accuracy_m"] == 64
 
     e = body["elevation"]
     assert e["radius_m"] == web_api.INSPECT_RADIUS_M == 200.0
@@ -354,9 +359,22 @@ def test_every_region_cell_lands_inside_that_regions_own_bbox(client):
             assert box[1] <= y and y + cell <= box[3], (i, j, letter)
             counted += 1
     assert counted > 400, "a base map of a few dozen cells is not a base map"
-    # And the north-east corner is desert, which is the one fact a mirrored map fails.
-    north_east = {body["grid"][j][i] for j in range(4) for i in range(26, 30)}
-    assert north_east == {"E"}
+    # And the desert is in the north-east, which is the one fact a mirrored map fails.
+    #
+    # Stated as "where E is" rather than "what is in the corner". The corner itself is the
+    # game's No Man's Land -- outer coast, which the retired wiki trace painted as desert
+    # right to the edge and the game does not -- so a corner test now asserts the coastline
+    # rather than the orientation. Presence in one quadrant and absence in the opposite one
+    # is what a mirror or a transpose actually breaks.
+    desert = [
+        (i, j)
+        for j, row in enumerate(body["grid"])
+        for i, letter in enumerate(row)
+        if body["legend"].get(letter) == "Dune Desert"
+    ]
+    assert desert, "Dune Desert is not on the map at all"
+    assert all(i > 15 for i, _j in desert), "Dune Desert has ground in the western half"
+    assert all(j < 20 for _i, j in desert), "Dune Desert has ground in the southern quarter"
 
 
 def test_the_map_image_is_a_loader_and_says_where_the_file_goes(client, tmp_path, monkeypatch):
@@ -989,9 +1007,30 @@ def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():
     neutral and quietly vanish into the coast) and that it really is a satellite palette
     rather than the legend under another name: nothing saturated, nothing at full white.
     """
-    assert set(gen_map_renders.REGION_PAIRS.values()) <= set(gen_map_renders.BIOME_COLOURS), (
-        "every game area this file checks against the region grid must also have a colour"
-    )
+    # Pinned by name rather than against a subset. The old form compared this table with
+    # ``REGION_PAIRS``, a list of wiki names that meant the same place as a game area; that
+    # list is gone with the wiki trace, and what replaces it is the stronger claim: these
+    # are the seventeen area stems build 495413 names, and every one of them has a colour.
+    # ``tests/test_gameassets_maparea.py`` pins the same seventeen against the container.
+    assert set(gen_map_renders.BIOME_COLOURS) == {
+        "Area_AbyssCliffs",
+        "Area_DesertCanyons",
+        "Area_DuneDesert",
+        "Area_GrassFields",
+        "Area_LakeForest",
+        "Area_MazeCanyons",
+        "Area_NorthernForest",
+        "Area_RedBambooFields",
+        "Area_RedJungle",
+        "Area_RockyDesert",
+        "Area_Savanna",
+        "Area_SouthernForest",
+        "Area_SpireCoast",
+        "Area_Swamp",
+        "Area_TitanForest",
+        "Area_WesternDuneForest",
+        "Area_crater",
+    }
     for name, colour in gen_map_renders.BIOME_COLOURS.items():
         assert len(colour) == 3 and all(0 <= c <= 255 for c in colour), name
         assert max(colour) - min(colour) <= 110, f"{name} is more saturated than imagery gets"

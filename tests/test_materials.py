@@ -12,6 +12,7 @@ cannot tell you what a plant costs, and a total cannot tell you what to go and m
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.materials import FOUNDATION_ID, build_materials, cost_of
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 SPIRE = dict(
     objective="max_mw",
-    sources=["region:Spire Coast"],
+    sources=list(REFERENCE_FIELD),
     exports=["MW"],
     extractor_clocks=[1.0, 1.5, 2.0, 2.5],
 )

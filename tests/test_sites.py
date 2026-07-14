@@ -17,6 +17,7 @@ fail loudly when it is incomplete -- which is the exact error the hand reconcili
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.prepare import prepare
@@ -35,7 +36,9 @@ def decoupled(game, live):
     stored = live.plans.find("spire-coast-full")
     if stored is None:
         pytest.skip("the reference plan is not saved on this machine")
-    return prepare(game, live, dict(stored.kwargs()))
+    kwargs = dict(stored.kwargs())
+    kwargs["sources"] = list(REFERENCE_FIELD)
+    return prepare(game, live, kwargs)
 
 
 # ------------------------------------------------------- the regression case
@@ -67,6 +70,7 @@ def test_the_coupled_variant_opens_the_fuel_return(game, live, decoupled):
     """The single interface that defines the architecture. Decoupled it is ZERO; coupled
     it is ~1,150 on 2 pipes, and the hall's share drops from 16 pipes to 14."""
     kw = dict(live.plans.find("spire-coast-full").kwargs())
+    kw["sources"] = list(REFERENCE_FIELD)
     kw["exclude_recipes"] = [x for x in kw["exclude_recipes"] if "Recycled" not in x]
     kw["export_minimums"] = {"Plastic": 2000, "Rubber": 300}
     coupled = prepare(game, live, kw)
@@ -108,7 +112,9 @@ def test_a_process_claimed_twice_is_reported_not_resolved(decoupled, game):
 
 
 def test_the_tool_says_when_the_table_is_complete(game):
-    out = srv.plan_layout(plan="spire-coast-full", detail="sites", sites=THREE)
+    out = srv.plan_layout(
+        plan="spire-coast-full", detail="sites", sites=THREE, sources=list(REFERENCE_FIELD)
+    )
     if out.startswith("! "):
         pytest.skip("the reference plan is not saved on this machine")
     assert "every process is assigned to exactly one site" in out

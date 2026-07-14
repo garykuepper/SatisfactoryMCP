@@ -1,24 +1,697 @@
 {
  "_meta": {
   "purpose": "ADVISORY region names only. Layer 1 (grid cells, cones, radii, clustering) is exact and is what every calculation uses. A name from this file must never feed a computation.",
-  "game_version": "v1.2.2.1 (saveVersion 60)",
+  "generated": "2026-07-30",
+  "generator": "tools/gen_region_names.py",
+  "game_version_pinned": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
+  "game_build": "++FactoryGame+rel-main-1.2.0-CL-495413",
   "units": "centimetres; north is -Y, east is +X, up is +Z",
-  "accuracy_m": 256,
+  "accuracy_m": 64,
+  "source": {
+   "asset": "/Game/FactoryGame/Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel",
+   "class": "/Script/FactoryGame.FGMapAreaTexture",
+   "derivation": "mAreaData, 4096x4096 palette indices at 1.8311 m to the texel, row 0 north; mColorToArea resolves each index to one UFGMapArea asset by PublicExportHash, and that asset's mDisplayName states the game's own name for the place",
+   "read_by": "core.gameassets.maparea, shared with tools/gen_map_renders.py",
+   "frame_m": {
+    "x_min_m": -3247.0,
+    "x_max_m": 4253.0,
+    "y_min_m": -3750.0,
+    "y_max_m": 3750.0
+   },
+   "shipped_palette_rgba": [
+    [
+     255,
+     191,
+     63,
+     255
+    ],
+    [
+     0,
+     0,
+     0,
+     255
+    ],
+    [
+     191,
+     255,
+     255,
+     255
+    ],
+    [
+     127,
+     191,
+     191,
+     255
+    ],
+    [
+     63,
+     63,
+     63,
+     255
+    ],
+    [
+     0,
+     0,
+     63,
+     255
+    ],
+    [
+     63,
+     127,
+     127,
+     255
+    ],
+    [
+     191,
+     191,
+     191,
+     255
+    ],
+    [
+     127,
+     127,
+     0,
+     255
+    ],
+    [
+     255,
+     255,
+     255,
+     255
+    ],
+    [
+     63,
+     63,
+     0,
+     255
+    ],
+    [
+     63,
+     63,
+     127,
+     255
+    ],
+    [
+     0,
+     191,
+     191,
+     255
+    ],
+    [
+     0,
+     255,
+     255,
+     255
+    ],
+    [
+     127,
+     0,
+     63,
+     255
+    ],
+    [
+     0,
+     63,
+     255,
+     255
+    ],
+    [
+     63,
+     191,
+     191,
+     255
+    ],
+    [
+     0,
+     127,
+     127,
+     255
+    ],
+    [
+     0,
+     63,
+     191,
+     255
+    ],
+    [
+     127,
+     191,
+     127,
+     255
+    ],
+    [
+     63,
+     63,
+     191,
+     255
+    ],
+    [
+     63,
+     127,
+     63,
+     255
+    ],
+    [
+     63,
+     255,
+     255,
+     255
+    ],
+    [
+     127,
+     63,
+     127,
+     255
+    ],
+    [
+     0,
+     0,
+     127,
+     255
+    ],
+    [
+     0,
+     0,
+     191,
+     255
+    ],
+    [
+     127,
+     0,
+     0,
+     255
+    ],
+    [
+     255,
+     127,
+     63,
+     255
+    ],
+    [
+     63,
+     0,
+     0,
+     255
+    ],
+    [
+     127,
+     63,
+     191,
+     255
+    ],
+    [
+     0,
+     63,
+     127,
+     255
+    ],
+    [
+     255,
+     0,
+     255,
+     255
+    ],
+    [
+     0,
+     191,
+     255,
+     255
+    ],
+    [
+     0,
+     127,
+     0,
+     255
+    ],
+    [
+     191,
+     0,
+     255,
+     255
+    ],
+    [
+     0,
+     63,
+     0,
+     255
+    ],
+    [
+     0,
+     127,
+     191,
+     255
+    ]
+   ],
+   "shipped_palette_role": "the game's own minimap legend -- flat primaries, cyan, magenta, white. Decoded for the record and never drawn or shipped; this file emits no colour at all.",
+   "pyooz_version": "0.0.8"
+  },
+  "licence": "First-party. Every value here is derived from Coffee Stain's cooked assets, read out of the reader's own installed copy of the game: palette indices, area identifiers and localisation keys. The same posture as every other derived table in data/ -- facts and coordinates, no artwork. No copyleft and no share-alike obligation reaches this file; the CC BY-SA wiki trace it used to rasterise is retired, and data/satisfactory_regions.json is deleted.",
+  "calibration": {
+   "method": "the artwork sheet's mean edge strength over the biome raster's area boundaries, divided by its mean edge strength everywhere. A boundary pinned right sits on a shore or a scarp the map draws; one pinned wrong sits on flat fill. A ratio, so a pin cannot win it by making more boundary.",
+   "ruler": "the game's own 8192 px map sheet, decoded from its four BC1 slices in this same run",
+   "resolution_px": 1024,
+   "edge_ratio_at_the_pin": 1.9692,
+   "sweep": "+-600 m in 200 m steps at true scale, plus x0.95, x1.05",
+   "best_rival_shift_m": {
+    "dx": -200.0,
+    "dy": 0.0
+   },
+   "edge_ratio_at_the_best_rival_shift": 1.333,
+   "edge_ratio_at_other_scales": {
+    "x0.95": 1.2432,
+    "x1.05": 1.2778
+   },
+   "margin_over_the_best_rival": 1.4773,
+   "margin_required": 1.15,
+   "pin_holds": true,
+   "pin": {
+    "x_min_m": -3247.0,
+    "x_max_m": 4253.0,
+    "y_min_m": -3750.0,
+    "y_max_m": 3750.0
+   },
+   "metres_per_texel": 1.8311,
+   "reading": "the raster spans exactly the square the artwork does. Every rival -- a shift in either direction, a box 5% larger, a box 5% smaller -- reads far below it, which is what makes this a measurement rather than a preference. pin_holds false would mean the texture moved, and the run says so instead of quietly colouring the world off its own biomes."
+  },
+  "area_display_names": {
+   "Area_AbyssCliffs_1": "Abyss Cliffs",
+   "Area_DesertCanyons_1": "Desert Canyons",
+   "Area_DuneDesert_1": "Dune Desert",
+   "Area_DuneDesert_2": "Dune Desert",
+   "Area_GrassFields_1": "Grass Fields",
+   "Area_GrassFields_2": "Grass Fields",
+   "Area_GrassFields_3": "Grass Fields",
+   "Area_LakeForest_1": "Lake Forest",
+   "Area_LakeForest_2": "Lake Forest",
+   "Area_MazeCanyons_1": "Maze Canyons",
+   "Area_MazeCanyons_2": "Maze Canyons",
+   "Area_NoMansLand_1": "No Man's Land",
+   "Area_NorthernForest_1": "Northern Forest",
+   "Area_NorthernForest_2": "Northern Forest",
+   "Area_RedBambooFields_2": "Red Bamboo Fields",
+   "Area_RedJungle_1": "Red Jungle",
+   "Area_RedJungle_2": "Jungle Spires",
+   "Area_RockyDesert_1": "Rocky Desert",
+   "Area_RockyDesert_2": "Rocky Desert",
+   "Area_Savanna_1": "Rocky Desert",
+   "Area_Savanna_2": "Rocky Desert",
+   "Area_SouthernForest_1": "Southern Forest",
+   "Area_SouthernForest_2": "Southern Forest",
+   "Area_SpireCoast": "Spire Coast",
+   "Area_Swamp_1": "Swamp",
+   "Area_Swamp_2": "Swamp",
+   "Area_TitanForest_1": "Titan Forest",
+   "Area_TitanForest_2": "Titan Forest",
+   "Area_WesternDuneForest_1": "Western Dune Forest",
+   "Area_WesternDuneForest_2": "Western Dune Forest",
+   "Area_crater_1": "Blue Crater",
+   "Area_crater_2": "Crater Lakes"
+  },
+  "name_map": {
+   "Area_AbyssCliffs_1": {
+    "package": "Area_AbyssCliffs",
+    "display_name_key": "Locations/AbyssCliffs",
+    "string_table": "World_Data",
+    "display_name": "Abyss Cliffs",
+    "palette_indices": [
+     27
+    ],
+    "texels": 208717
+   },
+   "Area_DesertCanyons_1": {
+    "package": "Area_DesertCanyons",
+    "display_name_key": "Locations/DesertCanyon",
+    "string_table": "World_Data",
+    "display_name": "Desert Canyons",
+    "palette_indices": [
+     6
+    ],
+    "texels": 359121
+   },
+   "Area_DuneDesert_1": {
+    "package": "Area_DuneDesert",
+    "display_name_key": "Locations/DuneDesert",
+    "string_table": "World_Data",
+    "display_name": "Dune Desert",
+    "palette_indices": [
+     2
+    ],
+    "texels": 767463
+   },
+   "Area_DuneDesert_2": {
+    "package": "Area_DuneDesert",
+    "display_name_key": "Locations/DuneDesert",
+    "string_table": "World_Data",
+    "display_name": "Dune Desert",
+    "palette_indices": [
+     3
+    ],
+    "texels": 662136
+   },
+   "Area_GrassFields_1": {
+    "package": "Area_GrassFields",
+    "display_name_key": "Locations/GrassFields",
+    "string_table": "World_Data",
+    "display_name": "Grass Fields",
+    "palette_indices": [
+     30
+    ],
+    "texels": 100589
+   },
+   "Area_GrassFields_2": {
+    "package": "Area_GrassFields",
+    "display_name_key": "Locations/GrassFields",
+    "string_table": "World_Data",
+    "display_name": "Grass Fields",
+    "palette_indices": [
+     32
+    ],
+    "texels": 468867
+   },
+   "Area_GrassFields_3": {
+    "package": "Area_GrassFields",
+    "display_name_key": "Locations/GrassFields",
+    "string_table": "World_Data",
+    "display_name": "Grass Fields",
+    "palette_indices": [
+     36
+    ],
+    "texels": 164898
+   },
+   "Area_LakeForest_1": {
+    "package": "Area_LakeForest",
+    "display_name_key": "Locations/LakeForest",
+    "string_table": "World_Data",
+    "display_name": "Lake Forest",
+    "palette_indices": [
+     14
+    ],
+    "texels": 146211
+   },
+   "Area_LakeForest_2": {
+    "package": "Area_LakeForest",
+    "display_name_key": "Locations/LakeForest",
+    "string_table": "World_Data",
+    "display_name": "Lake Forest",
+    "palette_indices": [
+     23
+    ],
+    "texels": 50782
+   },
+   "Area_MazeCanyons_1": {
+    "package": "Area_MazeCanyons",
+    "display_name_key": "Locations/MazeCanyon",
+    "string_table": "World_Data",
+    "display_name": "Maze Canyons",
+    "palette_indices": [
+     16
+    ],
+    "texels": 78660
+   },
+   "Area_MazeCanyons_2": {
+    "package": "Area_MazeCanyons",
+    "display_name_key": "Locations/MazeCanyon",
+    "string_table": "World_Data",
+    "display_name": "Maze Canyons",
+    "palette_indices": [
+     17
+    ],
+    "texels": 23307
+   },
+   "Area_NoMansLand_1": {
+    "package": "Area_NoMansLand",
+    "display_name_key": "Locations/NoMansLand",
+    "string_table": "World_Data",
+    "display_name": "No Man's Land",
+    "palette_indices": [
+     0,
+     1
+    ],
+    "texels": 7220715
+   },
+   "Area_NorthernForest_1": {
+    "package": "Area_NorthernForest",
+    "display_name_key": "Locations/NorthernForest",
+    "string_table": "World_Data",
+    "display_name": "Northern Forest",
+    "palette_indices": [
+     8
+    ],
+    "texels": 227545
+   },
+   "Area_NorthernForest_2": {
+    "package": "Area_NorthernForest",
+    "display_name_key": "Locations/NorthernForest",
+    "string_table": "World_Data",
+    "display_name": "Northern Forest",
+    "palette_indices": [
+     10
+    ],
+    "texels": 146966
+   },
+   "Area_RedBambooFields_2": {
+    "package": "Area_RedBambooFields",
+    "display_name_key": "Locations/RedBambooFields",
+    "string_table": "World_Data",
+    "display_name": "Red Bamboo Fields",
+    "palette_indices": [
+     18
+    ],
+    "texels": 236074
+   },
+   "Area_RedJungle_1": {
+    "package": "Area_RedJungle",
+    "display_name_key": "Locations/RedJungle",
+    "string_table": "World_Data",
+    "display_name": "Red Jungle",
+    "palette_indices": [
+     24
+    ],
+    "texels": 288438
+   },
+   "Area_RedJungle_2": {
+    "package": "Area_RedJungle",
+    "display_name_key": "Locations/JungleSpires",
+    "string_table": "World_Data",
+    "display_name": "Jungle Spires",
+    "palette_indices": [
+     25
+    ],
+    "texels": 269415
+   },
+   "Area_RockyDesert_1": {
+    "package": "Area_RockyDesert",
+    "display_name_key": "Locations/RockyDesert",
+    "string_table": "World_Data",
+    "display_name": "Rocky Desert",
+    "palette_indices": [
+     4,
+     12
+    ],
+    "texels": 1997092
+   },
+   "Area_RockyDesert_2": {
+    "package": "Area_RockyDesert",
+    "display_name_key": "Locations/RockyDesert",
+    "string_table": "World_Data",
+    "display_name": "Rocky Desert",
+    "palette_indices": [
+     13,
+     22
+    ],
+    "texels": 152765
+   },
+   "Area_Savanna_1": {
+    "package": "Area_Savanna",
+    "display_name_key": "Locations/RockyDesert",
+    "string_table": "World_Data",
+    "display_name": "Rocky Desert",
+    "palette_indices": [
+     7
+    ],
+    "texels": 94937
+   },
+   "Area_Savanna_2": {
+    "package": "Area_Savanna",
+    "display_name_key": "Locations/RockyDesert",
+    "string_table": "World_Data",
+    "display_name": "Rocky Desert",
+    "palette_indices": [
+     9
+    ],
+    "texels": 372390
+   },
+   "Area_SouthernForest_1": {
+    "package": "Area_SouthernForest",
+    "display_name_key": "Locations/SouthernForest",
+    "string_table": "World_Data",
+    "display_name": "Southern Forest",
+    "palette_indices": [
+     33
+    ],
+    "texels": 106739
+   },
+   "Area_SouthernForest_2": {
+    "package": "Area_SouthernForest",
+    "display_name_key": "Locations/SouthernForest",
+    "string_table": "World_Data",
+    "display_name": "Southern Forest",
+    "palette_indices": [
+     35
+    ],
+    "texels": 82375
+   },
+   "Area_SpireCoast": {
+    "package": "Area_SpireCoast",
+    "display_name_key": "Locations/SpireCoast",
+    "string_table": "World_Data",
+    "display_name": "Spire Coast",
+    "palette_indices": [
+     5
+    ],
+    "texels": 481162
+   },
+   "Area_Swamp_1": {
+    "package": "Area_Swamp",
+    "display_name_key": "Locations/Swamp",
+    "string_table": "World_Data",
+    "display_name": "Swamp",
+    "palette_indices": [
+     20
+    ],
+    "texels": 203473
+   },
+   "Area_Swamp_2": {
+    "package": "Area_Swamp",
+    "display_name_key": "Locations/Swamp",
+    "string_table": "World_Data",
+    "display_name": "Swamp",
+    "palette_indices": [
+     11
+    ],
+    "texels": 333064
+   },
+   "Area_TitanForest_1": {
+    "package": "Area_TitanForest",
+    "display_name_key": "Locations/TitanForest",
+    "string_table": "World_Data",
+    "display_name": "Titan Forest",
+    "palette_indices": [
+     19
+    ],
+    "texels": 381831
+   },
+   "Area_TitanForest_2": {
+    "package": "Area_TitanForest",
+    "display_name_key": "Locations/TitanForest",
+    "string_table": "World_Data",
+    "display_name": "Titan Forest",
+    "palette_indices": [
+     21
+    ],
+    "texels": 84764
+   },
+   "Area_WesternDuneForest_1": {
+    "package": "Area_WesternDuneForest",
+    "display_name_key": "Locations/WesternDuneForest",
+    "string_table": "World_Data",
+    "display_name": "Western Dune Forest",
+    "palette_indices": [
+     26
+    ],
+    "texels": 257604
+   },
+   "Area_WesternDuneForest_2": {
+    "package": "Area_WesternDuneForest",
+    "display_name_key": "Locations/WesternDuneForest",
+    "string_table": "World_Data",
+    "display_name": "Western Dune Forest",
+    "palette_indices": [
+     28
+    ],
+    "texels": 77417
+   },
+   "Area_crater_1": {
+    "package": "Area_crater",
+    "display_name_key": "Locations/BlueCrater",
+    "string_table": "World_Data",
+    "display_name": "Blue Crater",
+    "palette_indices": [
+     31,
+     34
+    ],
+    "texels": 338562
+   },
+   "Area_crater_2": {
+    "package": "Area_crater",
+    "display_name_key": "Locations/CraterLakes",
+    "string_table": "World_Data",
+    "display_name": "Crater Lakes",
+    "palette_indices": [
+     15
+    ],
+    "texels": 393136
+   }
+  },
+  "naming_rules": {
+   "rule": "the display name is the game's own, taken from each Area_* asset's mDisplayName localisation key. Geometry is game-granular: where two assets carry one key they are one region, and where two assets with the same package name carry different keys they are two.",
+   "one_key_two_assets": "Area_Savanna_1 and Area_Savanna_2 both state Locations/RockyDesert, so the game has a Savanna asset and no Savanna region. Same for the pairs behind Dune Desert, Grass Fields, Lake Forest, Maze Canyons, Northern Forest, Rocky Desert, Southern Forest, Swamp, Titan Forest and Western Dune Forest.",
+   "one_asset_name_two_keys": "Area_crater_1 is Blue Crater and Area_crater_2 is Crater Lakes; Area_RedJungle_1 is Red Jungle and Area_RedJungle_2 is Jungle Spires. Resolving by package name would answer one of each pair at random.",
+   "no_mans_land": "Area_NoMansLand is 43% of the raster and is the ocean and the outer coast. It is labelled No Man's Land -- the game's own display name for it -- rather than blanked, because a player standing on the outer coast is standing somewhere and the game has a name for it. A cell is void instead only when the game names no region AND no known static object is within 1000 m, which is ocean and off-map.",
+   "spellings": {
+    "Locations/DesertCanyon": {
+     "key": "Locations/DesertCanyon",
+     "emitted": "Desert Canyons",
+     "why": "the plural every player uses"
+    },
+    "Locations/MazeCanyon": {
+     "key": "Locations/MazeCanyon",
+     "emitted": "Maze Canyons",
+     "why": "the plural every player uses"
+    }
+   },
+   "names_with_no_ground": "Area assets that exist beside the texture and that no palette index reaches. Eastern Dune Forest is a name the game has and puts nowhere.",
+   "unreferenced_area_assets": [
+    "Area_DesertCanyons_2",
+    "Area_EasternDuneForest_1",
+    "Area_RedBambooFields_1"
+   ]
+  },
+  "grids": {
+   "published": "region_grid and confidence_grid are 30x30 at 256 m -- what /api/regions serves and what the map paints.",
+   "fine": "fine_grid and fine_confidence are 120x120 at 64 m and are what domain.spatial.regions looks names up in. Not served: the payload contract is the coarse pair and nothing else.",
+   "pairing": "each confidence grid is indexed exactly like the grid it is named after. confidence_grid goes with region_grid at 256 m; fine_confidence goes with fine_grid at 64 m. They are different shapes and swapping them reads fine and answers wrong.",
+   "why_64_m": "measured on 5,054 known static world objects, looked up in a majority downsample against the raster itself: 256 m mislabels 714 (14.13%), 128 m 421 (8.33%), 64 m 268 (5.30%), 32 m 132 (2.61%). 64 m costs 14,400 characters; 32 m costs 57,600 for twice the accuracy and was refused.",
+   "not_exact": "a majority downsample of an exact boundary is still a downsample. The boundaries in the source are exact; these two grids are not, and the confidence letter says which cells that bites in."
+  },
   "confidence_legend": {
-   "l": "interior cell, all neighbours agree",
-   "b": "boundary cell, a neighbour disagrees -- may be off by one region",
-   "u": "sparse cell, >400 m from any known object",
-   ".": "void: ocean or off-map, no label emitted"
+   "l": "interior cell: one area covers the whole 256 m cell",
+   "b": "boundary cell: an exact area boundary runs through it",
+   "u": "unnamed cell: the game names no region here, so the label is its No Man's Land",
+   ".": "void: the game names no region and no known object is within 1 km -- ocean or off-map"
+  },
+  "cell_counts": {
+   "256m": {
+    "interior": 197,
+    "boundary": 284,
+    "unnamed": 287,
+    "void": 132
+   },
+   "64m": {
+    "interior": 6177,
+    "boundary": 1631,
+    "unnamed": 4490,
+    "void": 2102
+   }
   },
   "void_distance_m": 1000.0,
-  "uncertain_distance_m": 400.0,
-  "land_mask_reference_points": 2688,
   "land_mask": {
-   "role": "positions only, used to tell land from ocean. No name, purity or collected-state from these tables reaches this file, and no calculation reads the mask -- it only decides which cells go void.",
+   "role": "positions only, and one decision only: whether a cell the GAME leaves unnamed is coast or open water. It supplies no name, and no calculation reads it.",
    "sources": {
     "data/world_resource_nodes.mit.json": "MIT (Copyright (c) 2024 Leonardo Ascione), extracted from FactoryGame/Map/GameLevel01/Persistent_Level.umap",
     "data/world_collectibles.json": "the game's own cooked map packages, read from the installed game"
    },
+   "reference_points": 2688,
    "categories": {
     "crashed_drop_pod": 118,
     "mercer_shrine": 298,
@@ -28,41 +701,31 @@
     "power_slug_yellow": 389,
     "resource_nodes": 626,
     "somersloop": 106
-   },
-   "licence": "no copyleft table contributed to this file. Nothing from sat_sav_parse/sav_data was read; that vendored GPL-3.0 parser and its world tables are deleted."
+   }
   },
-  "cell_counts": {
-   "land": 590,
-   "uncertain": 178,
-   "void": 132
-  },
-  "boundary_cells": 333,
-  "validation_vs_hand_verified_oil_clusters": {
-   "agree": 13,
-   "disagree": 1,
-   "on_void": 0,
-   "mismatches": [
-    "C9 Western Beaches -> raster says Jungle Spires"
+  "node_region_overrides": "gone, key and all. It held 48 oil nodes whose region had been read off a wiki image by eye and was trusted over the raster; the raster is the game's own geometry now, so there is nothing for a hand correction to correct. Keying one by instance name would be the wrong repair in any case -- a map update renames instances, which is what the node skew gate exists for. A node is labelled by where it stands, like every other coordinate.",
+  "retired_wiki_trace": {
+   "what": "data/satisfactory_regions.json, a hand trace of satisfactory.wiki.gg's Biome Map image (CC BY-SA 4.0), rasterised at 256 m. Retired in the same commit as this measurement; the geometry it supplied is now read from the game.",
+   "non_void_cells": 768,
+   "cells_landing_on_a_named_game_area": 481,
+   "cells_landing_on_a_named_game_area_pct": 62.6,
+   "cells_comparable_by_name": 401,
+   "cells_agreeing": 273,
+   "agreement_pct": 68.1,
+   "spire_coast": "62 of the 128 misses. The wiki draws one coastal ring; the game draws a smaller Spire Coast and gives the rest of that ring to four other areas -- Rocky Desert (40 cells), Desert Canyons (11), Dune Desert (10) and Swamp (1). The game's granularity is kept: those cells now carry the name the game gives them, which is the whole point of re-deriving the geometry.",
+   "names_the_wiki_had_and_the_game_does_not": [
+    "Western Beaches",
+    "Snaketree Forest"
+   ],
+   "names_the_game_has_and_the_wiki_did_not": [
+    "Blue Crater is a game name, not a wiki one"
    ]
   },
   "known_limitations": [
-   "Boundaries are accurate to about one 256 m cell; adjacent-region confusion is expected and is what the 'b' confidence flags.",
-   "Region geometry is hand-derived from the wiki biome map. The game ships no biome geometry, so this cannot be regenerated from game data and will not track map changes.",
-   "Per-crash-site validation needs the wiki Region column, which is not shipped locally; validation here uses the 14 hand-verified oil clusters instead.",
-   "source_file_provenance below is quoted from data/satisfactory_regions.json and still credits a GPL-3.0 world table for its coordinates. It describes how that file was built, not this one: the land mask here reads only the two sources named under land_mask. That stale credit belongs to satisfactory_regions.json and has to be settled there."
-  ],
-  "source_file": "data/satisfactory_regions.json",
-  "source_file_provenance": [
-   "node coordinates: rounded from actor positions in FactoryGame/Content/FactoryGame/Map/GameLevel01/Persistent_Level.umap, read out of the installed game's own IoStore container (2026-07-30, v1.2.2.1). All 48 oil-cluster members are the componentwise integer rounding of their asset position, 48/48, and equally of their position in the reference .sav read by sidecar/savparse (build 495413) -- assets and save agree to a median of 0.0001 cm and at worst 0.015 cm.",
-   "node purity and the satellite->well link: the same map package. Purity is the actor's mPurity, serialised only when it differs from the class template, so an absent property means RP_Normal; the link is each satellite's mCore object reference. Neither is in a save -- these 48 actors carry only mResourcesLeft and mDoSpawnParticle there -- so a table was always needed for it. Cross-checked against data/world_resource_nodes.mit.json (MIT), which agrees on purity and node kind for all 48.",
-   "history of the two lines above: this file used to credit 'GreyHak/sat_sav_parse sav_data/resourcePurity.py + the users .sav' for coords. That table was GPL-3.0 and is deleted. Re-derived from the game's assets on 2026-07-30 and no value moved: same 48 instance names, same purities, same 14 clusters, same centroids and spreads, same totals. What the table actually supplied was purity and the well grouping -- not the coordinates, which were in the save all along.",
-   "region labels: satisfactory.wiki.gg Crash_Site table (118 drop pods with Region + save coords)",
-   "region geometry: satisfactory.wiki.gg File:Biome_Map.jpg (5000x5000) + its printed 1.024 km grid. Hand-traced, with no generator. No node coordinate enters it, which is why swapping the coordinate source left region_grid and every region's bbox, centroid, area_km2 and grid_cells bit-identical.",
-   "map->world transform: px_x = 2231.4 + x/149.598 ; px_y = 2526.4 + y/149.598 (cm/px = 102400/684.5). Anchored on the printed grid rather than on any node: the scale is the printed 1.024 km spacing of 684.5 px, and the offsets put the X0 west edge at px 95.011 and the Y0 south edge at px 4550.488 -- within 0.012 px of the half-pixel values reading grid lines off a 5000 px image gives. Its only product is each oil cluster's region, read off the image by eye. The coordinate re-derivation moves a member by at most 0.71 cm = 0.005 px, against a 158 m distance from the closest cluster centroid to the nearest raster cell of a different region, so no region reading can turn on it.",
-   "grid: cell X_i spans x in [-319600 + i*102400, +102400); cell Y_j spans y in (302800-(j+1)*102400, 302800-j*102400]",
-   "frame.content_bbox: min/max over the 2688 static world objects in data/world_resource_nodes.mit.json (626 nodes) and data/world_collectibles.json (2062 drop pods, slugs, Mercer spheres and shrines, somersloops, read from the installed game). Reproduces all six numbers exactly. midline_y is the mean of its y extent."
-  ],
-  "source_file_licences": "The node data is first-party: the game's own packaged assets, with an MIT table (data/world_resource_nodes.mit.json) as a cross-check. Nothing copyleft contributes and no value here depends on the deleted GPL-3.0 sat_sav_parse tables. The region layer is a SEPARATE and unsettled question: satisfactory.wiki.gg content is CC BY-SA 4.0, region_grid and every region bbox are a hand trace of that wiki's Biome Map image, and the region labels come from its Crash_Site table. Tracing an image is a more substantial borrowing than joining a coordinate, and the game ships no biome geometry to replace it with. Flagged for a decision, not resolved here."
+   "The published grid is 256 m and the lookup grid is 64 m, so a name near a boundary can be one region out. The SOURCE boundaries are exact -- this is the cost of publishing a small table, not of not knowing.",
+   "No Man's Land is a label, not a region with edges anybody drew: it is everything the game does not name, from the outer coast to open ocean, and the land mask is what separates the two here.",
+   "The corners are MEASURED, not stated in the asset. Nothing in the texture says where its 4096 texels go; calibration above re-measures it every run and this file refuses to write if the pin stops holding."
+  ]
  },
  "grid_meta": {
   "x0": -336000.0,
@@ -70,7 +733,10 @@
   "cell": 25600.0,
   "nx": 30,
   "ny": 30,
-  "void": "."
+  "void": ".",
+  "fine_cell": 6400.0,
+  "fine_nx": 120,
+  "fine_ny": 120
  },
  "legend": {
   "A": "Abyss Cliffs",
@@ -78,104 +744,350 @@
   "C": "Crater Lakes",
   "D": "Desert Canyons",
   "E": "Dune Desert",
-  "F": "Eastern Dune Forest",
-  "G": "Grass Fields",
-  "H": "Jungle Spires",
-  "I": "Lake Forest",
-  "J": "Maze Canyons",
+  "F": "Grass Fields",
+  "G": "Jungle Spires",
+  "H": "Lake Forest",
+  "I": "Maze Canyons",
+  "J": "No Man's Land",
   "K": "Northern Forest",
   "L": "Red Bamboo Fields",
   "M": "Red Jungle",
   "N": "Rocky Desert",
-  "O": "Snaketree Forest",
-  "P": "Southern Forest",
-  "Q": "Spire Coast",
-  "R": "Swamp",
-  "S": "Titan Forest",
-  "T": "Western Beaches",
-  "U": "Western Dune Forest"
+  "O": "Southern Forest",
+  "P": "Spire Coast",
+  "Q": "Swamp",
+  "R": "Titan Forest",
+  "S": "Western Dune Forest"
  },
  "region_grid": [
-  ".................QQQQQQQQQEEEE",
-  ".........QQQQQQQQQQQQQQQQEEEEE",
-  "........QQQQQQQQQQQQQQQQEEEEEE",
-  "..NNNNNNQQQQQQQQQQQQQQQQEEEEEE",
-  "NNNNNNNNQQQQQQQQQQQQQQQEEEEEEE",
-  "NNNNNNNNQQQQQQQQQQQQQQQEEEEEEE",
-  "NNNNNNNNNQQQQQQQQQQQQQEEEEEEEE",
-  "NNNNNNNNNQQQQQQQQQQQQQEEEEEEEE",
-  "NNNNNNNNNNQQQQQQQQQQQQEEEEEEEE",
-  "NNNNNNNNNNKKKKKKQQQQQQEEEEEEEE",
-  "NNNNNNNNNNKKKKKKKDDQQEEEEEEEEE",
-  "NNNNNNNNNCCKKKKKKJDDEEEEEEEEEE",
-  "NNNNNNNNCCCCKKKKJJJDSSEEEEEEEE",
-  "NNNNNNNNCCCCCIIIJJJSSSSEEEEEES",
-  "NNNNNNNMMMLLLLIIISSSSRRRRESSSS",
-  "NNMMMMMMMMMLLLLSSSSSSRRRRSSSSS",
-  "TTTMMMMMMMMMLLLSSSSSSRRRRSSSS.",
-  "TTTTHHHHMMMLLLLFSSSFRRRRRRRSS.",
-  "TTTTTHHHUMMLLLFFFFSFRRRRRRRR..",
-  "TTTTTTHHUUULLLFFFFFFFRARRRRR..",
-  "TTTTTHHUUUUOOFFFFFFFFBARRRRR..",
-  "TTTTHHHUUOOOGGGPPBBBBBAARRRS..",
-  ".TTGGHHUOOGGGGPPPBBBBBAABRS...",
-  "..GGGGGGOOGGGGPPPBBBBBBBBB....",
-  "...GGGGGGGGGGGPPPBBBBBBBB.....",
-  "....GGGGGGGGGGGGPBBBBBBB......",
-  "....GGGGGGGGGGGGBBBBBBB.......",
-  "......GGOGGGGGGGBBBBBBB.......",
-  "......GGOGGGGGGGBBBBBB........",
-  "........OOGGGGGG..BB.........."
+  ".................JJJJJJJJJJJJJ",
+  ".........JJJJJJJJJJJJJJJJJJJJJ",
+  "........JJJJJJJJJJJJJEEEJJJJJJ",
+  "..JJJJJJJJNNNNNNNNNNPPEEEEEEJJ",
+  "JJJJNJNJNJJNNNNNNNNNPPEEEEEEEJ",
+  "JJJJNNJJNJJJNNNNNNNNPPEEEEEEEJ",
+  "JJNNNNNNNJJPPPNNNNNNPPEEEEEEEJ",
+  "JJNNNNNNNNJDDPPPNNNNPPEEEEEEEJ",
+  "JJNNNNNNNNDDDDDPPPPPPEEEEEEEEJ",
+  "JJNNNNNNNNKKKKDDDDDPEEEEEEEEEJ",
+  "JJJNNNNNNNKKKKKKKKQQDEEEEEEEEJ",
+  "JJJNNNNNNCCHHKKKKKDQQDEEEEEJJJ",
+  "JJNNNNNNCCCCHHHKKIDDDDEEEEJJJJ",
+  "JJNNNNNNCCCCCHHHIIIDRRRRQEJJJJ",
+  "JJJNNNNNNMMLLLHHHIRRRRRQQNNJJJ",
+  "JJGJJMMMMMMLLLLRRRRRRQQQQJJJJJ",
+  "JJJJJMMMMMMLCCCCRRRRQQQQQJJJJ.",
+  "JJJNJGGSSGGLCCCCRRRRQQQQQJJJJ.",
+  "JNNJJSGSSGGLLCCNNNNRQQQQJJJJ..",
+  "JNNNJJGGSSSSJCCNNNNAAAQQJJJJ..",
+  "JJNNJJSGSSSSJFFNBBBBAAAJJJJJ..",
+  "JJNNJJSGSSFFFFFOOBBBAAAJJJJJ..",
+  ".JNNJJJSFFFFFFOOOBBBBAJJJJJ...",
+  "..JNJJJJFFFFFOOOOBBBBJJJJJ....",
+  "...JJJJJJFFFFFFJJBBBJJJJJ.....",
+  "....JFFJJFFFFFFJJJJJJJJJ......",
+  "....JFFJJJJFFJJJJJJJJJJ.......",
+  "......JJJJJJJJJJJJJJJJJ.......",
+  "......JJJJJJJJJJJJJJJJ........",
+  "........JJJJJJJJ..JJ.........."
  ],
  "confidence_grid": [
   ".................uuuuuuuuuuuuu",
-  ".........uuuuuuuuuuulllbbuuluu",
-  "........uuuuuuuuuulllllbbblllu",
-  "..uuuuuuuulllulluullllbbblllll",
-  "uuuuuuuuulllllllllllllbbblllll",
-  "uuuuuuuuublllllllllllbbbllllll",
-  "ullllllbbblllllllllllbbbllllll",
-  "ulllllllbbbllllllllllbblllllll",
-  "llllllllbbbbbbbbbllllbblllllll",
-  "lllllllllbbbbbbbbbbbbbblllllll",
-  "ulllllllbbbblllbbbbbbbblllllll",
-  "ullllllbbbbbbllbbbbbbbblllllll",
-  "lllllllbbbbbbbbbbbbbbbbbllllbb",
-  "llllllbbbbbbbbbbbbbbbbbbbbbbbu",
-  "lbbbbbbbbbbbbbbbbbbbbbbbbbbbuu",
-  "ubbbbbbblbbbbbbbbbllbbllbbbuuu",
-  "uubbbbbbblbbblbbblbbbbllbbuuu.",
-  "ulbbbbbbbbbbbbbbbbbbbbllbbuuu.",
-  "ullbbbbbbbbblbbbbbbbbbbblluu..",
-  "ulllbbbbbbbbbbbllbbbbbbblluu..",
-  "uulbbbbbbbbbbbbbbbbbbbbbbluu..",
-  "uuuubbbbbbbbbbbbbbbbbbbbuuuu..",
-  ".uuuubbbbbbbbbbbbblllbbuuuu...",
-  "..uuuubbbbbllbblbblllbbuuu....",
-  "...uuulbbbbllbbbbblllluuu.....",
-  "....uuullllllbbbbbllluuu......",
-  "....uuuubblllllbublluuu.......",
-  "......uuubllllluuuuuuuu.......",
+  ".........uuuuuuuuuuuuuuuuuuuuu",
+  "........uuuuuuuuuuuuubbbuuuuuu",
+  "..uuuuuuuubllllllllbbbblllbbuu",
+  "uuuubububuubllllllllblblllllbu",
+  "uuuubbuubuuubllllllbbbbllllllu",
+  "uubbllllbuubbbbllllblbllllllbu",
+  "uubblllllbubbbbbbbbblbllllllbu",
+  "uubllllllbbbbbbbbbbbbblllllllu",
+  "uubllllllbbbbbbbbbbbblllllllbu",
+  "uuubllllbbblllllbbbbbbllllllbu",
+  "uuulllllbbbbbbllbbbbbbllllbuuu",
+  "uublllllbllbbbbbbbbbbbbblluuuu",
+  "uublllllblbbbblbblbbblbbbbuuuu",
+  "uuubbbbbbbbbbbblbbbllbblbbbuuu",
+  "uubuubbbbllbllbbbbllbbllbuuuuu",
+  "uuuuubbbblbbbbbbllllblllbuuuu.",
+  "uuububbbbbbbblbblbblblllbuuuu.",
+  "ubbuubbbbbbbblbbbbbbbbbbuuuu..",
+  "ublbuubblbbbubblbbbbbbbbuuuu..",
+  "uubbuubbblbbubbbbbbbblbuuuuu..",
+  "uulluubbbbblllbbblllblbuuuuu..",
+  ".ulbuuubbllllbblbbllbbuuuuu...",
+  "..ubuuuubllllblbbblbbuuuuu....",
+  "...uuuuuullllbbuublbuuuuu.....",
+  "....ubbuubblllbuuuuuuuuu......",
+  "....ubbuuuubbuuuuuuuuuu.......",
+  "......uuuuuuuuuuuuuuuuu.......",
   "......uuuuuuuuuuuuuuuu........",
   "........uuuuuuuu..uu.........."
+ ],
+ "fine_grid": [
+  "....................................................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "....................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJEEEEEJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJEEEEEEEEEJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJEEEEEEEEEJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJNNNNNNNNNNNNNNPPEEEEEEEEEEEEEEEEEEEJJJJJJJJJJJJJJJ",
+  "........JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPEEEEEEEEEEEEEEEEEEEJJEEEJJJJJJJJJ",
+  "........JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPEEEEEEEEEEEEEEEEEEEJJEEEEJJJJJJJJ",
+  "........JJJJJJNNJJNNJJJJJJJNNNJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJJ",
+  "........JJJJJJNNJJNNNNJJJNNNNNJJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJNJJJNNNNNNNNNJNNNNJNNJJJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJJNNJJJJNNNNJJNJJNNNNNNJJJNNJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJJJJJNJJNNNNJJNJJNNNNNJJJJNNNNJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNJJJJJJNNNJJNNNJJNNNNJJJNNNNNJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNJJJJJNNNNJJNNNJJJJJJJJJNNNNJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJJJJJJJNNNNJJNNNNNJJJJJJJNNNNJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJJNNJJJJNNNNNNNNNJNJJNNJNNNNNJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNNNNJJJNNNNNNNNNNNNNNNNNNNNNJJJJJJJJPPPPNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNNNNNNJNNNNNNNNNNNNNNNNNNNNJJJJJJJJPPPPPPPPPPPNNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJJNNJJNNNNNNNNNNNNNNNNNNNNNNNNJJJJJJPPPPPPPPPPPPNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJJNNJJJNNNNNNNNNNNNNNNNNNNNNNNNNJJJJPPPPPPPPPPPPPNNNNNNNNNNNNNNNNNNNNNNNNPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJPPPDPPPPPPPPPPPNNNNNNNNNNNNNNNNNNNNNNPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJPPPPDDDDDDPPPPPPNNNNNNNNNNNNNNNNNNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJPPPPDDDDDDPPPPPPPPNPPPNNNNNNNNNNNNNNPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJPPPPDDDDDDPPPPPPPPPPPPPPNNNNNNNNNNNPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDPPPDDDDDPPPPPPPPPPPPPPPPPPPPPPPNNNNPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDDPPDDDDDDDDDPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDDDDDDDDDDDDDDDDDPPPPPPPPPPPPPPPPPPPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDDDDDDDDDDDDDDDDDDPPDPDPPPPPPPPPPPPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDDDDDDDDDDDDDDDDDDDDDDDDDPPPPPPPPPPPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJJDDDDDKKKKKDDDDDDDDDDDDDDDDDDDDDDDDPPPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJDKKKKKKKKKKKKKDDDDDDDDDDDDDDDDDDDDDPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJKKKKKKKKKKKKKKKKKKKDDKKDDDDDDDDQQDDPPPPPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJKKKKKKKKKKKKKKKKKKKKKKKKKKDDDDDQQQDQQPEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNJJKKKKKKKKKKKKKKKKKKKKKKKKKKKDDDQQQQQQQQQQDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJ",
+  "JJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNNKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKQQQQQQQQQQDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKQQQQQQQQQQDDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJ",
+  "JJJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNJJNNJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKDDDQQQQQQQQDDDEEEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJJ",
+  "JJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNJJJJJKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKDDDDDQQQQQQQDDEEEEEEEEEEEEEEEEEEEEEEEEEEJJJJJJJJ",
+  "JJJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNJJJJJKJJJHHKKKKHKKKKKKKKKKKKKKKKKKKKDDDDDQQQQQQQDDDEEEEEEEEEEEEEEEEEEEEEEEJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCHHHKHHHHKKKKKKKKKKKKKKKKKKKDDDDDQQQQQQDDDDEEEEEEEEEEEEEEEEEEEEEJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCHHHHHKKKKKKKKKKKKKKKKKKKKDDDDDQQQQQDDDDDDEEEEEEEEEEEEEEEEEEEJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCHHHHHHKKKKKKKKKKKKIIIIIIDDDDQQQDDDDDDDDEEEEEEEEEEEEEEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCHHHHHHKIKKKKKKKKKIIIIIIDDDQQQDDDDDDDDDEEEEEEEEEEEEEEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCHHHHHHHHIIIKKKKKKIIIIIIDDDDDDDDDDDDRRREEEEEEEEEEEEEEEEJJJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCHHHHHHHHHHHHHIIIIIIIIIIIDDDDDDDDDDDRRRRREEEEEEEEEEEEEEEJJJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCHHHHHHHHHHHHIIIIIIIIIIIDDDDDDDDDRRRRRRRRRRREREEEEEEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCHHHHHHHHHHHHIIIIIIIIIIDDDDDDDRRRRRRRRRRRRRRQQQQEEEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCHHHHHHHHHHHHHHIIIIIIIIDDRRRDDRRRRRRRRRRRRRQQQQQQEEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCLLLLLLLCLHHHHHHHHHHHHHHIIIIIIIRRRRRRRRRRRRRRRRRRRQQQQQNNNEEEEJJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNCCCCMCCCCLLLLLLLLLLLHHHHHHHHHHHHHHIIIIIRRRRRRRRRRRRRRRRRRRQQQQQQQNNNNEEEJJJJJJJJJJJJJJ",
+  "JJJJJJJJJJNNNNNNNNNNNNNNNNNNNNNNNNCCCMMMCCMLLLLLLLLLLLLHHHHHHHHHHHHHIIIRRRRRRRRRRRRRRRRQRRRQQQQQQQQQNNNNEEEJJJJJJJJJJJJJ",
+  "JJJJJJJJJJJJMMMMMMMNNNNNNNNNNNNNNNCMMMMMCMMMLLLLLLLLLLLLLLHHHHHHHHHHHIIRRRRRRRRRRRRRRQQQQQQQQQQQQQQQNNNNNNENNNJJJJJJJJJJ",
+  "JJJJJJJJJJJJJJJMMMMMNMNNNNNNNNNNNNMMMMMMMMMMLLLLLLLLLLLLLLLHHHHHHHHHHIRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQNNNNNNNNNJJJJJJJJJJ",
+  "JJJJJJJJGJJJJJJJJMMMMMMMMMNNMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLHHRRRRHHHHHRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQJJNJJJNNJJJJJJJJJJJ",
+  "JJJJJJJJGGJJJJJJJJMMMMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLLRRRRRRRHHHRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQQJJJJJJJNNJJJJJJJJJJ",
+  "JJJJJJJJGGGGGGJJJJJMMMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLLRRRRRRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQJJJJJJNNJJJNNJJJJJJJJJ",
+  "JJJJJJJJGGGJGGJJJJJMMMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLLRRRRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQJJJJJJJNNJJJNNJJJJJJJJJ",
+  "JJJJJJJJGGJJGJGGGGJJMMMMMMMMMMMMMMMMMMMMMMMMLLLLLLLCCCCCCCCCRRRRRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQJJJJJJJNNJJJJJJJJJJ....",
+  "JJJJJJJJJGGGGGGGGGJJMMMMMMMMMMMMMMMMMMMMMMMMLLLLLCCCCCCCCCCCCRRRRRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJJJJJJGJJJMMMMMMMMMMMMMMMMMMMMMMMMMLLLLCCCCCCCCCCCCCCRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJJJJJJJJJJMMMMMMMMMSSMGGMMMMMMMMMLLLLLCCCCCCCCCCCCCCCRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJJNNJNJJJJGGGGGGGGSSSSGGGGGGGGMMLLLLLLCCCCCCCCCCCCCCCCRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJJJJJJJJJJGGGGGGGGSSSSSSSGGGGGGGGLLLLLLCCCCCCCCCCCCNNRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJNNNNNJJJJGGGGGGGSSSSSSSGGGGGGGGGGLLLLLCCCCCCCCCCCCNNRRRRRRRRRRRRRRRRRRQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJJJJJJJJJJNNJJJGGGGGGGSSSSSSSSSGGGGGGGGGLLLLLCCCCCCCCCCCNNRRRRRRRRNNRNRRRRRRQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJJJ....",
+  "JJJJJJNNJJJJJJJJJJJJJSGGGGGGGSSSSSSSGGGGGGGGGLLLLLCCCCCCCCCNNNNNRRRRRNNNNNNNRRRRRQQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNJJJJJJJJSSGGGGGGSSSSSSSGGGGGGGGGLLLLLLCCCCCCCNNNNNNNRRRNNNNNNNNNARRRRQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNNJJJJJJJSSGGGGGGSSSSSSGSSGGGGGGGLLLLLLCCCCCCCNNNNNNNNNNNNNNNNNNNARRRRQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNJJJJJJJJJSSGGGGGGSSSSSSSSSGGGGGLLLLLLLCCCCCCCCNNNNNNNNNNNNNNNNNNNAAQQQQQQQQQQQQQQQQJJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNJJJJJJJJJSSGGGGGGSSSSSSSSSSSSSSSSLLLLLLCCCCCCCNNNNNNNNNNNNNNNNNNNNAAAAAQQQAAQQQQQQQQJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNNJJJJJJJJJSSGGGGGGSSSSSSSSSSSSSSSSSJJJJCCCCCCCCNNNNNNNNNNNNNNNNNNAAAAAAAAAAAQQQQQQQQJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNNJJJJJJJJJSSSGGGGGGSSSSSSSSSSSSSSSSJJJJCCCCCCCNNNNNNNNNNNNNNNNNAAAAAAAAAAAAAAQQQQQQJJJJJJJJJJJJJJJJ........",
+  "JJJJJNNNNNNNNNNJJJJJJJJSSSGGGGGSSSSSSSSSSSSSSSSSJJJJFCCCCCCNNNNNNNNNBBBNNAAAAAAAAAAAAAAAAAAQQQQQQJJJJJJJJJJJJJJJ........",
+  "JJJJJJNNNNNNNNNNJJJJJJJJSGGSGGGSSSSSSSSSSSSSSSSFJJJJFFCCFFCNNNNNNNNBBBBNNNAAAAAAAAAAAAAAAAAQQJJJQJJJJJJJJJJJJJJJ........",
+  "JJJJJJJNNNNNNNNNNJJJJJJJSSGSGGGGSSSSSSSSSSSSSSSFFJJJFFFFFFFNNNNNNBBBBBBBBBBBBBAAAAAAAAAAAAQQJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJJJNNNNNNNNNJJJJJJJSSGSGGGGGSSSSSSSSSSSSSFFFJJJFFFFFFFNNNNNBBBBBBBBBBBBBBBBAAAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJJJNNNNNNNNNJJJJJJJJGGGGGGGGGSSSSSSSSSFSFFFFFFFFFFFFFFNNOOOBBOOBBBBBBBBBBBBAAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJJNNNNNNNNNNNJJJJJJJSGGGGGGSSSSSSSSSSSFFFFFFFFFFFFFFFFOOOOOOOOOBBBBBBBBBBBBAAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJJNNNNNNNNNNNJJJJJJJSSSGGGSSSSSSSSSSSFFFFFFFFFFFFFFFFFFOOOOOOOBBBBBBBBBBBBBAAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJJNNNNNNNNNNJJJJJJJJSSSSGGSSSSSSFFSSSFFFFFFFFFFFFFFFFFFOOOOOOOBBBBBBBBBBBBBAAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJJ........",
+  "JJJJJJNNNNNNNNNNNJJJJJJJSSSSSGGGGGGSFFFFFFFFFFFFFFFFFFFFFFFFOOOOOOOBBBBBBBBBBBBBBAAAAAAAAAAJJJJJJJJJJJJJJJJJJJJJ........",
+  "....JJNNNNNNNNNNNNJJJJJJJSSSSGGGGGGFFFFFFFFFFFFFFFFFFFFOFFOOOOOOOOOOBBBBBBBBBBBBBBAAAAAAAJJJJJJJJJJJJJJJJJJJ............",
+  "....JJNNNNNNNNNNNNJJJJJJJJSSSSSSSFFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOOBBBBBBBBBBBBBBBAAAAJJJJJJJJJJJJJJJJJJJJJ............",
+  "....JJNNNNNNNNNNNJJJJJJJJJJSSSSSFFFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOBBBBBBBBBBBBBBBBAAAJJJJJJJJJJJJJJJJJJJJJJ............",
+  "....JJNNNNNNNJJJJJJJJJJJJJJJSSSFFFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOOBBBBBBBBBBBBBBBBAAJJJJJJJJJJJJJJJJJJJJJJJ............",
+  ".......NJJJJJJJJJJJJJJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOOBBBBBBBBBBBBBBBBAAJJJJJJJJJJJJJJJJJJJ................",
+  "........JJJJJJNNNNNJJJJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOOOBBBBBBBBBBBBBBBAAJJJJJJJJJJJJJJJJJJJ................",
+  "........JJJJJNNNNNJJJJJJJFFJFJJJJFFFFFFFFFFFFFFFFFFFFFOOOOOOOOOOOOOOBBBBBBBBBBBBBBBAAJJJJJJJJJJJJJJJJJJJ................",
+  "........NNJJNNNNJJJJJJJJJFFFFJJJJJFFFFFFFFFFFFFFFFFFFOOOOOOOOOOJOJOOBBBBBBBBBBBBBBJJJJJJJJJJJJJJJJJJJJJJ................",
+  "........NN..NNNNJJJJJJJJJJFFFJJJJJFFFFFFFFFFFFFFFFFFFFFOOOOOOJOOOJJJBBBBBBBBBBBJJJJJJJJJJJJJJJJJJJJJ....................",
+  "............JJNJJJJJJJJJJJFFFJJJJJFFFFFFFFFFFFFFFFFFFFFFFFOOJJOOOOJJJBBBBBBBBBBBJJJJJJJJJJJJJJJJJJJJ....................",
+  "............JJJJJJJJJJJJJFFFJJJJJJFFFFFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJBBBBBBBBJBJJJJJJJJJJJJJJJJJJJJ....................",
+  "............JJJJJJJJJJJJJJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJBBBBBBBBBJJJJJJJJJJJJJJJJJJJJJJ....................",
+  "................JJJJFFJJFFJJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJBBBBBBBJJJJJJJJJJJJJJJJJJ........................",
+  "................JJFFFFFFFFFJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJBBJBBBJJJJJJJJJJJJJJJJJJJ........................",
+  "................JJJFFFFFFFFFFFJJJJJJJJFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJJJJJBBJJJJJJJJJJJJJJJJJJJ........................",
+  "................JJJFFFFFFFFFFJJJJJJJJJFFFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ........................",
+  "................JJJJFFFFFFFFFJJJJJJJJJJFFFFFFFFFFFFFFFFFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "................JJJJFFFFFFFFFJJJJJJJJJJJFFJJFFFFFFFFFFFJFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "................JJJFFFFFFFFFJJJJJJJJJJJJJFJJFFFFFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "................JJFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "...................N....JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "..................NNN...JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "..................NNN...JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "........................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ............................",
+  "........................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ................................",
+  "........................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ................................",
+  "........................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ................................",
+  "........................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ................................",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ........JJJJJJJJ........................................",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ........JJJJJJJJ........................................",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ........JJJJJJJJ........................................",
+  "................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ........JJJJJJJJ........................................"
+ ],
+ "fine_confidence": [
+  "....................................................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "....................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuubbbbbuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuublllllllbuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuublllllllbuuuuuuuuuuuuuuuuuuuuuuuuuu",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuubbbbbbbbbbbbbbbbbbllllllllbbllllllbuuuuuuuuuuuuuuu",
+  "........uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuulllllllllllllllllllllllllllllllllllllllllbblllblllllllllllllllllbuubbbuuuuuuuuu",
+  "........uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuublllllllllllllllllllllllllllllllllllllbbbbllllblllllllllllllllllbuubllbuuuuuuuu",
+  "........uuuuuubbuubbuuuuuuubbluuuuuuuuuuublllllllllllllllllllllllllllllllllllllbbllllllbllllllllllllllllllbbllllbbuuuuuu",
+  "........uuuuuubbuublbbuuubbbbbuuuuuuuuuuuublllllllllllllllllllllllllllllllllllllbllllllbblllllllllllllllllllllllllbuuuuu",
+  "uuuuuuuuuubuuubbbblbblbubllbubbuuuuuuuuuuuuublllllllllllllllllllllllllllllllllllbbllllllbblllllllllllllllllllllllllbuuuu",
+  "uuuuuuuuubbuuuubllbuubuubllbbbuuubbuuuuuuuuuublllllllllllllllllllllllllllllllllllblllllllbbllllllllllllllllllllllllluuuu",
+  "uuuuuuuuuuuubuubllbuubuublllbuuuullbbuuuuuuuuubllllllllllllllllllllllllllllllllllblllllllbbblllllllllllllllllllllllluuuu",
+  "uuuuuuuubuuuuuublbuublbuubbbbuuubllbbuuuuuuuuuublllllllllllllllllllllllllllllllllbllllllbbblllllllllllllllllllllllllbuuu",
+  "uuuuuuuubuuuuubllbuublbuuuuuuuuubllbuuuuuuuuuuublllllllllllllllllllllllllllllllbbblllllbblllllllllllllllllllllllllllbuuu",
+  "uuuuuuuuuuuuuubllbuublbbbuuuuuuulllbuuuuuuuuuuullllllllllllllllllllllllllllllllblllllllbllllllllllllllllllllllllllllbuuu",
+  "uuuuuuuuubbuuuullbbbllllubuubbublllluuuuuuuuuubllllllllllllllllllllllllllllllllblllllllblllllllllllllllllllllllllllluuuu",
+  "uuuuuuuubllbuuubllllllllbbbblllllllbuuuuuuuubbbbbllllllllllllllllllllllllllllllblllllllblllllllllllllllllllllllllllluuuu",
+  "uuuuuuuubllbbbubllllllllllllllllllbuuuuuuuubllllbbbbbbbllllllllllllllllllllllllblllllllblllllllllllllllllllllllllllluuuu",
+  "uuuuuuuuulluubblllllllllllllllllllbbbuuuuuubllllllllllbblllllllllllllllllllllllblllllllblllllllllllllllllllllllllllbuuuu",
+  "uuuuuuuuubluuulllllllllllllllllllllllbbuuuublllllllllllbbllllllllllllllllllllllbllllllbbllllllllllllllllllllllllllluuuuu",
+  "uuuuuuuuuubbbblllllllllllllllllllllllllbuuullbbbllbbblllbbbllllllllllllllllllllblllllllbllllllllllllllllllllllllllluuuuu",
+  "uuuuuuuuuuuubllllllllllllllllllllllllllbuubllblbbbblblllllblllllllllllllllllllbbllllllbbllllllllllllllllllllllllllluuuuu",
+  "uuuuuuuuuuuublllllllllllllllllllllllllluuubllbllllllblllllbbbbbbbblllllllllllbblllllllblllllllllllllllllllllllllllluuuuu",
+  "uuuuuuuuubblllllllllllllllllllllllllllbuuubllbbllllbbllllllllllllbblllbllllllblllllllbbllllllllllllllllllllllllllllbuuuu",
+  "uuuuuuuubllllllllllllllllllllllllllllluuubbbllblllbbbbblllllllllllbbbbbbbbbllbbllllllblllllllllllllllllllllllllllllluuuu",
+  "uuuuuuuubllllllllllllllllllllllllllllbuuublbbbblllllllbbllllllllllllllllllbbbblllllllbllllllllllllllllllllllllllllllbuuu",
+  "uuuuuuuulllllllllllllllllllllllllllllbuuublllllllllllllbbbbblllllllllllllllllllllllllbblllllllllllllllllllllllllllllluuu",
+  "uuuuuuuubllllllllllllllllllllllllllllbuuublllllllllllllllblbbbbbbblllllllllllllllllllbllllllllllllllllllllllllllllllluuu",
+  "uuuuuuuubllllllllllllllllllllllllllllluuublllllbbbblllllllllbblllbbbbbbbbbllllllllbbbbllllllllllllllllllllllllllllllluuu",
+  "uuuuuuuuullllllllllllllllllllllllllllbuuublllbbbbbbbbblllllllllllllblllbbbbllllllbblllllllllllllllllllllllllllllllllbuuu",
+  "uuuuuuuubllllllllllllllllllllllllllllbbuubbbbblllllblbbbbbbllllllllllllllllbbllllbllllllllllllllllllllllllllllllllllbuuu",
+  "uuuuuuuublllllllllllllllllllllllllllllbuubllllllllllllllbbbbbbbbbbbllllbbbblbllbbbllllllllllllllllllllllllllllllllllbuuu",
+  "uuuuuuuullllllllllllllllllllllllllllllbuulllllllllllllllllllbbllblbllllbllbbbbbbbllllllllllllllllllllllllllllllllllbuuuu",
+  "uuuuuuuubbblllllllllllllllllllllllllllluulllllllllllllllllllllllllbbbbbbllllllblbbbbbllllllllllllllllllllllllllllllbuuuu",
+  "uuuuuuuuuuuubllllllllllllllllllllllllllbbllllllllllllllllllllllllllllbbblllllllllblllbllllllllllllllllllllllllllllbuuuuu",
+  "uuuuuuuuuuuuublllllllllllllllllllllllllbbllllllllllllllllllllllllllllllblllllllllbbllbblllllllllllllllllllllllllllbuuuuu",
+  "uuuuuuuuuuuubblllllllllllllllllllllbuulbullllllllllllllllllllllllllllllbbbbbblllllbbllbllllllllllllllllllllllllllbuuuuuu",
+  "uuuuuuuuuuublllllllllllllllllllllllbuuuuublbbblllllbbllllllllllllllllllbllllbllllllblbbllllllllllllllllllllllllbuuuuuuuu",
+  "uuuuuuuuuuublllllllllllllllllllllllbuuuuubuuubbbllbbblllllllllllllllllllblllbblllllbllbbllllllllllllllllllllbbuuuuuuuuuu",
+  "uuuuuuuuuublllllllllllllllllllllllllbbllbbbbbblbbbblblllllllllllllllllllbllllblllllblllblllllllllllllllllllbuuuuuuuuuuuu",
+  "uuuuuuuuuulllllllllllllllllllllllllblllllllllbbbllllblblllllllllllbbbbblblllbbllllbllllblllllllllllllllllbbuuuuuuuuuuuuu",
+  "uuuuuuuuuullllllllllllllllllllllllbblllllllllllbbbllbbbbbbllblllllbbbbbbblllbllbbbbllllbllllllllllllllllluuuuuuuuuuuuuuu",
+  "uuuuuuuuuulllllllllllllllllllllllbbllllllllllllllbblllbbbbbbblllllbbllllbbllbbbbllllbbbbblllllllllllllllbuuuuuuuuuuuuuuu",
+  "uuuuuuuuuubllllllllllllllllllllllblllllllllllllllbbllllllbbbbbbbblblllllbbllblbbllllbllbbllllllllllllllluuuuuuuuuuuuuuuu",
+  "uuuuuuuuuublllllllllllllllllllllbbllllllllllllllbbblllllllllbbbbbbblllllbblllllllllbblllbbllbllblllllllluuuuuuuuuuuuuuuu",
+  "uuuuuuuuuublllllllllllllllllllllbllllllllllllllllbbbllllllllllbblllllllllbblllllllbblllllbbbbbbbblllllllbuuuuuuuuuuuuuuu",
+  "uuuuuuuubbllllllllllllllllllllllbblllllllllllllllllblllllllllllbbbllllllllblllllbbblllllllllllbbbbbbllllbuuuuuuuuuuuuuuu",
+  "uuuuuuublllllllllllllllllllllllllbblllllllllbbbbbllblllllllllllllbblllllllbbbbbbbblllllllllllbblllbbblllluuuuuuuuuuuuuuu",
+  "uuuuuuuubbllllllllllllllllllllllllbblllllllbbllllbbbbbllllllllllllbbllllllbbllllllllllllllllbblllbblbbllluuuuuuuuuuuuuuu",
+  "uuuuuuuuuullllllllllllllllllllllllbllbbbllbblllllllblbbllllllllllllbblllbbbllllllllllllllllbllllllbblbbblbuuuuuuuuuuuuuu",
+  "uuuuuuuuuubllbbbllbblllllllllllllbllbblbbbbbllllllllllbbbblllllllllbbllbbllllllllllllbbbbbbblllllllblllbbbbuuuuuuuuuuuuu",
+  "uuuuuuuuuuuubblbbblblllllllllllllbbbblllbblbbllllllllllllbblllllllllbbbblllllllllllllbllbblllllllllbblllbbbblbuuuuuuuuuu",
+  "uuuuuuuuuuuuuuublllbbbbbblllllbbblblllllblllbbllllllllllllbllllllllllbblllllllllllllbbllllllllllllllbbblblbllbuuuuuuuuuu",
+  "uuuuuuuubuuuuuuuubllllblbbbbbbblbbblllllllllbbllllllllllllbbbbbbbbbllblllllllllllllbblllllllllllllllbuubuuubluuuuuuuuuuu",
+  "uuuuuuuubbuuuuuuuubllllllllllllllllllllllllllbllllllllllllllblllllbbbbllllllllllllbbllllllllllllllbbluuuuuuubbuuuuuuuuuu",
+  "uuuuuuuubbbbbbuuuuublllllllllllllllllllllllllbllllllllllllllbllllllbblllllllllllllbllllllllllllllbuuuuuubbuuulbuuuuuuuuu",
+  "uuuuuuuublbubbuuuuubllllllllllllllllllllllllbblllllllllllllbblllllllllllllllllllbbllllllllllllllbuuuuuuulluuubbuuuuuuuuu",
+  "uuuuuuuubluububblbuullllllllllllllllllllllllbllllbbbbbbbbbbbblllllllllllllllllllbbblllllllllllllluuuuuuubbuuuuuuuuuu....",
+  "uuuuuuuuubbbbblllbuullllllllllllllllllllllllblllbbllllllllllbbbllllllllllllllllllbbllllllllllllllbuuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuuuuuuubuuublllllllllllllllllllllllblllblllllllllllllbbllllllllllllllllbblllllllllllllllluuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuuuuuuuuuuubbbbblbbbbbbbbbbllllllbbblllbllllllllllllllbllllllllllllllllbllllllllllllllllluuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuuubbubuuuubllbbbbbllllblbbbbbbbbbbllllbllllllllllllblbllllllllllllllllbllllllllllllllllluuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuuuuuuuuuuubllllllbllllbbbllllllllbllllbllllllllllllbbbllllllllllllllllbllllllllllllllllluuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuubbbbbuuuubllllllblllllbbblllllllbblllbblllllllllllbbbllllllllllblllllbblllllllllllllllluuuuuuuuuuuuuuuuuu....",
+  "uuuuuuuuuuuuuuubbuuublllllbbbblllbbbllllllllbblllblllllllllbbbbblllllbbbbbbbllllbblllllllllllllllbuuuuuuuuuuuuuuuuuu....",
+  "uuuuuubbuuuuuuuuuuuuubbllbbbbblllllbllllllllbblllbblllllllbblllbblllbbllbblbbllllblllllllllllllllbuuuuuuuuuuuuuu........",
+  "uuuuublllllbbuuuuuuuubbblbllbblllllbbbllllllbbllllblllllllblllllbbbbblllllllbblllbllllllllllllllbuuuuuuuuuuuuuuu........",
+  "uuuuublllllllbuuuuuuubbbllllbblllllbbbblllllbbllllbbllllllbllllllbblllllllllbbbbbblllllllllllllluuuuuuuuuuuuuuuu........",
+  "uuuuubllllllluuuuuuuuubbbllllblllllbblbbbbbbbllllllbllllllblllllllllllllllllbbbbbbbblllbbllllllbuuuuuuuuuuuuuuuu........",
+  "uuuuubllllllluuuuuuuuublbllllbbllllllllbblllbbbbbllblllllllbllllllllllllllllllbbbllbbbbbbbllllllbuuuuuuuuuuuuuuu........",
+  "uuuuublllllllbuuuuuuuuulbblllllblllllllllllllllbuuuulllllllbllllllllllllllllbbblllllllllbbblllllbuuuuuuuuuuuuuuu........",
+  "uuuuublllllllbuuuuuuuuublbbllllblllllllllllllllbuuuublllllbblllllllllblllbbbbblllllllllllbbllllbuuuuuuuuuuuuuuuu........",
+  "uuuuubllllllllbuuuuuuuublbbbblbblllllllllllllllbuuuubbblllbllllllllbbbblbbbbllllllllllllllbbllbbbuuuuuuuuuuuuuuu........",
+  "uuuuuubllllllllbuuuuuuuubbbbblbblllllllllllllllbuuuublbbbbbblllllbbbllbbbbbblllllllllllllbbbbuuubuuuuuuuuuuuuuuu........",
+  "uuuuuuulllllllllbuuuuuuubbbbbbbbbllllllllllllllbbuuublllllbbllllbbbllllllllbbbbllllllllllbbbuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuuuublllllllluuuuuuubbbbbbbblbllllllllllbbbbbuuulllllllblbbbblbbllllllllllbbblllllllllbbuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuuuublllllllluuuuuuuublbbllllbllllllllbbbllllllllllllllbbbbbbbbbblllllllllllblllllllllbuuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuuublllllllllbuuuuuuubbbllbbbbllllllllbllllllllllllllllbblllbblbllllllllllllblllllllllbuuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuuublllllllllbuuuuuuublbblbllllllbblllbllllllllllllllllbbllllllbllllllllllllblllllllllbuuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuuubllllllllluuuuuuuulllbbbblbblbbbblbblllllllllllllllllbllllllbllllllllllllblllllllllbuuuuuuuuuuuuuuuuuuuuu........",
+  "uuuuuublllllllllluuuuuuublllbblbbbbbbllbblllllllllllllllllbbbllllllbllllllllllllbbblllllllbuuuuuuuuuuuuuuuuuuuuu........",
+  "....uubllllllllllbuuuuuuulllbblbbllbllllllllllllllllllbbbbbblllllllbblllllllllllllbllllbbuuuuuuuuuuuuuuuuuuu............",
+  "....uubllllllllllbuuuuuuuubllbbbbbbbllllllllllllllllllbbbbbllllllllbblllllllllllllbbllbuuuuuuuuuuuuuuuuuuuuu............",
+  "....uubllllllbbbbuuuuuuuuuublllbblllllllllllllllllllllbblllllllllllblllllllllllllllblbuuuuuuuuuuuuuuuuuuuuuu............",
+  "....uublllllbuuuuuuuuuuuuuuubbbbllllllllllllllllllllllbllllllllllllblllllllllllllllbluuuuuuuuuuuuuuuuuuuuuuu............",
+  ".......buuuuuuuuuuuuuuuuuuuuuuublllllllllllllllllllllbbllllllllllllblllllllllllllllbbuuuuuuuuuuuuuuuuuuu................",
+  "........uuuuuubbbbbuuuuuuuuuuuuubllllllllllllllllllllblllllllllllllbblllllllllllllbbbuuuuuuuuuuuuuuuuuuu................",
+  "........uuuuubllbbuuuuuuubbubuuuublllllllllllllllllllbblllllllllllllblllllllllllllbbbuuuuuuuuuuuuuuuuuuu................",
+  "........lbuubllbuuuuuuuuubllluuuuulllllllllllllllllllblllllllbbububbblllllllllbbbbuuuuuuuuuuuuuuuuuuuuuu................",
+  "........bb..bllbuuuuuuuuuullluuuuulllllllllllllllllllbbbblllbubbbuuublllllllllbuuuuuuuuuuuuuuuuuuuuu....................",
+  "............uubuuuuuuuuuuublbuuuuublllllllllllllllllllllbbbbuubbbbuuubllllllllbbuuuuuuuuuuuuuuuuuuuu....................",
+  "............uuuuuuuuuuuuubbbuuuuuublllllllllllllllllllllllbuuuuuuuuuuubllllllbubuuuuuuuuuuuuuuuuuuuu....................",
+  "............uuuuuuuuuuuuuuuuuuuuuuulllllllllllllllllllllllbuuuuuuuuuubbllllllbuuuuuuuuuuuuuuuuuuuuuu....................",
+  "................uuuubbuubbuuuuuuuuuullllllllllllllllllllllbuuuuuuuuuuuubbllllbuuuuuuuuuuuuuuuuuu........................",
+  "................uublllbbblbuuuuuuuuublllllllllllllllllllllbuuuuuuuuuuuubbubbbuuuuuuuuuuuuuuuuuuu........................",
+  "................uuublllllllllbuuuuuuuubbllllllllllllllllllluuuuuuuuuuuuuuuulbuuuuuuuuuuuuuuuuuuu........................",
+  "................uuubllllllllluuuuuuuuubbbbllllllllllllllllbuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu........................",
+  "................uuuullllllllluuuuuuuuuublbbblllllllllllllbuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "................uuuublllllllbuuuuuuuuuuubluublllllllblbubuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "................uuubllllllbbuuuuuuuuuuuuubuublllllbuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "................uubbbuuuuuuuuuuuuuuuuuuuuuuuuuuubuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "...................b....uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "..................blb...uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "..................blb...uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "........................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu............................",
+  "........................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu................................",
+  "........................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu................................",
+  "........................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu................................",
+  "........................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu................................",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu........uuuuuuuu........................................",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu........uuuuuuuu........................................",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu........uuuuuuuu........................................",
+  "................................uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu........uuuuuuuu........................................"
  ],
  "regions": {
   "Abyss Cliffs": {
    "letter": "A",
    "bbox": [
-    227200,
+    150400,
     106400,
-    278400,
+    252800,
     208800
    ],
    "centroid": [
-    248533,
-    166133
+    206720,
+    149920
    ],
-   "cells": 6,
-   "area_km2": 0.39,
+   "cells": 10,
+   "area_km2": 0.66,
    "grid_cells": [
+    "X4Y1",
     "X5Y1"
+   ],
+   "areas": [
+    "Area_AbyssCliffs_1"
    ]
   },
   "Blue Crater": {
@@ -183,19 +1095,22 @@
    "bbox": [
     73600,
     132000,
-    329600,
-    388000
+    201600,
+    260000
    ],
    "centroid": [
-    180855,
-    263089
+    140444,
+    194577
    ],
-   "cells": 58,
-   "area_km2": 3.8,
+   "cells": 18,
+   "area_km2": 1.18,
    "grid_cells": [
+    "X3Y1",
     "X4Y0",
-    "X4Y1",
-    "X5Y1"
+    "X4Y1"
+   ],
+   "areas": [
+    "Area_crater_1"
    ]
   },
   "Crater Lakes": {
@@ -203,170 +1118,240 @@
    "bbox": [
     -131200,
     -98400,
-    -3200,
-    -21600
+    73600,
+    132000
    ],
    "centroid": [
-    -74181,
-    -53018
+    -23791,
+    12347
    ],
-   "cells": 11,
-   "area_km2": 0.72,
+   "cells": 23,
+   "area_km2": 1.51,
    "grid_cells": [
     "X1Y3",
+    "X2Y2",
     "X2Y3",
-    "X3Y3"
+    "X3Y1",
+    "X3Y2"
+   ],
+   "areas": [
+    "Area_crater_2"
    ]
   },
   "Desert Canyons": {
    "letter": "D",
    "bbox": [
-    99200,
-    -124000,
-    176000,
-    -47200
+    -80000,
+    -200800,
+    227200,
+    -21600
    ],
    "centroid": [
-    142720,
-    -90720
+    85120,
+    -121440
    ],
-   "cells": 5,
-   "area_km2": 0.33,
+   "cells": 20,
+   "area_km2": 1.31,
    "grid_cells": [
+    "X2Y4",
     "X3Y4",
     "X4Y3",
-    "X4Y4"
+    "X4Y4",
+    "X5Y3"
+   ],
+   "areas": [
+    "Area_DesertCanyons_1"
    ]
   },
   "Dune Desert": {
    "letter": "E",
    "bbox": [
     176000,
-    -380000,
-    432000,
-    4000
+    -328800,
+    406400,
+    -21600
    ],
    "centroid": [
-    334542,
-    -183184
+    302577,
+    -182666
    ],
-   "cells": 101,
-   "area_km2": 6.62,
+   "cells": 72,
+   "area_km2": 4.72,
    "grid_cells": [
+    "X4Y4",
     "X5Y3",
     "X5Y4",
     "X5Y5",
+    "X5Y6",
     "X6Y3",
     "X6Y4",
-    "X6Y5",
-    "X7Y5"
-   ]
-  },
-  "Eastern Dune Forest": {
-   "letter": "F",
-   "bbox": [
-    -3200,
-    55200,
-    201600,
-    157600
+    "X6Y5"
    ],
-   "centroid": [
-    102690,
-    118036
-   ],
-   "cells": 22,
-   "area_km2": 1.44,
-   "grid_cells": [
-    "X2Y1",
-    "X3Y1",
-    "X3Y2",
-    "X4Y1",
-    "X4Y2"
+   "areas": [
+    "Area_DuneDesert_1",
+    "Area_DuneDesert_2"
    ]
   },
   "Grass Fields": {
-   "letter": "G",
+   "letter": "F",
    "bbox": [
-    -284800,
-    157600,
-    73600,
-    388000
+    -208000,
+    132000,
+    48000,
+    311200
    ],
    "centroid": [
-    -77046,
-    279364
+    -50844,
+    230133
    ],
-   "cells": 78,
-   "area_km2": 5.11,
+   "cells": 36,
+   "area_km2": 2.36,
    "grid_cells": [
-    "X0Y0",
-    "X1Y-1",
     "X1Y0",
-    "X2Y-1",
+    "X1Y1",
     "X2Y0",
     "X2Y1",
     "X3Y0",
     "X3Y1"
+   ],
+   "areas": [
+    "Area_GrassFields_1",
+    "Area_GrassFields_2",
+    "Area_GrassFields_3"
    ]
   },
   "Jungle Spires": {
-   "letter": "H",
+   "letter": "G",
    "bbox": [
-    -233600,
-    55200,
-    -131200,
-    208800
+    -284800,
+    4000,
+    -54400,
+    183200
    ],
    "centroid": [
-    -179200,
-    124000
+    -144000,
+    93600
    ],
-   "cells": 16,
-   "area_km2": 1.05,
+   "cells": 12,
+   "area_km2": 0.79,
    "grid_cells": [
     "X0Y2",
     "X1Y1",
     "X1Y2",
     "X2Y2"
+   ],
+   "areas": [
+    "Area_RedJungle_2"
    ]
   },
   "Lake Forest": {
-   "letter": "I",
+   "letter": "H",
    "bbox": [
-    -3200,
-    -47200,
+    -54400,
+    -98400,
     99200,
     4000
    ],
    "centroid": [
-    48000,
-    -21600
+    23563,
+    -43709
    ],
-   "cells": 6,
-   "area_km2": 0.39,
+   "cells": 11,
+   "area_km2": 0.72,
    "grid_cells": [
     "X2Y3",
-    "X3Y2",
     "X3Y3"
+   ],
+   "areas": [
+    "Area_LakeForest_1",
+    "Area_LakeForest_2"
    ]
   },
   "Maze Canyons": {
-   "letter": "J",
+   "letter": "I",
    "bbox": [
     73600,
-    -98400,
+    -72800,
     150400,
-    -21600
+    4000
    ],
    "centroid": [
     112000,
-    -52685
+    -34400
    ],
-   "cells": 7,
-   "area_km2": 0.46,
+   "cells": 5,
+   "area_km2": 0.33,
    "grid_cells": [
     "X3Y3",
     "X4Y3"
+   ],
+   "areas": [
+    "Area_MazeCanyons_1",
+    "Area_MazeCanyons_2"
+   ]
+  },
+  "No Man's Land": {
+   "letter": "J",
+   "bbox": [
+    -336000,
+    -380000,
+    432000,
+    388000
+   ],
+   "centroid": [
+    49828,
+    19297
+   ],
+   "cells": 287,
+   "area_km2": 18.81,
+   "grid_cells": [
+    "X-1Y1",
+    "X-1Y2",
+    "X-1Y3",
+    "X-1Y4",
+    "X-1Y5",
+    "X0Y0",
+    "X0Y1",
+    "X0Y2",
+    "X0Y3",
+    "X0Y4",
+    "X0Y5",
+    "X1Y-1",
+    "X1Y0",
+    "X1Y1",
+    "X1Y5",
+    "X1Y6",
+    "X2Y-1",
+    "X2Y0",
+    "X2Y1",
+    "X2Y4",
+    "X2Y5",
+    "X2Y6",
+    "X3Y-1",
+    "X3Y0",
+    "X3Y6",
+    "X4Y-1",
+    "X4Y0",
+    "X4Y6",
+    "X5Y-1",
+    "X5Y0",
+    "X5Y1",
+    "X5Y2",
+    "X5Y6",
+    "X6Y0",
+    "X6Y1",
+    "X6Y2",
+    "X6Y3",
+    "X6Y5",
+    "X6Y6",
+    "X7Y2",
+    "X7Y3",
+    "X7Y4",
+    "X7Y5",
+    "X7Y6"
+   ],
+   "areas": [
+    "Area_NoMansLand_1"
    ]
   },
   "Northern Forest": {
@@ -374,295 +1359,242 @@
    "bbox": [
     -80000,
     -149600,
-    99200,
+    124800,
     -47200
    ],
    "centroid": [
-    11826,
-    -102295
+    27115,
+    -104463
    ],
-   "cells": 23,
-   "area_km2": 1.51,
+   "cells": 19,
+   "area_km2": 1.25,
    "grid_cells": [
-    "X2Y3",
     "X2Y4",
     "X3Y3",
     "X3Y4",
-    "X4Y3"
+    "X4Y3",
+    "X4Y4"
+   ],
+   "areas": [
+    "Area_NorthernForest_1",
+    "Area_NorthernForest_2"
    ]
   },
   "Red Bamboo Fields": {
    "letter": "L",
    "bbox": [
-    -80000,
+    -54400,
     -21600,
     48000,
-    132000
+    106400
    ],
    "centroid": [
-    -9904,
-    50933
+    -18327,
+    30763
    ],
-   "cells": 21,
-   "area_km2": 1.38,
+   "cells": 11,
+   "area_km2": 0.72,
    "grid_cells": [
-    "X2Y1",
     "X2Y2",
     "X2Y3",
-    "X3Y1",
     "X3Y2",
     "X3Y3"
+   ],
+   "areas": [
+    "Area_RedBambooFields_2"
    ]
   },
   "Red Jungle": {
    "letter": "M",
    "bbox": [
-    -284800,
+    -208000,
     -21600,
-    -28800,
-    106400
+    -54400,
+    55200
    ],
    "centroid": [
-    -139076,
-    34523
+    -123885,
+    24114
    ],
-   "cells": 26,
-   "area_km2": 1.7,
+   "cells": 14,
+   "area_km2": 0.92,
    "grid_cells": [
-    "X0Y2",
     "X1Y2",
-    "X1Y3",
-    "X2Y1",
-    "X2Y2"
+    "X2Y2",
+    "X2Y3"
+   ],
+   "areas": [
+    "Area_RedJungle_1"
    ]
   },
   "Rocky Desert": {
    "letter": "N",
    "bbox": [
-    -336000,
+    -310400,
     -303200,
-    -80000,
-    29600
+    355200,
+    234400
    ],
    "centroid": [
-    -223753,
-    -144676
+    -92006,
+    -117947
    ],
-   "cells": 104,
-   "area_km2": 6.82,
+   "cells": 129,
+   "area_km2": 8.45,
    "grid_cells": [
+    "X0Y0",
+    "X0Y1",
     "X0Y2",
     "X0Y3",
     "X0Y4",
+    "X0Y5",
     "X1Y3",
     "X1Y4",
-    "X2Y3",
-    "X2Y4"
-   ]
-  },
-  "Snaketree Forest": {
-   "letter": "O",
-   "bbox": [
-    -131200,
-    132000,
-    -3200,
-    388000
+    "X1Y5",
+    "X2Y4",
+    "X2Y5",
+    "X3Y1",
+    "X3Y2",
+    "X3Y4",
+    "X3Y5",
+    "X4Y1",
+    "X4Y2",
+    "X4Y4",
+    "X4Y5",
+    "X6Y3"
    ],
-   "centroid": [
-    -86892,
-    235384
-   ],
-   "cells": 13,
-   "area_km2": 0.85,
-   "grid_cells": [
-    "X1Y0",
-    "X1Y1",
-    "X2Y0",
-    "X2Y1"
+   "areas": [
+    "Area_RockyDesert_1",
+    "Area_RockyDesert_2",
+    "Area_Savanna_1",
+    "Area_Savanna_2"
    ]
   },
   "Southern Forest": {
-   "letter": "P",
+   "letter": "O",
    "bbox": [
-    22400,
+    -3200,
     157600,
     99200,
-    285600
+    234400
    ],
    "centroid": [
-    65066,
-    217333
+    57955,
+    201688
    ],
-   "cells": 12,
-   "area_km2": 0.79,
+   "cells": 9,
+   "area_km2": 0.59,
    "grid_cells": [
     "X3Y0",
     "X3Y1"
+   ],
+   "areas": [
+    "Area_SouthernForest_1",
+    "Area_SouthernForest_2"
    ]
   },
   "Spire Coast": {
-   "letter": "Q",
+   "letter": "P",
    "bbox": [
-    -131200,
-    -380000,
-    329600,
-    -98400
+    -54400,
+    -303200,
+    227200,
+    -124000
    ],
    "centroid": [
-    85822,
-    -257485
+    129808,
+    -204695
    ],
-   "cells": 133,
-   "area_km2": 8.72,
+   "cells": 23,
+   "area_km2": 1.51,
    "grid_cells": [
-    "X2Y4",
     "X2Y5",
     "X3Y4",
     "X3Y5",
-    "X4Y3",
     "X4Y4",
     "X4Y5",
-    "X4Y6",
     "X5Y4",
-    "X5Y5",
-    "X5Y6"
+    "X5Y5"
+   ],
+   "areas": [
+    "Area_SpireCoast"
    ]
   },
   "Swamp": {
-   "letter": "R",
+   "letter": "Q",
    "bbox": [
-    176000,
-    -21600,
-    380800,
-    208800
+    124800,
+    -124000,
+    304000,
+    132000
    ],
    "centroid": [
-    280228,
-    85066
+    234311,
+    29125
    ],
-   "cells": 42,
-   "area_km2": 2.75,
+   "cells": 27,
+   "area_km2": 1.77,
    "grid_cells": [
     "X4Y2",
+    "X4Y3",
+    "X4Y4",
     "X5Y1",
     "X5Y2",
     "X5Y3"
+   ],
+   "areas": [
+    "Area_Swamp_1",
+    "Area_Swamp_2"
    ]
   },
   "Titan Forest": {
-   "letter": "S",
+   "letter": "R",
    "bbox": [
     48000,
-    -72800,
-    432000,
-    208800
+    -47200,
+    278400,
+    106400
    ],
    "centroid": [
-    237672,
-    23781
+    156800,
+    18933
    ],
-   "cells": 44,
-   "area_km2": 2.88,
+   "cells": 24,
+   "area_km2": 1.57,
    "grid_cells": [
     "X3Y2",
     "X4Y2",
     "X4Y3",
-    "X5Y2",
-    "X5Y3",
-    "X6Y2"
-   ]
-  },
-  "Western Beaches": {
-   "letter": "T",
-   "bbox": [
-    -336000,
-    29600,
-    -182400,
-    208800
+    "X5Y3"
    ],
-   "centroid": [
-    -276413,
-    116551
-   ],
-   "cells": 29,
-   "area_km2": 1.9,
-   "grid_cells": [
-    "X0Y1",
-    "X0Y2",
-    "X1Y1",
-    "X1Y2"
+   "areas": [
+    "Area_TitanForest_1",
+    "Area_TitanForest_2"
    ]
   },
   "Western Dune Forest": {
-   "letter": "U",
+   "letter": "S",
    "bbox": [
-    -156800,
-    80800,
-    -54400,
+    -208000,
+    55200,
+    -28800,
     208800
    ],
    "centroid": [
-    -111418,
-    142472
+    -114133,
+    129155
    ],
-   "cells": 11,
-   "area_km2": 0.72,
+   "cells": 18,
+   "area_km2": 1.18,
    "grid_cells": [
     "X1Y1",
     "X1Y2",
-    "X2Y1",
-    "X2Y2"
+    "X2Y1"
+   ],
+   "areas": [
+    "Area_WesternDuneForest_1",
+    "Area_WesternDuneForest_2"
    ]
   }
- },
- "node_region_overrides": {
-  "BP_FrackingSatellite45": "Swamp",
-  "BP_FrackingSatellite46": "Swamp",
-  "BP_FrackingSatellite47": "Swamp",
-  "BP_FrackingSatellite48": "Swamp",
-  "BP_FrackingSatellite49": "Swamp",
-  "BP_FrackingSatellite50": "Swamp",
-  "BP_FrackingSatellite57": "Red Bamboo Fields",
-  "BP_FrackingSatellite59": "Red Bamboo Fields",
-  "BP_FrackingSatellite60": "Red Bamboo Fields",
-  "BP_FrackingSatellite61": "Red Bamboo Fields",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D7DF01_1933830510": "Western Beaches",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D7DF01_2053713511": "Western Beaches",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1587984689": "Western Beaches",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1704280690": "Western Beaches",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D8DF01_1999134691": "Western Beaches",
-  "BP_FrackingSatellite61_UAID_40B076DF2F79D9DF01_1230935868": "Western Beaches",
-  "BP_FrackingSatellite62": "Red Bamboo Fields",
-  "BP_FrackingSatellite63": "Red Bamboo Fields",
-  "BP_ResourceNode100": "Blue Crater",
-  "BP_ResourceNode14_609": "Spire Coast",
-  "BP_ResourceNode15": "Spire Coast",
-  "BP_ResourceNode151": "Blue Crater",
-  "BP_ResourceNode152_995": "Blue Crater",
-  "BP_ResourceNode154": "Blue Crater",
-  "BP_ResourceNode155": "Blue Crater",
-  "BP_ResourceNode16": "Spire Coast",
-  "BP_ResourceNode23_96": "Spire Coast",
-  "BP_ResourceNode24_97": "Spire Coast",
-  "BP_ResourceNode25_98": "Spire Coast",
-  "BP_ResourceNode26_99": "Spire Coast",
-  "BP_ResourceNode27_100": "Spire Coast",
-  "BP_ResourceNode28_101": "Spire Coast",
-  "BP_ResourceNode29_102": "Spire Coast",
-  "BP_ResourceNode30_103": "Spire Coast",
-  "BP_ResourceNode31_104": "Spire Coast",
-  "BP_ResourceNode32_105": "Spire Coast",
-  "BP_ResourceNode444_0": "Desert Canyons",
-  "BP_ResourceNode446_1": "Desert Canyons",
-  "BP_ResourceNode447": "Desert Canyons",
-  "BP_ResourceNode448": "Desert Canyons",
-  "BP_ResourceNode458": "Lake Forest",
-  "BP_ResourceNode459": "Lake Forest",
-  "BP_ResourceNode460": "Lake Forest",
-  "BP_ResourceNode86": "Western Beaches",
-  "BP_ResourceNode87": "Western Beaches",
-  "BP_ResourceNode88": "Western Beaches",
-  "BP_ResourceNode89": "Western Beaches",
-  "BP_ResourceNode98": "Blue Crater"
  }
 }

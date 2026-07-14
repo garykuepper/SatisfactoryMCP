@@ -11,6 +11,7 @@ from the save and the tool says which one it picked.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.scenario import build_scenario
@@ -86,7 +87,7 @@ def test_list_buildings_names_the_planning_default(game):
 def test_plan_layout_says_which_carriers_it_used(game):
     out = srv.plan_layout(
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
         limit=3,
@@ -101,7 +102,7 @@ def test_halving_the_pipe_doubles_the_trunks(game):
     Spire crude field needs twice the runs."""
     kw = dict(
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
         detail="trunks",

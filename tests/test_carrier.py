@@ -11,6 +11,7 @@ this that is not obvious and the one part a rewrite would drop.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.domain.planning.carrier import Carrier, carrier_for
 
@@ -91,7 +92,7 @@ def test_the_optimizer_and_the_layout_report_the_same_lines(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW"],
             extractor_clocks=[1, 1.5, 2, 2.5],

@@ -82,11 +82,12 @@ export interface paths {
          *
          *     The region name is joined here rather than in the browser because the raster lives on
          *     this side: sending 608 rows and then a 30x30 grid for the page to index into would put
-         *     the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node`` rather
-         *     than ``label_for`` -- it prefers the hand-verified override table, so the nodes someone
-         *     actually checked come back as ``verified`` instead of as a 256 m cell's best guess.
-         *     ``null`` for a node the raster calls void, which is the honest answer for the handful
-         *     that sit on islands off the grid.
+         *     the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node``, which is a
+         *     position lookup and nothing more: there used to be an override table of nodes someone
+         *     had checked against a wiki image by eye, reported as ``verified``, and the region
+         *     geometry is the game's own now so there is nothing for it to correct. ``null`` for a
+         *     node the raster calls void, which is the honest answer for the handful that sit on
+         *     islands off the grid.
          *
          *     **A failed save is not a failed answer** -- the same rule ``/api/inspect`` already
          *     follows, because the two used to disagree: the node table is static and needs no
@@ -161,12 +162,16 @@ export interface paths {
          *     which is why it is cacheable and fetched once per page load.
          *
          *     The raster comes through ``domain.spatial.regions``, which reads
-         *     ``data/region_names.json``. Two committed files carry a 30x30 grid and they differ:
-         *     this one is the file whose per-region bounding boxes are derived from its own grid, so
-         *     every cell provably lies inside the box of the region it names -- which is exactly
-         *     what the drawing client is checked against. ``satisfactory_regions.json``'s boxes come
-         *     from a coarser 1.024 km grid and do not agree with its raster cell for cell, so
-         *     painting from it would leave nothing to verify orientation with.
+         *     ``data/region_names.json`` -- a majority downsample of the game's own ``FGMapAreaTexture``
+         *     at 1.83 m. Every per-region bounding box in it is derived from this same 30x30 grid, so
+         *     every cell provably lies inside the box of the region it names, which is what the
+         *     drawing client is checked against.
+         *
+         *     The 30x30 grid is what is SERVED and it is not the finest thing in that file: a 64 m
+         *     grid rides along beside it and is what ``label_for`` answers from. This payload keeps
+         *     the coarse one -- 768 rectangles rather than twelve thousand -- so a label anchor below
+         *     is placed against ``rmap.grid`` rather than by asking ``label_for``, or the page would
+         *     print a name on a cell it paints as somebody else's.
          *
          *     The one thing a drawing client gets wrong is orientation, so it is stated here rather
          *     than left to be inferred. Game +X is east and game **+Y is south**; ``y0_m`` is the

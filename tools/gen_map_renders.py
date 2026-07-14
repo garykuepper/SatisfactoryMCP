@@ -103,9 +103,9 @@ The biome raster, and how its corners were found
 is a ``FGMapAreaTexture``: ``mDataWidth`` 4096, ``mAreaData`` 4096*4096 palette indices, and
 ``mColorToArea`` naming each index's ``UFGMapArea`` object. 37 indices resolve to 17 distinct
 areas plus ``Area_NoMansLand``, which is what the game calls everything it does not name.
-This is first-party biome geometry, and its existence contradicts
-``data/region_names.json``'s own note that "the game ships no biome geometry" -- that file's
-30x30 grid is a hand trace of a wiki image, and this is the thing it was tracing.
+Decoding it is ``core.gameassets.maparea``'s job, shared with ``tools/gen_region_names.py``,
+which builds ``data/region_names.json`` out of this same raster -- so the region table and
+this render now describe one geometry rather than two.
 
 Nothing in the asset says where those 4096 texels go, so the corners are **measured**.
 ``calibrate_biome`` scores a pin by the artwork sheet's own edge strength averaged over the
@@ -117,16 +117,15 @@ neighbour is far below it -- 1.28 at 5% larger, 1.24 at 5% smaller, and 1.33 for
 a +-600 m translation sweep at true scale. So the biome raster spans exactly the square the
 artwork does, 4096 texels over 7500 m, 1.831 m to the texel, row 0 north.
 
-That is the sharp measurement. The one the reader can check by name is
-``agree_with_region_grid``: the 768 non-void cells of ``data/region_names.json``, which is an
-INDEPENDENT source -- traced off the wiki's biome map, good to about one 256 m cell -- looked
-up in the raster. 62.6% of them land on a named game area at all; the rest are the outer
-coast, which the wiki names and the game leaves as no-man's-land. Of the cells that DO land
-on a named area and whose wiki region has a one-to-one counterpart among the game's, 68%
-agree. The residual is not noise and is not drift: it is one disagreement, Spire Coast, where
-the wiki draws a coastal ring the game divides differently. Both numbers are recorded every
-run, and neither of them is what pins the corners -- a 68% agreement could not tell 100 m
-from 400 m, and the edge ratio can.
+That is the sharp measurement, and it is the only one that pins anything.
+``region_table_is_current`` is the other number recorded every run and it is a staleness
+gate rather than evidence: ``data/region_names.json`` is now derived from this same asset, so
+its 768 non-void cells must be exactly this raster's majority downsample. Anything under 100%
+means the committed table was cut from a different build, and the run says which command
+fixes it. (It used to be a genuinely independent comparison -- that file was a hand trace of
+a wiki image and agreed with the game on 68.1% of the cells that were comparable at all --
+and that number is kept as history in the region table's own ``_meta``, because it is what
+the re-derivation moved.)
 
 The satellite palette is designed, not borrowed
 -----------------------------------------------
@@ -188,7 +187,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import struct
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -203,7 +201,14 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
-from satisfactory_mcp.core.gameassets.packages import PackageView, ScriptObjects, property_tags
+from satisfactory_mcp.core.gameassets.maparea import (
+    MAP_AREA_CLASS,
+    MAP_AREA_PATH,
+    NO_MANS_LAND,
+    MapAreaError,
+    read_map_areas,
+)
+from satisfactory_mcp.core.gameassets.packages import ScriptObjects
 from satisfactory_mcp.core.gameassets.provenance import read_str_path
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_2X_PX,
@@ -279,29 +284,11 @@ RECIPE = 2
 # The biome raster.
 # --------------------------------------------------------------------------------------
 
-#: The asset, mount-relative, inside FactoryGame-Windows.utoc.
-BIOME_PATH = (
-    "../../../FactoryGame/Content/FactoryGame/Interface/UI/Minimap/"
-    "MapAreaPersistenLevel/MapareatexturePersistentLevel.uasset"
-)
-
-#: What the asset has to be for this file to know how to read it. ``mDataWidth`` is in the
-#: asset and is checked against this rather than trusted from it: a re-cooked texture at
-#: another size is the game changing, and the run stops instead of decoding whatever is
-#: there -- the same posture as ``gen_map_image``'s ``.ubulk`` length check.
-BIOME_TEXELS = 4096
-
-#: The properties this file reads out of the export, and the class it expects to find them on.
-BIOME_CLASS = "/Script/FactoryGame.FGMapAreaTexture"
-BIOME_PROPS = ("mAreaData", "mColorPalette", "mColorToArea", "mDataWidth")
-
-#: What ``mColorToArea``'s entries are called. Each is a tagged-property struct: the area
-#: object, then the bounding box of that index in texel coordinates.
-BIOME_ENTRY_FIELDS = ("MapArea", "MinX", "MinY", "MaxX", "MaxY")
-
-#: The area every index that names nothing resolves to. Not "unknown": the game has an
-#: object for it, and it means the outer coast and the ocean past it.
-NO_MANS_LAND = "Area_NoMansLand"
+#: Decoding the raster, resolving each palette index to one ``Area_*`` asset and reading the
+#: game's own name for it all live in ``core.gameassets.maparea`` now, because
+#: ``tools/gen_region_names.py`` reads the same texture for the region layer and two decoders
+#: would be two opinions about what the game says. What stays here is what this file DRAWS
+#: with: a palette of its own, a blur, and the pin the raster is placed on.
 
 # --------------------------------------------------------------------------------------
 # The calibration. See the module docstring for what these numbers bought.
@@ -319,27 +306,12 @@ CALIBRATION_SCALES = (0.95, 1.05)
 #: 1.15 is well inside the measured gap -- 2.28 against 1.42 -- and well outside the noise.
 CALIBRATION_MARGIN = 1.15
 
-#: The hand-traced grid the agreement is reported against, and the pairs of names that mean
-#: the same place in both. Deliberately not all of them: the file has two crater regions and
-#: the game one area, and the game has a Savanna the wiki does not, so those cannot vote.
+#: The committed region table, which is now DERIVED from this same raster by
+#: ``tools/gen_region_names.py``. It used to be an independent hand trace of a wiki image and
+#: the agreement between the two was worth reporting; it is a downsample of the raster this
+#: file just decoded, so agreement is no longer evidence about the pin -- it is a staleness
+#: check, and that is what ``region_table_is_current`` below makes it.
 REGION_TABLE = ROOT / "data" / "region_names.json"
-REGION_PAIRS = {
-    "Abyss Cliffs": "Area_AbyssCliffs",
-    "Desert Canyons": "Area_DesertCanyons",
-    "Dune Desert": "Area_DuneDesert",
-    "Grass Fields": "Area_GrassFields",
-    "Lake Forest": "Area_LakeForest",
-    "Maze Canyons": "Area_MazeCanyons",
-    "Northern Forest": "Area_NorthernForest",
-    "Red Bamboo Fields": "Area_RedBambooFields",
-    "Red Jungle": "Area_RedJungle",
-    "Rocky Desert": "Area_RockyDesert",
-    "Southern Forest": "Area_SouthernForest",
-    "Spire Coast": "Area_SpireCoast",
-    "Swamp": "Area_Swamp",
-    "Titan Forest": "Area_TitanForest",
-    "Western Dune Forest": "Area_WesternDuneForest",
-}
 
 # --------------------------------------------------------------------------------------
 # The shading both layers share.
@@ -582,104 +554,37 @@ def load_imaging():
 
 
 def read_biome(store, scripts) -> dict:
-    """The 4096x4096 biome raster, its palette, and what each index is called.
+    """The map-area raster as this file wants it: a numpy square and a name per index.
 
-    Every check here is the same kind of check ``gen_map_image`` makes on the map slices'
-    ``.ubulk`` length: a shape that is not the one this file knows how to read means the
-    asset was re-cooked, i.e. the game changed, and a raster reshaped into whatever fits is
-    worse than no raster at all.
+    The decode, the shape checks and the index -> ``Area_*`` resolution are
+    ``core.gameassets.maparea``'s, shared with ``tools/gen_region_names.py``. What this
+    adapter adds is the two things only a renderer wants: the raster as a numpy array to
+    index a colour table with, and each index flattened to the STEM -- ``Area_RedJungle``
+    rather than ``Area_RedJungle_2`` -- because ``BIOME_COLOURS`` is one colour per kind of
+    ground, and the two assets behind one stem are one kind of ground however the game
+    names them.
     """
-    if BIOME_PATH not in store.by_path:
+    try:
+        areas = read_map_areas(store, scripts)
+    except MapAreaError as exc:
         raise SystemExit(
-            f"{BIOME_PATH} is not in the container. The biome texture moved or was renamed, "
-            "which means the game changed; the satellite layer has no other source for what "
-            "grows where, and nothing here can be trusted until that is looked at."
-        )
-    view = PackageView(store.read_path(BIOME_PATH), scripts)
-    export = next(
-        (e for e in view.exports if (view.class_of[e["slot"]] or "") == BIOME_CLASS), None
-    )
-    if export is None:
-        found = ", ".join(sorted({str(view.class_of[e["slot"]]) for e in view.exports})) or "none"
-        raise SystemExit(
-            f"{BIOME_PATH} has no {BIOME_CLASS} export (found: {found}). The asset is no "
-            "longer the class this file knows how to read."
-        )
-    props = view.props(export["slot"])
-    missing = [name for name in BIOME_PROPS if name not in props]
-    if missing:
-        raise SystemExit(
-            f"{BIOME_CLASS} is missing {', '.join(missing)} -- the properties this file "
-            "reads. The class changed shape; refusing to guess at the rest."
-        )
-
-    width = struct.unpack("<i", props["mDataWidth"])[0]
-    if width != BIOME_TEXELS:
-        raise SystemExit(
-            f"mDataWidth is {width}, not {BIOME_TEXELS}. The biome texture was re-cooked at "
-            "another size, so every corner this file measured is measured against a "
-            "different picture. Refusing to draw it."
-        )
-    raw = props["mAreaData"]
-    count = struct.unpack_from("<i", raw, 0)[0]
-    if count != width * width or len(raw) != 4 + width * width:
-        raise SystemExit(
-            f"mAreaData says {count} texels in {len(raw)} bytes, but a {width}x{width} array "
-            f"of palette indices is {width * width} in {4 + width * width}. The array is not "
-            "the shape its own width says."
-        )
-    area = np.frombuffer(raw, dtype=np.uint8, count=width * width, offset=4).reshape(width, width)
-
-    palette_raw = props["mColorPalette"]
-    entries = struct.unpack_from("<i", palette_raw, 0)[0]
-    palette = [
-        tuple(palette_raw[4 + i * 4 : 8 + i * 4]) for i in range(entries)
-    ]  # RGBA, the game's UI legend -- decoded for the record, never drawn
-
-    names = decode_colour_to_area(view, props["mColorToArea"])
-    if len(names) != entries:
-        raise SystemExit(
-            f"mColorPalette has {entries} entries and mColorToArea {len(names)}. The two "
-            "halves of one lookup disagree about how many indices there are."
-        )
-    used = int(area.max()) + 1
-    if used > entries:
-        raise SystemExit(
-            f"the raster uses index {used - 1} but the palette stops at {entries - 1}. "
-            "Refusing to draw a texel whose area has no name."
-        )
+            f"{exc} The satellite layer has no other source for what grows where, so "
+            "nothing here can be trusted until that is looked at."
+        ) from exc
+    raster = np.frombuffer(areas.texels, dtype=np.uint8).reshape(areas.width, areas.width)
+    names = [None if area is None else area.stem for area in areas.areas]
     return {
-        "width": width,
-        "area": area,
-        "palette": palette,
+        "width": areas.width,
+        "area": raster,
+        "palette": [tuple(entry) for entry in areas.palette],
         "names": names,
+        # The exact asset per index, kept beside the stem because the staleness check below
+        # reads a name map that is keyed by asset -- ``Area_crater_1`` and ``Area_crater_2``
+        # are one stem and two different named regions.
+        "assets_by_index": [None if area is None else area.asset for area in areas.areas],
+        "assets": list(areas.assets),
         "distinct_areas": sorted({n for n in names if n and n != NO_MANS_LAND}),
     }
-
-
-def decode_colour_to_area(view, blob: bytes) -> list[str | None]:
-    """``mColorToArea`` -> the ``Area_*`` leaf name of each palette index.
-
-    A ``TArray<FStruct>`` in Zen's tagged form is the count and then one property stream per
-    element, which is why the walk carries its own cursor rather than slicing: the elements
-    are not a fixed width and the only thing that knows where one ends is the parser that
-    read it.
-    """
-    count = struct.unpack_from("<i", blob, 0)[0]
-    out: list[str | None] = []
-    pos = 4
-    for _ in range(count):
-        tags, end = property_tags(blob, view.pkg.names, pos)
-        fields = {name: payload for name, _kind, payload, _value in tags}
-        if "MapArea" not in fields:
-            raise SystemExit(
-                "an mColorToArea entry carries no MapArea reference -- the struct this file "
-                f"reads is {', '.join(BIOME_ENTRY_FIELDS)} and it is no longer that"
-            )
-        path = view.import_path(fields["MapArea"])
-        out.append(path.rsplit("/", 1)[-1] if path else None)
-        pos = end
-    return out
 
 
 def biome_colour_field(biome: dict, table: np.ndarray) -> np.ndarray:
@@ -947,66 +852,66 @@ def calibrate_biome(biome: dict, sheet, image_mod) -> dict:
     }
 
 
-def agree_with_region_grid(biome: dict) -> dict:
-    """What the hand-traced region grid says about the raster, cell by cell.
+def region_table_is_current(biome: dict) -> dict:
+    """Is the committed 256 m region table still this raster's own majority downsample?
 
-    ``data/region_names.json`` is an independent source -- a trace of the wiki's biome map,
-    good to about one 256 m cell -- so this is a check rather than a circle. It is NOT what
-    pins the corners: a 68% agreement cannot tell 100 m from 400 m, and the edge ratio can.
+    It used to be a different question. ``data/region_names.json`` was a hand trace of a wiki
+    image, so its 68% agreement with the raster was independent evidence -- weak evidence,
+    reported and never used to pin anything, but somebody else's reading of the same world.
+    It is derived from THIS asset now, by ``tools/gen_region_names.py``, so agreement is no
+    longer evidence about anything: it is either 100% or the committed table is stale.
+
+    Which makes it worth more than it was. A regenerated render and a committed region table
+    that disagree mean the game changed under one of them, and this is the run that notices.
+    The name policy is read out of the table's own ``_meta`` rather than imported, so this
+    stays a check on the artifact rather than a second copy of the rules that made it.
     """
     if not REGION_TABLE.is_file():
-        return {"skipped": f"{REGION_TABLE.name} is not present, so the raster is unchecked"}
+        return {"skipped": f"{REGION_TABLE.name} is not present, so nothing was compared"}
     table = json.loads(REGION_TABLE.read_text(encoding="utf-8"))
+    display = (table.get("_meta") or {}).get("area_display_names")
+    if not isinstance(display, dict):
+        return {"skipped": f"{REGION_TABLE.name} carries no _meta.area_display_names to read"}
     meta, grid, legend = table["grid_meta"], table["region_grid"], table["legend"]
     cell, gx0, gy0 = meta["cell"], meta["x0"], meta["y0"]
     x0, x1 = BOUNDS_M["x_min_m"] * 100, BOUNDS_M["x_max_m"] * 100
     y0, y1 = BOUNDS_M["y_min_m"] * 100, BOUNDS_M["y_max_m"] * 100
-    width = biome["width"]
-    names = biome["names"]
+    width, assets = biome["width"], biome["assets_by_index"]
 
-    cells = named = comparable = agree = 0
+    compared = agree = 0
     disagreements: dict[str, int] = {}
     for j, row in enumerate(grid):
         for i, letter in enumerate(row):
             if letter == meta["void"]:
                 continue
-            cells += 1
-            u = [int((gx0 + (i + k) * cell - x0) / (x1 - x0) * width) for k in (0, 1)]
-            v = [int((gy0 + (j + k) * cell - y0) / (y1 - y0) * width) for k in (0, 1)]
+            u = [round((gx0 + (i + k) * cell - x0) / (x1 - x0) * width) for k in (0, 1)]
+            v = [round((gy0 + (j + k) * cell - y0) / (y1 - y0) * width) for k in (0, 1)]
             u = [max(0, min(width, value)) for value in u]
             v = [max(0, min(width, value)) for value in v]
             if u[1] <= u[0] or v[1] <= v[0]:
                 continue
             values, counts = np.unique(biome["area"][v[0] : v[1], u[0] : u[1]], return_counts=True)
-            got = names[int(values[counts.argmax()])]
-            if got in (None, NO_MANS_LAND):
-                continue
-            named += 1
-            region = legend[letter]
-            want = REGION_PAIRS.get(region)
-            if want is None:
-                continue
-            comparable += 1
+            asset = assets[int(values[counts.argmax()])]
+            compared += 1
+            want = legend[letter]
+            got = display.get(asset or "", display.get("", want))
             if got == want:
                 agree += 1
             else:
-                disagreements[f"{region} -> {got}"] = disagreements.get(f"{region} -> {got}", 0) + 1
+                key = f"{want} -> {got}"
+                disagreements[key] = disagreements.get(key, 0) + 1
     worst = sorted(disagreements.items(), key=lambda kv: -kv[1])[:5]
     return {
-        "source": "data/region_names.json, a hand trace of the wiki's biome map at 256 m",
-        "cells_not_void": cells,
-        "cells_on_a_named_area": named,
-        "cells_on_a_named_area_pct": round(100 * named / cells, 1) if cells else None,
-        "cells_comparable_by_name": comparable,
+        "source": "data/region_names.json, derived from this same asset by gen_region_names.py",
+        "cells_compared": compared,
         "cells_agreeing": agree,
-        "agreement_pct": round(100 * agree / comparable, 1) if comparable else None,
+        "agreement_pct": round(100 * agree / compared, 1) if compared else None,
         "largest_disagreements": [f"{key} ({count} cells)" for key, count in worst],
+        "table_is_current": compared > 0 and agree == compared,
         "reading": (
-            "the cells that land on no named area are the outer coast, which the wiki names "
-            "and the game leaves as no-man's-land -- a difference of scope, not a "
-            "misalignment. Of the rest, the residual is dominated by one genuine "
-            "disagreement about where a coastal ring stops. This number is reported, not "
-            "optimised: the corners come from the edge ratio next door."
+            "100% or the committed region table was cut from a different build of this "
+            "asset, and the fix is to re-run tools/gen_region_names.py. Not a pin and never "
+            "was: the corners come from the edge ratio next door."
         ),
     }
 
@@ -1834,21 +1739,28 @@ def main() -> int:
                 "The biome texture moved, or the artwork sheet did. The layer is still "
                 "drawn -- it is the corners that are in question -- and _meta says so."
             )
-        agreement = agree_with_region_grid(biome)
-        if "skipped" not in agreement:
+        agreement = region_table_is_current(biome)
+        if "skipped" in agreement:
+            print(f"  region table: {agreement['skipped']}")
+        else:
             print(
-                f"  region grid: {agreement['cells_on_a_named_area']} of "
-                f"{agreement['cells_not_void']} cells land on a named area "
-                f"({agreement['cells_on_a_named_area_pct']}%); of the "
-                f"{agreement['cells_comparable_by_name']} comparable by name, "
-                f"{agreement['cells_agreeing']} agree ({agreement['agreement_pct']}%)"
+                f"  region table: {agreement['cells_agreeing']} of "
+                f"{agreement['cells_compared']} committed cells match this raster "
+                f"({agreement['agreement_pct']}%)"
             )
+            if not agreement["table_is_current"]:
+                print(
+                    "  WARNING: data/region_names.json is no longer this asset's own "
+                    "downsample, so it was cut from a different build. Re-run:\n"
+                    "      uv run --extra gen python tools/gen_region_names.py"
+                )
         table, drawn = biome_lookup(biome)
         biome_rgb = biome_colour_field(biome, table)
         biome_source = {
             "biome_raster": {
-                "name": "/Game/" + BIOME_PATH.split("/FactoryGame/Content/")[1].rsplit(".", 1)[0],
-                "class": BIOME_CLASS,
+                "name": "/Game/"
+                + MAP_AREA_PATH.split("/FactoryGame/Content/")[1].rsplit(".", 1)[0],
+                "class": MAP_AREA_CLASS,
                 "licence": (
                     "Coffee Stain Studios' own asset, read out of the reader's installed "
                     "copy of the game. Not committed, not redistributed, and served to "
@@ -1872,8 +1784,9 @@ def main() -> int:
                     "an area this file has no colour for": list(UNKNOWN_BIOME_RGB),
                 },
                 "index_to_area": {str(i): name for i, name in enumerate(drawn)},
+                "index_to_asset": {str(i): name for i, name in enumerate(biome["assets_by_index"])},
                 "calibration": calibration,
-                "region_grid_check": agreement,
+                "region_table_check": agreement,
                 "pyooz_version": pyooz_version,
             }
         }

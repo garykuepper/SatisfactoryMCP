@@ -64,34 +64,58 @@ used only for human-readable labelling and name lookup. A name never feeds a cal
 Biome grid cell from §7.1's closed-form transform; cone/hemisphere direction tests; radius queries;
 200 m single-linkage clustering. All derived, all exact, nothing hand-authored.
 
-**Layer 2 — `data/region_names.json` (advisory). BUILT.**
-21 biomes as a 256 m label raster plus a parallel *confidence* raster, `accuracy_m: 256`, and an
-authoritative per-node override table. Exposed as `label_for(x, y)`, `label_for_node(node)`,
+**Layer 2 — `data/region_names.json` (advisory). BUILT, and re-derived from the game.**
+19 regions as a 256 m label raster with a matching confidence raster, plus a 64 m pair carried
+alongside for lookups (`accuracy_m: 64`). Exposed as `label_for(x, y)`, `label_for_node(node)`,
 `filter_nodes(nodes, name)` and `resolve(name)`. The optimizer and site ranking never consult it.
 
-Regenerate with `uv run python tools/gen_region_names.py`, which derives it from
-`data/satisfactory_regions.json` and fixes the four defects that made the source unusable:
+Regenerate with `uv run --extra gen python tools/gen_region_names.py`, which reads the game's own
+`FGMapAreaTexture` through `core.gameassets.maparea`. It used to rasterise
+`data/satisfactory_regions.json`, a hand trace of a wiki image; that file is **deleted** and so is
+the CC BY-SA obligation it carried. What the re-derivation bought:
 
-1. **No void/ocean class** — all 900 cells carried a land label, so open ocean north-west of the map
-   came back as "Rocky Desert". Fixed with a **land mask built from 2,669 static world objects** (nodes,
-   crash sites, power slugs, somersloops, Mercer shrines and spheres): a cell whose centre is >1000 m
-   from all of them is void. Threshold picked from the measured bimodal distribution — median 123 m on
-   land vs p90 1212 m. Result: **590 land / 178 sparse / 132 void** cells.
-2. **Raster spilling outside its own bboxes** (11 of 21 regions), which made the recommended
-   `bbox AND raster` test return `False` for points the raster itself assigned. Fixed by recomputing
-   every bbox **from** the raster, so containment holds by construction — asserted in the test suite.
-3. **Boundary mislabels presented as certain.** Fixed two ways: a per-cell confidence from 8-neighbour
-   agreement (`interior` / `boundary` / `sparse` / `void`; **333 boundary cells**, honestly reported),
-   and a 48-entry override table from the hand-verified oil clusters. That recovers exactly the known
-   failure — `BP_ResourceNode86/88` read `Jungle Spires (boundary)` from the raster and
-   `Western Beaches (verified)` after the override, so Western Beaches now returns 10 of 10 oil nodes
-   instead of 8.
-4. **A second implementation contradicting the prose.** `data/geo_reference.py` is **deleted**;
-   `spatial/regions.py` is the only implementation, so there is nothing left to disagree.
+1. **The boundaries are the game's.** 4096² palette indices at 1.83 m to the texel, `mColorToArea`
+   resolving each index to one `UFGMapArea` asset. Not a reading of a picture of the boundaries.
+2. **The names are the game's too**, out of each area asset's `mDisplayName` — a string-table key
+   `World_Data` / `Locations/<Something>`. Nineteen keys, nineteen labels, the identity apart from
+   two plurals. It supplies three facts nothing else could: `Area_Savanna_1/2` are **Rocky Desert**
+   (the game has a Savanna asset and no Savanna region), `Area_crater_1/2` are **Blue Crater** and
+   **Crater Lakes**, and `Area_RedJungle_1/2` are **Red Jungle** and **Jungle Spires**. Which is why
+   an index is resolved by `PublicExportHash` and not by package name: thirty-five assets share
+   eighteen names.
+3. **No Man's Land is a label, not a blank.** 43% of the raster is `Area_NoMansLand` — the outer
+   coast and the ocean — and the game has an object for it with its own display name, so it is
+   emitted. **287 of the 768 painted cells**, the largest region on the layer. Void is now the
+   narrower thing: the game names no region *and* no known static object within 1 km. The land mask
+   (2,688 objects) decides only that, never a name.
+4. **The confidence letters are measurements.** `interior` = one area covers the whole cell;
+   `boundary` = an exact boundary runs through it; `unnamed` = No Man's Land; `void` = no name.
+   At 256 m: **197 interior / 284 boundary / 287 unnamed / 132 void**. `verified` is gone with the
+   48-entry override table it described — those were nodes read off the wiki image by eye.
+5. **Bboxes still come from the published raster**, so `bbox AND raster` holds by construction —
+   the defect that made the shipped boxes disagree with their own grid for 11 of 21 regions.
 
-Validation: **13 of 14** hand-verified oil clusters agree with the raster, 0 land on void. The single
-mismatch is defect 3's cluster, which the override table now handles. Per-crash-site validation would
-need the wiki Region column, which isn't shipped locally — recorded as a limitation in `_meta`.
+Two grids because a majority downsample is lossy and how lossy was measured, on 5,054 known static
+world objects looked up in the grid against the raster itself: 256 m mislabels **14.13%**, 128 m
+8.33%, **64 m 5.30%**, 32 m 2.61%. 64 m costs 14,400 characters and is carried; 32 m costs 57,600
+for twice the accuracy and was refused. The 256 m pair is what `/api/regions` serves, so the payload
+and the frontend did not move.
+
+The corners are **measured, not stated in the asset** — see the biome-raster section below — and
+every run re-measures them and refuses to write if the pin stops holding (1.9692 against 1.333 on
+build 495413).
+
+What the change cost, measured against the retired trace before it was deleted: **454 of the 900
+cells changed name**, 287 of them to No Man's Land. The largest single move is Spire Coast, where the
+wiki drew one coastal ring across the whole north and the game draws a 1.6 km² strip, giving the rest
+to Rocky Desert (40 cells), Desert Canyons (11), Dune Desert (10) and Swamp (1). Three names went:
+**Western Beaches** and **Snaketree Forest**, which the game does not use, and **Eastern Dune Forest**,
+which it does use — the asset exists and states that name — but puts no ground under.
+
+That is also why the planner suite stopped planning over `region:Spire Coast`. Those reference plans
+were hand-verified over the 51 nodes that selector used to return and it now returns 18, so
+`tests/conftest.py` states the field as a bounding box instead: a region name is advisory by design
+and a regression suite must not stand on one.
 
 Also: 200 m single-linkage recovers the real oil fields, but one cluster merges 6 well satellites with a
 standalone node 85 m away — so **node kind must never be inferred from one cluster member**.
@@ -289,14 +313,20 @@ in-game map square that ratio is **1.97**; at ±600 m in any direction the best 
 the square the artwork does — 4096 texels over 7500 m, 1.831 m to the texel, row 0 north —
 and every run re-measures it and refuses to claim the pin if the margin goes.
 
-The check by NAME is reported and is deliberately not the pin. Of the 768 non-void cells of
-the hand-traced region grid, **481 (62.6%) land on a named game area**; the other 287 are the
-outer coast, which the wiki names and the game leaves as no-man's-land. Of the **401** that
-land on a named area and whose wiki region has a one-to-one counterpart among the game's,
-**273 agree (68.1%)**. The residual is one disagreement, not noise: the wiki's Spire Coast is
-a coastal ring the game divides between four areas, and it alone accounts for 62 of the 128
-misses. A 68% agreement could not tell 100 m from 400 m; the edge ratio can, which is why
-they are two separate records in `_meta` rather than one number.
+The check by NAME was reported, was deliberately not the pin, and has since turned into
+something else. While `data/region_names.json` was a hand trace of the wiki's map it was an
+independent reading of the same world: of its 768 non-void cells, **481 (62.6%) landed on a
+named game area** — the other 287 being the outer coast the wiki names and the game leaves as
+no-man's-land — and of the **401** comparable by name, **273 agreed (68.1%)**, with one
+disagreement dominating: the wiki's Spire Coast ring against four game areas, 62 of the 128
+misses. That number is kept as history in the region table's own `_meta.retired_wiki_trace`,
+because it is the size of the change the re-derivation made.
+
+It is not evidence any more. The region table is derived from this same asset now, so
+`region_table_is_current` asks a staleness question instead: anything under 100% means the
+committed table was cut from a different build, and the run says which command fixes it. The
+corners still come from the edge ratio, which is the only measurement here sharp enough to tell
+100 m from 400 m.
 
 ### The palette is designed, and the shipped one is not used
 
@@ -625,8 +655,11 @@ the intended behaviour, and filling it would mean inventing ocean.
 
 Dry-node false positives over 1% mean the colour classifier drifted or the sheet moved.
 Spire Coast recall under 95%, measured against the artwork over the `Spire Coast` cells of
-`data/region_names.json` — a hand trace of the wiki's map, so not this pipeline marking its
-own homework — means the region that exposed the old detector is being missed again. An ocean
+`data/region_names.json` — the game's own map areas, so still not this pipeline marking its own
+homework, and a sharper stencil than the wiki trace it replaced — means the region that exposed
+the old detector is being missed again. That stencil is a good deal smaller than it was, so the
+0.48% / 99.85% / 0.000 m / 0.0001% below are the last run's numbers over the old one and the next
+run re-measures them. An ocean
 level more than 0.5 m from the median ocean-spline box top means the level is coming from the
 wrong volumes. And artwork water standing over no box at all, past 1%, means the mask and the
 volumes have stopped describing the same world, which is what a misregistration looks like

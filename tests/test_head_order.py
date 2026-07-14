@@ -12,6 +12,7 @@ understated its own build.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.layout import build_layout, fluid_head, order_stages_by_head
@@ -33,7 +34,7 @@ def plan(game, state):
         game,
         state,
         dict(
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             objective="max_mw",
             exports=["MW"],
             extractor_clocks=[1, 1.5, 2, 2.5],

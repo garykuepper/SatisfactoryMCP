@@ -42,6 +42,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.core.gamedata.constants import CAPABILITY_SCHEMATICS
@@ -196,7 +197,7 @@ def test_a_gate_prices_itself_against_spendable_stock(locked_fixture):
 
 
 PLAN_KW = dict(
-    sources=["region:Spire Coast"],
+    sources=list(REFERENCE_FIELD),
     objective="max_mw",
     exports=["MW"],
     extractor_clocks=[1, 1.5, 2, 2.5],

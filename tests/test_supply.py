@@ -10,6 +10,7 @@ cross-reference of a node scan against a recipe to find.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.domain.planning import supply
 from satisfactory_mcp.domain.planning.optimize import solve
@@ -103,7 +104,7 @@ def test_nitrogen_gas_is_reported_as_locked_behind_the_pressurizer(game, state):
 def test_a_supplied_resource_is_never_a_candidate(game, state):
     """Iron is extractable in this scope, so it can never be the missing input -- and
     a diagnosis that named it would send the player somewhere pointless."""
-    req = build_scenario(game, state, sources=["region:Spire Coast"])
+    req = build_scenario(game, state, sources=list(REFERENCE_FIELD))
     report = supply.diagnose(req, game, state.unlocked_building_ids)
     assert IRON not in report.candidates
 
@@ -119,7 +120,7 @@ def test_the_probe_says_so_when_supply_is_not_the_cause(game, state):
         target_item="Steel Ingot",
         exports=["Steel Ingot"],
         export_minimums={"Steel Ingot": 1e7},
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
     )
     assert not solve(req.scenario).ok
 
@@ -229,7 +230,7 @@ def test_power_keeps_its_own_balance_and_is_not_double_rowed(game, state):
     from satisfactory_mcp.domain.planning.scenario import build_scenario
 
     req = build_scenario(
-        game, state, objective="max_mw", sources=["region:Spire Coast"], exports=["MW"]
+        game, state, objective="max_mw", sources=list(REFERENCE_FIELD), exports=["MW"]
     )
     sol = solve(req.scenario)
     assert sol.ok

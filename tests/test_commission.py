@@ -20,6 +20,7 @@ below that touches power is really a test that silence is never read as "unpower
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.commission import commission, track
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 SPIRE = dict(
     objective="max_mw",
-    sources=["region:Spire Coast"],
+    sources=list(REFERENCE_FIELD),
     exports=["MW"],
     extractor_clocks=[1.0, 1.5, 2.0, 2.5],
 )
@@ -598,7 +599,7 @@ def test_the_tool_prints_the_wait_and_calls_it_a_floor(game):
     an estimate would understate exactly the interval the player is exposed during."""
     out = srv.commission_plan(
         objective="max_mw",
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
         limit=14,

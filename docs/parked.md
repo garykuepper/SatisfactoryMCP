@@ -104,8 +104,14 @@ build the cache does not know.
   must re-fold that rather than reset it, and instance renames mean the fold cannot key on the name
   alone — position within a tolerance is the fallback, and the skew gate shows the tolerance has to
   be chosen against the rounding floor rather than guessed.
-* **No first-party escape for the region layer.** The game ships no biome geometry, so
-  `data/satisfactory_regions.json` stays a CC BY-SA trace whatever happens here.
+* ~~**No first-party escape for the region layer.** The game ships no biome geometry, so
+  `data/satisfactory_regions.json` stays a CC BY-SA trace whatever happens here.~~ **Wrong, and
+  fixed.** The game ships `FGMapAreaTexture` — a 4096² map-area raster at 1.83 m with a
+  `UFGMapArea` object per palette index, each stating its own display name. `data/region_names.json`
+  is derived from it, the trace is deleted, and the share-alike obligation went with it. Left
+  struck through rather than removed because the failure is the instructive part: this bullet was
+  a *conclusion from not having looked*, written beside a note in the same document that had
+  already seen the asset and called it "low prior, custom serialisation".
 
 ## 16. Parked: site outlines and visualisation
 

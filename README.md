@@ -145,11 +145,13 @@ that trade was measured to be worth) and announced in the warnings.
 plus the water-extractor count. Capping throughput would be wrong — parallel lines are legal — but a plan
 that silently needs 7 Mk2 water pipes is not a plan.
 
-**Region names are advisory, and say so.** Boundaries come from a hand-derived 256 m raster, because the
-game ships no biome geometry. Every lookup carries a confidence (`interior` / `boundary` / `sparse`), a
-land mask built from 2,669 static world objects means ocean returns *"off-map or ocean"* instead of the
-nearest land region, and 48 hand-verified nodes override the raster outright. All computation uses exact
-geometry — grid cells, cones, radii — never a name.
+**Region names are advisory, and say so.** The boundaries are the game's own — `FGMapAreaTexture`, a
+4096² map-area raster at 1.83 m — and so are the names, read out of each `UFGMapArea` asset's
+`mDisplayName`. What ships is a 256 m grid to draw and a 64 m one to look names up in, so every lookup
+carries a confidence that means something measured: `interior` (one region fills the cell), `boundary`
+(an exact boundary runs through it), `unnamed` (the game names nothing here, so the label is its own **No
+Man's Land**), `void` (no name at all — ocean and off-map, decided by a land mask of 2,688 static world
+objects). All computation uses exact geometry — grid cells, cones, radii — never a name.
 
 ## Resources and prompts
 
@@ -197,11 +199,14 @@ deleted; the agreement between the two, measured leaf for leaf across every proj
 saves it could read, is banked as digests in `tests/fixtures/vendor_parity.json` and replayed by
 `tests/test_savparse_parity.py`, because deleting the library destroyed the ability to re-run the diff.
 
-One open question, of a different kind: `data/satisfactory_regions.json`'s region geometry is traced
-from [satisfactory.wiki.gg](https://satisfactory.wiki.gg)'s Biome Map image, which is **CC BY-SA 4.0**.
-The game ships no biome geometry, so unlike the node data this cannot be re-derived first-party. It is
-build-time input only — nothing at runtime reads that file — and the region names it produces are
-labelled advisory and never feed a computation.
+That was not the only borrowing, and the other one is settled too. The region layer's geometry used to
+be traced from [satisfactory.wiki.gg](https://satisfactory.wiki.gg)'s Biome Map image, **CC BY-SA 4.0**,
+on the belief that the game shipped no biome geometry. It does:
+`Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel` is an `FGMapAreaTexture` whose
+4096² of palette indices resolve to `UFGMapArea` assets, each stating its own display name.
+`data/region_names.json` is derived from that, `data/satisfactory_regions.json` is deleted, and no
+share-alike obligation reaches this repository. Same posture as every other derived table here: facts,
+coordinates and identifiers read out of the reader's own install, and no artwork shipped.
 
 `data/resource_nodes.json` is merged from two sources, both recorded in the file's `_meta`: an
 MIT-licensed set extracted from the game's own map assets

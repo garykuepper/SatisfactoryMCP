@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 
@@ -118,12 +119,12 @@ def test_docs_summary_reports_no_normalisation_warnings():
         ("factory_sites", {"limit": 5}),
         ("search_resource_nodes", {"sources": ["north"], "resource": "Crude Oil"}),
         ("rank_build_sites", {"resource": "Crude Oil", "sources": ["north"]}),
-        ("plan_factory", {"objective": "max_mw", "sources": ["region:Spire Coast"]}),
+        ("plan_factory", {"objective": "max_mw", "sources": list(REFERENCE_FIELD)}),
         (
             "diff_vs_save",
             {
                 "objective": "max_mw",
-                "sources": ["region:Spire Coast"],
+                "sources": list(REFERENCE_FIELD),
                 "exports": ["MW", "Plastic", "Rubber"],
             },
         ),
@@ -144,7 +145,7 @@ def test_response_fits_the_context_budget(name, kwargs):
 #: sit near the bottom of a flow table ranked by volume.
 OIL_PLAN = dict(
     objective="max_mw",
-    sources=["region:Spire Coast"],
+    sources=list(REFERENCE_FIELD),
     exports=["MW", "Plastic", "Rubber"],
     export_minimums={"Plastic": 300.0, "Rubber": 300.0},
 )
@@ -195,7 +196,7 @@ def test_truncated_logistics_says_how_many_it_hid():
 def test_an_unknown_export_token_is_refused_by_name():
     """Four INFEASIBLE calls came out of a mangled export whitelist, so the tool now
     refuses rather than solving a question nobody asked."""
-    out = srv.plan_factory(objective="max_mw", sources=["region:Spire Coast"], exports=["Plastik"])
+    out = srv.plan_factory(objective="max_mw", sources=list(REFERENCE_FIELD), exports=["Plastik"])
     assert "Plastik" in out
     assert "REPLACES the default" in out
 

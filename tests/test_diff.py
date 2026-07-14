@@ -15,6 +15,7 @@ import asyncio
 from copy import deepcopy
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.diff import (
@@ -40,7 +41,7 @@ DIFF_BUDGET = 2600
 
 SPIRE = {
     "objective": "max_mw",
-    "sources": ["region:Spire Coast"],
+    "sources": list(REFERENCE_FIELD),
     "exports": ["MW", "Plastic", "Rubber"],
 }
 

@@ -12,6 +12,7 @@ each module optimises locally. That is the number that makes it a choice.
 from __future__ import annotations
 
 import pytest
+from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
 from satisfactory_mcp.domain.planning.prepare import prepare
@@ -34,7 +35,7 @@ def rig(game, live):
             objective="max_item",
             target_item="Fuel",
             exports=["Fuel", "Polymer Resin"],
-            sources=["region:Spire Coast"],
+            sources=list(REFERENCE_FIELD),
             extractor_clocks=[1, 1.5, 2, 2.5],
             allow_sinks=False,
             exclude_recipes=[
@@ -148,7 +149,9 @@ def test_three_loops_cost_a_little_optimality(game, live, rig):
     plant = _resin_plant(game, live, resin)
     assert hall.ok and plant.ok
     chained = rig.solution.net_mw + hall.solution.net_mw + plant.solution.net_mw
-    single = prepare(game, live, dict(stored.kwargs())).solution.net_mw
+    single = prepare(
+        game, live, {**stored.kwargs(), "sources": list(REFERENCE_FIELD)}
+    ).solution.net_mw
     assert chained < single, "decomposition cannot beat a joint solve"
     assert chained > single * 0.99, "and should not lose much"
 
@@ -209,7 +212,7 @@ def test_a_power_blind_objective_overclocks_and_it_costs_hundreds_of_MW(game, li
     at 120% draws 1,625."""
     kw = dict(
         exports=["Fuel", "Polymer Resin"],
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         extractor_clocks=[1, 1.5, 2, 2.5],
         allow_sinks=False,
         exclude_recipes=[
@@ -248,7 +251,7 @@ def test_the_tool_warns_when_the_objective_ignores_power(game):
         objective="max_item",
         target_item="Fuel",
         exports=["Fuel", "Polymer Resin"],
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         extractor_clocks=[1, 1.5, 2, 2.5],
         allow_sinks=False,
         water_extractors=64,
@@ -263,7 +266,7 @@ def test_max_mw_gets_no_such_warning(game):
     out = srv.plan_factory(
         objective="max_mw",
         exports=["MW"],
-        sources=["region:Spire Coast"],
+        sources=list(REFERENCE_FIELD),
         extractor_clocks=[1, 1.5, 2, 2.5],
         limit=2,
     )
