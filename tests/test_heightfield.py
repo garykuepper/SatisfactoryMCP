@@ -457,11 +457,11 @@ def test_the_inspect_endpoint_says_which_source_answered(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web import terrain as web_terrain
     from satisfactory_mcp.interfaces.web.app import create_app
 
     field = hf.load_field(build_field(tmp_path))
-    monkeypatch.setattr(web_api, "_terrain_field", lambda: field)
+    monkeypatch.setattr(web_terrain, "field", lambda: field)
     # The synthetic field is pinned at the map's south-west corner, so ask about a point
     # inside it in metres -- which is the unit the endpoint takes and the popup prints.
     x_m, y_m = FAKE_X0 / 100.0, FAKE_Y0 / 100.0
@@ -494,11 +494,11 @@ def test_the_endpoint_sends_a_water_level_without_a_depth_where_it_has_no_depth(
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web import terrain as web_terrain
     from satisfactory_mcp.interfaces.web.app import create_app
 
     field = hf.load_field(build_field(tmp_path))
-    monkeypatch.setattr(web_api, "_terrain_field", lambda: field)
+    monkeypatch.setattr(web_terrain, "field", lambda: field)
     app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: None)
     with TestClient(app) as client:
         asked = {}
@@ -525,10 +525,10 @@ def test_the_endpoint_says_WHY_there_is_no_terrain_rather_than_leaving_a_null(mo
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from satisfactory_mcp.interfaces.web import api as web_api
+    from satisfactory_mcp.interfaces.web import terrain as web_terrain
     from satisfactory_mcp.interfaces.web.app import create_app
 
-    monkeypatch.setattr(web_api, "_terrain_field", lambda: None)
+    monkeypatch.setattr(web_terrain, "field", lambda: None)
     app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: None)
     with TestClient(app) as client:
         body = client.get("/api/inspect", params={"x_m": 0.0, "y_m": 0.0}).json()

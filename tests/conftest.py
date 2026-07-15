@@ -75,6 +75,8 @@ def pytest_collection_modifyitems(items):
     if hoisted:
         rest = [i for i in items if not i.get_closest_marker(WHOLE_FOLDER)]
         items[:] = hoisted + rest
+
+
 #: The node field every planner test in this suite plans over, and the reason it is a BOX.
 #:
 #: It used to be ``["region:Spire Coast"]``, and the reference plans -- 99,729.62 MW over 787
@@ -197,3 +199,31 @@ def projection() -> dict:
 @pytest.fixture(scope="session")
 def state(game, projection) -> WorldState:
     return WorldState(projection=projection, game=game)
+
+
+def _explode(save=None, world=None):
+    """A loader that fails the way the real one fails when the sidecar produces nothing."""
+    raise RuntimeError("sidecar produced no output")
+
+
+@pytest.fixture
+def client(state, game):
+    """The API over the fixture world. Both loaders are stubs; no save is ever read.
+
+    Here rather than in one test module because the web surface is split across a file per
+    router and every one of them needs this exact app. ``fastapi`` is imported INSIDE the
+    fixture, not at the top of this file: it lives in the optional ``web`` extra and this
+    conftest is imported by the whole suite, so a module-level import would turn "the extra
+    is not installed" into a collection error for tests that never touch HTTP. The web test
+    modules ``importorskip`` it themselves, so anything that reaches this fixture has one.
+    """
+    from fastapi.testclient import TestClient
+
+    from satisfactory_mcp.interfaces.web.app import create_app
+
+    app = create_app(
+        state_loader=lambda save=None, world=None: state,
+        game_loader=lambda: game,
+    )
+    with TestClient(app) as c:
+        yield c

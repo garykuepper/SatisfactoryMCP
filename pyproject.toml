@@ -130,8 +130,12 @@ ignore = [
 # two: a generator that puts the repository root on sys.path before importing `tools`, and
 # a test module that asks `pytest.importorskip` whether the optional web stack is here at
 # all before importing from it. Anywhere else, E402 is a stray import and now says so.
+#
+# The web tests are a file per router now, and every one of them opens with that same
+# `importorskip` -- so the pattern is `tests/test_web_*.py` rather than a list that has to
+# grow with each split. It stays narrow: only the web suite may import after code.
 "tools/*.py" = ["E402"]
-"tests/test_web_api.py" = ["E402"]
+"tests/test_web_*.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 # Stated rather than inferred. isort decides first-party by resolving the dotted name on

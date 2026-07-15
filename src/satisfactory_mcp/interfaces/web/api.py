@@ -5,16 +5,14 @@ nothing. Every question answered here is answered by ``domain/`` -- the placemen
 the power ledger, the node occupancy, the factory proposals -- and the only work done
 in this file is turning a query string into arguments and a dataclass into JSON.
 
-Two conventions run through the whole surface:
+The two conventions this surface runs on -- metres at one decimal, and ``?save=``/
+``?world=`` everywhere a state is read -- live with the helpers that enforce them, in
+``serial.py``, which is where the error shape is written down too.
 
-* **Metres, one decimal.** The save stores centimetres. Every coordinate that leaves
-  this module has been divided by 100 and rounded, exactly as the text presenters do,
-  because a reader who sees two units in one product will eventually mix them.
-* **``?save=`` and ``?world=`` everywhere a state is read**, so a page can pin itself
-  to one save while the game keeps autosaving over another.
-
-Errors are ``{"error": "..."}`` with a 4xx, never a 200 with an empty list: a browser
-that cannot tell "no nodes" from "no save" will draw an empty map and say nothing.
+**This module is being emptied.** One concern at a time moves to ``routers/``, in the
+order the handlers are decorated here, and ``app.py`` includes what is left AFTER them --
+which is what keeps ``/openapi.json``'s path order, and therefore the committed
+``api-schema.d.ts``, byte-identical while the file shrinks. Nothing new goes in here.
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -39,20 +36,18 @@ from ...core.gameassets.pyramid import (
 )
 from ...core.gamedata.footprint import FOUNDATION_M
 from ...core.gamedata.model import pretty_class
-from ...core.saveio import projection as proj
 from ...core.saveio import rows as saverows
 from ...domain.collectibles.service import collect_view
 from ...domain.factories import floors as ffloors
 from ...domain.factories import identity as fidentity
 from ...domain.factories import select as fselect
-from ...domain.spatial import elevation as spatial_elevation
 from ...domain.spatial import geo
-from ...domain.spatial import heightfield as spatial_heightfield
-from ...domain.spatial import nodes as spatial_nodes
 from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
+from . import terrain
+from .serial import _fail, _m, _state, _xyz, _yaw
 
-__all__ = ["DEFAULT_MAP_BOUNDS_M", "INSPECT_NEAREST", "INSPECT_RADIUS_M", "PING_SECONDS", "router"]
+__all__ = ["DEFAULT_MAP_BOUNDS_M", "PING_SECONDS", "router"]
 
 #: How long a quiet SSE stream waits before sending a comment. Proxies and browsers
 #: both drop a connection that has said nothing for a while, and a comment line is the
@@ -63,74 +58,6 @@ router = APIRouter(prefix="/api")
 
 
 # --------------------------------------------------------------------- helpers
-
-
-def _m(value: float | None) -> float | None:
-    """Centimetres to metres, one decimal. The unit rule, in one place."""
-    return None if value is None else round(float(value) / 100.0, 1)
-
-
-def _xyz(pos: Any) -> dict[str, float | None]:
-    """A projection ``pos`` triple as named metre fields."""
-    if not pos:
-        return {"x_m": None, "y_m": None, "z_m": None}
-    p = list(pos) + [None, None, None]
-    return {"x_m": _m(p[0]), "y_m": _m(p[1]), "z_m": _m(p[2])}
-
-
-def _yaw(value: Any) -> float | None:
-    """A placement's rotation about world Z, degrees, one decimal.
-
-    Positive turns +X towards +Y, so it is directly comparable with ``atan2(dy, dx)`` over
-    two ``pos`` values -- which is how the projection's own convention was verified, and
-    the one sentence a client needs to draw a rotated footprint.
-
-    ``None``, never 0.0, when the projection carries no yaw at all: schema 12 added the
-    field, and an absent one means "this projection predates it", which is a different
-    claim from "this thing is axis-aligned". Both end up drawn the same way, and only one
-    of them is a measurement.
-
-    Rounded like every other number that leaves this module. 0.1 degrees swings the corner
-    of an 8 m foundation by 7 mm.
-    """
-    if value is None:
-        return None
-    try:
-        return round(float(value), 1)
-    except (TypeError, ValueError):
-        return None
-
-
-def _fail(message: str, status: int = 400) -> JSONResponse:
-    return JSONResponse({"error": message}, status_code=status)
-
-
-def _state(request: Request, save: str | None, world: str | None) -> WorldState:
-    """The world a request is asking about. Raises whatever the loader raises."""
-    return request.app.state.load_state(save, world)
-
-
-def _label_json(label: spatial_regions.Label) -> dict | None:
-    """A region lookup as JSON, or ``None`` for ocean and off-map.
-
-    ``None`` rather than a nearest-land guess, which is the refusal ``label_for`` already
-    makes and which this layer must not undo -- a page that printed the closest biome for
-    a click in the sea would read exactly like a measurement.
-
-    The confidence word travels with the name because the name alone cannot be trusted:
-    the raster is 256 m per cell, so "Northern Forest, boundary" and "Northern Forest,
-    interior" are different claims. ``certain`` is the domain's own reading of that word,
-    computed here once so the page does not have to know the four codes.
-    """
-    if label.name is None:
-        return None
-    return {
-        "name": label.name,
-        "confidence": label.confidence,
-        "accuracy_m": label.accuracy_m,
-        "certain": label.certain,
-        "text": label.describe(),
-    }
 
 
 def _record_row(st: WorldState, row: dict) -> dict:
@@ -181,321 +108,6 @@ def _record_row(st: WorldState, row: dict) -> dict:
         "w_m": round(footprint.width_m, 1) if footprint else None,
         "l_m": round(footprint.depth_m, 1) if footprint else None,
         "h_m": round(footprint.height_m, 1) if footprint else None,
-    }
-
-
-# --------------------------------------------------------------------- worlds
-
-
-@router.get("/worlds")
-def worlds() -> Any:
-    """Every world the save directory holds, newest first."""
-    try:
-        found, unsupported = proj.list_worlds()
-    except Exception as exc:
-        return _fail(f"could not scan saves: {exc}", 404)
-    rows = []
-    for w in found:
-        newest = w.newest
-        rows.append(
-            {
-                **asdict(w),
-                "mtime": newest.get("mtime_ns", 0) / 1e9,
-                "newest_filename": newest.get("filename"),
-                "play_duration_s": w.max_play_duration_s,
-            }
-        )
-    return {"worlds": rows, "unsupported": list(unsupported)}
-
-
-# -------------------------------------------------------------------- summary
-
-
-@router.get("/summary")
-def summary(request: Request, save: str | None = None, world: str | None = None) -> Any:
-    try:
-        st = _state(request, save, world)
-    except Exception as exc:
-        return _fail(f"could not read save: {exc}", 404)
-    return {
-        "header": st.header,
-        "age_note": st.age_note,
-        "power": st.power_report(),
-        "progression": st.progression(),
-        # Where the player last stood, so the map can draw a you-are-here. Nulls when
-        # the save has no pawn, which _xyz already says honestly.
-        "player": _xyz(st.player_position()),
-    }
-
-
-# ---------------------------------------------------------------------- nodes
-
-
-@router.get("/nodes")
-def nodes(
-    request: Request,
-    resource: str | None = None,
-    save: str | None = None,
-    world: str | None = None,
-) -> Any:
-    """The resource node table, joined to what this save has built on it.
-
-    The join is deliberately partial and says so: ``occupancy`` resolves only the
-    extractors whose target is a node key, so ``occupied`` false means "no extractor
-    known here", never "free". The map draws it as unknown-or-free and the popup
-    carries the node id, which doubles as a ``node:`` selector for the MCP tools.
-
-    The region name is joined here rather than in the browser because the raster lives on
-    this side: sending 608 rows and then a 30x30 grid for the page to index into would put
-    the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node``, which is a
-    position lookup and nothing more: there used to be an override table of nodes someone
-    had checked against a wiki image by eye, reported as ``verified``, and the region
-    geometry is the game's own now so there is nothing for it to correct. ``null`` for a
-    node the raster calls void, which is the honest answer for the handful that sit on
-    islands off the grid.
-
-    **A failed save is not a failed answer** -- the same rule ``/api/inspect`` already
-    follows, because the two used to disagree: the node table is static and needs no
-    ``.sav``, so a world whose save will not load still gets its geography. What it loses
-    is the occupancy join, and ``save_error`` says so out loud (with ``occupied`` null at
-    the top, since "0 of them occupied" would be a claim no one measured).
-    """
-    try:
-        table = spatial_nodes.load_nodes()
-        rmap = spatial_regions.load_regions()
-    except FileNotFoundError as exc:
-        return _fail(str(exc), 404)
-
-    save_error: str | None = None
-    taken: dict = {}
-    try:
-        st = _state(request, save, world)
-        taken = spatial_nodes.occupancy(st.projection)
-    except Exception as exc:
-        save_error = f"could not read save: {exc}"
-
-    game = request.app.state.game()
-    rows = table.by_resource(resource) if resource else table.nodes
-    out = []
-    for n in rows:
-        held = taken.get(n["instance"])
-        occupant = held["extractor"] if held else None
-        out.append(
-            {
-                "id": n["instance"],
-                "resource": n["resource"],
-                "name": str(n["instance"]).rsplit(".", 1)[-1],
-                "kind": n["kind"],
-                "purity": n["purity"],
-                **_xyz((n["x"], n["y"], n["z"])),
-                "occupied": held is not None,
-                "occupant_cls": occupant,
-                "occupant_name": game.building_name(occupant),
-                "region": _label_json(rmap.label_for_node(n)),
-            }
-        )
-    return {
-        "nodes": out,
-        "resource": resource,
-        "occupied": None if save_error else sum(1 for r in out if r["occupied"]),
-        "save_error": save_error,
-    }
-
-
-# ----------------------------------------------------------- point inspector
-
-
-#: How far a click looks for known elevations, metres. The same default
-#: ``describe_location`` uses, so the map and the MCP tool answer one question one way.
-INSPECT_RADIUS_M = 200.0
-
-#: How many nodes a click reports. Enough to see what a site is next to; more would make
-#: the popup a second copy of the node table.
-INSPECT_NEAREST = 5
-
-
-def _terrain_field():
-    """The extracted 1 m heightfield, or ``None`` on a machine that has none.
-
-    A loader and only a loader, exactly like ``/api/mapimage``: the raster is derived from
-    the game's cooked assets, so this repository ships none and most installs have none.
-    Wrapped in a function of its own rather than called inline so a test can replace it
-    with a synthetic field and get a deterministic answer without a game install.
-    """
-    return spatial_heightfield.load_field()
-
-
-def _elevation_json(near: spatial_elevation.Elevation) -> dict:
-    """A probe as JSON, with the reason for every number it declines to give.
-
-    Four sources, and each is labelled as what it is. ``terrain_m`` is one texel of the
-    extracted heightfield read at exactly the coordinate asked about; ground and built are
-    populations of things standing nearby. They stay apart all the way out to the page,
-    because that is the whole point of the module they come from: a node rests on terrain,
-    a foundation is wherever the player put it, a texel is the game's own ground, and one
-    median over the three would be a number describing none of them.
-
-    ``terrain_source`` says which layer of the field answered and ``terrain_accuracy_m``
-    carries what the generator measured for that layer, so a reading is never quoted
-    without the uncertainty that belongs to it -- a 0.2 m landscape texel and a 3.9 m fill
-    texel are both "the terrain" and are not the same claim.
-
-    ``fill_m`` is ``null`` more often than not, and a null with no reason next to it reads
-    as a bug. It has exactly two causes -- fewer than ``MIN_GROUND_SAMPLES`` nodes nearby,
-    or nothing built nearby -- and ``fill_note`` names whichever one applied. Neither is
-    ever rendered as 0: zero fill is a real, different measurement. ``terrain_note`` does
-    the same job for the field, and it too has exactly two causes: no field on this
-    machine, or a coordinate the field has no data for.
-
-    Water is two numbers for the same reason, and the second one is null far more often
-    than the first. ``terrain_water_m`` is the surface's own height, which the channel
-    takes from a cooked water volume's bounding box and knows to centimetres wherever
-    there is water at all. ``terrain_water_depth_m`` is that minus the ground, which only
-    exists where the ground under the water was itself measured at 1 m -- over the fill
-    layer, which is most of the ocean, subtracting a 3.9 m-quantised raster from a sea
-    surface produces a number nobody measured. So it is ``null`` there, with
-    ``terrain_water_note`` saying why, and never 0.0.
-    """
-    ground, built = near.ground, near.built
-    # Derived from the samples actually present rather than from a hardcoded list, so a
-    # new non-ground source in the domain module arrives here without an edit.
-    built_sources = tuple(s for s in near.counts if s not in spatial_elevation.GROUND_SOURCES)
-
-    fill = near.fill_m
-    note = None
-    if fill is None:
-        if len(ground) < spatial_elevation.MIN_GROUND_SAMPLES:
-            note = (
-                f"not enough ground samples ({len(ground)} of "
-                f"{spatial_elevation.MIN_GROUND_SAMPLES} within {near.radius_m:g} m)"
-            )
-        elif not built:
-            note = f"nothing built within {near.radius_m:g} m"
-
-    def _round(value: float | None) -> float | None:
-        return None if value is None else round(value, 1)
-
-    terrain = near.terrain
-    terrain_note = None
-    if terrain is None:
-        terrain_note = (
-            "the field has no data at this point -- open ocean, or a cave mouth"
-            if _terrain_field() is not None
-            else "no terrain field on this machine (run tools/gen_world_heightmap.py)"
-        )
-    water_note = None
-    if terrain is not None and terrain.submerged and terrain.water_depth_m is None:
-        water_note = (
-            f"the ground under this water is the {terrain.source} layer, which is too "
-            "coarse to subtract a surface from, so the depth here is not known"
-        )
-
-    return {
-        "radius_m": near.radius_m,
-        "terrain_m": _round(near.terrain_m),
-        "terrain_source": terrain.source if terrain else None,
-        "terrain_accuracy_m": terrain.accuracy_m if terrain else None,
-        "terrain_water_m": _round(terrain.water_m) if terrain and terrain.submerged else None,
-        "terrain_water_depth_m": _round(terrain.water_depth_m) if terrain else None,
-        "terrain_water_note": water_note,
-        "terrain_note": terrain_note,
-        "ground_m": _round(near.median(*spatial_elevation.GROUND_SOURCES)),
-        "ground_spread_m": _round(near.spread(*spatial_elevation.GROUND_SOURCES)),
-        "ground_count": len(ground),
-        "built_m": _round(near.median(*built_sources)) if built_sources else None,
-        "built_count": len(built),
-        "fill_m": _round(fill),
-        "fill_note": note,
-        "counts": dict(near.counts),
-    }
-
-
-def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[dict]:
-    """The closest ``limit`` nodes to a point, centimetres in, metres out."""
-    ranked = sorted(
-        ((geo.distance_m((x, y), (n["x"], n["y"])), n) for n in table.nodes),
-        key=lambda pair: pair[0],
-    )
-    out = []
-    for distance_m, n in ranked[:limit]:
-        held = taken.get(n["instance"])
-        out.append(
-            {
-                "id": n["instance"],
-                "name": str(n["instance"]).rsplit(".", 1)[-1],
-                "resource": n["resource"],
-                "kind": n["kind"],
-                "purity": n["purity"],
-                **_xyz((n["x"], n["y"], n["z"])),
-                "occupied": held is not None,
-                "occupant_cls": held["extractor"] if held else None,
-                "distance_m": round(distance_m, 1),
-            }
-        )
-    return out
-
-
-@router.get("/inspect")
-def inspect(
-    request: Request,
-    x_m: float,
-    y_m: float,
-    save: str | None = None,
-    world: str | None = None,
-) -> Any:
-    """What is at a coordinate: the region, the measured ground, and the nearest nodes.
-
-    The three answers a site starts with, and none of them was on the map before. Every
-    one comes straight out of ``domain.spatial`` -- this endpoint converts metres to the
-    save's centimetres, calls three functions, and rounds.
-
-    **A failed save is not a failed answer.** The node table is static, covers the whole
-    map and needs no ``.sav`` at all, so a world whose save will not load still gets its
-    region, its ground elevation and its nearest nodes; what it loses is the built
-    population and the occupancy join, and ``save_error`` says so out loud rather than
-    letting "no extractor here" quietly mean "no save here".
-
-    **And it prefers the extracted terrain when there is any.** On a machine where
-    ``tools/gen_world_heightmap.py`` has been run, the 1 m field answers "how high is it
-    here" for unexplored ground with one number at the coordinate asked about, instead of a
-    population of things standing near it -- and it says which layer of itself answered, so
-    a 0.2 m landscape reading and a 3.9 m fill reading are told apart. Where there is no
-    field, or the field has no data there, this is exactly the endpoint it was before.
-
-    Not cached, deliberately and by measurement: ``sample_points`` over the 320-hour
-    reference world builds 9,525 samples in 2.0 ms and ``probe`` scans them in 0.8 ms, so
-    a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click. The
-    field is cached, because it is 0.45 s of zlib and 170 MB either way -- but by the
-    loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
-    """
-    try:
-        table = spatial_nodes.load_nodes()
-        rmap = spatial_regions.load_regions()
-    except FileNotFoundError as exc:
-        return _fail(str(exc), 404)
-
-    st: WorldState | None = None
-    save_error: str | None = None
-    try:
-        st = _state(request, save, world)
-    except Exception as exc:
-        save_error = f"could not read save: {exc}"
-
-    x, y = x_m * 100.0, y_m * 100.0
-    near = spatial_elevation.probe(
-        x,
-        y,
-        spatial_elevation.sample_points(table, st),
-        INSPECT_RADIUS_M,
-        terrain_field=_terrain_field(),
-    )
-    taken = spatial_nodes.occupancy(st.projection) if st is not None else {}
-    return {
-        "at": {"x_m": round(x_m, 1), "y_m": round(y_m, 1)},
-        "region": _label_json(rmap.label_for(x, y)),
-        "elevation": _elevation_json(near),
-        "nearest": _nearest_nodes(table, taken, x, y, INSPECT_NEAREST),
-        "save_error": save_error,
     }
 
 
@@ -2082,7 +1694,7 @@ def floors_view(
 
     try:
         report = ffloors.floor_decomposition(
-            st, platform=platform, label=factory, terrain_field=_terrain_field()
+            st, platform=platform, label=factory, terrain_field=terrain.field()
         )
     except fselect.SelectorError as exc:
         return _fail(str(exc))
