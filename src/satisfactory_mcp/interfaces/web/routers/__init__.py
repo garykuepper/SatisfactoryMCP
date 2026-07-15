@@ -20,13 +20,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import inspect, nodes, world
+from . import inspect, nodes, regions, tiles, world
 
 __all__ = ["ALL_ROUTERS"]
 
 #: Mounted in this order, and this order is the decorator order ``api.py`` had.
+#:
+#: ``regions`` before ``tiles`` because that is what the surface says: the baseline manifest
+#: records ``/api/regions`` at index 4 of ``/openapi.json``'s ``paths``, ahead of
+#: ``/api/mapimage`` and the two ``/api/maptiles`` formats. The FILE order in ``api.py`` was
+#: never the guide -- the tile constants and helpers sat above ``regions()`` under a section
+#: banner that named it -- and only the DECORATOR order registers a route.
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     world.router,
     nodes.router,
     inspect.router,
+    regions.router,
+    tiles.router,
 )

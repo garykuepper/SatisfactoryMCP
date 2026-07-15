@@ -230,13 +230,13 @@ COPIED_VERBATIM = "vendor/LEAFLET-LICENSE"
 #: The frontend's claim about which base layers the server serves, and the server's own list.
 #: The tile path is built from a hand-written union in ``api.ts`` because the generated
 #: OpenAPI schema cannot supply it -- ``layer`` is a plain ``str`` path parameter, so the names
-#: live only in ``MAP_LAYERS`` in ``api.py`` and never reach the document ``npm run typegen``
-#: reads. Two lists in two languages with nothing between them is exactly the drift this file
-#: exists to catch, and the cost of getting it wrong is a 404 per tile with a map that simply
-#: stays blank.
+#: live only in ``MAP_LAYERS`` in ``routers/tiles.py`` and never reach the document
+#: ``npm run typegen`` reads. Two lists in two languages with nothing between them is exactly
+#: the drift this file exists to catch, and the cost of getting it wrong is a 404 per tile
+#: with a map that simply stays blank.
 FRONTEND_API_TS = FRONTEND / "src" / "api.ts"
 MAP_LAYER_UNION = "export type MapTileLayer ="
-WEB_API_PY = WEB / "api.py"
+WEB_TILES_PY = WEB / "routers" / "tiles.py"
 
 # --------------------------------------------------------------------- the generators
 
@@ -794,8 +794,8 @@ def test_the_frontend_sources_are_not_reachable_from_python():
 def _literal_strings(tree: ast.AST, name: str) -> list[str] | None:
     """The string members of a module-level ``NAME = (...)`` tuple or list, by AST.
 
-    By AST because importing ``interfaces/web/api.py`` would need FastAPI, and this module's
-    first promise is that it runs on stdlib alone.
+    By AST because importing ``interfaces/web/routers/tiles.py`` would need FastAPI, and this
+    module's first promise is that it runs on stdlib alone.
     """
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -813,7 +813,7 @@ def _literal_strings(tree: ast.AST, name: str) -> list[str] | None:
 
 
 def test_the_page_and_the_server_agree_on_the_base_layer_names():
-    """``MapTileLayer`` in api.ts against ``MAP_LAYERS`` in api.py, which nothing else joins.
+    """``MapTileLayer`` in api.ts against ``MAP_LAYERS`` in tiles.py, which nothing else joins.
 
     Every other response shape the page claims is checked by ``npm run typegen`` against the
     server's own OpenAPI document. This one cannot be: ``layer`` is a plain ``str`` path
@@ -828,14 +828,14 @@ def test_the_page_and_the_server_agree_on_the_base_layer_names():
     not fix it.
     """
     served = _literal_strings(
-        ast.parse(WEB_API_PY.read_text(encoding="utf-8"), filename=str(WEB_API_PY)),
+        ast.parse(WEB_TILES_PY.read_text(encoding="utf-8"), filename=str(WEB_TILES_PY)),
         "MAP_RENDER_LAYERS",
     )
-    assert served is not None, "MAP_RENDER_LAYERS is no longer a literal tuple in api.py"
+    assert served is not None, "MAP_RENDER_LAYERS is no longer a literal tuple in routers/tiles.py"
     # ``MAP_LAYERS = (MAP_LAYER_DEFAULT, *MAP_RENDER_LAYERS)`` -- the default is the artwork
     # and is spelled separately there because it is the path the three-segment alias serves.
     default = _literal_strings(
-        ast.parse(WEB_API_PY.read_text(encoding="utf-8"), filename=str(WEB_API_PY)),
+        ast.parse(WEB_TILES_PY.read_text(encoding="utf-8"), filename=str(WEB_TILES_PY)),
         "MAP_LAYERS",
     )
     assert default is None or default == [], (
@@ -853,9 +853,9 @@ def test_the_page_and_the_server_agree_on_the_base_layer_names():
     assert line is not None, f"{MAP_LAYER_UNION} is gone from api.ts"
     claimed = re.findall(r'"([^"]+)"', line)
     assert claimed[1:] == served, (
-        "the page's MapTileLayer union has drifted from MAP_LAYERS in api.py:\n"
-        f"  api.py serves: map, {', '.join(served)}\n"
-        f"  api.ts claims: {', '.join(claimed)}"
+        "the page's MapTileLayer union has drifted from MAP_LAYERS in routers/tiles.py:\n"
+        f"  tiles.py serves: map, {', '.join(served)}\n"
+        f"  api.ts claims:   {', '.join(claimed)}"
     )
     assert claimed[0] == "map", f"the artwork layer is not first in the union: {claimed}"
 

@@ -45,7 +45,7 @@ export type ApiPath = keyof paths;
  *
  * Hand-written for the same reason the response shapes in api-types.ts are: the generated
  * schema cannot supply it. `layer` is a plain `str` path parameter, so `api-schema.d.ts`
- * types it `string` -- the names live in `MAP_LAYERS` in api.py, which the OpenAPI document
+ * types it `string` -- the names live in `MAP_LAYERS` in routers/tiles.py, which the document
  * never sees, and an unknown one comes back as a 404 listing the real ones rather than as a
  * 422 about a parameter.
  *
