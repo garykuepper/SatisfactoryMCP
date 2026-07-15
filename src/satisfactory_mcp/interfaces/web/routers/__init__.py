@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import inspect, nodes, regions, tiles, world
+from . import inspect, nodes, placements, power, regions, routes_layer, storage, tiles, world
 
 __all__ = ["ALL_ROUTERS"]
 
@@ -31,10 +31,20 @@ __all__ = ["ALL_ROUTERS"]
 #: ``/api/mapimage`` and the two ``/api/maptiles`` formats. The FILE order in ``api.py`` was
 #: never the guide -- the tile constants and helpers sat above ``regions()`` under a section
 #: banner that named it -- and only the DECORATOR order registers a route.
+#:
+#: The four appended after ``tiles`` sit at indices 8..13 of that same manifest, in one
+#: unbroken run: ``/api/machines``, ``/api/structures`` (``placements``), ``/api/belts``,
+#: ``/api/pipes`` (``routes_layer``), ``/api/storage``, ``/api/power``. Two endpoints per file
+#: for the first two, so the tuple's order is checked against the PATH order rather than
+#: against the file list -- the same rule ``regions``/``tiles`` was settled by.
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     world.router,
     nodes.router,
     inspect.router,
     regions.router,
     tiles.router,
+    placements.router,
+    routes_layer.router,
+    storage.router,
+    power.router,
 )

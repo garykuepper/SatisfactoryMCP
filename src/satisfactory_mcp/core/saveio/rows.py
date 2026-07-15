@@ -13,7 +13,9 @@ neighbour:
 * ``domain/factories/structure.py`` -- once more, for the slab weld;
 * ``domain/spatial/elevation.py`` -- once, for ground samples;
 * ``domain/world/flow.py`` -- twice, for the pipe-to-graph join;
-* ``interfaces/web/api.py`` -- three times, one per endpoint.
+* the web adapter -- three times, one per endpoint. That module has since been split, and
+  the callers are ``interfaces/web/routers/placements.py`` (structures),
+  ``routers/routes_layer.py`` (belts and pipes) and ``routers/power.py`` (poles and wires).
 
 Copied guards drift. They had already: one site resolved an out-of-range class index to
 ``""`` and another to ``None``; one checked that a point's coordinates were numbers and
