@@ -1,41 +1,35 @@
-/* Who fetches what, and when: the two waves, the epoch guard, and the redraw.
+/* When the page fetches, and what a reply is allowed to do when it lands.
  *
- * The split between `loadStatic` and `loadLive` is a claim about the data rather than about
- * the code -- nodes, concrete and routes change when the player builds, machines and
- * collectibles change on every autosave -- so a save event refetches one wave and a world
- * switch refetches both. This module is where every draw function is finally called, which
- * makes it the one file that knows the whole page, and the reason every other module can
- * afford not to.
+ * WHAT is fetched is not here any more: each feature declares its own entry in registry.ts,
+ * and this file runs the list without knowing a single one of the names in it. What is left
+ * is the machinery every entry shares and no entry should be spelling for itself -- the two
+ * waves, the epoch guard that drops a reply nobody is waiting for, the clear a failure owes
+ * the layers it was going to draw into, and the mark on screen while a switch is in flight.
+ *
+ * THIS FILE IMPORTS NO MODULE THAT REGISTERS A FETCH, and that is a ratchet rather than a
+ * habit: it used to import all seven of them, and stripping those imports is what makes the
+ * registrations reachable only through main.ts's FEATURES block. See registry.ts.
+ *
+ * The one fetch that is not in the registry is the first one below. /api/regions is geography
+ * -- no world to scope it to, no epoch to guard it against, fetched once for the life of the
+ * page -- so it is neither wave, and it is the reason `regions.ts` is the single feature
+ * module this file still names.
  */
 
 import { get } from "./api";
 import { el } from "./dom";
-import { inFloorMode, leaveFloors, refilterFloors, refreshFloors } from "./floors";
-import { phaseText } from "./format";
-import { drawFactories } from "./labels";
+import { inFloorMode, leaveFloors, refilterFloors } from "./floors";
 import { clearPrefixed } from "./layers";
 import { L } from "./leaflet";
 import { map, writeHash } from "./map";
-import { drawCollectibles, drawNodes, drawPlayer } from "./markers";
-import { drawMachines, drawStorage, drawStructures } from "./placements";
-import { drawPower } from "./power";
+import { fetcherFor, fetchersOf } from "./registry";
 import { drawRegions } from "./regions";
-import { drawBelts, drawPipes } from "./routes";
 import { state } from "./state";
 import { fail, friendly } from "./toast";
 
-import type {
-  BeltsResponse,
-  CollectiblesResponse,
-  FactoriesResponse,
-  MachinesResponse,
-  NodesResponse,
-  PipesResponse,
-  PowerResponse,
-  StorageResponse,
-  StructuresResponse,
-  SummaryResponse,
-} from "./api-types";
+import type { ApiUrl } from "./api";
+import type { ApiError } from "./api-types";
+import type { Registered } from "./registry";
 
 export function loadRegions() {
   // Geography, not save state: no world parameter, fetched once, never refetched.
@@ -52,172 +46,76 @@ export function loadRegions() {
     });
 }
 
-/* Every loader below is epoch-guarded: a switch bumps `state.epoch`, and a reply that
- * comes back for an earlier epoch is dropped instead of drawn. Without this, whichever
- * world answered LAST owned the map -- switch away from a slow world and its late reply
- * silently repainted everything under the new world's name.
+/* One registered fetch, from the request to whatever the reply is allowed to do.
  *
- * The catch paths clear their layers before tosting: a failed switch must leave those
- * layers empty, not showing the previous world under the new world's header. */
-
-/* Every draw goes through here, and it says two things at once.
+ * THE EPOCH GUARD is the older half and the reason this is one function rather than ten. A
+ * switch bumps `state.epoch`, and a reply that comes back for an earlier epoch is dropped
+ * instead of drawn -- without it, whichever world answered LAST owned the map, so switching
+ * away from a slow world let its late reply silently repaint everything under the new world's
+ * name. It is checked in both places a reply can arrive, and the catch checks it BEFORE
+ * clearing anything: a failure belonging to a world nobody is looking at must not empty the
+ * layers the current world has just filled.
  *
- * The epoch guard is the older one: a reply that comes back for a world nobody is looking at
- * any more is dropped rather than drawn. What is new is the line after the draw -- a redraw
- * replaces a layer's CONTENTS, and the floor filter is a fact about contents, so a layer
- * refetched during floor mode would arrive holding every storey at once. Spelled once here
- * rather than eight times below, because eight copies is eight chances to forget the second
- * half in the ninth. */
-function drew<T>(live: () => boolean, draw: (data: T) => void): (data: T) => void {
-  return function (data) {
-    if (!live()) return;
-    draw(data);
-    refilterFloors();
-  };
-}
-
-export function loadStatic() {
-  // Nodes and factory shapes change only when the player builds, so they are refetched
-  // on a world switch rather than on every save write.
+ * The catch clears before it toasts, for the mirror reason: a failed switch must leave those
+ * layers empty rather than showing the previous world under the new world's header.
+ *
+ * `after` runs inside the same guarded block as the draw rather than in a `.then` of its own,
+ * which is where /api/machines' floor refresh used to sit. A second `.then` is a microtask
+ * later and so genuinely needed a second guard; here nothing can run between the two lines.
+ * The only thing that bumps the epoch is `reload`, and `reload` leaves floor mode on its way
+ * past, so the hook's own "am I still in a view" check is the same question anyway. */
+function run(fetcher: Registered): void {
   var epoch = state.epoch;
   var live = function () {
     return epoch === state.epoch;
   };
-  get<NodesResponse>("/api/nodes")
-    .then(drew(live, drawNodes))
-    .catch(function (e) {
+  get<ApiError>(fetcher.path)
+    .then(function (body) {
       if (!live()) return;
-      clearPrefixed(["node: "]);
-      fail("nodes: " + friendly(e));
-    });
-  get<StructuresResponse>("/api/structures")
-    .then(drew(live, drawStructures))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["foundations"]);
-      fail("structures: " + friendly(e));
-    });
-  get<BeltsResponse>("/api/belts")
-    .then(drew(live, drawBelts))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["belts"]);
-      fail("belts: " + friendly(e));
-    });
-  get<PipesResponse>("/api/pipes")
-    .then(drew(live, drawPipes))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["pipes"]);
-      fail("pipes: " + friendly(e));
-    });
-  // Static, and it belongs in this wave rather than the live one for the reason the belts do:
-  // a wire changes when the player builds, not when the game autosaves.
-  get<PowerResponse>("/api/power")
-    .then(function (d) {
-      if (live()) drawPower(d);
+      if (fetcher.settles) busy(false);
+      fetcher.draw(body);
+      // A redraw replaces a layer's CONTENTS, and the floor filter is a fact about contents,
+      // so a layer refetched during floor mode would arrive holding every storey at once.
+      // Which entries do this and which do not is stated per entry; see `refilters`.
+      if (fetcher.refilters) refilterFloors();
+      if (fetcher.after) fetcher.after();
     })
     .catch(function (e) {
       if (!live()) return;
-      clearPrefixed(["power"]);
-      fail("power: " + friendly(e));
-    });
-  get<StorageResponse>("/api/storage")
-    .then(drew(live, drawStorage))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["storage"]);
-      fail("storage: " + friendly(e));
-    });
-  get<FactoriesResponse>("/api/factories")
-    .then(drew(live, drawFactories))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["factory labels", "proposals"]);
-      fail("factories: " + friendly(e));
+      if (fetcher.settles) busy(false);
+      clearPrefixed(fetcher.clears);
+      if (fetcher.failed) fetcher.failed();
+      fail(fetcher.label + ": " + friendly(e));
     });
 }
 
-export function loadLive() {
-  var epoch = state.epoch;
-  var live = function () {
-    return epoch === state.epoch;
-  };
-  get<MachinesResponse>("/api/machines")
-    .then(drew(live, drawMachines))
-    .then(function () {
-      // A save write changes what is BUILT, so it changes the decomposition -- and the ids a
-      // band lists are what the floor filter runs on. Without this a machine placed since the
-      // view was opened would be drawn by /api/machines, listed by no band, and therefore
-      // silently missing from every floor rather than visibly new on one.
-      if (live()) refreshFloors();
-    })
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["machines", "extractors", "generators"]);
-      fail("machines: " + friendly(e));
-    });
-  get<CollectiblesResponse>("/api/collectibles?mode=remaining")
-    .then(drew(live, drawCollectibles))
-    .catch(function (e) {
-      if (!live()) return;
-      clearPrefixed(["pickup: "]);
-      fail("collectibles: " + friendly(e));
-    });
-  get<SummaryResponse>("/api/summary")
-    .then(function (s) {
-      if (!live()) return;
-      busy(false);
-      drawPlayer(s.player);
-      var power = s.power;
-      // No fallback to the nameplate any more, because there was never a case to fall back
-      // FROM: `PowerReport` starts the measured figure at 0.0 and charges an unmonitored
-      // machine in full, so it is always a number. The old `?? draw_mw` would have printed
-      // the nameplate total under the word "drawn" on the one save it could ever have fired
-      // for, which is the opposite of what the split exists to say.
-      var measured = power.measured_draw_mw;
-      var parts = [s.header.session_name];
-      var phase = phaseText(s.progression.game_phase);
-      if (phase) parts.push(phase);
-      // The measured figure, labelled: the nameplate total alone reads as "one factory
-      // from a brown-out" on a base that is mostly idle. Both live in the tooltip.
-      parts.push(Math.round(measured) + " MW drawn / " + Math.round(power.generation_mw) + " MW capacity");
-      parts.push(s.age_note);
-      var span = el("summary");
-      span.textContent = parts.join(" — ");
-      // Set in the same breath as the text, and so are the two branches that replace this
-      // one below. `title` is a property of the element, not of the string just written to
-      // it, so a branch that only touches `textContent` leaves the PREVIOUS world's tooltip
-      // hanging off the new world's header -- and this tooltip is the only place the
-      // measured/nameplate split is spelled out, so what survives is three specific power
-      // figures presented as this world's. worlds.ts does both together for the same reason.
-      span.title =
-        "power: " +
-        Math.round(measured) +
-        " MW measured draw; " +
-        Math.round(power.draw_mw) +
-        " MW nameplate if every machine ran at once; " +
-        Math.round(power.generation_mw) +
-        " MW generation capacity";
-    })
-    .catch(function (e) {
-      if (!live()) return;
-      busy(false);
-      clearPrefixed(["player"]);
-      // The header is the page's identity line; a failure leaves a statement, not a
-      // blank that reads as "everything is fine, there is just nothing here". Tooltip
-      // included: leaving the previous world's power figures hovering over the words
-      // "could not be read" is worse than the blank, because it is an answer.
-      var failed = "this world's save could not be read";
-      el("summary").textContent = failed;
-      el("summary").title = failed;
-      fail("summary: " + friendly(e));
-    });
+/* Nodes and factory shapes change only when the player builds, so they are refetched on a
+ * world switch rather than on every save write. */
+export function loadStatic(): void {
+  fetchersOf("static").forEach(run);
+}
+
+/* What an autosave can have changed: the machines standing on the plan, what has been picked
+ * up, and the header's own reading of the save. */
+export function loadLive(): void {
+  fetchersOf("live").forEach(run);
+}
+
+/** One registered fetch on its own, guarded and cleared exactly as its wave would have done
+ *  it. For the caller that wants a single layer outside both waves: worlds.ts draws the node
+ *  table on a page with no readable save at all, and geography needs no save. Nothing happens
+ *  if no feature claimed this path -- which is what main.ts's FEATURES block is there to
+ *  prevent, and what test_architecture.py checks. */
+export function loadOne(path: ApiUrl): void {
+  var fetcher = fetcherFor(path);
+  if (fetcher) run(fetcher);
 }
 
 /* A switch in progress is marked on screen -- header says so, map dims -- because the
  * old world's layers stay visible until the new responses land, and an unmarked blend of
- * two worlds reads as data. Cleared when this epoch's summary settles either way. */
+ * two worlds reads as data. Cleared when this epoch's settling fetch lands either way; which
+ * one that is is declared by the fetcher, and it is the summary, because the summary is what
+ * replaces the header text this turned on. */
 function busy(on: boolean): void {
   var container = el("map");
   if (on) L.DomUtil.addClass(container, "busy");
@@ -231,9 +129,9 @@ export function reload(note?: string): void {
   // handed out, and the ids on its bands name machines in the save being left. Leaving the
   // mode is the honest move; re-entering on the new world is one click and one link.
   if (inFloorMode()) leaveFloors();
-  // Same reason the popup is closed one line up, and the same reason the two branches in
-  // loadLive() set both: a tooltip is a claim about the previous world too, and this one
-  // outlives the switch by the whole length of a 3 s parse if it is not replaced here.
+  // Same reason the popup is closed one line up, and the same reason both branches of the
+  // header's own fetch set both: a tooltip is a claim about the previous world too, and this
+  // one outlives the switch by the whole length of a 3 s parse if it is not replaced here.
   var loading = note || "loading…";
   el("summary").textContent = loading;
   el("summary").title = loading;

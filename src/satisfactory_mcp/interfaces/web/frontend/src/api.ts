@@ -72,8 +72,12 @@ export function tilePath(
 
 /* A path plus a query string, which is what two callers pass: `/api/inspect` takes a
  * coordinate and `/api/collectibles` takes a mode, and both are spelled inline at the call
- * site rather than plumbed through here. The template keeps the path half checked. */
-type ApiUrl = ApiPath | `${ApiPath}?${string}`;
+ * site rather than plumbed through here. The template keeps the path half checked.
+ *
+ * Exported because the fetch registry stores paths rather than calls: a `Fetcher` names the
+ * URL it wants and load.ts is what passes it to `get`, so the type has to travel with it or
+ * the compile-time check on every registered path is lost. See registry.ts. */
+export type ApiUrl = ApiPath | `${ApiPath}?${string}`;
 
 export function get<T extends ApiError>(path: ApiUrl): Promise<T> {
   var q = "";

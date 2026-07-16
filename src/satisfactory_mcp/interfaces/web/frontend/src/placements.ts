@@ -13,11 +13,13 @@
 
 import { code, popup } from "./dom";
 import type { Row } from "./dom";
+import { refreshFloors } from "./floors";
 import { L } from "./leaflet";
 import { layer } from "./layers";
 import { footprintCorners } from "./map";
 import { raiseNodeDots } from "./markers";
 import { KIND_COLOUR, STORAGE_COLOUR, STORAGE_FLUID_COLOUR } from "./palette";
+import { registerFetch } from "./registry";
 
 import type {
   MachinesResponse,
@@ -70,6 +72,18 @@ export function drawStructures(data: StructuresResponse): void {
     piece.addTo(group);
   });
 }
+
+/* Static, and early in the wave: the concrete is what floor mode measures a platform's extent
+ * from, so the opening flight cannot happen until these pieces are on the map. */
+registerFetch<StructuresResponse>({
+  wave: "static",
+  rank: 20,
+  path: "/api/structures",
+  label: "structures",
+  clears: ["foundations"],
+  refilters: true,
+  draw: drawStructures,
+});
 
 /* Machines at their real size AND their real facing: `w_m`/`l_m` are the building's own
  * footprint, so a Manufacturer (18x20 m) reads as the eight-times-larger thing it is next
@@ -133,6 +147,25 @@ export function drawMachines(data: MachinesResponse): void {
   });
   raiseNodeDots();
 }
+
+/* The live wave's first entry, and the only one on the page with a post-draw hook.
+ *
+ * A save write changes what is BUILT, so it changes the decomposition -- and the ids a band
+ * lists are what the floor filter runs on. Without `after` a machine placed since the view
+ * was opened would be drawn by /api/machines, listed by no band, and therefore silently
+ * missing from every floor rather than visibly new on one. It is a hook rather than a line at
+ * the end of `drawMachines` because it is a refetch and not a draw: it asks /api/floors the
+ * same question again, which is load.ts's kind of work, not this file's. */
+registerFetch<MachinesResponse>({
+  wave: "live",
+  rank: 10,
+  path: "/api/machines",
+  label: "machines",
+  clears: ["machines", "extractors", "generators"],
+  refilters: true,
+  draw: drawMachines,
+  after: refreshFloors,
+});
 
 
 /* Storage: the boxes, and what is in them.
@@ -250,3 +283,17 @@ export function drawStorage(data: StorageResponse): void {
   });
   raiseNodeDots();
 }
+
+/* Static rather than live, which is a claim about the CONTAINER and not about its contents:
+ * the boxes move when the player builds. What is in them changes on every autosave and is not
+ * refetched until the next switch, which is the same bargain the machines' clock speeds make
+ * -- and the reason it is bearable is that the popup is opened by a click, on demand. */
+registerFetch<StorageResponse>({
+  wave: "static",
+  rank: 60,
+  path: "/api/storage",
+  label: "storage",
+  clears: ["storage"],
+  refilters: true,
+  draw: drawStorage,
+});

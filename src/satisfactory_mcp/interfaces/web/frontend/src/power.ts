@@ -29,6 +29,7 @@ import { popup } from "./dom";
 import { L } from "./leaflet";
 import { layer } from "./layers";
 import { pixelsPerMetre } from "./map";
+import { registerFetch } from "./registry";
 import { ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
 
 import type { Row } from "./dom";
@@ -214,3 +215,21 @@ export function drawPower(data: PowerResponse): void {
 
   sinkRoutes();
 }
+
+/* Static for the reason the belts are: a wire changes when the player builds, not when the
+ * game autosaves. The header's power figures come from a different endpoint on the other
+ * wave, which is why a save write updates the number without redrawing the network.
+ *
+ * `refilters: false`, and it is one of two entries that say so. Nothing this draws is a thing
+ * a storey contains -- floors.ts filters the concrete, the machines and the routes, and a
+ * circuit is a pool rather than a placement -- so the pass would find nothing of its own to
+ * do. See `refilters` in registry.ts for why that is stated here rather than assumed. */
+registerFetch<PowerResponse>({
+  wave: "static",
+  rank: 50,
+  path: "/api/power",
+  label: "power",
+  clears: ["power"],
+  refilters: false,
+  draw: drawPower,
+});

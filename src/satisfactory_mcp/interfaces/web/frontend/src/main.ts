@@ -36,6 +36,34 @@ import { BOOT, state } from "./state";
 import { loadBaseMap } from "./tiles";
 import { loadWorlds } from "./worlds";
 
+/* ---------------------------------------------------------------- features */
+
+/* Every module that declares a fetch, imported for that side effect alone.
+ *
+ * ORDER IS NOT LOAD-BEARING HERE, unlike the listener block below, and that is a property
+ * bought rather than hoped for: `registerFetch` takes an explicit `rank` and `fetchersOf`
+ * sorts by it, precisely so that the sequence the requests go out in cannot become a
+ * consequence of the import graph. A feature is one appended line, in whatever place keeps
+ * this list alphabetical.
+ *
+ * Bare imports, because there is no name to take: each module registers what it wants fetched
+ * as it is evaluated, and load.ts deliberately imports none of them -- it runs the registry
+ * and knows none of these names. That is what makes this block load-bearing in a way nothing
+ * about it looks: delete a line and its layer is simply never fetched, with no compile error
+ * and no runtime one either. `test_architecture.py` checks this list against the set of
+ * modules that call `registerFetch`, in both directions.
+ *
+ * Two of them are imported by name above as well, for something else entirely -- the route
+ * layers and the declutter pass. They are repeated here anyway: the set of modules that
+ * fetch is a fact worth reading in one place, and a rule with two exceptions in it is a rule
+ * nobody can check at a glance. */
+import "./header";
+import "./labels";
+import "./markers";
+import "./placements";
+import "./power";
+import "./routes";
+
 /* ------------------------------------------------------------------- wiring */
 
 /* Every map listener the page adds, in one block and in this order on purpose.

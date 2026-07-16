@@ -13,6 +13,7 @@ import { batch } from "./layercontrol";
 import { L } from "./leaflet";
 import { layer } from "./layers";
 import { map } from "./map";
+import { registerFetch } from "./registry";
 import { state } from "./state";
 import { note } from "./toast";
 
@@ -225,6 +226,21 @@ export function drawFactories(data: FactoriesResponse): void {
   });
   declutter();
 }
+
+/* Last of the static wave, and that is the one ordering decision in this file: the labels are
+ * the map's index, and `declutter` decides which of them fit by measuring screen rectangles
+ * against the ones already placed -- so it wants to run when there is a map to measure on
+ * rather than first, into an empty one. Two layers under one entry because /api/factories
+ * answers with both, and a proposal is a factory the player has not named yet. */
+registerFetch<FactoriesResponse>({
+  wave: "static",
+  rank: 70,
+  path: "/api/factories",
+  label: "factories",
+  clears: ["factory labels", "proposals"],
+  refilters: true,
+  draw: drawFactories,
+});
 
 /* Labels are the map's index, so a pile of them is a broken index: at the whole-world
  * zoom the base's labels overlap in dozens of pairs and whichever tooltip was added last

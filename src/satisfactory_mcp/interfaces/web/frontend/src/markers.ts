@@ -19,6 +19,7 @@ import {
   PURITY_RADIUS,
   RESOURCE_COLOUR,
 } from "./palette";
+import { registerFetch } from "./registry";
 import { state } from "./state";
 import { fail } from "./toast";
 
@@ -102,6 +103,20 @@ export function drawNodes(data: NodesResponse): void {
     fail("nodes: " + data.save_error + " — nodes drawn, occupancy unknown");
   }
 }
+
+/* First of the static wave, which is where it was when the wave was a list of calls: the node
+ * dots are the layer every other placement is read against, and the extractors drawn on top
+ * of them arrive with the live wave. `clears` carries the trailing space because the layer
+ * names are data -- one per resource -- and "node:" alone is a prefix of more than this. */
+registerFetch<NodesResponse>({
+  wave: "static",
+  rank: 10,
+  path: "/api/nodes",
+  label: "nodes",
+  clears: ["node: "],
+  refilters: true,
+  draw: drawNodes,
+});
 
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node.
@@ -193,3 +208,17 @@ export function drawCollectibles(data: CollectiblesResponse): void {
       });
     });
 }
+
+/* The live wave, because a pickup is collected between one autosave and the next, and
+ * `mode=remaining` because the question the layer answers is "what is left". The query string
+ * is spelled at the registration rather than plumbed through `get`, which is what the two
+ * callers that take one have always done. */
+registerFetch<CollectiblesResponse>({
+  wave: "live",
+  rank: 20,
+  path: "/api/collectibles?mode=remaining",
+  label: "collectibles",
+  clears: ["pickup: "],
+  refilters: true,
+  draw: drawCollectibles,
+});

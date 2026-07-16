@@ -7,15 +7,13 @@
  * selected.
  */
 
-import { get } from "./api";
 import { el } from "./dom";
-import { reload } from "./load";
+import { loadOne, reload } from "./load";
 import { writeHash } from "./map";
-import { drawNodes } from "./markers";
 import { BOOT, currentWorld, pinnedPath, state } from "./state";
 import { fail, friendly } from "./toast";
 
-import type { NodesResponse, WorldRow, WorldsResponse } from "./api-types";
+import type { WorldRow, WorldsResponse } from "./api-types";
 
 function worldOption(w: WorldRow, dupes: Record<string, number>): HTMLOptionElement {
   var option = document.createElement("option");
@@ -136,18 +134,17 @@ export function loadWorlds(): Promise<void> {
         // Geography needs no save. The node table still draws -- the same table the
         // right-click inspector reads, so the two surfaces agree even with no world.
         //
-        // Epoch-guarded like every loader in load.ts, and it was the only one that was not.
-        // "No readable saves" is precisely the state a player fixes while the tab is open --
-        // point SATISFACTORY_SAVES somewhere real, or let the game write one -- and
-        // refreshWorlds then adopts the world and reloads. This fetch outlives that switch,
-        // so without the guard the world-less table lands on top of the world's own and the
-        // occupancy every dot carries silently reverts to "no extractor known here".
-        var epoch = state.epoch;
-        get<NodesResponse>("/api/nodes")
-          .then(function (d) {
-            if (epoch === state.epoch) drawNodes(d);
-          })
-          .catch(function () {});
+        // Through the registry rather than hand-rolled here, which it was: this file used to
+        // spell a second /api/nodes fetch with an epoch guard of its own and an empty catch,
+        // and that copy is exactly the kind of thing that stops matching. The guard it needed
+        // is the registry's own -- "no readable saves" is precisely the state a player fixes
+        // while the tab is open, and `refreshWorlds` then adopts the world and reloads, so
+        // this fetch outlives that switch and its late reply would otherwise land on top of
+        // the world's own table with every dot's occupancy silently back to "no extractor
+        // known here". What the copy did NOT have is the failure half, which is the whole
+        // reason to route it: a failure now empties the node layers and says so, instead of
+        // being swallowed on the one page where a diagnosis is the only thing on screen.
+        loadOne("/api/nodes");
         return;
       }
 

@@ -21,6 +21,7 @@ import { L } from "./leaflet";
 import { layer } from "./layers";
 import { footprintCorners, map, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
+import { registerFetch } from "./registry";
 import { state } from "./state";
 
 import type { Row } from "./dom";
@@ -447,6 +448,20 @@ export function drawBelts(data: BeltsResponse): void {
   sinkRoutes();
 }
 
+/* Static, and next to the pipes on purpose: a belt changes when the player builds one, not
+ * when the game autosaves, so both networks are refetched on a switch and left alone in
+ * between. The two sit adjacent in the wave because they share the overlay canvas and the
+ * sink pass that decides what a click lands on. */
+registerFetch<BeltsResponse>({
+  wave: "static",
+  rank: 30,
+  path: "/api/belts",
+  label: "belts",
+  clears: ["belts"],
+  refilters: true,
+  draw: drawBelts,
+});
+
 /* The pixels half of both route layers, re-derived whenever the scale changes.
  *
  * A polyline's weight and a circleMarker's radius are the two sizes on this page that are
@@ -795,6 +810,17 @@ export function drawPipes(data: PipesResponse): void {
   });
   sinkRoutes();
 }
+
+/** The belts' twin; see the note on that registration for why both are static. */
+registerFetch<PipesResponse>({
+  wave: "static",
+  rank: 40,
+  path: "/api/pipes",
+  label: "pipes",
+  clears: ["pipes"],
+  refilters: true,
+  draw: drawPipes,
+});
 
 /* Both route layers share the overlay canvas with the machines and the node dots, so the
  * rule markers.ts' raiseNodeDots exists for applies to them too: hit-testing is draw order and the LAST
