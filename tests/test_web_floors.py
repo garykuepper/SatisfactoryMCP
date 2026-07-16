@@ -1,27 +1,15 @@
-"""The web adapter's JSON surface, driven off the committed fixture projection.
+"""``/api/floors``: the floor decomposition, over the committed fixture projection.
 
 ``importorskip`` at module scope, not a marker: ``fastapi`` lives in the optional
 ``web`` extra, so an install without it must skip this file rather than fail collection.
 
-Every test here injects both loaders -- through the ``client`` fixture, which lives in
-``conftest.py`` now that more than one module needs it -- so nothing in this file spawns
-the sidecar, reads a ``.sav`` or needs the save directory to exist. The one exception is
-the watcher test, which needs a directory precisely so it can be pointed at an empty one.
-
-**This file is being emptied**, one concern at a time, alongside the module it covers:
-``/api/worlds`` and ``/api/summary`` are in ``test_web_world.py``, ``/api/nodes`` in
-``test_web_nodes.py``, ``/api/inspect`` in ``test_web_inspect.py``, ``/api/regions`` in
-``test_web_regions.py``, the base map in ``test_web_tiles.py`` and its agreement with the
-two generators in ``test_map_generators.py``, ``/api/machines`` and ``/api/structures`` in
-``test_web_placements.py``, ``/api/belts`` and ``/api/pipes`` in ``test_web_routes.py``,
-``/api/storage`` in ``test_web_storage.py`` and ``/api/power`` in ``test_web_power.py``.
-What is left here is whatever ``interfaces/web/api.py`` still serves.
+Both loaders are injected by the ``client`` fixture in ``conftest.py``, so nothing here
+spawns the sidecar or reads a ``.sav``. The heightfield is the one other thing this
+endpoint reads, and it is replaced too -- see ``blind_floors``.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import types
 
 import pytest
@@ -29,14 +17,11 @@ from conftest import _explode
 
 fastapi = pytest.importorskip("fastapi")
 
-from fastapi import Request
 from fastapi.testclient import TestClient
 
-from satisfactory_mcp import config
 from satisfactory_mcp.domain.world.state import WorldState
-from satisfactory_mcp.interfaces.web import api as web_api
 from satisfactory_mcp.interfaces.web import terrain as web_terrain
-from satisfactory_mcp.interfaces.web.app import STATIC_DIR, create_app
+from satisfactory_mcp.interfaces.web.app import create_app
 
 # --------------------------------------------------------------------- floors
 
@@ -48,6 +33,10 @@ def blind_floors(client, monkeypatch):
     Pinned rather than left to the machine: this repository ships no heightfield, so a test
     that passed only where somebody had run the generator would be a test of the generator.
     The one case that needs a field builds its own.
+
+    Patched on ``interfaces.web.terrain`` -- the MODULE -- because that is the seam:
+    ``routers/floors.py`` calls ``terrain.field()`` through the module rather than binding
+    the function at import time, so a ``setattr`` here is what the endpoint sees.
     """
     monkeypatch.setattr(web_terrain, "field", lambda: None)
     return client
@@ -305,216 +294,3 @@ def test_a_save_that_cannot_be_read_has_no_floors_either(game):
         r = c.get("/api/floors")
     assert r.status_code == 404
     assert "sidecar produced no output" in r.json()["error"]
-
-
-def test_factories_report_named_labels_and_proposals(client, state):
-    body = client.get("/api/factories").json()
-    assert len(body["labels"]) == len(state.labels.labels)
-    assert body["proposals"], "the fixture world has proposable factories"
-    first = body["proposals"][0]
-    assert set(first) >= {"index", "label", "centroid_m", "machines", "score"}
-    # The index is the row's position in the FULL proposal list -- named clusters are
-    # filtered out ahead of it -- so it must still resolve as a proposal:N selector.
-    assert first["machines"] == state.proposals[first["index"]].size
-    assert len(first["centroid_m"]) == 2
-    # Centroids are metres too, and the world is roughly 7 km across.
-    assert abs(first["centroid_m"][0]) < 5000
-
-
-def test_a_factory_carries_the_box_its_machines_occupy(client, state):
-    """``bbox_m`` is what turns a label into a button: the map flies to a factory's own
-    extent, and a centroid alone cannot decide a zoom. Every anchor still standing has to
-    lie inside the box, in metres, or the viewport it produces cuts machines off.
-    """
-    from satisfactory_mcp.domain.factories import identity as fidentity
-
-    body = client.get("/api/factories").json()
-    placed = fidentity.positions(state.projection)
-    by_name = {label.name: label for label in state.labels.labels}
-
-    for row in body["labels"]:
-        anchors = [a for a in by_name[row["name"]].anchors if a in placed]
-        if not anchors:
-            assert row["bbox_m"] is None
-            continue
-        x_min, y_min, x_max, y_max = row["bbox_m"]
-        assert abs(x_min) < 5000 and abs(y_max) < 5000, "metres, not the save's centimetres"
-        cx, cy = row["centroid_m"]
-        assert x_min <= cx <= x_max and y_min <= cy <= y_max
-        for name in anchors:
-            x, y = placed[name][0] / 100.0, placed[name][1] / 100.0
-            assert x_min - 0.1 <= x <= x_max + 0.1
-            assert y_min - 0.1 <= y <= y_max + 0.1
-
-    proposal = body["proposals"][0]
-    x_min, y_min, x_max, y_max = proposal["bbox_m"]
-    # A box no wider than the diameter the same row already reports: the two are computed
-    # from the same machines, so a disagreement means one of them is stale.
-    assert max(x_max - x_min, y_max - y_min) <= proposal["spread_m"] + 0.2
-
-
-def test_a_proposal_the_player_already_named_is_not_proposed_again(client, state, monkeypatch):
-    """The clusterer re-discovers every named factory; the endpoint must not re-offer
-    them. A proposal whose machines are majority-covered by a label's anchors would draw
-    a machine-generated recipe string exactly on top of the player's own name -- and take
-    its clicks, since the proposal layer is added later."""
-    labelled = {a for label in state.labels.labels for a in label.anchors}
-    body = client.get("/api/factories").json()
-    for row in body["proposals"]:
-        pr = state.proposals[row["index"]]
-        overlap = sum(1 for m in pr.machines if m in labelled)
-        assert 2 * overlap <= len(pr.machines), (row["index"], overlap, len(pr.machines))
-    # The indices keep their position in the full list, so proposal:N still resolves.
-    shown = [row["index"] for row in body["proposals"]]
-    assert shown == sorted(shown)
-    if len(shown) < len(state.proposals):
-        assert set(shown) < set(range(len(state.proposals)))
-
-
-def test_a_factory_whose_machines_are_all_gone_has_no_box_to_fly_to(client, monkeypatch):
-    """A label outlives its machines -- that is the point of anchoring to instance ids --
-    so the honest answer is a name with nowhere to go, not a zero box at the world centre
-    that would fly the map to (0, 0) and read as a bug in the projection."""
-    monkeypatch.setattr(web_api.fidentity, "positions", lambda projection: {})
-    body = client.get("/api/factories").json()
-    assert body["labels"], "the labels survive; only their positions are gone"
-    assert all(row["bbox_m"] is None for row in body["labels"])
-
-
-def test_collectibles_list_remaining_placements(client):
-    body = client.get("/api/collectibles", params={"mode": "remaining"}).json()
-    assert body["mode"] == "remaining"
-    assert body["rows"]
-    row = body["rows"][0]
-    assert set(row) >= {"category", "name", "x_m", "y_m", "z_m", "collected", "observed"}
-    assert all(r["collected"] is False for r in body["rows"])
-
-
-def test_collectibles_can_be_scoped_to_one_group_and_to_collected(client):
-    body = client.get(
-        "/api/collectibles", params={"mode": "collected", "group": "power_slug_blue"}
-    ).json()
-    assert body["group"] == "power_slug_blue"
-    assert {r["category"] for r in body["rows"]} == {"power_slug_blue"}
-    assert all(r["collected"] for r in body["rows"])
-
-
-def test_an_unknown_mode_is_refused_with_the_tools_own_wording(client):
-    r = client.get("/api/collectibles", params={"mode": "sideways"})
-    assert r.status_code == 400
-    assert r.json()["error"].startswith("! unknown mode 'sideways'")
-
-
-def test_remaining_is_refused_when_the_map_table_is_absent(state, game, monkeypatch):
-    """No table, no answer -- the same refusal the MCP tool gives, not a shorter list."""
-    monkeypatch.setattr(type(state), "collectibles", property(lambda self: None))
-    app = create_app(
-        state_loader=lambda save=None, world=None: state,
-        game_loader=lambda: game,
-    )
-    with TestClient(app) as c:
-        r = c.get("/api/collectibles", params={"mode": "remaining"})
-    assert r.status_code == 400
-    assert "needs the map's own placement table" in r.json()["error"]
-
-
-def test_a_save_that_cannot_be_read_is_a_404_with_a_reason(game):
-    app = create_app(state_loader=_explode, game_loader=lambda: game)
-    with TestClient(app) as c:
-        r = c.get("/api/summary")
-    assert r.status_code == 404
-    assert "sidecar produced no output" in r.json()["error"]
-
-
-def _first_sse_chunk(app) -> bytes:
-    """Open the event stream, take one chunk, hang up.
-
-    Driven through the endpoint rather than through ``TestClient``: an SSE response is
-    an endless generator, and TestClient's portal deadlocks on teardown waiting for one
-    to finish. This exercises the real generator -- the real watcher, the real ping
-    constant, the real unsubscribe on close -- and terminates.
-    """
-
-    async def pull() -> bytes:
-        await app.state.watcher.start()
-        try:
-            request = Request(
-                {
-                    "type": "http",
-                    "method": "GET",
-                    "path": "/api/events",
-                    "headers": [],
-                    "query_string": b"",
-                    "app": app,
-                }
-            )
-            response = await web_api.events(request)
-            assert response.media_type == "text/event-stream"
-            async for chunk in response.body_iterator:
-                return chunk  # closes the generator, which unsubscribes
-            raise AssertionError("the stream ended without sending anything")
-        finally:
-            await app.state.watcher.stop()
-
-    return asyncio.run(pull())
-
-
-def test_events_keep_the_stream_alive_with_a_ping_comment(game, tmp_path, monkeypatch):
-    """An empty save directory produces no events, so the keepalive is what arrives.
-
-    The watcher is pointed at ``tmp_path`` rather than the player's real save root: this
-    test is about the stream's shape, and a real directory would make it about timing.
-    """
-    monkeypatch.setattr(config, "saves_root", lambda: tmp_path)
-    monkeypatch.setattr(web_api, "PING_SECONDS", 0.05)
-    app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: game)
-    assert _first_sse_chunk(app) == b": ping\n\n"
-
-
-def test_a_written_save_becomes_a_save_event(game, tmp_path, monkeypatch):
-    """The watcher's whole job: a new mtime under the save root reaches the browser."""
-    monkeypatch.setattr(config, "saves_root", lambda: tmp_path)
-    (tmp_path / "nested").mkdir()
-    (tmp_path / "nested" / "Han Solo_autosave_0.sav").write_bytes(b"not really a save")
-    app = create_app(state_loader=lambda save=None, world=None: None, game_loader=lambda: game)
-
-    async def watch_once():
-        found = await app.state.watcher.poll_once()
-        assert found is not None
-        return found
-
-    event = asyncio.run(watch_once())
-    assert event.filename == "Han Solo_autosave_0.sav"
-    assert event.mtime > 0
-
-    # A stream that opens after the change still learns about it: the watcher replays
-    # its latest event to a new subscriber, so a browser started mid-session draws the
-    # current world instead of waiting for the next autosave.
-    chunk = _first_sse_chunk(app).decode()
-    assert chunk.startswith("event: save\ndata: ")
-    assert json.loads(chunk.split("data: ", 1)[1]) == {
-        "filename": "Han Solo_autosave_0.sav",
-        "mtime": event.mtime,
-    }
-
-
-def test_the_static_bundle_ships_the_page_and_the_vendor_licence():
-    """Redistributing Leaflet means shipping its BSD-2-Clause text next to it.
-
-    Leaflet is compiled into ``app.js`` now rather than served as ``vendor/leaflet.js``, so
-    there is no file to point at any more -- which is exactly why the licence text still has
-    to be here, and why the bundle names the library in its own banner. The obligation did
-    not move when the packaging did.
-    """
-    assert (STATIC_DIR / "index.html").is_file()
-    assert (STATIC_DIR / "app.js").is_file()
-    assert (STATIC_DIR / "app.css").is_file()
-    licence = (STATIC_DIR / "vendor" / "LEAFLET-LICENSE").read_text(encoding="utf-8")
-    assert "BSD 2-Clause License" in licence
-    assert "Leaflet" in (STATIC_DIR / "app.js").read_text(encoding="utf-8")[:1000]
-
-
-def test_the_page_is_served_from_the_root(client):
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "app.js" in r.text

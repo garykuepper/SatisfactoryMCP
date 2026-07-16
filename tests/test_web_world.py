@@ -6,15 +6,23 @@
 Both loaders are injected by the ``client`` fixture in ``conftest.py``, so nothing here
 spawns the sidecar or reads a ``.sav``. ``/api/worlds`` is the one route that scans the
 save directory on its own, and its one test stubs the scanner.
+
+The surface-wide "could not read save" refusal is pinned here too, on ``/api/summary``:
+every handler makes it the same way through ``serial._state``, and this is the endpoint
+the page opens with.
 """
 
 from __future__ import annotations
 
 import pytest
+from conftest import _explode
 
 fastapi = pytest.importorskip("fastapi")
 
+from fastapi.testclient import TestClient
+
 from satisfactory_mcp.core.saveio.projection import World
+from satisfactory_mcp.interfaces.web.app import create_app
 from satisfactory_mcp.interfaces.web.routers import world as web_world
 
 
@@ -50,3 +58,18 @@ def test_summary_reports_the_header_power_and_progression(client, state):
     else:
         assert body["player"]["x_m"] == pytest.approx(round(pos[0] / 100.0, 1))
         assert body["player"]["y_m"] == pytest.approx(round(pos[1] / 100.0, 1))
+
+
+def test_a_save_that_cannot_be_read_is_a_404_with_a_reason(game):
+    """The refusal ``_state`` makes, on the endpoint the page opens with.
+
+    Every handler on this surface spends ``?save=``/``?world=`` through ``serial._state``
+    and turns a loader failure into the same 404, so the shape is pinned once here rather
+    than in a file per router -- and it is pinned on ``/api/summary`` because that is the
+    first request the page makes, and the one whose failure the header has to explain.
+    """
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        r = c.get("/api/summary")
+    assert r.status_code == 404
+    assert "sidecar produced no output" in r.json()["error"]

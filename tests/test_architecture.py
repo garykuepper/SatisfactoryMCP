@@ -53,6 +53,15 @@ way through a file nothing checks. It is treated as a pseudo-layer, like the SDK
 there already and whitelisted by name below. And nothing under ``src`` may see IT, which falls
 out of the layer table for free.
 
+The seventh is the web adapter's own routers, and it exists because ``interfaces/web/api.py``
+was 2,174 lines of every endpoint the surface has and is now thirteen modules under
+``routers/``. Nothing about that arrangement holds itself up: a router importing another
+router puts the file boundary back where the coupling is not, a module left out of
+``ALL_ROUTERS`` is a 404 that nothing reports, a file called ``api.py`` re-created for the
+handler that "does not fit anywhere" collects the next one too, and a router quietly past a
+thousand lines is the original file under a new name. Four rules, all read off the AST and
+the filesystem, none of them needing FastAPI installed.
+
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
 load-bearing for reasons that have nothing to do with layering -- crash isolation,
@@ -237,6 +246,79 @@ COPIED_VERBATIM = "vendor/LEAFLET-LICENSE"
 FRONTEND_API_TS = FRONTEND / "src" / "api.ts"
 MAP_LAYER_UNION = "export type MapTileLayer ="
 WEB_TILES_PY = WEB / "routers" / "tiles.py"
+
+# ------------------------------------------------------------------- the routers
+
+#: The JSON surface: one module per concern, and the tuple that mounts them.
+#:
+#: ``api.py`` was 2,174 lines of every endpoint in one file. It is gone, and the three rules
+#: below are what stop it reassembling itself somewhere else -- because each of the three
+#: failures they catch is silent. A router importing a router compiles and serves; a router
+#: never appended to ``ALL_ROUTERS`` compiles and 404s; a file growing back past a thousand
+#: lines compiles and reads fine right up to the point where nobody can find anything in it.
+WEB_ROUTERS = WEB / "routers"
+WEB_APP_PY = WEB / "app.py"
+
+#: What a router module may import, beyond the standard library. Deliberately short.
+#:
+#: ``fastapi``/``starlette`` because it is one; ``config``/``core``/``domain`` because that
+#: is the whole point of the layer -- parse a query, call a domain service, serialise; and
+#: the web package's own two shared modules, ``serial`` (the metre/error vocabulary) and
+#: ``terrain`` (the heightfield seam), which exist precisely so that routers need nothing
+#: else from each other.
+ROUTER_ALLOWED_ROOTS = frozenset({"fastapi", "starlette"})
+
+#: The two packages a relative import TRAVERSES, allowed exactly and never as a prefix.
+#:
+#: ``from .. import terrain`` and ``from .... import config`` are two edges each -- the
+#: package walked through, and the module bound -- and the first is unavoidable. Neither
+#: name is a layer: ``_layer`` already says the top-level ``__init__`` is a package marker
+#: and importing it claims nothing. Allowing them as PREFIXES instead would wave through
+#: ``from .. import app`` in the same breath, which is the import that would make the mount
+#: order a cycle; spelled exactly, that one still fails on its second edge.
+ROUTER_ALLOWED_EXACT = frozenset({"satisfactory_mcp", "satisfactory_mcp.interfaces.web"})
+
+ROUTER_ALLOWED_PREFIXES: tuple[str, ...] = (
+    "satisfactory_mcp.config",
+    "satisfactory_mcp.core",
+    "satisfactory_mcp.domain",
+    "satisfactory_mcp.interfaces.web.serial",
+    "satisfactory_mcp.interfaces.web.terrain",
+)
+
+#: The one measured exception, and it is one module reaching one module.
+#:
+#: ``routers/events.py`` streams what ``watch.SaveWatcher`` publishes. It reads the watcher
+#: off ``request.app.state`` and needs no import at all today; the entry is here so that a
+#: type annotation on it stays legal without widening the rule for everybody. Named as a
+#: pair rather than as a prefix: any OTHER router importing ``watch`` is the failure this
+#: is shaped to still catch.
+ROUTER_EXTRA_EDGES: frozenset[tuple[str, str]] = frozenset(
+    {
+        (
+            "satisfactory_mcp.interfaces.web.routers.events",
+            "satisfactory_mcp.interfaces.web.watch",
+        )
+    }
+)
+
+#: The hard cap, in lines, on any one router module.
+#:
+#: Not a style preference: it is the number that makes "one module per concern" checkable.
+#: The budgets the split was planned against are well under it -- tiles 650, floors 450,
+#: routes_layer 400, everything else 300 -- and the cap is set above all of them so that a
+#: file has room to explain itself before it has to be split. What it stops is the drift
+#: back: a second concern lands in a router, then a third, and nothing says so until the
+#: file is api.py again under a different name.
+#:
+#: Measured at the end of W4 (the numbers below), so a breach is a real change and not a
+#: pre-existing condition:
+#:
+#:     tiles.py 492   floors.py 395   routes_layer.py 325   inspect.py 221
+#:     storage.py 176   power.py 176   placements.py 158   regions.py 114
+#:     factories.py 95   nodes.py 94   events.py 75   collectibles.py 74
+#:     __init__.py 72   world.py 68
+ROUTER_MAX_LINES = 700
 
 # --------------------------------------------------------------------- the generators
 
@@ -858,6 +940,179 @@ def test_the_page_and_the_server_agree_on_the_base_layer_names():
         f"  api.ts claims:   {', '.join(claimed)}"
     )
     assert claimed[0] == "map", f"the artwork layer is not first in the union: {claimed}"
+
+
+def _router_sources() -> list[Path]:
+    """Every router module. ``__init__.py`` is excluded -- it is the mount list, not a
+    router, and it is the one file in the package that may name all the others."""
+    return [path for path in _sources(WEB_ROUTERS) if path.name != "__init__.py"]
+
+
+def test_a_router_sees_the_domain_and_its_own_two_helpers_and_nothing_else():
+    """One module per concern only means something if the modules cannot reach each other.
+
+    Three imports would each undo the split silently. **Another router**: the moment
+    ``storage`` imports a helper from ``placements`` the two are one unit again, with a file
+    boundary between them that only makes the coupling harder to see -- and the shared thing
+    belongs in ``serial`` where every router can have it. **``app``**: a router importing the
+    application it is mounted into is a cycle, and the loose end is the mount ORDER, which is
+    what keeps ``/openapi.json`` and the committed ``api-schema.d.ts`` byte-stable.
+    **``presenters``**: this layer serialises to JSON, and a formatted string arriving in a
+    payload is a decision made in the wrong place -- the same rule
+    ``test_domain_and_core_never_import_a_presenter`` states one layer down.
+
+    Stated positively, as an allowlist, because that is the version that stays true: a
+    denylist of three names would pass the day somebody imports a fourth thing.
+    """
+    stray = []
+    for path in _router_sources():
+        name = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node, _in_function in _import_nodes(tree):
+            for target in _targets(node, _package_of(path)):
+                allowed = (
+                    _root(target) in sys.stdlib_module_names
+                    or _root(target) in ROUTER_ALLOWED_ROOTS
+                    or target in ROUTER_ALLOWED_EXACT
+                    or _covers(target, ROUTER_ALLOWED_PREFIXES)
+                    or (name, target) in ROUTER_EXTRA_EDGES
+                )
+                if not allowed:
+                    stray.append(f"  {name}:{node.lineno} imports {target}")
+    assert not stray, (
+        "a router may import the standard library, fastapi/starlette, config/core/domain "
+        "and the web package's own serial and terrain -- never another router, never app, "
+        "never a presenter. Whatever is shared belongs in serial.py:\n" + "\n".join(sorted(stray))
+    )
+
+
+def _all_routers_declared() -> list[str]:
+    """The module names in ``ALL_ROUTERS``, in order, read off the AST.
+
+    By AST rather than by import for the reason ``_literal_strings`` gives next door: this
+    module's first promise is that it runs on the standard library alone, and importing
+    ``routers/__init__.py`` would need FastAPI installed.
+    """
+    path = WEB_ROUTERS / "__init__.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AnnAssign):
+            continue
+        if not (isinstance(node.target, ast.Name) and node.target.id == "ALL_ROUTERS"):
+            continue
+        assert isinstance(node.value, ast.Tuple), "ALL_ROUTERS is no longer a literal tuple"
+        return [
+            element.value.id
+            for element in node.value.elts
+            if isinstance(element, ast.Attribute)
+            and element.attr == "router"
+            and isinstance(element.value, ast.Name)
+        ]
+    raise AssertionError("ALL_ROUTERS is gone from routers/__init__.py")
+
+
+def test_every_router_is_mounted_exactly_once_and_app_mounts_only_the_tuple():
+    """A router nobody mounts is a 404, and nothing anywhere fails to say so.
+
+    That is the whole failure this catches: the module imports, the decorators run, the
+    handlers are correct, and the route simply is not there. It has no test of its own
+    either, because the test that would catch it is the one somebody forgot to write in the
+    same breath as the mount. So the tuple is checked against the DIRECTORY.
+
+    The second half is the mount itself. ``app.py`` must reach its routers by looping over
+    ``ALL_ROUTERS`` and by no other means: one ``include_router`` outside that loop is how
+    the path order stops being the tuple's order, and path order is what the committed
+    ``api-schema.d.ts`` is generated from -- so the diff it produces would be in a file
+    nobody edited, describing a change nobody made.
+
+    Exactly once, not at least once: a router included twice registers every one of its
+    paths twice, and FastAPI serves the first while ``/openapi.json`` lists them both.
+    """
+    declared = _all_routers_declared()
+    on_disk = sorted(path.stem for path in _router_sources())
+
+    duplicated = sorted({name for name in declared if declared.count(name) > 1})
+    assert not duplicated, (
+        "these routers are in ALL_ROUTERS more than once -- every path they carry is "
+        f"registered twice: {duplicated}"
+    )
+    assert sorted(declared) == on_disk, (
+        "ALL_ROUTERS and routers/ have drifted; an unmounted module is a 404 that nothing "
+        "reports:\n"
+        f"  never mounted: {sorted(set(on_disk) - set(declared))}\n"
+        f"  no such file:  {sorted(set(declared) - set(on_disk))}"
+    )
+
+    source = WEB_APP_PY.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(WEB_APP_PY))
+    includes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "include_router"
+    ]
+    assert len(includes) == 1, (
+        "app.py includes routers somewhere other than the loop over ALL_ROUTERS -- the "
+        f"mount order is the tuple's order or it is nobody's ({len(includes)} calls found)"
+    )
+    loops = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "ALL_ROUTERS"
+    ]
+    assert len(loops) == 1, "app.py no longer mounts the API by iterating ALL_ROUTERS"
+    assert includes[0] in ast.walk(loops[0]), (
+        "the one include_router in app.py is outside the ALL_ROUTERS loop"
+    )
+
+
+def test_the_one_file_api_stays_deleted():
+    """``interfaces/web/api.py`` is dead, and re-creating it is the whole regression.
+
+    The inverted ratchet, exactly as ``test_the_old_paths_stay_deleted`` runs it one layer
+    up. This file was 2,174 lines holding eighteen endpoints, six serialisers and every
+    constant the surface has; it is now thirteen router modules plus ``serial.py``. Nothing
+    about that arrangement is enforced by anything else if a file called ``api.py`` may
+    exist again -- the natural next edit is always "this bit does not fit anywhere, put it
+    back in api.py", and the second endpoint to land there re-creates the original.
+
+    Its test file goes with it. ``test_web_api.py`` was 3,048 lines and is now one module
+    per router; a new one would be the same drift from the other end.
+    """
+    for candidate in (WEB / "api.py", WEB / "api"):
+        assert not candidate.exists(), (
+            "interfaces/web/api.py is back -- it was split into routers/ (one module per "
+            "concern, mounted through ALL_ROUTERS) and serial.py (the shared vocabulary), "
+            "and a handler that fits neither belongs in a router of its own"
+        )
+    assert not (REPO / "tests" / "test_web_api.py").exists(), (
+        "tests/test_web_api.py is back -- the endpoint tests live in test_web_<router>.py, "
+        "one file per router, plus test_web_static.py for the mount at /"
+    )
+
+
+def test_no_router_grows_back_into_a_one_file_api():
+    """The cap that makes 'one module per concern' a measurement rather than an intention.
+
+    ``api.py`` did not arrive at 2,174 lines; it got there one reasonable addition at a
+    time, and no single one of those commits looked wrong. The cap is set well above every
+    budget the split was planned against so that a module always has room to explain itself,
+    and low enough that a second concern moving in shows up as a failing test rather than as
+    a code review somebody has to remember to ask for.
+    """
+    over = [
+        f"  routers/{path.name}: {len(path.read_text(encoding='utf-8').splitlines())} lines"
+        for path in _sources(WEB_ROUTERS)
+        if len(path.read_text(encoding="utf-8").splitlines()) > ROUTER_MAX_LINES
+    ]
+    assert not over, (
+        f"a router module is over {ROUTER_MAX_LINES} lines -- that is a second concern, and "
+        "it wants its own file and its own entry at the END of ALL_ROUTERS (never in the "
+        "middle: the tuple's order is the committed schema's path order):\n" + "\n".join(over)
+    )
 
 
 def test_the_generators_reach_down_and_nothing_reaches_up_to_them():

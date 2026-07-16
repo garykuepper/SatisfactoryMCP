@@ -353,7 +353,7 @@ def yaw_of(quat) -> float | None:
     unreadable quaternion returning it published a bearing nobody read off anything, mixed
     in with 8,000 real ones and indistinguishable from them. A consumer bucketing yaws, or
     drawing a footprint, had no way to tell the two apart afterwards. Null is the claim the
-    rest of the stack already understands: ``api.py``'s ``_yaw`` maps it straight through,
+    rest of the stack already understands: the web adapter's ``serial._yaw`` maps it through,
     and the map draws a null yaw axis-aligned while saying "facing: unknown" rather than
     "facing: 0deg" -- which it has done since schema 12, for a projection too old to carry
     the field at all. This is the same statement about one placement instead of all of them.

@@ -1,6 +1,6 @@
 """The save watcher's own mechanism: fan-out, unsubscribe, the bound, and the failure count.
 
-``test_web_api.py`` already covers what the watcher is FOR -- a written save becomes an
+``test_web_events.py`` already covers what the watcher is FOR -- a written save becomes an
 ``event: save`` on the wire, and a stream that opens late still gets the replay. What it does
 not touch is the machinery underneath, and that machinery is where the interesting failures
 are, because every one of them is silent:
@@ -19,7 +19,7 @@ which is the one failure the whole module was written to prevent -- so they are 
 rather than left to the endpoint test, which would pass through all four.
 
 No game install, no save file, no event loop of the caller's: every test drives its own
-through ``asyncio.run``, which is what the two async tests in ``test_web_api.py`` do and is
+through ``asyncio.run``, which is what the two async tests in ``test_web_events.py`` do and is
 why this suite still needs no ``pytest-asyncio``.
 """
 

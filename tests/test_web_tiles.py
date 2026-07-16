@@ -106,7 +106,7 @@ def _fake_layer(
 ) -> int:
     """The same tree one level down, where ``tools/gen_map_renders.py`` writes a layer.
 
-    Deliberately built through ``web_api``'s own names rather than a hand-typed path: what
+    Deliberately built through ``web_tiles``'s own names rather than a hand-typed path: what
     these tests are checking is that the endpoint finds a layer where the generator puts
     one, and a fixture that spelled the directory itself would agree with the endpoint by
     construction rather than by the module having got it right.

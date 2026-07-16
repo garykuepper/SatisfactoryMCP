@@ -7,9 +7,9 @@ insertion order, the committed ``api-schema.d.ts`` inherits that order, and a ro
 mounted out of turn re-writes the generated file with a diff that means nothing.
 
 ``ALL_ROUTERS`` is therefore **append-only**. A new router goes at the end; nothing already
-in the tuple ever moves. During the split this tuple is partial -- the sections not yet
-extracted are still served by ``api.router``, which ``app.py`` includes AFTER these, which
-is what keeps the extraction front-to-back and the path order unchanged.
+in the tuple ever moves. It is now the WHOLE surface -- ``api.py`` is deleted and ``app.py``
+includes nothing but this tuple, in this order -- which is what the split was front-to-back
+for: the last append left ``/openapi.json``'s path order exactly where it started.
 
 **The function name is the operation id.** FastAPI's default is
 ``{function_name}_{path}_{method}`` -- the MODULE is not part of it -- which is exactly why
@@ -20,7 +20,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import inspect, nodes, placements, power, regions, routes_layer, storage, tiles, world
+from . import (
+    collectibles,
+    events,
+    factories,
+    floors,
+    inspect,
+    nodes,
+    placements,
+    power,
+    regions,
+    routes_layer,
+    storage,
+    tiles,
+    world,
+)
 
 __all__ = ["ALL_ROUTERS"]
 
@@ -37,6 +51,10 @@ __all__ = ["ALL_ROUTERS"]
 #: ``/api/pipes`` (``routes_layer``), ``/api/storage``, ``/api/power``. Two endpoints per file
 #: for the first two, so the tuple's order is checked against the PATH order rather than
 #: against the file list -- the same rule ``regions``/``tiles`` was settled by.
+#:
+#: The last four are indices 14..17, the tail of that same manifest and one endpoint each:
+#: ``/api/factories``, ``/api/floors``, ``/api/collectibles``, ``/api/events``. With them the
+#: tuple is the whole surface, and ``path_order`` is the list this order produces.
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     world.router,
     nodes.router,
@@ -47,4 +65,8 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     routes_layer.router,
     storage.router,
     power.router,
+    factories.router,
+    floors.router,
+    collectibles.router,
+    events.router,
 )

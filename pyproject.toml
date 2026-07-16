@@ -106,11 +106,17 @@ target-version = "py311"
 #
 # So E402 is switched ON rather than deleted, because the sentence it was trying to make
 # is worth enforcing and the enforcement is what makes the exemption mean something. The
-# 32 hits split three ways: 19 in tools/, which is the documented case; 12 in
-# test_web_api.py behind a `pytest.importorskip`, which is the same case; and 1 in
-# domain/planning/scenario.py, which was a plain stray import sitting 40 lines below the
+# 32 hits split three ways when it was measured: 19 in tools/, which is the documented
+# case; 12 in test_web_api.py behind a `pytest.importorskip`, which is the same case; and 1
+# in domain/planning/scenario.py, which was a plain stray import sitting 40 lines below the
 # import block for no reason and is now at the top of it. That one defect is the whole
 # argument for selecting the rule instead of writing prose about it.
+#
+# The count has moved since and the SHAPE has not, which is the part worth recording: 74
+# hits now, 31 in tools/ and 43 in tests/, and every one of the 43 is the same
+# `importorskip` line -- test_web_api.py's 12 became one file per router, so the number
+# grew with the number of web test modules while the exempt pattern stayed two globs and a
+# name. Nothing outside those two cases has ever been exempted.
 extend-select = ["E402"]
 ignore = [
     # Broad excepts are deliberate at the save boundary: autosaves are rewritten in

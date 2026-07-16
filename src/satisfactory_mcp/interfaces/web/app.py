@@ -26,7 +26,6 @@ from ...core.gamedata.loader import load_docs
 from ...core.gamedata.model import GameData
 from ...core.gamedata.normalize import normalize
 from ...domain.world.state import WorldState, load_state
-from . import api
 from .routers import ALL_ROUTERS
 from .watch import SaveWatcher
 
@@ -72,12 +71,11 @@ def create_app(
     instance.state.game = load_game
     instance.state.watcher = SaveWatcher()
     # Order is load-bearing. ``/openapi.json`` emits ``paths`` in registration order and
-    # the committed ``api-schema.d.ts`` inherits it, so the extracted routers go first --
-    # in the order ``api.py`` decorated them -- and whatever is still in ``api.py`` follows.
-    # That is what makes the split byte-identical while it is only half done.
+    # the committed ``api-schema.d.ts`` inherits it, so the JSON surface is mounted in one
+    # loop over one append-only tuple -- ``routers.ALL_ROUTERS``, which says why it may
+    # never be reordered. This loop is the whole API; there is no second include.
     for extracted in ALL_ROUTERS:
         instance.include_router(extracted)
-    instance.include_router(api.router)
 
     # Mounted at the root and therefore LAST: a mount at "/" swallows every path that
     # did not already match, so the API router has to be registered above it.

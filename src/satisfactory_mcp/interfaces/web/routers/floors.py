@@ -1,142 +1,64 @@
-"""The JSON endpoints. Parse the query, call a domain service, serialise.
+"""``/api/floors``: the floor decomposition of a world, one storey at a time.
 
-The same shape as an MCP tool module and for the same reason: this layer decides
-nothing. Every question answered here is answered by ``domain/`` -- the placement rows,
-the power ledger, the node occupancy, the factory proposals -- and the only work done
-in this file is turning a query string into arguments and a dataclass into JSON.
+**The one endpoint on this surface that declares its response body, and the reason is that
+nothing has been written against it yet.** Every other endpoint on it is annotated ``->
+Any``, so FastAPI publishes no response schema for it and ``/openapi.json`` types the rest
+of them ``unknown``; the map page fills that gap by hand in ``api-types.ts``, from observed
+payloads, which that file says at the top and which is honest about what it is -- an
+observation, and an observation can be wrong in one direction.
 
-The two conventions this surface runs on -- metres at one decimal, and ``?save=``/
-``?world=`` everywhere a state is read -- live with the helpers that enforce them, in
-``serial.py``, which is where the error shape is written down too.
+Converting the lot is a change to the server's whole public surface and belongs in its own
+commit. Converting THIS one is a different act: the floor view has no client at all yet, so
+there is no hand-written block to reconcile with and no drawing code whose guards are the
+evidence for a nullable. The types below are read off the serialisers three screens down
+rather than off a payload, ``npm run typegen`` turns them into the page's own types, and
+the client that gets written next is written against a declared contract instead of a
+further hand-maintained interface.
 
-**This module is being emptied.** One concern at a time moves to ``routers/``, in the
-order the handlers are decorated here, and ``app.py`` includes what is left AFTER them --
-which is what keeps ``/openapi.json``'s path order, and therefore the committed
-``api-schema.d.ts``, byte-identical while the file shrinks. Nothing new goes in here.
+TypedDict rather than a pydantic model, for the same reason the serialisers are functions
+returning dicts: this layer decides nothing and holds no state, and a class hierarchy here
+would invite behaviour into a module whose whole claim is that it has none.
+
+**Nullability is not decoration.** ``_m``, ``_xyz`` and ``_yaw`` all return ``float |
+None``, so every field they produce is declared that way even where the reference world
+has never produced a null -- a response_model is a validator as well as a schema, and a
+field declared ``float`` that arrives null is a 500 rather than a null.
+
+**Declaration order is wire order.** A response_model serialises in declaration order, so
+the TypedDicts below are in the order the serialisers emit and reordering one reorders the
+bytes on the wire -- and, through ``npm run typegen``, the committed ``api-schema.d.ts``.
+
+WARNING: the function name is the operation_id -- rename it and the committed schema
+churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
+is generated off it. ``floors_view``, not ``floors``, for exactly that reason.
+
+The HANDLER's docstring is frozen for the same reason and one step further: FastAPI
+publishes it as the operation's ``description``, so editing a word of it re-writes the
+committed schema. It still says "the four endpoints above" -- ``/api/machines``,
+``/api/structures``, ``/api/belts``, ``/api/pipes``, which were above it in ``api.py`` and
+are now four files away. Left standing deliberately: correcting the phrase is a schema
+regeneration, and it belongs in the commit that regenerates rather than in the one that
+moved the code. This paragraph is not published anywhere.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
 
-from ...domain.collectibles.service import collect_view
-from ...domain.factories import floors as ffloors
-from ...domain.factories import identity as fidentity
-from ...domain.factories import select as fselect
-from ...domain.spatial import geo
-from ...domain.world.state import WorldState
-from . import terrain
-from .serial import _fail, _m, _state, _xyz
+from ....domain.factories import floors as ffloors
+from ....domain.factories import select as fselect
+from ....domain.world.state import WorldState
+from .. import terrain
+from ..serial import _fail, _m, _state, _xyz
 
-__all__ = ["PING_SECONDS", "router"]
-
-#: How long a quiet SSE stream waits before sending a comment. Proxies and browsers
-#: both drop a connection that has said nothing for a while, and a comment line is the
-#: cheapest thing that counts as having said something.
-PING_SECONDS = 15.0
+__all__ = ["router"]
 
 router = APIRouter(prefix="/api")
 
 
-# ------------------------------------------------------------------ factories
-
-
-@router.get("/factories")
-def factories(request: Request, save: str | None = None, world: str | None = None) -> Any:
-    """Named factories and the coherence-scored proposals for the unnamed rest.
-
-    Each row carries ``bbox_m`` -- ``[x_min, y_min, x_max, y_max]`` in metres, game axes
-    -- alongside its centroid, because a centroid alone cannot frame a viewport. The map
-    turns a label into a button that flies to its factory, and "fly to the mean of 50
-    machines" is not the same request as "show me all 50": the first picks a zoom out of
-    the air, the second is decided by the extent. Computed here rather than client-side
-    because the client is never sent the anchor machines, only their count.
-
-    ``null`` when nothing in the set is still standing -- ``geo.bbox`` refuses to invent
-    a zero box at the world centre, and so does this. A label whose machines were all
-    demolished keeps its name and its remembered centroid; what it loses is the ability
-    to be flown to, which is the honest report.
-
-    A proposal whose machines the player has already named is not a proposal: the
-    clusterer runs over the whole world, so it re-discovers every named factory, and
-    sending those rows lets a machine-generated recipe string draw itself exactly on
-    top of the player's own label. Any proposal in which named anchors are the majority
-    is dropped here; ``index`` stays the position in the full proposal list, so a
-    ``proposal:N`` selector still resolves to the same cluster in the MCP tools.
-    """
-    try:
-        st = _state(request, save, world)
-    except Exception as exc:
-        return _fail(f"could not read save: {exc}", 404)
-
-    placed = fidentity.positions(st.projection)
-
-    def _bbox_m(machines) -> list[float] | None:
-        box = geo.bbox([placed[m][:2] for m in machines if m in placed])
-        return None if box is None else [_m(v) for v in box]
-
-    named = [
-        {
-            "name": label.name,
-            "centroid_m": [_m(label.centroid[0]), _m(label.centroid[1])],
-            "bbox_m": _bbox_m(label.anchors),
-            "machines": len(label.anchors),
-            "notes": label.notes,
-        }
-        for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors))
-    ]
-
-    labelled = {anchor for label in st.labels.labels for anchor in label.anchors}
-
-    proposals = []
-    for index, pr in enumerate(st.proposals):
-        if pr.machines and 2 * sum(1 for m in pr.machines if m in labelled) > len(pr.machines):
-            continue  # already named by the player; the label speaks for it
-        cand = fidentity.describe(pr.machines, st.graph, st.game, st.projection, "proposal")
-        proposals.append(
-            {
-                "index": index,
-                "label": cand.name_hint(),
-                "centroid_m": [_m(cand.centroid[0]), _m(cand.centroid[1])],
-                "bbox_m": _bbox_m(pr.machines),
-                "machines": pr.size,
-                "score": round(pr.cohesion, 3),
-                "spread_m": round(cand.spread_m, 1),
-            }
-        )
-    return {"labels": named, "proposals": proposals}
-
-
 # --------------------------------------------------------------------- floors
-#
-# **The one endpoint in this module that declares its response body, and the reason is that
-# nothing has been written against it yet.** Every other endpoint here is annotated ``->
-# dict``, so FastAPI publishes no response schema for it and ``/openapi.json`` types the
-# rest of them ``unknown``; the map page fills that gap by hand in ``api-types.ts``, from
-# observed payloads, which that file says at the top and which is honest about what it is --
-# an observation, and an observation can be wrong in one direction.
-#
-# Converting the lot is a change to the server's whole public surface and belongs in its own
-# commit. Converting THIS one is a different act: the floor view has no client at all yet, so
-# there is no hand-written block to reconcile with and no drawing code whose guards are the
-# evidence for a nullable. The types below are read off the serialisers three screens down
-# rather than off a payload, ``npm run typegen`` turns them into the page's own types, and
-# the client that gets written next is written against a declared contract instead of a
-# further hand-maintained interface.
-#
-# TypedDict rather than a pydantic model, for the same reason the serialisers are functions
-# returning dicts: this layer decides nothing and holds no state, and a class hierarchy here
-# would invite behaviour into a module whose whole claim is that it has none.
-#
-# **Nullability is not decoration.** ``_m``, ``_xyz`` and ``_yaw`` all return ``float |
-# None``, so every field they produce is declared that way even where the reference world
-# has never produced a null -- a response_model is a validator as well as a schema, and a
-# field declared ``float`` that arrives null is a 500 rather than a null.
 
 
 class FloorDeck(TypedDict):
@@ -471,94 +393,3 @@ def floors_view(
             "minor_share": ffloors.MINOR_SHARE,
         },
     }
-
-
-# ---------------------------------------------------------------- collectibles
-
-
-@router.get("/collectibles")
-def collectibles(
-    request: Request,
-    group: str | None = None,
-    mode: str = "remaining",
-    near: str | None = None,
-    save: str | None = None,
-    world: str | None = None,
-) -> Any:
-    """Map placements, filtered exactly the way the MCP tool filters them.
-
-    ``collect_view`` owns every refusal -- unknown mode, retired group, and the one
-    that matters here: ``mode=remaining`` needs the generated placement table, and
-    without it the honest answer is the refusal rather than a shorter list.
-    """
-    try:
-        st = _state(request, save, world)
-    except Exception as exc:
-        return _fail(f"could not read save: {exc}", 404)
-
-    view = collect_view(st, group, mode, near)
-    if view.error:
-        return _fail(view.error)
-
-    rows = [
-        {
-            "category": r["category"],
-            "name": r["name"],
-            **_xyz(r["pos"]),
-            "collected": r["collected"],
-            "observed": r["observed"],
-            "distance_m": round(r["distance_m"], 1) if r.get("distance_m") is not None else None,
-        }
-        for r in (view.rows or ())
-    ]
-    return {
-        "mode": view.mode,
-        "group": view.group,
-        "rows": rows,
-        "counts": view.counts,
-        "hidden_pedestals": view.hidden,
-        "save_only": view.save_only,
-        "where": view.where,
-    }
-
-
-# --------------------------------------------------------------------- events
-
-
-def _sse(event: str | None, data: str) -> bytes:
-    if event is None:
-        return f": {data}\n\n".encode()
-    return f"event: {event}\ndata: {data}\n\n".encode()
-
-
-@router.get("/events")
-async def events(request: Request) -> StreamingResponse:
-    """Server-sent events: one ``save`` event per observed write, plus keepalives.
-
-    The stream carries the trigger, never the payload. A save event says which file
-    moved and when; the page decides what to refetch. That keeps this endpoint O(1) in
-    the size of the world and means a browser that missed an event is one refetch, not
-    one resync, behind.
-    """
-    watcher = request.app.state.watcher
-    queue = watcher.subscribe()
-
-    async def stream():
-        try:
-            if watcher.latest is not None:
-                yield _sse("save", json.dumps(watcher.latest.as_dict()))
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=PING_SECONDS)
-                except TimeoutError:
-                    yield _sse(None, "ping")
-                    continue
-                yield _sse("save", json.dumps(event.as_dict()))
-        finally:
-            watcher.unsubscribe(queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
