@@ -50,37 +50,53 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | file | what it is | lines |
 | --- | --- | --- |
 | `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 55 |
-| `src/main.ts` | the entry: which map events are listened for, in what order, and what happens on load | 129 |
+| `src/main.ts` | the entry: which map events are listened for, in what order, which modules fetch, and what happens on load | 157 |
 | `src/leaflet.ts` | the one `import`, and where the private-field declarations attach | 19 |
 | `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 153 |
+| `src/registry.ts` | what the page fetches, declared by the module that draws it. Imports nothing at runtime | 131 |
 | `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 67 |
 | `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
 | `src/format.ts` | resource short name, region line, phase name | 37 |
 | `src/palette.ts` | every colour chosen against the others, in one table | 121 |
-| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 94 |
+| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 98 |
 | `src/api-types.ts` | the response shapes, hand-written from observed payloads | 438 |
 | `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1545 |
 | `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 124 |
 | `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 219 |
+| `src/fragment.ts` | the address bar as an input: re-reading `#…` when it changes under an open tab | 125 |
 | `src/layers.ts` | named layer groups, kept across a refetch | 87 |
 | `src/layercontrol.ts` | the folded control: floor picker, base-map modes, legend, filter, tri-state families, focus | 784 |
 | `src/regions.ts` | the biome raster, how it shares the screen with a render, and whose choice it is | 176 |
 | `src/tiles.ts` | the base map: four modes, one tile layer, and the probing behind both | 426 |
-| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 846 |
-| `src/placements.ts` | the floor plan and the machines standing on it | 252 |
+| `src/routes.ts` | belts and pipes: runs, lifts, junctions, chevrons | 911 |
+| `src/placements.ts` | the floor plan, the machines standing on it, and the containers among them | 299 |
+| `src/power.ts` | the wires and the poles they are strung between | 235 |
 | `src/floors.ts` | floor mode: one storey at a time, by filtering what is already drawn | 896 |
-| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 195 |
-| `src/labels.ts` | factory labels, the flight, the card's one action, and the declutter pass | 364 |
+| `src/markers.ts` | nodes, pickups, the player — and the node-dot raise | 224 |
+| `src/labels.ts` | factory labels, the flight, the card's one action, and the declutter pass | 388 |
+| `src/header.ts` | the identity line and the you-are-here dot: `/api/summary`'s two consumers | 81 |
 | `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 155 |
-| `src/load.ts` | who fetches what and when; the epoch guard | 231 |
-| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 200 |
+| `src/load.ts` | when the page fetches, and what a reply is allowed to do; the epoch guard | 142 |
+| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 197 |
 | `src/sse.ts` | one EventSource, and what a save write means | 61 |
 | `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 604 |
 | `public/vendor/LEAFLET-LICENSE` | copied verbatim into the build; BSD-2-Clause requires it | |
 | `vite.config.ts` | where the build writes, the banner it stamps, the dev proxy | |
 | `scripts/stamp-schema.mjs` | re-applies the generated schema's provenance header | |
 
-Three things about the graph are deliberate and easy to undo by accident.
+Four things about the graph are deliberate and easy to undo by accident.
+
+`load.ts` imports no module that fetches, and that is the newest of the four. It used to import
+all seven drawing modules and call each draw function by name; they now declare what they want
+fetched through `registry.ts` and `load.ts` runs the list knowing none of the names. The catch
+is that a module nothing imports is a module the build leaves out, and a registration that
+never ran is a layer that is simply never fetched — no compile error, no runtime error, just an
+absence. So `main.ts` names every one of them in its FEATURES block, and
+`tests/test_architecture.py` checks that block against the set of modules calling
+`registerFetch` in both directions, plus the rule that keeps it load-bearing: `load.ts` and
+`registry.ts` may not import any of them. `regions.ts` is the exception `load.ts` still names,
+because `/api/regions` is geography — no world to scope it to, fetched once — so it is in
+neither wave and registers nothing.
 
 `state.ts` imports nothing. `map.ts` reads `BOOT` while it is building the map, so anything
 `state.ts` imported would have to be evaluated before the map exists. It is also where
@@ -102,9 +118,10 @@ widget that otherwise knows nothing about pyramids.
 `layercontrol.ts` does not import `floors.ts` for the third time round the same shape:
 `onFloorPick` and `onFloorExit` are the seam, and the control draws a floor picker without
 knowing what a storey is. `floors.ts` is imported by `labels.ts` (the card's action),
-`fragment.ts` and `main.ts` (the address bar and the Esc key) and `load.ts` (a redraw replaces
-a layer's contents, and the floor filter is a fact about contents) — so it must import none of
-those four, and does not.
+`fragment.ts` and `main.ts` (the address bar and the Esc key), `load.ts` (a redraw replaces a
+layer's contents, and the floor filter is a fact about contents) and `placements.ts` (a save
+write changes what is built, so `/api/machines` re-asks for the decomposition) — so it must
+import none of those five, and does not.
 
 Leaflet is the `leaflet` npm package pinned to **1.9.4** — the exact version that used to sit
 in `static/vendor/leaflet.js` — and it is compiled into the bundle together with its own

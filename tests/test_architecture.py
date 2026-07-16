@@ -62,6 +62,17 @@ handler that "does not fit anywhere" collects the next one too, and a router qui
 thousand lines is the original file under a new name. Four rules, all read off the AST and
 the filesystem, none of them needing FastAPI installed.
 
+The eighth is the page's fetch registry, and it is the only rule here whose failure mode is
+a feature that quietly stops existing. ``load.ts`` used to import every drawing module on the
+page and call each one by name; the modules now declare what they want fetched, and
+``load.ts`` runs the list knowing none of the names. That inversion has a hole in it that no
+compiler can see: a module nothing imports is a module Rollup leaves out of the bundle, and a
+registration that never ran is a layer that is simply never fetched -- no error, no blank
+space, just an absence. So the two directions are checked as a pair. Every module that calls
+``registerFetch`` is named in ``main.ts``'s FEATURES block, and nothing in that block fails to
+register; and the mechanism side -- ``load.ts`` and ``registry.ts`` -- imports none of them,
+which is what makes the FEATURES block the only thing holding them in.
+
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
 load-bearing for reasons that have nothing to do with layering -- crash isolation,
@@ -246,6 +257,27 @@ COPIED_VERBATIM = "vendor/LEAFLET-LICENSE"
 FRONTEND_API_TS = FRONTEND / "src" / "api.ts"
 MAP_LAYER_UNION = "export type MapTileLayer ="
 WEB_TILES_PY = WEB / "routers" / "tiles.py"
+
+#: The page's TypeScript, and the three files the fetch-registry rule is about.
+FRONTEND_SRC = FRONTEND / "src"
+FRONTEND_MAIN_TS = FRONTEND_SRC / "main.ts"
+FRONTEND_LOAD_TS = FRONTEND_SRC / "load.ts"
+FRONTEND_REGISTRY_TS = FRONTEND_SRC / "registry.ts"
+
+#: A registration, which is a call at MODULE SCOPE and has to be: it runs when the module is
+#: evaluated, which is the whole point of it. Anchoring on the margin is what tells the three
+#: other appearances of the name apart from a real one -- the declaration in ``registry.ts``
+#: (``export function …``), the prose in ``load.ts``, and the paragraph in ``main.ts``
+#: explaining what the block of bare imports below it is for.
+REGISTER_CALL = re.compile(r"^registerFetch[<(]", re.MULTILINE)
+
+#: A bare side-effect import of a sibling module: ``import "./markers";`` and nothing else.
+#: Stylesheets are excluded by the pattern itself -- ``"./style.css"`` carries a dot.
+BARE_IMPORT = re.compile(r'^import "\./([A-Za-z0-9_-]+)";$', re.MULTILINE)
+
+#: The tail of any other import of a sibling, which is matched rather than the whole
+#: statement because several of them span lines.
+FROM_IMPORT = re.compile(r'from "\./([A-Za-z0-9_-]+)"')
 
 # ------------------------------------------------------------------- the routers
 
@@ -940,6 +972,103 @@ def test_the_page_and_the_server_agree_on_the_base_layer_names():
         f"  api.ts claims:   {', '.join(claimed)}"
     )
     assert claimed[0] == "map", f"the artwork layer is not first in the union: {claimed}"
+
+
+def _ts_imports(path: Path) -> set[str]:
+    """Every sibling module a ``.ts`` file imports -- bare, named, value or type.
+
+    Two patterns rather than one because the two forms do not look alike: a side-effect
+    import is the whole statement on one line, and everything else is recognised by its
+    ``from "./x"`` tail, which is the only part guaranteed not to be split across lines.
+    """
+    text = path.read_text(encoding="utf-8")
+    return set(BARE_IMPORT.findall(text)) | set(FROM_IMPORT.findall(text))
+
+
+def _registering_modules() -> set[str]:
+    """Every page module that declares a fetch, by module name."""
+    return {
+        path.stem
+        for path in sorted(FRONTEND_SRC.glob("*.ts"))
+        if REGISTER_CALL.search(path.read_text(encoding="utf-8"))
+    }
+
+
+def test_every_module_that_fetches_is_named_in_the_features_block():
+    """The registrations only exist if the modules holding them are in the bundle.
+
+    ``registerFetch`` runs when a module is evaluated, and a module is evaluated only if
+    something imports it. ``load.ts`` used to be that something for all of them and
+    deliberately is not any more, which leaves exactly one thing holding the features in: the
+    block of bare imports at the top of ``main.ts``. Delete a line from it and the build
+    succeeds, ``tsc`` is happy -- there is no unused name to notice -- Rollup drops the module,
+    and a layer of the map is never fetched again. Nothing on the page says so; the checkbox
+    is simply not there.
+
+    Checked in both directions on purpose. A module that registers and is not listed is the
+    failure above. A module listed that no longer registers is the same block turning into a
+    list of imports nobody can explain, which is how it stops being read.
+    """
+    listed = set(BARE_IMPORT.findall(FRONTEND_MAIN_TS.read_text(encoding="utf-8")))
+    registering = _registering_modules()
+    assert registering, (
+        "nothing calls registerFetch at module scope any more -- if the registry is gone, "
+        "this rule and the paragraph about it at the top of this file should go with it"
+    )
+    missing = sorted(registering - listed)
+    assert not missing, (
+        "these modules register a fetch and nothing imports them for it -- add a bare "
+        '`import "./name";` to the FEATURES block in main.ts, or their layers are dropped '
+        "from the bundle with no error anywhere:\n" + "\n".join(f"  src/{n}.ts" for n in missing)
+    )
+    stale = sorted(listed - registering)
+    assert not stale, (
+        "these are imported for their side effect in main.ts's FEATURES block but register "
+        "no fetch -- either they lost their registerFetch call (and their layer with it) "
+        "or the line belongs somewhere the reason for it is visible:\n"
+        + "\n".join(f"  src/{n}.ts" for n in stale)
+    )
+
+
+def test_the_fetch_mechanism_imports_no_module_that_fetches():
+    """The other half of the same rule, and the half that makes it a seam rather than a habit.
+
+    If ``load.ts`` imported one feature module the arrangement would still work -- and the
+    ratchet next door would still pass, because that module would be in the bundle. It would
+    just be in the bundle for the wrong reason, and the day somebody tidied the import away
+    the FEATURES block would take the blame for a failure it did not cause. So the mechanism
+    side is required to know none of the names: ``load.ts`` runs waves, ``registry.ts`` holds
+    a list, and neither can reach a drawing module that declares one.
+
+    ``regions.ts`` is the one feature module ``load.ts`` still names, and it is allowed here
+    because it registers nothing: ``/api/regions`` is geography -- no world to scope it to, no
+    epoch to guard it against, fetched once for the life of the page -- so it is in neither
+    wave, and importing it drops no registration. That is why the forbidden set is "the
+    modules that register" rather than "the modules that draw": the rule then defines itself
+    from the source instead of from a list somebody has to maintain.
+
+    ``registry.ts`` is held to the stronger version of ``state.ts``'s rule -- nothing at all at
+    runtime, only ``import type``, which is erased. Everything that draws imports it, so
+    anything it imported would be evaluated before all of them.
+    """
+    registering = _registering_modules()
+    for path in (FRONTEND_LOAD_TS, FRONTEND_REGISTRY_TS):
+        reached = sorted(_ts_imports(path) & registering)
+        assert not reached, (
+            f"src/{path.name} imports a module that registers a fetch, which is what the "
+            "registry exists to stop -- the feature declares what it wants fetched and this "
+            "side runs the list:\n" + "\n".join(f"  -> src/{n}.ts" for n in reached)
+        )
+
+    values = [
+        line
+        for line in FRONTEND_REGISTRY_TS.read_text(encoding="utf-8").splitlines()
+        if line.startswith("import ") and not line.startswith("import type ")
+    ]
+    assert not values, (
+        "registry.ts imports something at runtime -- everything that draws imports it, so "
+        "whatever this is would be evaluated before all of them:\n" + "\n".join(values)
+    )
 
 
 def _router_sources() -> list[Path]:
