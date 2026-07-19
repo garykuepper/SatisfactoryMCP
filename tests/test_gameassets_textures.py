@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from satisfactory_mcp.core.gameassets.textures import (
     bc1_mip_sizes,
+    bc3_mip_sizes,
     decode_bc1_rgba,
+    decode_bc3_rgba,
+    decode_bgra8_rgba,
     raw_mip_sizes,
 )
 
@@ -64,6 +67,10 @@ class _Decoder:
         self.calls.append((raw, width, height))
         return b"%s as %dx%d BGRA" % (raw, width, height)
 
+    def decode_bc3(self, raw: bytes, width: int, height: int) -> bytes:
+        self.calls.append((raw, width, height))
+        return b"%s as %dx%d BGRA" % (raw, width, height)
+
 
 class _Imaging:
     """Pillow as far as this module is concerned: ``frombytes`` and what it was told."""
@@ -93,3 +100,66 @@ def test_the_decode_says_bgra_out_loud_because_rgba_also_produces_a_picture():
     assert (mode, size) == ("RGBA", (4096, 4096))
     assert (decoder_name, args) == ("raw", "BGRA"), "reading BGRA as RGBA turns the ocean orange"
     assert data == b"blocks as 4096x4096 BGRA", "the decoder's own bytes, unmodified"
+
+
+def test_the_item_icons_two_chains_are_the_lengths_the_generator_refuses_to_read_past():
+    """The four ``.ubulk`` lengths every icon in the game has, derived rather than typed.
+
+    ``tools/gen_item_icons.py`` builds its whole integrity check out of these: a bulk chunk
+    holds the chain from the texture's own side down to 128 px, so its length names the
+    (format, side) pair uniquely, and a file of any other length was re-cooked. The numbers
+    on the right are what the container actually holds on build 495413 -- measured over all
+    744 icons -- so this fails if either the arithmetic or the game's cook layout moves.
+    """
+    assert sum(size for _px, size in bc3_mip_sizes(256, 2)) == 81_920
+    assert sum(size for _px, size in bc3_mip_sizes(512, 3)) == 344_064
+    assert sum(size for _px, size in raw_mip_sizes(256, 2, 4)) == 327_680
+    assert sum(size for _px, size in raw_mip_sizes(512, 3, 4)) == 1_376_256
+
+    # And mip 0, which is the only level the generator ever decodes: the first N bytes with
+    # no offset to guess, exactly as the map slices are read.
+    assert bc3_mip_sizes(256, 1)[0][1] == 65_536
+    assert bc3_mip_sizes(512, 1)[0][1] == 262_144
+
+
+def test_bc3_is_bc1s_grid_at_twice_the_bytes_and_the_same_block_floor():
+    """One arithmetic, one number different -- which is why they share ``block_mip_sizes``.
+
+    The alpha block is the whole of the difference: same 4x4 grid, same largest-first chain,
+    same "a level narrower than four texels still costs one block". Asserting the RATIO
+    rather than a second table of numbers is what stops the two drifting apart.
+    """
+    for px, count in ((4096, 6), (512, 3), (8, 4)):
+        one, three = bc1_mip_sizes(px, count), bc3_mip_sizes(px, count)
+        assert [side for side, _ in one] == [side for side, _ in three]
+        assert [size * 2 for _, size in one] == [size for _, size in three]
+    assert bc3_mip_sizes(8, 4) == ((8, 64), (4, 16), (2, 16), (1, 16))
+
+
+def test_the_two_icon_decoders_say_bgra_out_loud_for_bc1s_reason():
+    """Copper comes out cyan and a candy cane comes out blue, and both look deliberate.
+
+    The failure mode is worse here than on the map, which is why it is asserted on both
+    paths: an item icon read as ``"RGBA"`` is a plausible-looking picture of the wrong
+    colour, sitting in a directory of 743 correct ones.
+
+    The uncompressed path takes NO decoder and is the point of it being here at all: 111 of
+    the icons are ``PF_B8G8R8A8``, already texels in the same B, G, R, A order, so the only
+    thing left to get wrong is the argument pair -- and it should be got wrong or got right
+    in one place for all three formats.
+    """
+    decoder, imaging = _Decoder(), _Imaging()
+
+    assert decode_bc3_rgba(decoder, imaging, b"blocks", 512) == "an image"
+    assert decoder.calls == [(b"blocks", 512, 512)]
+    mode, size, data, decoder_name, args = imaging.calls[0]
+    assert (mode, size) == ("RGBA", (512, 512))
+    assert (decoder_name, args) == ("raw", "BGRA"), "reading BGRA as RGBA turns copper cyan"
+    assert data == b"blocks as 512x512 BGRA", "the decoder's own bytes, unmodified"
+
+    raw = bytes(256 * 256 * 4)
+    assert decode_bgra8_rgba(imaging, raw, 256) == "an image"
+    mode, size, data, decoder_name, args = imaging.calls[1]
+    assert (mode, size, data) == ("RGBA", (256, 256), raw), "no decompression step at all"
+    assert (decoder_name, args) == ("raw", "BGRA")
+    assert len(decoder.calls) == 1, "the uncompressed path must not reach a block decoder"

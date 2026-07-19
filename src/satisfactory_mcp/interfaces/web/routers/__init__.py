@@ -26,6 +26,7 @@ from . import (
     events,
     factories,
     floors,
+    icons,
     inspect,
     nodes,
     placements,
@@ -65,6 +66,8 @@ __all__ = ["ALL_ROUTERS"]
 #: generated ``operations[...]`` entry keeps its position, and the schema grows by exactly
 #: the one endpoint that was added. Regenerating ``api-schema.d.ts`` belongs with whatever
 #: change teaches the page to draw crates, not with the endpoint that serves them.
+#:
+#: ``icons`` follows it at index 19, on the same terms and with the same reading.
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     world.router,
     nodes.router,
@@ -80,4 +83,5 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     collectibles.router,
     events.router,
     crates.router,
+    icons.router,
 )
