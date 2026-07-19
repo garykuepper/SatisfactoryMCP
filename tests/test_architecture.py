@@ -70,8 +70,13 @@ compiler can see: a module nothing imports is a module Rollup leaves out of the 
 registration that never ran is a layer that is simply never fetched -- no error, no blank
 space, just an absence. So the two directions are checked as a pair. Every module that calls
 ``registerFetch`` is named in ``main.ts``'s FEATURES block, and nothing in that block fails to
-register; and the mechanism side -- ``load.ts`` and ``registry.ts`` -- imports none of them,
-which is what makes the FEATURES block the only thing holding them in.
+register; and the mechanism side -- ``load.ts``, ``registry.ts``, ``layers.ts`` and
+``layercontrol.ts`` -- imports none of them, which is what makes the FEATURES block the only
+thing holding them in. Those same four are held to a second, wider rule: none may import a
+module that imports it. The narrow rule is about the bundle; this one is about rings, and
+``layers.ts`` is why it exists -- every drawing module reaches it, so anything it reached back
+would be evaluated before all of them, and ``regions.ts`` (which draws and fetches nothing)
+is exactly the import the narrow rule would wave through.
 
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
@@ -258,10 +263,24 @@ FRONTEND_API_TS = FRONTEND / "src" / "api.ts"
 MAP_LAYER_UNION = "export type MapTileLayer ="
 WEB_TILES_PY = WEB / "routers" / "tiles.py"
 
-#: The page's TypeScript, and the three files the fetch-registry rule is about.
+#: The page's TypeScript, and the files the registry rules are about.
 FRONTEND_SRC = FRONTEND / "src"
 FRONTEND_MAIN_TS = FRONTEND_SRC / "main.ts"
-FRONTEND_LOAD_TS = FRONTEND_SRC / "load.ts"
+
+#: The MECHANISM side of the page: four modules that hold a list and run it, and know none of
+#: the names in it.
+#:
+#: ``load.ts`` runs the two waves, ``registry.ts`` holds what is in them, ``layers.ts`` hands
+#: out the named groups, and ``layercontrol.ts`` is the widget listing them. Every feature on
+#: the page reaches at least one of these; none of the four may reach a feature. That is what
+#: makes each of them a seam rather than a habit -- see the two rules below for the two
+#: different things that sentence has to mean.
+FRONTEND_MECHANISM = (
+    FRONTEND_SRC / "load.ts",
+    FRONTEND_SRC / "registry.ts",
+    FRONTEND_SRC / "layers.ts",
+    FRONTEND_SRC / "layercontrol.ts",
+)
 FRONTEND_REGISTRY_TS = FRONTEND_SRC / "registry.ts"
 
 #: A registration, which is a call at MODULE SCOPE and has to be: it runs when the module is
@@ -1030,15 +1049,26 @@ def test_every_module_that_fetches_is_named_in_the_features_block():
     )
 
 
-def test_the_fetch_mechanism_imports_no_module_that_fetches():
-    """The other half of the same rule, and the half that makes it a seam rather than a habit.
+def _ts_importers_of(module: str) -> set[str]:
+    """Every page module that imports ``module``, by module name."""
+    return {
+        path.stem
+        for path in sorted(FRONTEND_SRC.glob("*.ts"))
+        if path.stem != module and module in _ts_imports(path)
+    }
+
+
+def test_the_mechanism_imports_no_module_that_fetches():
+    """The other half of the FEATURES rule, and the half that makes it a seam rather than a
+    habit.
 
     If ``load.ts`` imported one feature module the arrangement would still work -- and the
     ratchet next door would still pass, because that module would be in the bundle. It would
     just be in the bundle for the wrong reason, and the day somebody tidied the import away
     the FEATURES block would take the blame for a failure it did not cause. So the mechanism
     side is required to know none of the names: ``load.ts`` runs waves, ``registry.ts`` holds
-    a list, and neither can reach a drawing module that declares one.
+    a list, ``layers.ts`` hands out groups and ``layercontrol.ts`` draws the rows, and not one
+    of the four can reach a module that declares a fetch.
 
     ``regions.ts`` is the one feature module ``load.ts`` still names, and it is allowed here
     because it registers nothing: ``/api/regions`` is geography -- no world to scope it to, no
@@ -1047,17 +1077,50 @@ def test_the_fetch_mechanism_imports_no_module_that_fetches():
     modules that register" rather than "the modules that draw": the rule then defines itself
     from the source instead of from a list somebody has to maintain.
 
+    For ``layers.ts`` that is deliberately NOT the whole rule, because ``regions.ts`` is
+    exactly the module a wider one has to catch. See the next test.
+
     ``registry.ts`` is held to the stronger version of ``state.ts``'s rule -- nothing at all at
     runtime, only ``import type``, which is erased. Everything that draws imports it, so
     anything it imported would be evaluated before all of them.
     """
     registering = _registering_modules()
-    for path in (FRONTEND_LOAD_TS, FRONTEND_REGISTRY_TS):
+    for path in FRONTEND_MECHANISM:
         reached = sorted(_ts_imports(path) & registering)
         assert not reached, (
             f"src/{path.name} imports a module that registers a fetch, which is what the "
             "registry exists to stop -- the feature declares what it wants fetched and this "
             "side runs the list:\n" + "\n".join(f"  -> src/{n}.ts" for n in reached)
+        )
+
+
+def test_no_mechanism_module_imports_a_module_that_imports_it():
+    """The wider rule, and the one the ranks and the sections needed.
+
+    "Imports no module that fetches" is the right forbidden set for ``load.ts``: what it must
+    not know is what is in the waves. It is the wrong one for ``layers.ts``, which hands a
+    named group to everything that draws -- and ``regions.ts`` draws without fetching, so the
+    rule next door would let ``layers.ts`` import it. That import would be a ring, and rings
+    between page modules are the specific failure this file was extended for: everything that
+    draws reaches ``layers.ts``, so anything ``layers.ts`` reached back would be evaluated
+    before all of them, and the two files would each look reasonable on their own.
+
+    So the wider rule is stated as the absence of a cycle and derived from the source rather
+    than from a list: none of the four mechanism modules may import a module that imports it.
+    That covers every drawing module for ``layers.ts`` -- because importing ``./layers`` is
+    what makes a module one -- and every consumer of the control, the registry and the loader
+    for the other three, without anybody having to keep the set up to date.
+
+    It is not implied by the rule above and does not imply it. ``markers.ts`` breaks both
+    ways round; ``regions.ts`` breaks only this one; a feature that registered a fetch but
+    imported none of the four would break only the other.
+    """
+    for path in FRONTEND_MECHANISM:
+        reached = sorted(_ts_imports(path) & _ts_importers_of(path.stem))
+        assert not reached, (
+            f"src/{path.name} imports a module that imports it back, which is a ring: this "
+            "side is a mechanism every feature reaches, so whatever it reaches would be "
+            "evaluated before all of them:\n" + "\n".join(f"  -> src/{n}.ts" for n in reached)
         )
 
     values = [
