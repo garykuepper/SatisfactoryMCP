@@ -10,7 +10,7 @@
 import { code, popup } from "./dom";
 import { regionLine, shortResource } from "./format";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { xy } from "./map";
 import {
   PICKUP_COLOUR,
@@ -66,7 +66,11 @@ export function drawNodes(data: NodesResponse): void {
     .forEach(function (resource) {
       var short = shortResource(resource);
       var colour = RESOURCE_COLOUR[resource] || "#888";
-      var group = layer("node: " + short, true, colour);
+      // Slot 0 for every member, so the band's whole ordering is the name: these rows are
+      // DATA -- one per resource this world has -- and there is no editorial order to give
+      // fourteen of them that a reader could predict. Alphabetical is predictable.
+      var name = "node: " + short;
+      var group = layer(name, true, colour, [BAND.node, 0, name]);
       byResource[resource]!.forEach(function (n) {
         L.circleMarker(xy(n), {
           radius: PURITY_RADIUS[n.purity] || 4,
@@ -107,7 +111,10 @@ export function drawNodes(data: NodesResponse): void {
 /* First of the static wave, which is where it was when the wave was a list of calls: the node
  * dots are the layer every other placement is read against, and the extractors drawn on top
  * of them arrive with the live wave. `clears` carries the trailing space because the layer
- * names are data -- one per resource -- and "node:" alone is a prefix of more than this. */
+ * names are data -- one per resource -- and "node:" alone is a prefix of more than this.
+ *
+ * FETCH RANK, not row rank: this is the first request of the wave and its rows are the
+ * second-to-last band in the control. See layers.ts for why neither follows from the other. */
 registerFetch<NodesResponse>({
   wave: "static",
   rank: 10,
@@ -142,7 +149,10 @@ export function drawPlayer(p: SummaryResponse["player"]): void {
     if (stale) stale.clearLayers();
     return;
   }
-  var group = layer("player", true, PLAYER_COLOUR);
+  // Chrome, not a placement: where you last stood is part of the frame the built world is
+  // read against, which is why it sits with the biomes and the labels rather than with the
+  // machines. Third of that band, under the two region rows it is a position within.
+  var group = layer("player", true, PLAYER_COLOUR, [BAND.chrome, 20, "player"]);
   L.circleMarker(xy(p as { x_m: number; y_m: number }), {
     radius: 7,
     color: PLAYER_COLOUR,
@@ -177,7 +187,10 @@ export function drawCollectibles(data: CollectiblesResponse): void {
       // One toggleable group per category, because "show me every hard drive" and "show
       // me everything" are different questions and the second one is unreadable.
       var colour = PICKUP_COLOUR[category] || PICKUP_FALLBACK;
-      var group = layer("pickup: " + category, false, colour);
+      // Slot 0 and alphabetical for the same reason the node rows are, one band lower: ten
+      // categories of thing lying on the ground, in no order anyone could guess at.
+      var name = "pickup: " + category;
+      var group = layer(name, false, colour, [BAND.pickup, 0, name]);
       byCategory[category]!.forEach(function (r) {
         var here = xy(r);
         var mark: L.Path = r.collected

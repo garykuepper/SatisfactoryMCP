@@ -56,7 +56,9 @@ export interface FloorMark {
 
 declare module "leaflet" {
   interface Layer {
-    /** Sort key for the control's row order: [group, index, name]. See layerRank. */
+    /** The ROW RANK: where this layer's row sits in the control, as [band, slot, name].
+     *  Declared at the `layer()` call that creates the group; see BAND in layers.ts, and
+     *  the note there on why this is neither the fetch rank nor draw order. */
     _rank?: [number, number, string];
     /** What the floor filter joins this piece by. See FloorMark. */
     _floor?: FloorMark;

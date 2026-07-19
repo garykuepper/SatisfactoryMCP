@@ -31,6 +31,14 @@ export var control = L.control.layers(
   {
     collapsed: false,
     sortLayers: true,
+    /* The ROW RANK, and the only thing on the page that reads one: [band, slot, name],
+     * stamped onto every group by `layer()`. Read when this control rebuilds its list and
+     * nowhere else -- it is not draw order, and layers.ts says why at length.
+     *
+     * `[9, 0, ""]` is `BAND.unknown` written out rather than imported, because layers.ts
+     * imports THIS file and importing it back would be the ring the ratchet next door
+     * forbids. It is also unreachable through `layer()`, which supplies the same band
+     * itself: what it defends against is a group that reached the control another way. */
     sortFunction: function (a: L.Layer, b: L.Layer) {
       var ra = a._rank || [9, 0, ""];
       var rb = b._rank || [9, 0, ""];

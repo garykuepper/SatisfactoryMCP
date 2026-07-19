@@ -15,7 +15,7 @@ import { code, popup } from "./dom";
 import type { Row } from "./dom";
 import { refreshFloors } from "./floors";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { footprintCorners } from "./map";
 import { raiseNodeDots } from "./markers";
 import { KIND_COLOUR, STORAGE_COLOUR, STORAGE_FLUID_COLOUR } from "./palette";
@@ -49,7 +49,9 @@ import type {
 var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built against the biomes.
 
 export function drawStructures(data: StructuresResponse): void {
-  var group = layer("foundations", true, STRUCTURE_COLOUR);
+  // First of the built band, because the concrete is what everything else in it stands on
+  // or runs over -- the legend reads a base bottom-up, exactly as the player laid it.
+  var group = layer("foundations", true, STRUCTURE_COLOUR, [BAND.built, 0, "foundations"]);
   // No `|| 8`: `tile_m` is the server's FOUNDATION_M constant and is always sent, and the
   // fallback was a second copy of the number the field exists to stop the page hardcoding.
   var half = data.tile_m / 2;
@@ -99,9 +101,23 @@ var MACHINE_FALLBACK_M = 6;
  * an index into an object with a string. */
 const MACHINE_KINDS = ["machines", "extractors", "generators"] as const;
 
+/* Where each of the three sits in the built band, spelled rather than taken from the loop's
+ * own index: the order these are FETCHED and drawn in is one payload's field order, and the
+ * order they are LISTED in is an editorial choice about a legend. They agree today. Reading
+ * the second off the first would make the day they stop agreeing a silent one. */
+const MACHINE_SLOT: Record<(typeof MACHINE_KINDS)[number], number> = {
+  machines: 40,
+  extractors: 50,
+  generators: 60,
+};
+
 export function drawMachines(data: MachinesResponse): void {
   MACHINE_KINDS.forEach(function (kind) {
-    var group = layer(kind, kind !== "machines", KIND_COLOUR[kind]);
+    var group = layer(kind, kind !== "machines", KIND_COLOUR[kind], [
+      BAND.built,
+      MACHINE_SLOT[kind],
+      kind,
+    ]);
     data[kind].forEach(function (m) {
       // One guard, on x only, exactly as it always was. The row type says y_m can be null
       // too and the assertion below is that claim being deliberately not acted on: widening
@@ -260,7 +276,9 @@ function storagePopup(s: StorageRow): Row[] {
 export function drawStorage(data: StorageResponse): void {
   // Off at the whole-world zoom, exactly like the machines and the routes: 151 boxes across
   // 7 km is a scatter of specks, and the owner asked for a toggle.
-  var group = layer("storage", false, STORAGE_COLOUR);
+  // Last of the built band: a container is the thing a base is built AROUND, and the row is
+  // off by default, so the bottom of the list is where a reader who wants it goes looking.
+  var group = layer("storage", false, STORAGE_COLOUR, [BAND.built, 70, "storage"]);
   data.storage.forEach(function (s) {
     if (s.x_m === null || s.y_m === null) return;
     var colour = s.kind === "fluid" ? STORAGE_FLUID_COLOUR : STORAGE_COLOUR;

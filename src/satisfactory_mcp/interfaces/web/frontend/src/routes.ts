@@ -18,7 +18,7 @@
 
 import { code, popup } from "./dom";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { footprintCorners, map, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
 import { registerFetch } from "./registry";
@@ -387,7 +387,9 @@ function beltPopup(b: BeltRow, kind: string | null, first: Point3M, last: Point3
 export function drawBelts(data: BeltsResponse): void {
   // Off by default at the whole-world zoom, exactly like `machines` and for the same
   // reason: 3,085 routes across 7 km is a smear. See reveal() in labels.ts.
-  var group = layer("belts", false, BELT_COLOUR);
+  // The networks, immediately over the concrete they run on and in the order a reader names
+  // them: belts, then pipes, then power. See power.ts for the third.
+  var group = layer("belts", false, BELT_COLOUR, [BAND.built, 10, "belts"]);
   var ppm = pixelsPerMetre();
   data.belts.forEach(function (b) {
     var first = b.points_m[0]!;
@@ -770,7 +772,9 @@ function routeChevrons(points_m: Point3M[], reverse: boolean): PointM[][] {
 
 export function drawPipes(data: PipesResponse): void {
   // Off by default at the whole-world zoom, exactly like `belts` and `machines`. See reveal() in labels.ts.
-  var group = layer("pipes", false, PIPE_COLOUR);
+  // Directly under the belts, which is the pair they are: two networks in one grammar. See
+  // drawBelts for the band.
+  var group = layer("pipes", false, PIPE_COLOUR, [BAND.built, 20, "pipes"]);
   var ppm = pixelsPerMetre();
   var alpha = chevronOpacity(ppm);
   data.pipes.forEach(function (p) {

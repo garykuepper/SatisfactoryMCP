@@ -27,7 +27,7 @@
 
 import { popup } from "./dom";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { pixelsPerMetre } from "./map";
 import { registerFetch } from "./registry";
 import { ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
@@ -182,7 +182,9 @@ export function drawPower(data: PowerResponse): void {
    * 2.5 px discs cluster into the same shape the wires already make, so they cost nothing
    * legible and they are the layer at factory zoom. Splitting them into a second checkbox
    * would be two rows for one idea. */
-  var group = layer("power", true, WIRE_COLOUR);
+  // Third of the three networks and last of them, under the belts and the pipes: the grid is
+  // what joins this world's bases rather than what moves anything through one.
+  var group = layer("power", true, WIRE_COLOUR, [BAND.built, 30, "power"]);
   // The same expression the zoom pass restyles these with, off the same table -- see
   // routeWeight in routes.ts, which is exported for exactly this line.
   var weight = routeWeight(ROUTE_WIDTH_M.power!, pixelsPerMetre());

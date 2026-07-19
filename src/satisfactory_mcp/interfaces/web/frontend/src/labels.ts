@@ -11,7 +11,7 @@ import { code, esc, popup } from "./dom";
 import { cardWithFloors } from "./floors";
 import { batch } from "./layercontrol";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { map } from "./map";
 import { registerFetch } from "./registry";
 import { state } from "./state";
@@ -190,7 +190,9 @@ function factoryAnchor(
 }
 
 export function drawFactories(data: FactoriesResponse): void {
-  var named = layer("factory labels", true);
+  // Chrome rather than built: a label is the page's name for a place, not a thing standing
+  // in it -- the same kind of row as the region names two slots up, and read the same way.
+  var named = layer("factory labels", true, undefined, [BAND.chrome, 30, "factory labels"]);
   data.labels.forEach(function (f) {
     factoryAnchor(
       f,
@@ -206,7 +208,9 @@ export function drawFactories(data: FactoriesResponse): void {
       f.name
     ).addTo(named);
   });
-  var proposed = layer("proposals", false);
+  // Directly under the labels it is the machine-made version of, and last of the chrome:
+  // a proposal names a place nobody has named yet, which is the weakest claim in the band.
+  var proposed = layer("proposals", false, undefined, [BAND.chrome, 40, "proposals"]);
   data.proposals.forEach(function (p) {
     var title = "#" + p.index + " " + p.label;
     // No cohesion row: the clusterer does not compute the score yet (every proposal

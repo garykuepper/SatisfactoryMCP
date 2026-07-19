@@ -9,7 +9,7 @@
 
 import { esc } from "./dom";
 import { L } from "./leaflet";
-import { layer } from "./layers";
+import { BAND, layer } from "./layers";
 import { map } from "./map";
 import { REGION_COLOUR } from "./palette";
 import { state } from "./state";
@@ -131,8 +131,12 @@ export function drawRegions(data: RegionsResponse): void {
   // "regions" and "region names": one row for the fill, one for the labels over it, named
   // as the pair they are. The fill was called "terrain" until there was a real terrain
   // render to be confused with -- what it draws is biome regions, and always was.
-  var regions = layer("regions", true);
-  var names = layer("region names", true);
+  //
+  // The top of the legend, and adjacent slots because they ARE the pair: the biome fill is
+  // the ground every other layer is drawn over, and its names are the same thing said in
+  // words. Nothing on this page is chrome ahead of these two.
+  var regions = layer("regions", true, undefined, [BAND.chrome, 0, "regions"]);
+  var names = layer("region names", true, undefined, [BAND.chrome, 10, "region names"]);
   var cell = data.cell_m;
   data.grid.forEach(function (row, j) {
     for (var i = 0; i < row.length; i++) {
