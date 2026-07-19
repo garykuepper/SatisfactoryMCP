@@ -68,7 +68,9 @@ L.control.scale({ imperial: false }).addTo(map);
  *     -- and those two start folded, because they are the families that grow with the
  *     world and that turned a nine-row legend into thirty-five. Their heads carry the
  *     same "n of m" count, which is what lets a folded section still answer "are the ore
- *     dots on?" without unfolding it.
+ *     dots on?" without unfolding it. WHICH families exist, and which start shut, is not
+ *     this file's to say any more: both are declared by the module that draws them, and
+ *     `registerSection` below is the seam.
  *   * The MODE head folds the four base-map radios, and starts OPEN: it is four rows that
  *     never grow, and it is the row that answers "why is the map dark?". Its tail is the
  *     active mode's name rather than a count, because one of four is always the answer.
@@ -83,16 +85,51 @@ L.control.scale({ imperial: false }).addTo(map);
  * layer CONTENTS without rebuilding the control, the layer groups or these flags.
  */
 /** One data-driven family of control rows, folded together and toggled together. */
-interface Section {
+export interface Section {
+  /** This section's own name in `state.panel.sections`, where its fold is remembered. */
   key: string;
+  /** The layer-name prefix whose rows are this family. The trailing space is load-bearing
+   *  -- matching is `indexOf === 0`, and "node:" would also take "node:-something-else". */
   prefix: string;
+  /** What the head calls the family, and what its two tooltips are phrased around. */
   title: string;
+  /** Whether it starts unfolded. Both families that exist say no, for the reason the block
+   *  above gives: they are the ones that grow with the world, and their heads carry a count
+   *  that answers "are the ore dots on?" without being opened. */
+  startOpen: boolean;
 }
 
-var SECTIONS: Section[] = [
-  { key: "nodes", prefix: "node: ", title: "resource nodes" },
-  { key: "pickups", prefix: "pickup: ", title: "pickups" },
-];
+/* The families, registered by the module that names them rather than listed here.
+ *
+ * The MECHANISM is this file's -- a family is a fold, a tri-state box, a count and a place
+ * in the render, and all four are the control's business. WHICH families exist is not: the
+ * two that do are "the `node: ` rows" and "the `pickup: ` rows", and the module that creates
+ * those rows is markers.ts, which now says so beside the `layer()` calls that make them.
+ * That is the same inversion registry.ts made for fetches, one seam down: the control owned
+ * a list of prefixes it could not create and could not check, and a third data-driven family
+ * would have meant editing two files to add one feature.
+ *
+ * Order here is registration order and is not load-bearing: a head is inserted immediately
+ * before its own family's first row, and where that row sits was decided by the row rank.
+ */
+var SECTIONS: Section[] = [];
+
+export function registerSection(section: Section): void {
+  if (import.meta.env.DEV) {
+    var clash = SECTIONS.filter(function (other) {
+      return other.key === section.key || other.prefix === section.prefix;
+    });
+    if (clash.length) {
+      console.error("two sections registered for " + section.key + "/" + section.prefix);
+    }
+  }
+  SECTIONS.push(section);
+  // The default fold, set at registration rather than in the table below: the module that
+  // declares a family is the one with an opinion about whether it starts open. Safe to write
+  // into `state.panel` from here because every caller is another module, and this file has
+  // finished evaluating -- panel and all -- before any of them can be evaluated at all.
+  state.panel.sections[section.key] = section.startOpen;
+}
 
 /** The MODE section's fold, kept in the same map as the families' so one mechanism folds
  *  all three -- see renderModes for why it is the only section built from a list rather
@@ -102,11 +139,15 @@ var MODE_SECTION = "modes";
 /** The radio group's name, which is the whole of what makes the four exclusive. */
 var MODE_GROUP = "basemap-mode";
 
+/* The folds this file's OWN two sections start in. The registered families are not here:
+ * each sets its default as it registers, which is what makes a family one line in one file.
+ *
+ * `floors` starts open and normally has no section to open: the picker exists only while the
+ * page is slicing a factory, and arriving there is a gesture that should show it. `modes` is
+ * four rows that never grow and answers "why is the map dark?", so it starts open too. */
 state.panel = {
   open: true,
-  // `floors` starts open and normally has no section to open: the picker exists only while
-  // the page is slicing a factory, and arriving there is a gesture that should show it.
-  sections: { floors: true, modes: true, nodes: false, pickups: false },
+  sections: { floors: true, modes: true },
 };
 
 function sectionFor(name: string): Section | null {

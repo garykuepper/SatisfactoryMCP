@@ -9,6 +9,7 @@
 
 import { code, popup } from "./dom";
 import { regionLine, shortResource } from "./format";
+import { registerSection } from "./layercontrol";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { xy } from "./map";
@@ -107,6 +108,21 @@ export function drawNodes(data: NodesResponse): void {
     fail("nodes: " + data.save_error + " — nodes drawn, occupancy unknown");
   }
 }
+
+/* The `node: ` rows as a family: one fold, one tri-state box, one "n of 14".
+ *
+ * Declared here rather than in the control because this is the file that makes those rows --
+ * `layer("node: " + short, …)` a few lines up is the only thing that ever will -- and a
+ * family whose prefix is spelled in one file and created in another is two edits for one
+ * feature. Shut by default: fourteen rows that grow with the world are what turned a nine-row
+ * legend into thirty-seven, and the head's own count answers "are the ore dots on?" without
+ * opening it.
+ *
+ * NOT the same statement as the row rank above, and the two are independent on purpose. The
+ * rank puts these rows together and in order; the section puts a head on them. A family with
+ * no rank would still fold -- its rows would just be scattered through the list, which is
+ * what the head would then be a head OF. */
+registerSection({ key: "nodes", prefix: "node: ", title: "resource nodes", startOpen: false });
 
 /* First of the static wave, which is where it was when the wave was a list of calls: the node
  * dots are the layer every other placement is read against, and the extractors drawn on top
@@ -221,6 +237,10 @@ export function drawCollectibles(data: CollectiblesResponse): void {
       });
     });
 }
+
+/* The `pickup: ` rows as a family, on the same terms as the node one above and shut for the
+ * same reason -- ten rows, nine of them normally off, and a count that says so folded. */
+registerSection({ key: "pickups", prefix: "pickup: ", title: "pickups", startOpen: false });
 
 /* The live wave, because a pickup is collected between one autosave and the next, and
  * `mode=remaining` because the question the layer answers is "what is left". The query string
