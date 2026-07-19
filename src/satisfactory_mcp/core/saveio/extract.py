@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-17 projection is this project's shape, versioned with this project's cache,
+the schema-18 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -63,7 +63,40 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
+
+#: The classes the game drops on the ground when items have nowhere else to go. Schema 18;
+#: see `_crates`.
+#:
+#: **One class, and the game says so.** ``AFGCrate`` (``FGCrate.h``) is the whole family:
+#: "containers of items that are spawned on demand when the contents do not fill into the
+#: player's inventory, or when the player dies". A death crate and a dismantle crate are the
+#: same actor with a different ``mCrateType``, which is why this is a class list of one and
+#: the KIND is read off a property rather than off a name. All 170 crates across the 67 saves
+#: on the reference machine are ``BP_Crate_C``; there is no second class to find.
+#:
+#: **Not the item pickups beside them, and the distinction is the world's rather than ours.**
+#: ``FGItemPickup_Spawnable`` (336 on the reference world) and ``BP_ItemPickup_Spawnable_C``
+#: (7) are map-placed loot -- the things that were always lying there -- and they are the
+#: ``collectibles`` layer's business, which already reports them against the world table.
+#: A crate is the opposite record: it did not exist until the player made it exist, by dying
+#: or by dismantling something with a full inventory.
+CRATE_CLASSES = ("BP_Crate_C",)
+
+#: ``EFGCrateType`` (``FGCrate.h``) as the projection spells it. The enum's own three values,
+#: renamed only by dropping the ``CT_`` and lowercasing -- the game's vocabulary, not a new one.
+#:
+#: ``none`` is the game's OWN third value and not a parse failure, which is the whole reason
+#: it is spelled out here. ``mCrateType`` is a ``SaveGame`` property, so UE omits it while it
+#: is still at the class default of ``CT_None``, and the header comments beside its siblings
+#: say what that means: ``mMapText`` is "name of the crate on the map (before distinction
+#: between dismantle and death crates was added)". A crate that predates the distinction
+#: carries no type and never will -- measured, and it is not a handful: on the reference
+#: machine's saves the property does not appear at all below build 433351, and two of the
+#: reference world's own crates were created under builds 201717 and 186638 and still read
+#: ``none`` under 495413. So "unknown kind" is a permanent, ordinary state of an old crate,
+#: and reporting it as a death crate would be inventing the one fact the save withheld.
+CRATE_KINDS = {"CT_None": "none", "CT_DismantleCrate": "dismantle", "CT_DeathCrate": "death"}
 
 #: The classes drawn as POLES by the power layer: where a wire can end at something the
 #: player placed for the purpose of ending wires at it. Schema 17; see `_power`.
@@ -467,6 +500,17 @@ def extract(path: str) -> dict:
         # its contents. ``inventories["storage"]`` next door is the same stacks summed over the
         # whole world, which answers "have I got enough steel" and cannot answer "where is it".
         "storage": [],
+        # The crates on the ground and what is in each one. Schema 18; see `_crates`.
+        #
+        # Its OWN key rather than more rows in ``storage``, and the reason is that the two
+        # answer different questions. A container is infrastructure: the player built it, it
+        # stays where it was put, and "where did I leave the steel" is a question about a
+        # base. A crate is a SITUATION -- somebody died here, or dismantled something with a
+        # full inventory -- it self-destructs the moment it is emptied, and the question it
+        # answers is "what did I lose and where". Merging them would put 2 rows that are
+        # events among 151 that are places, and any client wanting one without the other
+        # would have to filter by class to get its own question back.
+        "crates": [],
         "pipe_networks": [],
         "depot": {},
         # Split by owner: lumping machine buffers in with carried stock overstates
@@ -504,6 +548,14 @@ def extract(path: str) -> dict:
     #: buffer's fluid comes off its pipe NETWORK, which may be written after either.
     storage_actors: list[tuple] = []
     held: dict[str, tuple] = {}
+    #: (class, instanceName, pos, yaw, mCrateType) per crate, and owner instanceName ->
+    #: (totals, slotCount) for every component named ``Inventory``. Held for the reason the
+    #: containers above are, and one more: a crate's inventory component is spelled
+    #: ``.inventory`` on some saves and ``.Inventory`` on others -- both cases occur on this
+    #: machine, 89 and 81 times -- so the role test has to be case-folded and the join has to
+    #: happen where the OWNER's class is known. See `_crates`.
+    crate_actors: list[tuple] = []
+    crate_held: dict[str, tuple] = {}
     #: (class, instanceName, pos, yaw) per pole, and shortName -> (endA, endB) for every actor
     #: that carries an ``mWireInstances``. Both held rather than emitted in the walk because a
     #: wire's two ENDS are the two power connection components that name it, and a component
@@ -576,6 +628,21 @@ def extract(path: str) -> dict:
                 totals = {}
                 _accumulate_inventory(p["mInventoryStacks"], totals)
                 held[str(instance).rpartition(".")[0]] = (
+                    totals,
+                    len(p["mInventoryStacks"] or []),
+                )
+            elif role.lower() == "inventory":
+                # Every one of them, on the terms ``StorageInventory`` above is collected on:
+                # a player pawn, a crashed drop pod and a crate all own a component by this
+                # name, and which of them this is cannot be known from a component header.
+                # `_crates` looks up only the owners it has a crate ACTOR for, so the pawn and
+                # the pods simply go unclaimed. Case-folded because the game spells the same
+                # component both ways across save versions -- ``.inventory`` and ``.Inventory``
+                # -- and a case-sensitive test would silently empty half the crates in the
+                # world while reporting them all as present.
+                totals = {}
+                _accumulate_inventory(p["mInventoryStacks"], totals)
+                crate_held[str(instance).rpartition(".")[0]] = (
                     totals,
                     len(p["mInventoryStacks"] or []),
                 )
@@ -755,6 +822,24 @@ def extract(path: str) -> dict:
                 out["node_state"][instance] = {"resources_left": left}
             continue
 
+        # ---- crates ---------------------------------------------------------
+        # ``continue``d past, unlike the pipes and containers below, and the difference is
+        # that a crate is NOT a ``Build_`` actor: it owes ``building_counts`` nothing, has no
+        # recipe, no clock and no buffers, and every line under the gate below is about a
+        # buildable. Held rather than emitted because its contents are a component, written
+        # after it -- the containers' reason exactly.
+        if cls in CRATE_CLASSES:
+            crate_actors.append(
+                (
+                    cls,
+                    instance,
+                    pos_of(header),
+                    yaw_of(getattr(header, "rotation", None)),
+                    p.get("mCrateType"),
+                )
+            )
+            continue
+
         if not cls.startswith("Build_"):
             continue
         counts[cls] = counts.get(cls, 0) + 1
@@ -874,6 +959,7 @@ def extract(path: str) -> dict:
     # index past the end of it. A pipe with no connection at all gets -1 instead.
     out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix, drops)
     out["storage"] = _storage(storage_actors, held, pipe_nets)
+    out["crates"] = _crates(crate_actors, crate_held)
     out["removed"] = _removed(save)
     out["n_objects"] = n_objects
     out.setdefault("progression", {}).setdefault("available_recipes", [])
@@ -888,7 +974,12 @@ def extract(path: str) -> dict:
     unread = (
         sum(
             1
-            for key in ("machines", "extractors", "generators", "attachments", "storage")
+            # Schema 18's crates join the census on the terms schema 17's poles did: a crate's
+            # yaw is read by the same `yaw_of` and means the same thing, and a placement left
+            # out would make this a count of some of the world. Free on the evidence -- all
+            # 170 crates in the 67 saves on the reference machine read their rotation -- which
+            # is exactly why it can be added to a banked key without moving it.
+            for key in ("machines", "extractors", "generators", "attachments", "storage", "crates")
             for record in out[key]
             if record.get("yaw") is None
         )
@@ -1877,6 +1968,83 @@ def _storage(actors: list, held: dict, networks: list) -> list:
             # container, and because the docs dump spells it as two numbers to multiply.
             row["slots"] = slots
         rows.append(row)
+    return rows
+
+
+def crate_kind(raw) -> str:
+    """``mCrateType`` as one of ``CRATE_KINDS``' words, defaulting to ``none``.
+
+    The parser hands an EnumProperty back as ``[enumName, "EFGCrateType::CT_DeathCrate"]``,
+    so the word wanted is the tail of the second element. Anything else -- an absent property,
+    a shape this parser has not met, a value the enum has grown since -- is ``none``, which is
+    the enum's own name for "this crate does not say", and is therefore not a lie in any of
+    the three cases.
+    """
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        return CRATE_KINDS["CT_None"]
+    return CRATE_KINDS.get(str(raw[1]).rsplit("::", 1)[-1], CRATE_KINDS["CT_None"])
+
+
+def _crates(actors: list, held: dict) -> list:
+    """Every crate on the ground, what kind it is, where it is, and what is inside it.
+
+    ``actors`` is ``[(class, instanceName, pos, yaw, mCrateType), ...]`` and ``held`` is
+    ``{ownerInstanceName: ({itemClass: count}, slotCount)}`` for every component named
+    ``Inventory``, in either case, anywhere in the world.
+
+    **The record nothing else in the projection could carry.** A crate is not a buildable, so
+    it is not in ``building_counts``, not a machine, not a lightweight piece and not a
+    container -- schema 15's ``storage`` deliberately lists the classes it joins, and this is
+    not one of them. What the projection HAS said about a crate's contents since schema 11 is
+    that they are somewhere in ``inventories["machine"]``: the bucket rule sees a component
+    called ``Inventory`` on an owner that is neither a player nor a storage class and files it
+    with the smelter buffers. That is left exactly as it is -- it is a schema-11 key, it is
+    part of the banked agreement with the deleted parser, and moving it is a separate decision
+    from being able to see a crate at all.
+
+    **The kind comes off ``mCrateType`` and is ``none`` for a crate that predates it**, which
+    is a third of the crates on this machine and the reason `CRATE_KINDS` argues the point at
+    length. It is the game's own value, not a parse failure.
+
+    **What the save does NOT say, stated because the obvious question is "is it mine".**
+    ``AFGCrate`` has exactly one ``SaveGame`` property and it is ``mCrateType``; there is no
+    owning player, no timestamp and no cause of death on the actor -- verified against
+    ``FGCrate.h`` in the install's own ``Headers.zip`` and against every crate in all 67 saves
+    on this machine, none of which carries a second property. So in a single-player world every
+    death crate is the player's by construction, and in a co-op world this projection cannot
+    say whose it was. A field invented here would answer that question wrongly and look exactly
+    like an answer.
+
+    **Contents are joined by owner instance name**, the join `_storage` uses, and the same
+    guard applies: a player pawn and 93 crashed drop pods also own a component named
+    ``Inventory``, and they are not in ``actors``, so they are never looked up. Items biggest
+    first, ties by class, for the popup that shows the top few.
+
+    Sorted by kind then instance so the key is stable between two runs and diffable between
+    two saves of one world -- and so that the interesting rows, the death crates, do not move
+    around inside the list as dismantle crates come and go.
+    """
+    rows: list[dict] = []
+    for cls, instance, pos, yaw, raw_type in actors:
+        totals, slots = held.get(str(instance), ({}, 0))
+        rows.append(
+            {
+                "cls": cls,
+                "instance": instance,
+                "pos": pos,
+                "yaw": yaw,
+                "kind": crate_kind(raw_type),
+                "items": [
+                    [item, amount]
+                    for item, amount in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+                ],
+                # Off the component, like a container's: a crate is sized to what was put in
+                # it, so this is a fact about this crate rather than about its class -- 1 slot
+                # for a dropped stack of rods, 55 for a full inventory's worth of death.
+                "slots": slots,
+            }
+        )
+    rows.sort(key=lambda row: (row["kind"], str(row["instance"])))
     return rows
 
 
