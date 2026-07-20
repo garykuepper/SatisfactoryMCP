@@ -130,6 +130,16 @@ _GEN_EXTRA_ROOTS = frozenset({"ooz", "pyooz", "texture2ddecoder", "PIL"})
 #: The one package allowed to name them at all, and only inside a function body.
 GAMEASSETS = "satisfactory_mcp.core.gameassets"
 
+#: What ``core/gameassets`` may import at module scope besides the standard library and
+#: ``core`` itself. **One entry, and it is not an extra**: ``numpy`` is in
+#: ``[project] dependencies``, so a clone that installs this project has it, and naming it
+#: here does not weaken the rule next door -- the rule is that an *optional* dependency
+#: must not become a dependency of the server by the back door, and numpy was never
+#: optional. It is here because ``nanite.py`` and ``staticmesh.py`` hand back triangle
+#: arrays, and an array reader that returns lists of tuples to avoid an import the project
+#: already makes would be a worse file for no gain.
+_GAMEASSETS_HARD_ROOTS = frozenset({"numpy"})
+
 #: Who may import whom. A layer always may import itself.
 #:
 #: ``tools`` is the one entry that is not part of the shipped package, and the interesting
@@ -722,14 +732,20 @@ def test_gameassets_never_imports_dynamically():
 
 
 def test_gameassets_imports_nothing_but_the_stdlib_and_core():
-    """The allowlist, stated positively: stdlib, ``core``/``config``, and the extra lazily.
+    """The allowlist, stated positively: stdlib, ``core``/``config``, numpy, the extra lazily.
 
     ``core`` may already import only ``core``, so most of this is implied -- but only most.
     The package exists to be read by ``tools/gen_*.py``, and the tempting import is the one
-    that goes the other way: a generator's helper, a numpy convenience, a third-party format
-    library pulled in because it is already installed for something else. Any of those would
-    quietly make a *generation-time* dependency into a dependency of the server, which is
-    exactly the shape of thing the ``gen`` extra was created to stop.
+    that goes the other way: a generator's helper, a third-party format library pulled in
+    because it is already installed for something else. Either would quietly make a
+    *generation-time* dependency into a dependency of the server, which is exactly the shape
+    of thing the ``gen`` extra was created to stop.
+
+    ``numpy`` is on the list and is not an exception to that rule -- it is a hard dependency
+    of the project, so nothing about a clone changes by naming it. See
+    ``_GAMEASSETS_HARD_ROOTS``. Anything genuinely optional still has to be imported inside
+    a function body, and ``test_gameassets_never_imports_dynamically`` is what stops that
+    rule being routed around.
     """
     stray = []
     for path in _gameassets_sources():
@@ -742,6 +758,7 @@ def test_gameassets_imports_nothing_but_the_stdlib_and_core():
                 allowed = (
                     root in sys.stdlib_module_names
                     or root in _GEN_EXTRA_ROOTS
+                    or root in _GAMEASSETS_HARD_ROOTS
                     or target == "satisfactory_mcp.config"
                     or target == "satisfactory_mcp.core"
                     or target.startswith("satisfactory_mcp.core.")
@@ -750,10 +767,32 @@ def test_gameassets_imports_nothing_but_the_stdlib_and_core():
                     stray.append(f"  {name}:{node.lineno} imports {target}")
     assert not stray, (
         "core/gameassets may import the standard library, satisfactory_mcp.core (and "
-        "config), and the `gen` extra from inside a function -- nothing else, or reading "
-        "the game's assets stops being something the server can be built without:\n"
+        "config), numpy, and the `gen` extra from inside a function -- nothing else, or "
+        "reading the game's assets stops being something the server can be built without:\n"
         + "\n".join(sorted(stray))
     )
+
+
+def test_the_nanite_port_travels_with_its_notice():
+    """Apache-2.0 section 4(a) and 4(d), as a file that exists rather than an intention.
+
+    ``nanite.py`` and ``staticmesh.py`` are ports of formats documented by CUE4Parse, whose
+    licence permits exactly this and asks for attribution and a copy of itself in return.
+    Neither obligation is met by a comment, so the two files are asserted to be here, to
+    name both modules, and to name the licence -- and if one of the modules is ever deleted
+    or renamed, this fails and the notice gets corrected instead of going stale.
+    """
+    directory = PKG / "core" / "gameassets"
+    notice = directory / "NOTICE"
+    licence = directory / "LICENSE-Apache-2.0.txt"
+    assert notice.is_file(), f"{notice} is missing: Apache-2.0 4(d) is not optional"
+    assert licence.is_file(), f"{licence} is missing: Apache-2.0 4(a) is not optional"
+    text = notice.read_text(encoding="utf-8")
+    for module in ("nanite.py", "staticmesh.py"):
+        assert (directory / module).is_file(), f"{module} is gone; NOTICE still names it"
+        assert module in text, f"NOTICE does not name {module}"
+    assert "CUE4Parse" in text and "Apache License, Version 2.0" in text
+    assert "Apache License" in licence.read_text(encoding="utf-8")
 
 
 def test_the_served_page_is_build_output_and_nothing_else():

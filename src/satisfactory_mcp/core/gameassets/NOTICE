@@ -1,0 +1,79 @@
+NOTICE
+======
+
+This notice covers two files in this directory:
+
+    nanite.py       the Unreal Engine 5.6 Nanite streaming-page decoder
+    staticmesh.py   the cooked UStaticMesh render-data walk
+
+Both are independent Python reimplementations of on-disk formats. They were written by
+reading, and are derived from, the format description embodied in:
+
+    CUE4Parse
+    Copyright (c) CUE4Parse contributors
+    https://github.com/FabianFG/CUE4Parse
+    Licensed under the Apache License, Version 2.0
+
+    Files consulted, for nanite.py:
+      FNaniteStreamableData.cs   page layout, cluster SOA striding, decode order
+      FPageDiskHeader.cs         page disk header field order and version gates
+      FClusterDiskHeader.cs      (in FNaniteStreamableData.cs) per-cluster offsets
+      FCluster.cs                packed cluster bit layout; GetTriangleIndices;
+                                 ResolveVertexReferences; the low/mid/high byte-plane
+                                 vertex streams
+      FFixupChunk.cs             fixup chunk header and magic
+      NaniteUtils.cs             bit helpers, PrecisionScales, zigzag, BitAlignU32
+      NaniteConstants.cs         version-gated constants
+
+    Files consulted, for staticmesh.py:
+      FStaticMeshRenderData.cs   the LOD array and what follows it
+      FStaticMeshLODResources.cs strip flags and buffer order
+      FStaticMeshVertexBuffer.cs, FPositionVertexBuffer.cs, FColorVertexBuffer.cs,
+      FRawStaticIndexBuffer.cs   the vertex and index buffer headers
+      NaniteResources.cs         the FNaniteResources field order
+      FPageStreamingState.cs     the page table entry
+      FByteBulkDataHeader.cs     the Zen BulkDataMap entry
+
+**No CUE4Parse source code is copied into this repository.** The C# was read to learn the
+on-disk layout; the Python is a fresh implementation with different structure -- numpy
+vectorisation over the byte planes, positions and topology only, no attribute decode -- and
+it is validated against the bytes on disk rather than against CUE4Parse's output. That
+validation is not a claim: the pure-Python decoder was diffed against a CUE4Parse build
+over all 156 Nanite meshes of Satisfactory build 495413 and agrees on the canonical
+triangle multiset of every one of them, with a maximum absolute vertex delta of 0.0 cm --
+bit-exact float32 -- while emitting genuinely different arrays before canonicalisation
+(11,566 of 12,817 vertex rows differ on CliffPillar_01). The two implementations are
+independent and equivalent, which is what makes the port a port rather than a translation.
+
+The Apache License 2.0 permits this use, including modification and redistribution,
+provided attribution is retained. This NOTICE is that attribution.
+
+Apache-2.0 section 4 obligations, and how each is met here:
+
+  (a) recipients get a copy of the licence
+      -> LICENSE-Apache-2.0.txt, in this directory
+
+  (b) modified files carry prominent notices stating that they changed
+      -> the header docstring of each file states that it is a port, names the
+         source, and says what was deliberately left out
+
+  (c) attribution notices from the source are retained
+      -> this file
+
+  (d) a NOTICE file is distributed with the derivative work
+      -> this file, which travels with the two modules it names
+
+Apache-2.0 is compatible with committing the result, and its obligations are weaker than
+those of the GPL tools this project already uses locally (the `pyooz` precedent, recorded
+in tools/_common.py and in every generator's sidecar).
+
+Epic's own Unreal Engine source was **not** fetched and not consulted: it requires an Epic
+account and EULA acceptance, and the format was learned from CUE4Parse only.
+
+No game assets, extracted geometry, or decoded page bytes are covered by this notice.
+Those never leave the reader's machine and never enter git -- the same posture every
+generator in tools/ has, and data/local/ is gitignored for the same reason.
+
+Other licences touched by these two modules:
+
+  numpy            BSD-3-Clause    a dependency of this project outright
