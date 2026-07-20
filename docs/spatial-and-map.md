@@ -404,6 +404,16 @@ landscape — continuous geometry the game evaluates itself, which genuinely sha
 is cliff, rasterised low-poly collision hulls whose facets resampling can only polish, and
 14.0% is fill, a 3.9 m-quantised block raster where resampling does nothing at all.
 
+**2026-07-30, the cliff half of that sentence is out of date and the conclusion is not.**
+Heightfield v3 builds the cliff layer from the Nanite leaf rather than the collision hull:
+the world-space median triangle edge is 0.48 m, not 2.48 m, and 73% of cliff texels now hold
+at least one source vertex. So "low-poly" is wrong and the province genuinely does carry
+detail the artwork is not needed for. It is borrowed over anyway, for now, because the gain
+was picked by looking at a hull-built field and re-picking it is a separate change with its
+own before-and-after — and because the borrow's own province test had to be widened to both
+cliff values regardless, or it would have withdrawn itself from three quarters of the
+province by renumbering. See [§20 of `parked.md`](parked.md) for what v3 did and did not fix.
+
 Over the last two provinces, and only over them, the render borrows the artwork sheet's
 **luminance high pass**: the game's own 8192 px map, decoded from its four BC1 slices in the
 same run, minus its own Gaussian blur at σ = 8 px, multiplied into the shading and faded out

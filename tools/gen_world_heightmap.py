@@ -1553,7 +1553,13 @@ def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np
         level[orphan] = lookup[labelled[orphan]]
 
     terrain_m = np.where(height_dm == hf.NODATA, np.nan, height_dm / hf.DM_PER_M).astype(np.float32)
-    measurable = ((prov == hf.PROV_LANDSCAPE) | (prov == hf.PROV_CLIFF)) & np.isfinite(terrain_m)
+    # Both cliff values. A depth is knowable wherever the ground under the water was
+    # measured at 1 m, and whether a source vertex happened to land in the texel has
+    # nothing to do with that -- listing only 4 here would call three quarters of the
+    # cliff province depth-unknown for a reason that is about rendering.
+    measurable = ((prov == hf.PROV_LANDSCAPE) | np.isin(prov, hf.PROV_CLIFF_VALUES)) & np.isfinite(
+        terrain_m
+    )
     standing_out = measurable & np.isfinite(level) & (level <= terrain_m)
     level[standing_out] = np.nan
 

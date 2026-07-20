@@ -412,7 +412,10 @@ def main() -> int:
     for name, pts in probes.items():
         col = np.clip(np.round((pts[:, 0] - gen.ORIGIN_X_CM) / 100.0).astype(int), 0, 7499)
         row_i = np.clip(np.round((pts[:, 1] - gen.ORIGIN_Y_CM) / 100.0).astype(int), 0, 7499)
-        province[name] = field._prov[row_i, col] == hf.PROV_CLIFF
+        # Both cliff values, so this selects the same province on a field written before
+        # the split and on one written after it. Testing ``== PROV_CLIFF`` would silently
+        # score a v3 field on a quarter of the probes and call it the same measurement.
+        province[name] = np.isin(field._prov[row_i, col], hf.PROV_CLIFF_VALUES)
         print(f"  {name}: {len(pts)} probes, {int(province[name].sum())} on the cliff province")
 
     # -- the ladder ----------------------------------------------------------------------
