@@ -38,7 +38,9 @@ FAKE_W, FAKE_H = 7, 6
 FAKE_X0, FAKE_Y0, FAKE_SPACING = -300.0, -200.0, 100.0
 
 
-def build_field(tmp_path: Path, *, water: bool = True, quality: bool = True) -> Path:
+def build_field(
+    tmp_path: Path, *, water: bool = True, quality: bool = True, density: bool = False
+) -> Path:
     """Write a whole synthetic field and return its directory.
 
     Row 0 is landscape, row 1 cliff, row 2 fill, row 3 no data, row 4 landscape under
@@ -73,8 +75,17 @@ def build_field(tmp_path: Path, *, water: bool = True, quality: bool = True) -> 
     wet[5, :] = -170  # a sea surface at -17.0 m over a fill "ground" of -15.0 m
     grade[5, :] = hf.WATER_LEVEL_ONLY
 
+    samples = np.zeros((FAKE_H, FAKE_W), np.uint8)
+    if density:
+        # Half of the cliff row is a texel a source vertex landed in and half is not,
+        # which is the only shape that exercises the split rather than a constant.
+        samples[1, : FAKE_W // 2] = 3
+        prov[1, : FAKE_W // 2] = hf.PROV_CLIFF_DIRECT
+
     (directory / hf.HEIGHT_NAME).write_bytes(hf.encode_i16(height))
     (directory / hf.PROV_NAME).write_bytes(hf.encode_u8(prov))
+    if density:
+        (directory / hf.DENSITY_NAME).write_bytes(hf.encode_u8(samples))
     if water:
         (directory / hf.WATER_NAME).write_bytes(hf.encode_i16(wet))
         if quality:
@@ -95,6 +106,7 @@ def build_field(tmp_path: Path, *, water: bool = True, quality: bool = True) -> 
                     "1": {"name": "landscape", "accuracy_m": 0.205},
                     "3": {"name": "fill", "accuracy_m": 3.897},
                     "4": {"name": "cliff", "accuracy_m": 0.21},
+                    "5": {"name": "cliff, direct", "accuracy_m": 0.21},
                 },
                 "sources": {"game": {"game_version_pinned": "buildVersion 495413, a test"}},
             }
@@ -252,6 +264,35 @@ def test_the_field_answers_with_the_layer_that_answered_and_its_measured_accurac
     assert (cliff.z_m, cliff.source, cliff.accuracy_m) == (245.6, "cliff", 0.21)
     fill = field.at(FAKE_X0, FAKE_Y0 + 2 * FAKE_SPACING)
     assert (fill.z_m, fill.source, fill.accuracy_m) == (-7.8, "fill", 3.897)
+
+
+def test_the_two_cliff_values_are_one_layer_split_by_how_the_texel_was_answered(tmp_path):
+    """5 is additive: it is still the cliff layer and it is still as accurate at 1 m.
+
+    What it adds is the only thing a renderer drawing finer than 1 m needs to know -- that
+    a source vertex actually landed in this texel -- and ``density.u8.z`` is the count
+    behind it.
+    """
+    field = hf.load_field(build_field(tmp_path, density=True))
+    interpolated = field.at(FAKE_X0 + 6 * FAKE_SPACING, FAKE_Y0 + FAKE_SPACING)
+    direct = field.at(FAKE_X0, FAKE_Y0 + FAKE_SPACING)
+    assert interpolated.provenance == hf.PROV_CLIFF
+    assert direct.provenance == hf.PROV_CLIFF_DIRECT
+    assert direct.source == "cliff, direct"
+    assert (interpolated.z_m, direct.z_m) == (245.6, 245.6)
+    assert (interpolated.accuracy_m, direct.accuracy_m) == (0.21, 0.21)
+
+    samples = field.density_raster()
+    assert samples is not None
+    assert samples[1, 0] == 3, "the direct half of the cliff row carries its sample count"
+    assert samples[1, FAKE_W - 1] == 0, "the interpolated half carries none"
+    assert samples[0].max() == 0, "the landscape is a lattice and has no sample count"
+
+
+def test_a_field_written_before_the_density_plane_says_nothing_rather_than_zero(tmp_path):
+    """Absent is not "no samples anywhere", and reading it as that would be a claim."""
+    field = hf.load_field(build_field(tmp_path))
+    assert field.density_raster() is None
 
 
 def test_a_no_data_texel_and_an_off_grid_point_are_both_silence(tmp_path):
