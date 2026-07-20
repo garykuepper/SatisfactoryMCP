@@ -72,11 +72,14 @@ import numpy as np
 from ... import config
 
 __all__ = [
+    "DENSITY_NAME",
     "DIR_NAME",
     "HEIGHT_NAME",
     "META_NAME",
     "NODATA",
     "PROV_CLIFF",
+    "PROV_CLIFF_DIRECT",
+    "PROV_CLIFF_VALUES",
     "PROV_FILL",
     "PROV_LANDSCAPE",
     "PROV_NAME",
@@ -106,6 +109,7 @@ HEIGHT_NAME = "height.i16.z"
 PROV_NAME = "prov.u8.z"
 WATER_NAME = "water.i16.z"
 WATER_QUALITY_NAME = "waterq.u8.z"
+DENSITY_NAME = "density.u8.z"
 META_NAME = "meta.json"
 
 #: The int16 value that means "nothing is known here". Not zero: zero is sea level and a
@@ -116,16 +120,36 @@ NODATA = -32768
 #: Which layer answered a texel. The numbers are the file format and must not be
 #: renumbered; 2 is deliberately absent, because the prototype that used it -- baseline
 #: values standing in for cliffs over the landscape -- was superseded by real geometry.
+#:
+#: **5 is additive and a reader that does not know it degrades correctly.** It splits the
+#: cliff province in two by how the texel was answered rather than by what answered it: 5
+#: is a texel a source vertex actually landed in, 4 is one the rasteriser reached by
+#: interpolating across a triangle wider than the texel. An old reader that tests
+#: ``== PROV_CLIFF`` reads 5 as "not landscape, not fill, not no-data", which is the whole
+#: of what 4 used to mean -- so the split costs nothing and states something new.
+#:
+#: A field written before the split emits no 5 at all and no density plane, and its 4s are
+#: the undivided cliff province. Which is why the split is announced by the presence of
+#: ``density.u8.z``, and never inferred from a texel being 4.
 PROV_NODATA = 0
 PROV_LANDSCAPE = 1
 PROV_FILL = 3
 PROV_CLIFF = 4
+PROV_CLIFF_DIRECT = 5
+
+#: The two values that are both the cliff layer. Anything asking "is this texel cliff"
+#: means this, and spelling it once is what stops the next caller testing only ``== 4``.
+PROV_CLIFF_VALUES = (PROV_CLIFF, PROV_CLIFF_DIRECT)
 
 PROV_NAMES = {
     PROV_NODATA: "no data",
     PROV_LANDSCAPE: "landscape",
     PROV_FILL: "fill",
+    # 4 keeps the name it has had since it existed, deliberately. A field written before
+    # the split has no density plane and its 4s mean "cliff" and nothing finer, so renaming
+    # them would make an old field claim a distinction it never measured.
     PROV_CLIFF: "cliff",
+    PROV_CLIFF_DIRECT: "cliff, direct",
 }
 
 #: What the water channel is called when a reading has one. Not a provenance value: water
@@ -314,6 +338,8 @@ class Field:
         self._water_tried = False
         self._water_quality: np.ndarray | None = None
         self._water_quality_tried = False
+        self._density: np.ndarray | None = None
+        self._density_tried = False
         self._accuracy = {
             int(key): value.get("accuracy_m")
             for key, value in (meta.get("provenance") or {}).items()
@@ -365,6 +391,26 @@ class Field:
             if path.is_file():
                 self._water_quality = decode_u8(path.read_bytes(), self.height, self.width)
         return self._water_quality
+
+    def density_raster(self) -> np.ndarray | None:
+        """``density.u8.z``, or ``None`` for a field written before it existed.
+
+        How many source vertices landed in each texel, clamped at 255 -- zero everywhere
+        the cliff layer did not answer, because the landscape and the fill are lattices and
+        "samples per texel" is not a question either of them has.
+
+        This is the interface between the geometry and anything that draws it. A renderer
+        asking for a pixel finer than the field's own 1 m spacing has to decide whether it
+        is reading a measurement or an interpolant, and this is the only plane that can
+        tell it. ``None`` is not zero: a field that predates the plane knows nothing about
+        its own density, and a caller must not read that as "no samples anywhere".
+        """
+        if not self._density_tried:
+            self._density_tried = True
+            path = self.directory / DENSITY_NAME
+            if path.is_file():
+                self._density = decode_u8(path.read_bytes(), self.height, self.width)
+        return self._density
 
     def at(self, x_cm: float, y_cm: float) -> Reading | None:
         """The terrain at one world coordinate, or ``None`` where the field knows nothing.

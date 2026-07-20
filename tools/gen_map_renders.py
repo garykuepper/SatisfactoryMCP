@@ -395,7 +395,15 @@ SEA_RGB = np.array([16, 32, 44], np.float32)
 #: the field, and its shading is the field's own. These two are not -- cliff is rasterised
 #: low-poly collision hulls and fill is a 3.9 m block raster -- and over them a render drawn
 #: from the field alone is smooth because it has nothing to say, not because the world is.
-BORROW_PROVENANCE = (hf.PROV_CLIFF, hf.PROV_FILL)
+#:
+#: **Both cliff values, and this is not a formality.** Heightfield v3 split the cliff
+#: province into 4 (a texel the rasteriser reached by interpolating a triangle wider than
+#: itself) and 5 (a texel a source vertex landed in), and on the shipped field 73% of it is
+#: 5. Listing only 4 would silently withdraw the borrow from three quarters of the province
+#: it was measured on -- the same shading change that was picked by looking, unpicked by a
+#: renumbering. Spelled through ``PROV_CLIFF_VALUES`` so a third cliff value cannot be
+#: added without this line seeing it.
+BORROW_PROVENANCE = (*hf.PROV_CLIFF_VALUES, hf.PROV_FILL)
 
 #: How far the borrow fades out across a province boundary, in field texels (metres). The
 #: provenance byte is a hard label on a 1 m grid, and a hard switch between two shading

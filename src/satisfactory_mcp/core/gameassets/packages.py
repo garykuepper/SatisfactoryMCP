@@ -25,11 +25,13 @@ from .iostore import ContainerError, Decompressor, IoStore
 #: (``_name_batch``, ``_owner_class``, the two rotation constants).
 __all__ = [
     "LEVEL_CLASS",
+    "MOUNT_ROOTS",
     "AssetIndex",
     "ClassFacts",
     "Package",
     "PackageView",
     "ScriptObjects",
+    "apply_fname_number",
     "class_name_of",
     "compose",
     "local_transform",
@@ -54,6 +56,13 @@ _D2R = math.pi / 180.0
 _UNIT_SCALE = (1.0, 1.0, 1.0)
 _MASK62 = (1 << 62) - 1
 
+#: The mount points a ``/Game/`` or ``/Engine/`` package path can hang off, and the whole
+#: reason :meth:`AssetIndex.path_for` needs a list rather than the one prefix it used to
+#: split on. A container path spells the same asset ``.../FactoryGame/Content/<rest>`` or
+#: ``.../Engine/Content/<rest>``, so what the two have in common is the part AFTER the
+#: mount -- and an ``/Engine/`` reference contains no ``/Game/`` at all.
+MOUNT_ROOTS = ("/Game/", "/Engine/")
+
 
 def _name_batch(blob: bytes, pos: int) -> tuple[list[str], int]:
     """An ``FNameBatch``: count, byte length, hash version, hashes, headers, then strings."""
@@ -72,6 +81,34 @@ def _name_batch(blob: bytes, pos: int) -> tuple[list[str], int]:
             names.append(blob[pos : pos + length].decode("utf-8", "replace"))
             pos += length
     return names, pos
+
+
+def _fname_numbers(blob: bytes, pos: int, count: int, limit: int) -> list[int]:
+    """The ``uint32[count]`` of ``FName`` numbers that follows an imported-package batch.
+
+    A name batch carries strings and nothing else, so the number half of every ``FName`` in
+    it is written separately -- as a plain array immediately after the strings, one entry
+    per name, in the same order. Reading the batch and stopping is what dropped it.
+
+    Measured on build 495413: the section runs to the end of the header and the array is
+    exactly ``4 * count`` bytes of it, on every package that has one. If it is not -- an
+    older cook, a layout change -- every number reads as zero, which is precisely the
+    behaviour this replaced, so a wrong guess degrades to the old answer rather than to a
+    wrong name.
+    """
+    if count <= 0 or pos + 4 * count > limit:
+        return [0] * max(count, 0)
+    return list(struct.unpack_from(f"<{count}I", blob, pos))
+
+
+def apply_fname_number(base: str, number: int) -> str:
+    """UE's own spelling of an ``FName``: ``("Foo", 4)`` is written ``Foo_3``.
+
+    One function because three readers need the identical rule -- the package's own name
+    map, ``ScriptObjects``, and the imported-package names -- and a fourth spelling of
+    ``number - 1`` would be a fourth chance to be off by one.
+    """
+    return base if number == 0 else f"{base}_{number - 1}"
 
 
 class ScriptObjects:
@@ -105,7 +142,7 @@ class ScriptObjects:
             name_index, number, own, outer, _cdo = struct.unpack_from("<IIQQQ", blob, pos + i * 32)
             slot = name_index & 0x3FFFFFFF
             base = names[slot] if slot < len(names) else f"<oob{slot}>"
-            entries[own] = (base if number == 0 else f"{base}_{number - 1}", outer)
+            entries[own] = (apply_fname_number(base, number), outer)
         self.entries = entries
         self.paths: dict[int, str] = {}
         for own in entries:
@@ -174,11 +211,21 @@ class Package:
         if import_offset and export_offset > import_offset:
             count = (export_offset - import_offset) // 8
             self.imports = list(struct.unpack_from(f"<{count}Q", blob, import_offset))
+        # ``ImportedPackageNames``: a name batch, then one uint32 FName NUMBER per name.
+        # Reading only the batch spells ``SM_MERGED_BP_CaveFloor2_3`` as
+        # ``SM_MERGED_BP_CaveFloor2``, and that reference then resolves to nothing -- which
+        # is how six of the largest meshes in the world went missing from the heightfield
+        # without anything reporting a failure. The number is right there in the header.
         self.imported_packages: list[str] = []
         offset = words[12]
         if offset and offset < self.header_size:
             try:
-                self.imported_packages, _ = _name_batch(blob, offset)
+                names, end = _name_batch(blob, offset)
+                numbers = _fname_numbers(blob, end, len(names), self.header_size)
+                self.imported_packages = [
+                    apply_fname_number(name, number)
+                    for name, number in zip(names, numbers, strict=True)
+                ]
             except (struct.error, IndexError):
                 self.imported_packages = []
 
@@ -190,7 +237,7 @@ class Package:
             # Kind 2 is the global name map, which lives in global.utoc. Nothing this
             # generator reads -- actor names, RelativeLocation -- is ever global.
             base = f"<kind{kind}:{slot}>"
-        return base if number == 0 else f"{base}_{number - 1}"
+        return apply_fname_number(base, number)
 
     def exports(self) -> list[dict]:
         out = []
@@ -505,8 +552,7 @@ class PackageView:
         slot = index & 0x3FFFFFFF
         if (index >> 30) != 0 or slot >= len(self.pkg.names):
             return None
-        base = self.pkg.names[slot]
-        return base if number == 0 else f"{base}_{number - 1}"
+        return apply_fname_number(self.pkg.names[slot], number)
 
 
 class AssetIndex:
@@ -515,22 +561,76 @@ class AssetIndex:
     Every class-side fact a generator wants -- a component template, a creature's
     ``mIsPassiveCreature``, a spore flower's damage radius, an ore's radioactivity -- is
     read out of the class asset, and all of them need the same lookup.
+
+    **Two assumptions the first version made, and what each one lost.** A package path is a
+    reference somebody typed; a container path is what the cooker wrote. They agree on the
+    spelling of an asset far less often than they look like they do.
+
+    * *One mount.* Splitting on ``/Game/`` to get the directory works until the reference is
+      an ``/Engine/`` one, which contains no ``/Game/`` at all -- so the split returns the
+      whole path and the namesake guard can never match it. ``/Engine/BasicShapes/Sphere``
+      and ``Plane`` fail exactly this way.
+    * *One casing.* The container spells ``Medkit`` as ``MedKit`` and ``trees`` as
+      ``Trees``, and an exact-case leaf key plus an exact-case ``directory in path`` guard
+      turns both into "not in the container". ``setdefault`` compounds it: only the first
+      path for a leaf was kept, so a second package sharing a leaf was unreachable even when
+      its directory was the matching one.
+
+    Case-folding both halves and keeping every candidate is a **strict superset** of the
+    old behaviour -- an exact-case leaf still wins where one exists, and it is still the
+    first such path in container order -- so nothing that resolved before resolves
+    differently. What it adds is the four references that resolved to nothing.
+
+    The other half of that story is not here: six ``SM_MERGED_BP_CaveFloor*`` failed for a
+    different reason entirely, an ``FName`` number dropped by the header reader, and no
+    amount of case-folding would have found them. See :func:`_fname_numbers`.
     """
+
+    SUFFIX = ".uasset"
 
     def __init__(self, store: IoStore) -> None:
         self.store = store
-        self._by_leaf: dict[str, str] = {}
+        self._by_leaf: dict[str, list[str]] = {}
         for path in store.by_path:
-            if path.endswith(".uasset"):
-                self._by_leaf.setdefault(path[: -len(".uasset")].rsplit("/", 1)[-1], path)
+            if path.endswith(self.SUFFIX):
+                leaf = path[: -len(self.SUFFIX)].replace("\\", "/").rsplit("/", 1)[-1]
+                self._by_leaf.setdefault(leaf.lower(), []).append(path)
+
+    @staticmethod
+    def _directory(package: str) -> str:
+        """A package path's directory below its mount point, case-folded.
+
+        The mount is dropped because that is the one part the two spellings genuinely
+        disagree on: ``/Game/FactoryGame/Equipment/...`` is written
+        ``.../FactoryGame/Content/FactoryGame/Equipment/...`` and ``/Engine/BasicShapes``
+        is written ``.../Engine/Content/BasicShapes``. What is left is a substring of the
+        container path, which is what the namesake guard tests for.
+        """
+        directory = package.rsplit("/", 1)[0]
+        for root in MOUNT_ROOTS:
+            if root in directory:
+                return directory.split(root, 1)[-1].strip("/").lower()
+        return directory.strip("/").lower()
 
     def path_for(self, class_package: str) -> str | None:
-        """The container path of a ``/Game/`` class package, guarded against namesakes."""
-        path = self._by_leaf.get(class_package.rsplit("/", 1)[-1])
-        if not path:
+        """The container path of a class package, guarded against namesakes."""
+        leaf = class_package.rsplit("/", 1)[-1]
+        candidates = self._by_leaf.get(leaf.lower())
+        if not candidates:
             return None
-        directory = class_package.split("/Game/", 1)[-1].rsplit("/", 1)[0]
-        return path if directory in path.replace("\\", "/") else None
+        directory = self._directory(class_package)
+        matches = [p for p in candidates if directory in p.replace("\\", "/").lower()]
+        if not matches:
+            return None
+        # An exact-case leaf is a better answer than a case-folded one and is preferred
+        # wherever the container offers both, which is what keeps this a superset rather
+        # than a re-resolution of everything that already worked.
+        exact = [
+            p
+            for p in matches
+            if p[: -len(self.SUFFIX)].replace("\\", "/").rsplit("/", 1)[-1] == leaf
+        ]
+        return (exact or matches)[0]
 
 
 class ClassFacts:

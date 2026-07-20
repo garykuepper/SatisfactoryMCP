@@ -32,13 +32,34 @@ in the middle of the map and catastrophic in the tail: the cliffs, mesas and bou
 placed static meshes, and the landscape underneath them is whatever the artist left there.
 Landscape alone scores *worse* than the interface raster on trimmed RMS.
 
-**And the cliffs ship their own collision geometry.** Every rock ``StaticMesh`` carries a
-``BodySetup`` whose trailing bytes are a cooked Chaos ``FTriangleMeshImplicitObject``:
-after a ``267`` (``0x10B``) marker, ``NumVerts`` float32 triples then ``NumTris`` index
-triples. Exact float32 geometry at about 1 m mean edge length, placed 21,234 times.
-Rasterising it as a max-Z overlay over the landscape is what removes the tail: on 600,000
-foliage ground samples -- an independent set 1,000x larger than the nodes -- P90 error
-falls from 14.75 m to 3.13 m.
+**And the cliffs ship their own geometry, three times over.** Every rock ``StaticMesh``
+carries a ``BodySetup`` whose trailing bytes are a cooked Chaos
+``FTriangleMeshImplicitObject`` -- after a ``267`` (``0x10B``) marker, ``NumVerts`` float32
+triples then ``NumTris`` index triples -- and, in the same export's tail, the render
+chain's LOD 0 and an ``FNaniteResources`` whose pages hold the leaf level of the mesh the
+game actually draws. Rasterising any of them as a max-Z overlay over the landscape is what
+removes the tail: on 600,000 foliage ground samples -- an independent set 1,000x larger
+than the nodes -- P90 error falls from 14.75 m to 3.13 m.
+
+**Which of the three, and what that does and does not buy.** The layer takes the finest
+description each mesh ships: the Nanite leaf where there is one, LOD 0 where there is not,
+the hull where neither parses. Measured at the placement transform, that takes the median
+world-space triangle edge from **2.43 m to 0.48 m** and the share of edges at or under a
+z6 texel from 2.9% to 48.9%.
+
+It does **not** make the field more accurate, and saying so would be false. Across a 12x
+triangle range the cliff province's median moves 5 mm, its ``frac_lt_0.25m`` half a point,
+and its p90 **not at all** -- 58.45 m on the hull, 58.45 m on the Nanite leaf. The error
+that p90 measures is topological: max-Z answers with a cave roof or an overhang while the
+probe stands on the floor beneath, and a denser triangle makes that answer sharper rather
+than righter. What the finer geometry buys is DENSITY, which is a different and still
+useful claim -- see ``density.u8.z`` below.
+
+The MESH SET is still decided by the collision hull, and every placement cull is
+unchanged, so a field before and after differs in triangles and nothing else. Extending
+the layer to the 120 meshes that ship no hull was measured and refused: it costs 1.66
+points and 10.9 m of p90, because they are cave pillars, cave holes and merged cave floors
+-- roofs.
 
 Five stages, and what each one is guarded by
 --------------------------------------------
@@ -140,13 +161,23 @@ Still **information only**: nothing downstream moves ground because of this chan
 
 What it writes
 --------------
-``data/local/heightmap/``, five files, about 18 MB::
+``data/local/heightmap/``, six files, about 18 MB::
 
     height.i16.z  7500x7500 int16 decimetres, row-delta + zlib, -32768 = no data
-    prov.u8.z     0 no-data, 1 landscape, 3 fill, 4 cliff collision
+    prov.u8.z     0 no-data, 1 landscape, 3 fill, 4 cliff interpolated, 5 cliff direct
+    density.u8.z  source vertices per texel over the cliff layer, clamped at 255
     water.i16.z   water surface Z, same grid and no-data
     waterq.u8.z   0 dry, 1 water with a measured depth, 2 water whose depth is unknowable
     meta.json     georeference, game build, generator version, coverage, measured accuracy
+
+**The two cliff provenance values are one layer, split by how the texel was answered.**
+5 means at least one source vertex landed in that texel; 4 means the rasteriser reached it
+by interpolating the plane of a triangle wider than the texel. At 1 m they are equally
+accurate and the split says nothing about that. It exists for the renderer: anything
+drawing finer than 1 m has to decide whether it is resampling a measurement or an
+interpolant, and ``density.u8.z`` -- the count behind the same rule -- is the only plane
+that can tell it. The split is **additive**: a reader that knows only 4 sees 5 as "not
+landscape, not fill, not no-data", which is exactly what 4 meant before.
 
 The georeference is fixed and recorded: ``x_cm = -324700 + col*100``,
 ``y_cm = -375000 + row*100``, **vertex-aligned** -- a texel's height belongs to that point
@@ -230,6 +261,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
+from satisfactory_mcp.core.gameassets import nanite, staticmesh
 from satisfactory_mcp.core.gameassets.iostore import IoStore, oodle_decompress
 from satisfactory_mcp.core.gameassets.levels import level_paths, walk_levels
 from satisfactory_mcp.core.gameassets.packages import (
@@ -334,18 +366,30 @@ ARCH_MARK = "Arc"
 #: and the ocean shells. 600 m is an order of magnitude above the largest real rock.
 OVERSIZE_CM = 60000.0
 
-#: The Chaos cooked-trimesh marker, and the window it is searched in. Searched, never
-#: indexed: a fixed offset is a guess that keeps working until the day it does not.
-TRIMESH_MARKER = struct.pack("<I", 267)
-TRIMESH_SEARCH = (40, 400)
+#: Where the cliff layer's triangles may come from, finest first. The set of MESHES is
+#: still decided by the cooked collision hull; this is only which of a mesh's own
+#: descriptions of itself gets rasterised.
+CLIFF_SOURCES = ("nanite", "lod0", "hull")
 
-#: How far past its own ``ExtendedBounds`` a vertex may sit. Both a decode check -- 90% of
-#: vertices must be inside, which a misread stream cannot manage -- and, per triangle, the
-#: clamp guarding against the stray far vertices that drew spider streaks in the
-#: prototypes. On build 495413 the clamp fires zero times; the sidecar records the count.
-BOUNDS_PAD_CM = 4.0
-BOUNDS_PAD_FRACTION = 0.05
-BOUNDS_INSIDE_MIN = 0.90
+#: How far past its own ``ExtendedBounds`` a vertex may sit. Both a decode check -- 99% of
+#: a candidate's vertices must be inside, which a misread stream cannot manage -- and, per
+#: triangle, the clamp guarding against the stray far vertices that drew spider streaks in
+#: the prototypes. On build 495413 the clamp fires zero times; the sidecar records the
+#: count. The pad itself is ``core.gameassets.staticmesh``'s, imported rather than retyped.
+BOUNDS_PAD_CM = staticmesh.BOUNDS_PAD_CM
+BOUNDS_PAD_FRACTION = staticmesh.BOUNDS_PAD_FRACTION
+BOUNDS_INSIDE_MIN = staticmesh.BOUNDS_INSIDE_MIN
+
+#: Metres of world per output pixel at the two candidate zoom levels, over the 7,500 m box:
+#: 16384 px and 32768 px. Here because the density plane's whole job is to say which side
+#: of the first of these a texel is on, and a number typed twice is a number that drifts.
+Z6_TEXEL_M = 7500.0 / 16384
+Z7_TEXEL_M = 7500.0 / 32768
+
+#: How many source vertices a texel needs before its height is a measurement rather than an
+#: interpolation across a triangle wider than itself. One. That is the operative rule, and
+#: the two texel sizes above are only where it is evaluated.
+DIRECT_SAMPLES_MIN = 1
 
 #: The rasteriser's scatter buffer, in candidate texels. Bounded so a 21,000-placement run
 #: holds a few hundred MB rather than the whole 120 M-triangle scatter at once.
@@ -425,8 +469,11 @@ ACCURACY_MIN_SAMPLES = 30
 LOCAL_DIR = ROOT / "data" / "local"
 
 #: Bumped when the pipeline changes what it writes, so a sidecar dates its own field.
-#: 2 is the rebuilt water stage and the ``waterq.u8.z`` raster that came with it.
-GENERATOR_VERSION = 2
+#: 2 is the rebuilt water stage and the ``waterq.u8.z`` raster that came with it; 3 is the
+#: cliff layer moving from the collision hull to the Nanite leaf, the ``density.u8.z``
+#: plane, and the provenance value that says which side of one sample per texel a cliff
+#: texel is on.
+GENERATOR_VERSION = 3
 
 #: Where the sidecar records the build, and what the staleness guard reads back.
 PIN_PATH = ("sources", "game", "game_version_pinned")
@@ -722,60 +769,80 @@ def drop_offsets(frame: dict) -> tuple[int, int]:
 # --------------------------------------------------------------------------------------
 
 
-def decode_trimesh(blob: bytes, low: np.ndarray, high: np.ndarray):
-    """One cooked ``FTriangleMeshImplicitObject``, or ``(None, why)``.
+def finer_source(store, package: str, view, export, low, high) -> tuple[str, tuple] | None:
+    """The finest geometry this mesh ships, and which one that was -- or ``None``.
 
-    Layout, past the export's property tags::
+    Nanite first, LOD 0 second, and the reason for the order is measured: at the placement
+    transform the Nanite leaf's median world edge is **0.48 m**, LOD 0's is 1.33 m and the
+    collision hull's is 2.43 m, so the leaf is the only one of the three that is finer than
+    a z6 texel more often than not.
 
-        ... header ...  <u32 267>  <u8 flag>  <u32 NumVerts>  <NumVerts * 3 float32>
-        <u32 0>  <u32 NumTris>  <NumTris * 3 uint16, or uint32 when NumVerts >= 65536>
+    **The LOD 0 fallback is not a nicety.** 25 of this build's rock meshes carry no Nanite
+    resource at all -- sea rocks, corals, part of the cave interior set -- and a
+    Nanite-only layer silently loses about 365,000 texels against the hull layer. It looks
+    like a field either way, which is what makes it worth a branch.
 
-    The marker is searched for inside ``TRIMESH_SEARCH`` rather than indexed at a fixed
-    offset. Three checks then have to pass before the result is believed, and together they
-    are what makes a misaligned read fail instead of returning plausible noise: the vertices
-    must be finite, 90% of them must lie inside the mesh's own ``ExtendedBounds``, and every
-    triangle index must be less than ``NumVerts``. The last one also picks the index width:
-    a uint16 view of a uint32 array reads indices roughly twice the vertex count, so it
-    fails and the uint32 view is tried.
+    A finer source is only accepted if it clears the same bounds check the hull does. A
+    decoder that produced plausible garbage would otherwise ship it, and the mesh's own
+    serialised ``ExtendedBounds`` is the one statement available that does not come from
+    the same reader.
     """
-    at = blob.find(TRIMESH_MARKER, *TRIMESH_SEARCH)
-    if at < 0:
-        return None, "no 267 marker in the search window"
-    count = struct.unpack_from("<I", blob, at + 5)[0]
-    pos = at + 9
-    if count <= 0 or pos + 12 * count > len(blob):
-        return None, f"implausible vertex count {count}"
-    verts = np.frombuffer(blob, "<f4", count=3 * count, offset=pos).reshape(count, 3)
-    verts = verts.astype(np.float32)
+    tail = staticmesh.render_tail(view, export)
+    try:
+        parsed = staticmesh.parse_render_data(tail)
+    except staticmesh.ParseError:
+        return None
+
+    resource = staticmesh.load_nanite(store, package, view, parsed, tail)
+    if resource is not None:
+        decoded = nanite.decode_resource(resource)
+        problems = staticmesh.page_table_problems(resource, staticmesh.bulk_size(view, resource))
+        problems += nanite.identity_checks(resource, decoded)
+        if not problems and len(decoded["triangles"]):
+            candidate = (decoded["positions"], decoded["triangles"])
+            if _inside_bounds(candidate[0], low, high):
+                return "nanite", candidate
+
+    got = staticmesh.lod0_buffers(tail, parsed)
+    if got is not None and len(got[1]) and _inside_bounds(got[0], low, high):
+        return "lod0", (got[0], got[1])
+    return None
+
+
+def _inside_bounds(verts: np.ndarray, low, high) -> bool:
     if not np.isfinite(verts).all():
-        return None, "non-finite vertices"
-    pad = BOUNDS_PAD_CM + BOUNDS_PAD_FRACTION * float(np.max(high - low))
+        return False
+    pad = BOUNDS_PAD_CM + BOUNDS_PAD_FRACTION * float(np.max(np.asarray(high) - np.asarray(low)))
     inside = ((verts >= low - pad) & (verts <= high + pad)).all(axis=1)
-    if inside.mean() <= BOUNDS_INSIDE_MIN:
-        return None, f"only {inside.mean():.1%} of vertices inside ExtendedBounds"
-    pos += 12 * count
-    _zero, tris = struct.unpack_from("<II", blob, pos)
-    pos += 8
-    for width, dtype in ((2, "<u2"), (4, "<u4")):
-        if tris > 0 and pos + 3 * tris * width <= len(blob):
-            candidate = np.frombuffer(blob, dtype, count=3 * tris, offset=pos).reshape(tris, 3)
-            if candidate.max() < count:
-                return (verts, candidate.astype(np.int32), pad), None
-    return None, f"no index width fits {tris} triangles over {count} vertices"
+    return bool(inside.mean() >= BOUNDS_INSIDE_MIN)
 
 
 def read_mesh_geometry(store, scripts, index, meshes: list[str], progress: bool = True) -> dict:
-    """Decode the collision trimesh of every rock mesh the world places. Returns a dict.
+    """The finest geometry every placed rock mesh ships, over the hull-equivalent set.
 
     Only ``ROCK_DIRS`` are opened: a tree's collision is a tree, and the point of this layer
-    is the geometry the landscape does not contain. A mesh with no cooked trimesh is
-    recorded with the reason and skipped -- 21 of the 124 use ``CTF_UseSimpleAndComplex``
-    and ship only convex hulls, which are small and rare enough to lose.
+    is the geometry the landscape does not contain.
+
+    **The cooked collision hull still decides the SET.** A mesh with no hull is skipped
+    exactly as it always was -- 21 of the 130 use ``CTF_UseSimpleAndComplex`` and ship only
+    convex hulls -- and the hull's padded ``ExtendedBounds`` remain the per-triangle clamp
+    downstream. What changed in v3 is only which triangles are rasterised inside that same
+    set of meshes and that same set of placements, which is what makes the field's before
+    and after comparable at all.
+
+    That restraint is a measurement, not caution. Extending the layer to the 120 meshes
+    that ship no hull costs 1.66 points of ``frac_lt_0.25m`` and 10.9 m of p90 under a max-Z
+    sampler: they are cave pillars, cave holes and merged cave floors -- roofs -- and two of
+    them contribute zero up-facing triangles under this file's own facing rule.
     """
     wanted = [m for m in meshes if any(d in m for d in ROCK_DIRS)]
     geometry: dict[str, tuple] = {}
+    sources: dict[str, str] = {}
     failures: dict[str, str] = {}
+    hull_tris = 0
     closed = 0
+    manifolds = 0
+    checked_manifold = 0
     started = time.time()
     for count, mesh in enumerate(wanted):
         package = index.path_for(mesh)
@@ -787,52 +854,55 @@ def read_mesh_geometry(store, scripts, index, meshes: list[str], progress: bool 
         except Exception as exc:
             failures[mesh] = f"unreadable package: {type(exc).__name__}"
             continue
-        bounds = None
-        for export in view.exports:
-            if class_name_of(view.class_of.get(export["slot"])) != "StaticMesh":
-                continue
-            payload = view.props(export["slot"]).get("ExtendedBounds")
-            if not payload:
-                continue
-            decoded = view.decode_struct(payload) or {}
-            origin = decoded.get("Origin")
-            extent = decoded.get("BoxExtent")
-            if isinstance(origin, dict) and isinstance(extent, dict):
-                o = struct.unpack("<3d", bytes.fromhex(origin["_raw"])[:24])
-                e = struct.unpack("<3d", bytes.fromhex(extent["_raw"])[:24])
-                bounds = (np.array(o), np.array(e))
-            break
+        export = staticmesh.static_mesh_export(view)
+        if export is None:
+            failures[mesh] = "no StaticMesh export"
+            continue
+        bounds = staticmesh.extended_bounds(view, export)
         if bounds is None:
             failures[mesh] = "no ExtendedBounds, so a decode could not be checked"
             continue
-        origin, extent = bounds
-        for export in view.exports:
-            if class_name_of(view.class_of.get(export["slot"])) != "BodySetup":
-                continue
-            body = view.pkg.body(export)
-            _tags, end = property_tags(body, view.pkg.names)
-            result, why = decode_trimesh(body[end:], origin - extent, origin + extent)
-            if result is None:
-                failures[mesh] = why
-            else:
-                verts, tris, pad = result
-                geometry[mesh] = (verts, tris, origin - extent - pad, origin + extent + pad)
-                # The closed-manifold Euler relation. Not a gate -- cave walls, floors and
-                # merged arch pieces are open shells and are meant to be -- but counting it
-                # is the cheapest evidence that this is geometry and not pattern-matched
-                # noise, since noise satisfies it essentially never.
-                if tris.shape[0] == 2 * verts.shape[0] - 4:
-                    closed += 1
-            break
-        if mesh not in geometry and mesh not in failures:
-            failures[mesh] = "no BodySetup export"
+        low, high = bounds
+        hull, why = staticmesh.collision_hull(view, low, high)
+        if hull is None:
+            failures[mesh] = why
+            continue
+        hull_verts, hull_tris_array, pad = hull
+        hull_tris += hull_tris_array.shape[0]
+        # The closed-manifold Euler relation on the hull. Not a gate -- cave walls, floors
+        # and merged arch pieces are open shells and are meant to be -- but counting it is
+        # the cheapest evidence that this is geometry and not pattern-matched noise, since
+        # noise satisfies it essentially never.
+        if hull_tris_array.shape[0] == 2 * hull_verts.shape[0] - 4:
+            closed += 1
+
+        chosen = finer_source(store, package, view, export, low, high)
+        if chosen is None:
+            source, (verts, tris) = "hull", (hull_verts, hull_tris_array)
+        else:
+            source, (verts, tris) = chosen
+        if source == "nanite":
+            checked_manifold += 1
+            manifolds += nanite.boundary_edges(tris) == 0
+        sources[mesh] = source
+        geometry[mesh] = (
+            np.ascontiguousarray(verts, dtype=np.float32),
+            np.ascontiguousarray(tris, dtype=np.int64),
+            low - pad,
+            high + pad,
+        )
         if progress and count % 25 == 0:
             print(f"  {count}/{len(wanted)} rock meshes, {time.time() - started:.0f}s", flush=True)
     return {
         "geometry": geometry,
+        "sources": sources,
+        "by_source": {s: sum(1 for v in sources.values() if v == s) for s in CLIFF_SOURCES},
         "failures": failures,
         "wanted": len(wanted),
         "closed_manifolds": closed,
+        "nanite_closed": manifolds,
+        "nanite_checked": checked_manifold,
+        "hull_triangles": hull_tris,
         "verts": sum(v.shape[0] for v, _t, _lo, _hi in geometry.values()),
         "tris": sum(t.shape[0] for _v, t, _lo, _hi in geometry.values()),
         "seconds": time.time() - started,
@@ -853,10 +923,53 @@ class MaxZRaster:
         self.x0, self.y0, self.scale = x0_cm, y0_cm, scale
         self.z = np.full(height * width, -np.inf, dtype=np.float32)
         self.src = np.zeros(height * width, dtype=np.uint16)
+        self.density = np.zeros(height * width, dtype=np.uint32)
         self._idx: list[np.ndarray] = []
         self._z: list[np.ndarray] = []
         self._s: list[np.ndarray] = []
         self._n = 0
+        self._samples: list[np.ndarray] = []
+        self._sample_n = 0
+
+    def count_samples(self, points: np.ndarray) -> None:
+        """Record which texel each SOURCE VERTEX landed in. The density plane, accumulated.
+
+        Not the same question as the fold above, and the difference is the whole point of
+        the plane: the fold answers every texel a triangle covers, however large that
+        triangle is, while this counts only the texels the geometry actually sampled. A
+        texel with no samples has a height, and that height is the rasteriser's plane
+        interpolation -- honest, but an interpolation, and a renderer drawing finer than 1 m
+        needs to know which it is looking at.
+
+        Floored, not rounded, to match ``add``: the barycentric test above samples at
+        ``col + 0.5`` in grid units and writes to ``col``, so a vertex at fraction
+        ``[col, col+1)`` belongs to that same texel. Two conventions here would put the
+        density plane half a texel away from the heights it describes.
+        """
+        col = np.floor((points[:, 0] - self.x0) / self.scale).astype(np.int64)
+        row = np.floor((points[:, 1] - self.y0) / self.scale).astype(np.int64)
+        ok = (col >= 0) & (col < self.width) & (row >= 0) & (row < self.height)
+        if not ok.any():
+            return
+        self._samples.append(row[ok] * self.width + col[ok])
+        self._sample_n += int(ok.sum())
+        if self._sample_n > RASTER_FLUSH:
+            self.flush_samples()
+
+    def flush_samples(self) -> None:
+        """Reduce the buffered sample texels into the density plane.
+
+        Sorted and run-length counted rather than ``bincount``-ed, because a bincount over
+        the frame allocates a 43-million-element temporary on every flush and there are
+        dozens of flushes. The sort is over a few million and the add is over the unique
+        texels only.
+        """
+        if not self._samples:
+            return
+        idx = np.concatenate(self._samples)
+        self._samples, self._sample_n = [], 0
+        unique, counts = np.unique(idx, return_counts=True)
+        self.density[unique] += counts.astype(np.uint32)
 
     def flush(self) -> None:
         if not self._idx:
@@ -927,11 +1040,14 @@ class MaxZRaster:
         if self._n > RASTER_FLUSH:
             self.flush()
 
-    def result(self) -> tuple[np.ndarray, np.ndarray]:
+    def result(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self.flush()
+        self.flush_samples()
         z = self.z.reshape(self.height, self.width)
-        return np.where(np.isfinite(z), z, np.nan).astype(np.float32), self.src.reshape(
-            self.height, self.width
+        return (
+            np.where(np.isfinite(z), z, np.nan).astype(np.float32),
+            self.src.reshape(self.height, self.width),
+            self.density.reshape(self.height, self.width),
         )
 
 
@@ -972,6 +1088,7 @@ def rasterise_cliffs(sweep: dict, geometry: dict, frame: dict, progress: bool = 
     dropped = {"owner": 0, "no_geometry": 0, "arch": 0, "oversize": 0}
     used = 0
     triangles = 0
+    samples = 0
     clamped = 0
     started = time.time()
     for count, row in enumerate(placements):
@@ -1003,14 +1120,21 @@ def rasterise_cliffs(sweep: dict, geometry: dict, frame: dict, progress: bool = 
             if tris.size == 0:
                 continue
         world = (verts * scale) @ matrix + row[2:5].astype(np.float32)
-        tri = world[tris]
         facing = windings[mesh] * np.sign(scale[0] * scale[1] * scale[2])
         if facing != 0:
-            normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
-            tri = tri[(normals[:, 2] * facing) > 0]
-        if tri.shape[0]:
-            raster.add(tri, mesh_id + 1)
-            triangles += tri.shape[0]
+            corner = world[tris[:, 0]]
+            normals = np.cross(world[tris[:, 1]] - corner, world[tris[:, 2]] - corner)
+            tris = tris[(normals[:, 2] * facing) > 0]
+        if tris.shape[0]:
+            raster.add(world[tris], mesh_id + 1)
+            triangles += tris.shape[0]
+            # The density plane counts the vertices of the triangles that SURVIVED the
+            # facing cull, not every vertex of the mesh: a downward-facing vertex is not a
+            # sample of the surface this field describes, and counting it would call a
+            # texel measured because the underside of a rock passed over it.
+            surviving = np.unique(tris)
+            raster.count_samples(world[surviving])
+            samples += surviving.size
         used += 1
         if progress and count % 4000 == 0:
             print(
@@ -1018,14 +1142,16 @@ def rasterise_cliffs(sweep: dict, geometry: dict, frame: dict, progress: bool = 
                 f"{triangles / 1e6:.1f} M triangles, {time.time() - started:.0f}s",
                 flush=True,
             )
-    z_cm, _src = raster.result()
+    z_cm, _src, density = raster.result()
     return {
         "z_cm": z_cm,
+        "density": density,
         "placements_total": len(placements),
         "placements_used": used,
         "dropped": dropped,
         "arch_meshes": len(arch_ids & set(np.unique(placements[:, 0]).astype(int))),
         "triangles": int(triangles),
+        "samples": int(samples),
         "triangles_out_of_bounds": clamped,
         "seconds": time.time() - started,
     }
@@ -1427,7 +1553,13 @@ def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np
         level[orphan] = lookup[labelled[orphan]]
 
     terrain_m = np.where(height_dm == hf.NODATA, np.nan, height_dm / hf.DM_PER_M).astype(np.float32)
-    measurable = ((prov == hf.PROV_LANDSCAPE) | (prov == hf.PROV_CLIFF)) & np.isfinite(terrain_m)
+    # Both cliff values. A depth is knowable wherever the ground under the water was
+    # measured at 1 m, and whether a source vertex happened to land in the texel has
+    # nothing to do with that -- listing only 4 here would call three quarters of the
+    # cliff province depth-unknown for a reason that is about rendering.
+    measurable = ((prov == hf.PROV_LANDSCAPE) | np.isin(prov, hf.PROV_CLIFF_VALUES)) & np.isfinite(
+        terrain_m
+    )
     standing_out = measurable & np.isfinite(level) & (level <= terrain_m)
     level[standing_out] = np.nan
 
@@ -1605,23 +1737,44 @@ def compose(frame: dict, cliffs: dict, baseline_cm: np.ndarray, valid: np.ndarra
     cliff_m = (cliffs["z_cm"] / 100.0).astype(np.float32)
     take = np.isfinite(cliff_m) & (~np.isfinite(land_m) | (cliff_m > land_m))
     sub_z = np.where(take, cliff_m, land_m)
-    sub_prov = np.where(take, hf.PROV_CLIFF, sub_prov).astype(np.uint8)
+    # Two cliff values, one layer. 5 says a source vertex landed in this texel and its
+    # height is a sample; 4 says the rasteriser reached it by interpolating the plane of a
+    # triangle wider than the texel. Both are the cliff layer and both are as accurate as
+    # each other AT 1 m -- what differs is what a renderer drawing finer than 1 m is
+    # entitled to claim, which is the whole reason the distinction is recorded.
+    direct = take & (cliffs["density"] >= DIRECT_SAMPLES_MIN)
+    sub_prov = np.where(take, hf.PROV_CLIFF, sub_prov)
+    sub_prov = np.where(direct, hf.PROV_CLIFF_DIRECT, sub_prov).astype(np.uint8)
+    sub_density = np.where(take, np.minimum(cliffs["density"], 255), 0).astype(np.uint8)
 
     window = np.isfinite(sub_z)
     z_m[dy : dy + frame["height"], dx : dx + frame["width"]][window] = sub_z[window]
     prov[dy : dy + frame["height"], dx : dx + frame["width"]][window] = sub_prov[window]
+    density = np.zeros((GRID_PX, GRID_PX), np.uint8)
+    density[dy : dy + frame["height"], dx : dx + frame["width"]][window] = sub_density[window]
 
     known = np.isfinite(z_m)
     height_dm = np.where(known, np.clip(np.round(z_m * 10.0), -32767, 32767), hf.NODATA)
     error = np.abs(height_dm.astype(np.float32) / 10.0 - z_m)[known]
+    cliff = np.isin(prov, hf.PROV_CLIFF_VALUES)
     return {
         "height_dm": height_dm.astype(np.int16),
         "prov": prov,
+        "density": density,
         "drop": (dx, dy),
         "coverage": {
             hf.PROV_NAMES[value]: float((prov == value).mean())
-            for value in (hf.PROV_NODATA, hf.PROV_LANDSCAPE, hf.PROV_FILL, hf.PROV_CLIFF)
+            for value in (
+                hf.PROV_NODATA,
+                hf.PROV_LANDSCAPE,
+                hf.PROV_FILL,
+                hf.PROV_CLIFF,
+                hf.PROV_CLIFF_DIRECT,
+            )
         },
+        "cliff_texels": int(cliff.sum()),
+        "cliff_direct_fraction": float((prov == hf.PROV_CLIFF_DIRECT).sum() / max(cliff.sum(), 1)),
+        "density_p50": int(np.median(density[cliff])) if cliff.any() else 0,
         "z_range_m": [float(np.nanmin(z_m)), float(np.nanmax(z_m))],
         "quantisation_max_m": float(error.max()),
         "quantisation_rms_m": float(np.sqrt((error**2).mean())),
@@ -1684,11 +1837,16 @@ def validate(height_dm: np.ndarray, prov: np.ndarray) -> dict:
     row = np.clip(np.round((y - ORIGIN_Y_CM) / SPACING_CM).astype(int), 0, GRID_PX - 1)
     layers = prov[row, col]
     per_layer = {}
-    for value in (hf.PROV_LANDSCAPE, hf.PROV_FILL, hf.PROV_CLIFF):
+    for value in (hf.PROV_LANDSCAPE, hf.PROV_FILL, hf.PROV_CLIFF, hf.PROV_CLIFF_DIRECT):
         pick = layers == value
         per_layer[hf.PROV_NAMES[value]] = error_stats(
             np.where(pick, errors, np.nan), int(pick.sum())
         )
+    # The cliff province whole, as well as split. The split is what v3 added and the whole
+    # is what every previous field's number was measured over, so dropping it would make
+    # this run's cliff accuracy incomparable to the one it is supposed to not regress from.
+    cliff = np.isin(layers, hf.PROV_CLIFF_VALUES)
+    per_layer["cliff, both"] = error_stats(np.where(cliff, errors, np.nan), int(cliff.sum()))
     return {
         "against": str(NODE_TABLE.relative_to(ROOT)).replace("\\", "/"),
         "nodes": len(nodes),
@@ -1720,6 +1878,7 @@ def accuracy_block(validation: dict) -> dict:
     derived = {
         hf.PROV_LANDSCAPE: (1.0, LANDSCAPE_SCALE_CM / LANDSCAPE_PER_UNIT / 100.0),
         hf.PROV_CLIFF: (1.0, 0.0),
+        hf.PROV_CLIFF_DIRECT: (1.0, 0.0),
         hf.PROV_FILL: (FILL_HORIZONTAL_M, FILL_VERTICAL_M),
     }
     notes = {
@@ -1728,9 +1887,15 @@ def accuracy_block(validation: dict) -> dict:
             "quantisation, no resampling anywhere between the component and this texel"
         ),
         hf.PROV_CLIFF: (
-            "rasterised Chaos collision geometry from a placed rock or cliff -- exact "
-            "float32 triangles at about 1 m mean edge length, so the vertical step is "
-            "continuous and the 0.1 m container is the only rounding"
+            "rasterised triangles from a placed rock or cliff, at a texel NO SOURCE VERTEX "
+            "landed in: the height is this file's own plane interpolation across a triangle "
+            "wider than the texel. Exactly as accurate as value 5 at 1 m, and not a "
+            "measurement below it -- which is the only thing the two values distinguish"
+        ),
+        hf.PROV_CLIFF_DIRECT: (
+            "rasterised triangles from a placed rock or cliff, at a texel at least one "
+            "source vertex landed in. density.u8.z says how many. This is where a render "
+            "finer than 1 m is reading geometry rather than a kernel"
         ),
         hf.PROV_FILL: (
             "the 2048 px HeightData_Test interface raster, outside the landscape frame. "
@@ -1752,21 +1917,46 @@ def accuracy_block(validation: dict) -> dict:
         name = hf.PROV_NAMES[value]
         measured = validation["per_layer"].get(name, {})
         enough = measured.get("n", 0) >= ACCURACY_MIN_SAMPLES
+        # The two cliff values are one layer measured two ways, so a split too thin to
+        # believe on its own falls back to the province WHOLE rather than to a derived
+        # step. Quoting 0.1 m there -- the derived floor, because a rasterised triangle has
+        # no vertical quantisation -- would be a better number than the layer has ever
+        # measured, invented by splitting the node set in half.
+        fallback = validation["per_layer"].get("cliff, both", {})
+        pooled = value in hf.PROV_CLIFF_VALUES and fallback.get("n", 0) >= ACCURACY_MIN_SAMPLES
+        if enough:
+            accuracy, source = (
+                measured["medabs_m"],
+                (
+                    f"measured: median absolute error over {measured['n']} static resource "
+                    "nodes that fell on this layer"
+                ),
+            )
+        elif pooled:
+            accuracy, source = (
+                fallback["medabs_m"],
+                (
+                    f"measured over the cliff province WHOLE ({fallback['n']} nodes), because "
+                    f"only {measured.get('n', 0)} fell on this half of it and that is fewer "
+                    f"than {ACCURACY_MIN_SAMPLES}. The two halves differ in what a finer render "
+                    "may claim, not in how accurate they are at 1 m"
+                ),
+            )
+        else:
+            accuracy, source = (
+                round(max(vertical, 0.1), 3),
+                (
+                    f"derived: this layer's own vertical step, because only "
+                    f"{measured.get('n', 0)} nodes fell on it and that is fewer than "
+                    f"{ACCURACY_MIN_SAMPLES}"
+                ),
+            )
         out[str(value)] = {
             "name": name,
             "horizontal_m": round(horizontal, 4),
             "vertical_step_m": round(vertical, 4),
-            "accuracy_m": (measured["medabs_m"] if enough else round(max(vertical, 0.1), 3)),
-            "accuracy_from": (
-                f"measured: median absolute error over {measured.get('n', 0)} static "
-                "resource nodes that fell on this layer"
-                if enough
-                else (
-                    f"derived: this layer's own vertical step, because only "
-                    f"{measured.get('n', 0)} nodes fell on it and that is fewer than "
-                    f"{ACCURACY_MIN_SAMPLES}"
-                )
-            ),
+            "accuracy_m": accuracy,
+            "accuracy_from": source,
             "measured": measured,
             "note": notes[value],
         }
@@ -1826,6 +2016,30 @@ def build_meta(
             "known": round(1.0 - field["coverage"][hf.PROV_NAMES[hf.PROV_NODATA]], 6),
         },
         "z_range_m": [round(v, 2) for v in field["z_range_m"]],
+        "density": {
+            "file": hf.DENSITY_NAME,
+            "content": ("source vertices per texel, clamped at 255, zero outside the cliff layer"),
+            "rule": (
+                f"a texel with at least {DIRECT_SAMPLES_MIN} sample is provenance "
+                f"{hf.PROV_CLIFF_DIRECT} (direct); below that it is {hf.PROV_CLIFF} "
+                "(interpolated). Counted after the facing cull, so a vertex on the "
+                "underside of a rock does not make the ground beneath it a measurement"
+            ),
+            "cliff_texels": field["cliff_texels"],
+            "direct_fraction": round(field["cliff_direct_fraction"], 4),
+            "median_samples_per_cliff_texel": field["density_p50"],
+            "z6_texel_m": round(Z6_TEXEL_M, 4),
+            "z7_texel_m": round(Z7_TEXEL_M, 4),
+            "why": (
+                "a renderer drawing finer than this field's own 1 m spacing has to decide "
+                "whether it is resampling a measurement or an interpolant, and nothing "
+                "else in the field can tell it. The honest claim this supports is about "
+                "DENSITY and never about accuracy: the geometry ladder from the collision "
+                "hull to the Nanite leaf is worth half a point of frac_lt_0.25m and moves "
+                "p90 by nothing, because the cliff province's error is topological -- a "
+                "max-Z field answering with a cave roof over the floor a probe stands on"
+            ),
+        },
         "container": {
             "quantisation_max_m": round(field["quantisation_max_m"], 4),
             "quantisation_rms_m": round(field["quantisation_rms_m"], 4),
@@ -1875,27 +2089,61 @@ def build_meta(
                 },
             },
             "cliffs": {
-                "class": "BodySetup / FTriangleMeshImplicitObject",
-                "derivation": (
+                "class": "StaticMesh render data / BodySetup / FTriangleMeshImplicitObject",
+                "recipe": (
+                    "the finest description each rock mesh ships, over the set of meshes "
+                    "the cooked collision hull defines: the Nanite leaf level where there "
+                    "is one, LOD 0 where there is not, the hull itself where neither "
+                    "parses. The MESH SET and every placement cull are unchanged from the "
+                    "hull-only field, so a before and after differ in triangles alone"
+                ),
+                "sources": meshes["by_source"],
+                "source_order": list(CLIFF_SOURCES),
+                "why_not_nanite_only": (
+                    "25 rock meshes carry no Nanite resource at all -- sea rocks, corals, "
+                    "part of the cave interior set -- and a Nanite-only layer loses about "
+                    "365,000 texels against the hull layer while still looking like a field"
+                ),
+                "why_not_every_mesh": (
+                    "extending past the hull-equivalent set costs 1.66 points of "
+                    "frac_lt_0.25m and 10.9 m of p90 on 839,506 foliage probes: the 120 "
+                    "meshes with no cooked hull are cave pillars, cave holes and merged "
+                    "cave floors, and a max-Z field that starts drawing roofs gets worse at "
+                    "'where is the ground' no matter how fine its triangles are"
+                ),
+                "hull_derivation": (
                     "cooked Chaos collision trimesh, found by searching for the 267 (0x10B) "
                     "marker, never at a fixed offset; NumVerts float32 triples then NumTris "
                     "index triples, width chosen by validating max(index) < NumVerts"
+                ),
+                "nanite_derivation": (
+                    "FNaniteResources: root pages inline in the StaticMesh export's tail, "
+                    "streaming pages out of the .ubulk the Zen BulkDataMap names, decoded "
+                    "in pure Python by core.gameassets.nanite. Leaf clusters only; "
+                    "positions and topology only; cluster seams welded at 10 um"
                 ),
                 "rock_meshes_seen": meshes["wanted"],
                 "meshes_decoded": len(meshes["geometry"]),
                 "meshes_without_cooked_trimesh": len(meshes["failures"]),
                 "closed_manifolds": meshes["closed_manifolds"],
                 "closed_manifold_check": (
-                    f"{meshes['closed_manifolds']} of {len(meshes['geometry'])} satisfy "
-                    "NumTris == 2*NumVerts - 4 exactly. The rest are the open shells -- cave "
-                    "walls, floors, ceilings and merged arch pieces -- and are meant to be"
+                    f"{meshes['closed_manifolds']} of {len(meshes['geometry'])} HULLS "
+                    "satisfy NumTris == 2*NumVerts - 4 exactly, and "
+                    f"{meshes['nanite_closed']} of {meshes['nanite_checked']} Nanite "
+                    "decodes have zero boundary edges once cluster seams are welded. The "
+                    "rest are the open shells -- cave walls, floors, ceilings and merged "
+                    "arch pieces -- and are meant to be. One bit wrong in the strip decode "
+                    "shatters the second number into thousands of boundary edges, which is "
+                    "what makes it worth computing"
                 ),
                 "vertices": meshes["verts"],
                 "triangles_in_source": meshes["tris"],
+                "hull_triangles_in_source": meshes["hull_triangles"],
                 "placements_total": cliffs["placements_total"],
                 "placements_rasterised": cliffs["placements_used"],
                 "placements_dropped": cliffs["dropped"],
                 "triangles_rasterised": cliffs["triangles"],
+                "vertex_samples_rasterised": cliffs["samples"],
                 "triangles_outside_bounds": cliffs["triangles_out_of_bounds"],
                 "exclusions": (
                     "NodeMeshActor_C, because predicting a resource node's Z from the mesh "
@@ -2202,13 +2450,19 @@ def main() -> int:
     print(f"  drops into the output grid at texel ({dx}, {dy}), exactly -- no resampling")
 
     # ---- stage 3: cliff collision ------------------------------------------------------
-    print("decoding the cooked collision trimesh of every placed rock")
+    print("decoding the finest geometry every placed rock ships")
     meshes = read_mesh_geometry(store, scripts, index, sweep["meshes"], loud)
     timings["mesh_decode"] = round(meshes["seconds"], 1)
     print(
         f"  {len(meshes['geometry'])}/{meshes['wanted']} rock meshes decoded in "
-        f"{meshes['seconds']:.0f}s: {meshes['verts']} vertices, {meshes['tris']} triangles, "
-        f"{meshes['closed_manifolds']} closed manifolds"
+        f"{meshes['seconds']:.0f}s: {meshes['verts']} vertices, {meshes['tris']} triangles "
+        f"({meshes['hull_triangles']} in the hulls they replace), sources "
+        f"{meshes['by_source']}"
+    )
+    print(
+        f"  {meshes['closed_manifolds']} hulls satisfy the Euler relation; "
+        f"{meshes['nanite_closed']}/{meshes['nanite_checked']} Nanite decodes have zero "
+        "boundary edges after welding"
     )
     if not meshes["geometry"]:
         print(
@@ -2240,6 +2494,11 @@ def main() -> int:
     print(
         f"  z range {field['z_range_m'][0]:.1f} .. {field['z_range_m'][1]:.1f} m; "
         f"int16-decimetre quantisation RMS {field['quantisation_rms_m']:.4f} m"
+    )
+    print(
+        f"  cliff province {field['cliff_texels']} texels, "
+        f"{field['cliff_direct_fraction'] * 100:.1f}% with a source vertex in them "
+        f"(median {field['density_p50']} samples per cliff texel)"
     )
 
     # ---- stage 5: water, after the terrain it is measured against ----------------------
@@ -2327,6 +2586,7 @@ def main() -> int:
         hf.PROV_NAME: hf.encode_u8(field["prov"]),
         hf.WATER_NAME: hf.encode_i16(water_dm),
         hf.WATER_QUALITY_NAME: hf.encode_u8(water["quality"]),
+        hf.DENSITY_NAME: hf.encode_u8(field["density"]),
     }
     timings["encode"] = round(time.time() - started, 1)
     files = {
@@ -2335,9 +2595,22 @@ def main() -> int:
             "bytes": len(payload[hf.HEIGHT_NAME]),
         },
         hf.PROV_NAME: {
-            "content": "which layer answered each texel: 0 no-data, 1 landscape, 3 fill, "
-            "4 cliff collision. zlib, no delta",
+            "content": (
+                "which layer answered each texel: 0 no-data, 1 landscape, 3 fill, "
+                "4 cliff geometry interpolated across a triangle wider than the texel, "
+                "5 cliff geometry with at least one source vertex in the texel. A reader "
+                "that knows only 4 sees 5 as 'not landscape, not fill, not no-data', which "
+                "is what 4 meant before the split. zlib, no delta"
+            ),
             "bytes": len(payload[hf.PROV_NAME]),
+        },
+        hf.DENSITY_NAME: {
+            "content": (
+                "source vertices per texel over the cliff layer, clamped at 255, zero "
+                "elsewhere. The interface between the geometry and anything that draws it. "
+                "zlib, no delta"
+            ),
+            "bytes": len(payload[hf.DENSITY_NAME]),
         },
         hf.WATER_NAME: {
             "content": "water surface Z, same grid, same no-data. Information only",
