@@ -45,7 +45,10 @@ export function raiseNodeDots() {
 }
 
 // Ore colours follow the in-game item tints closely enough to be recognisable without
-// shipping a single game asset: they are hex strings, not textures.
+// shipping a single game asset: they are hex strings, not textures. Which is also why they are
+// the one family here that cannot simply be moved when the audit objects -- an ore's colour is
+// the ore's, and the page borrowed it rather than chose it. Four of them are in STANDING in
+// palette.ts, coal against eight grounds among them.
 var RESOURCE_COLOUR: Record<string, string> = declareColours("markers", {
   Desc_OreIron_C: "#c8b6a6",
   Desc_OreCopper_C: "#e08a4b",
@@ -209,6 +212,10 @@ export function drawPlayer(p: SummaryResponse["player"]): void {
 
 // One colour per pickup category, so ten separate checkboxes stop drawing one
 // indistinguishable teal dot. Unlisted categories share the old teal as the fallback below.
+//
+// Handed out one per kind rather than measured against the page, and the audit in palette.ts
+// says what that cost: the crashed drop pod is dE 2.1 from the belt steel, which is the closest
+// pair anywhere on this map.
 var PICKUP_COLOUR: Record<string, string> = declareColours("markers", {
   somersloop: "#e05c5c",
   mercer_sphere: "#b06ae0",

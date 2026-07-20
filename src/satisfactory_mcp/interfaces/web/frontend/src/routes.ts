@@ -261,7 +261,13 @@ function retessellate(piece: L.Polyline, ppm: number): boolean {
 /* The three tier tones are one step of value either side of the middle one, which stays the
  * network's colour and the swatch in the layer control. The step is dE 15.6 between slowest
  * and fastest and it is the page's house step -- the pipes' 15.7 below, the storage pair's
- * 16.7 and the poles' 16.2 all match it. */
+ * 16.7 and the poles' 16.2 all match it. Every one of those is a ramp INSIDE one module, which
+ * is why palette.ts compares across modules and never within one: the check would otherwise
+ * flag the four deliberate steps this page is built out of.
+ *
+ * The belt steel is the page's oldest network colour and was never measured against anything.
+ * The audit says what that cost: at dE 2.1 from the crashed-drop-pod pickup it is the closest
+ * cross-module pair on the map. */
 var BELTS = declareColours("routes", {
   belts: "#93a5b4",
   "belt slow": "#7f8f9d",
@@ -586,6 +592,13 @@ export function styleRoutes() {
  * saturated amber a pipe suggests first, #d99a3e, is dE 4.5 from the extractors and would
  * have been indistinguishable from them. Warm where the belts are cool, and dark enough not
  * to shout over a photographic map. */
+/* MEASURED AGAINST A SET THAT DID NOT INCLUDE THE BAUXITE DOT, which is what making the
+ * discipline executable found. The paragraph above says the nearest neighbour on the page is
+ * the copper dot at dE 22; `Desc_OreBauxite_C` has been in the palette since this map's first
+ * commit and is dE 4.9 away, and both pipe tier tones land nearer to it than to the copper too.
+ * Recorded in STANDING in palette.ts rather than quietly corrected here -- moving a colour that
+ * three published measurements are written about is a decision to make against the map, not a
+ * line to change while refactoring. */
 var PIPE_COLOUR = declareColours("routes", { pipes: "#a8613c" }).pipes;
 
 /* The two tier tones, one step of value either side of PIPE_COLOUR -- which stays the middle

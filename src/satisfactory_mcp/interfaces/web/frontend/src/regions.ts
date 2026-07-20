@@ -155,11 +155,13 @@ var REGION_COLOUR: Record<string, string> = declareColours("regions", {
    * Measured like the pipe rust and the storage magenta. In CIE Lab it is dE 17.1 from its
    * nearest neighbour (Rocky Desert, which it borders for most of the west coast), 18.4 from
    * Dune Desert and 20.6 from Western Dune Forest -- above the ~15.6 step the belts use and
-   * comfortably above the pipes' 15.7. The alternatives measured beside it were all worse
-   * against that same Rocky Desert border: the render's own no-man's-land tone (#7c7a6c) lands
-   * at dE 12.6, a warm sand (#807a68) at 13.3, and anything darker collapses onto it (#5a5750
-   * is dE 3.9). Cool greys were rejected for the other end: #46484a is dE 5.1 from Abyss
-   * Cliffs. */
+   * comfortably above the pipes' 15.7. All three are same-owner comparisons and palette.ts
+   * makes none of them: this is the ground's own ramp, and the audit draws its line at owners
+   * so that a deliberate step like this one never has to be excused. The alternatives measured
+   * beside it were all worse against that same Rocky Desert border: the render's own
+   * no-man's-land tone (#7c7a6c) lands at dE 12.6, a warm sand (#807a68) at 13.3, and anything
+   * darker collapses onto it (#5a5750 is dE 3.9). Cool greys were rejected for the other end:
+   * #46484a is dE 5.1 from Abyss Cliffs. */
   J: "#8a8478", // No Man's Land
   K: "#2e4637", // Northern Forest
   L: "#65423b", // Red Bamboo Fields

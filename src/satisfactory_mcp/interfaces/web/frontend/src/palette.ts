@@ -1,5 +1,5 @@
-/* Where a colour is DECLARED, so that the claim that the colours were chosen against each
- * other has one place to be checked from.
+/* Where a colour is DECLARED, and where the claim that the colours were chosen against each
+ * other is CHECKED.
  *
  * Every value used to be here, on the argument that a table of colours picked against each
  * other only holds together while it is in one place to be compared. Half of that was right,
@@ -10,14 +10,16 @@
  * different file from the width, the tier ramp and the reasoning that produced them. The file
  * even had to carve out an exception for the two networks that had done it the other way.
  *
- * So the values go to the features and the comparison stays. Every colour on this page is now
- * declared by the module that draws with it, beside its warrant, through `declareColours`
- * below; this file holds no hex at all, which `test_architecture.py` checks. What it holds is
- * the table -- every declared colour with the module that chose it -- which is what the next
- * commit needs to make the CIE Lab discipline in those warrants something a build can run.
+ * So the values went to the features and the comparison stayed. Every colour on this page is
+ * now declared by the module that draws with it, beside its warrant, through `declareColours`
+ * below. This file holds no hex at all, which `test_architecture.py` checks. What it holds
+ * instead is the discipline the old header could only describe: hex to CIE Lab, pairwise dE
+ * across every pair of colours declared by two DIFFERENT owners, and a console.error in dev
+ * mode for any pair under the threshold that is not written down below with a reason and a
+ * measured distance.
  *
- * A new layer's colour is still a decision about the whole table. What this file is for is
- * making sure the whole table is still a thing that exists.
+ * A new layer's colour is still a decision about the whole table. The difference is that the
+ * table now answers back.
  */
 
 /** One declared colour: who draws with it, what it is called there, and its value. */
@@ -27,10 +29,12 @@ interface Declared {
   hex: string;
 }
 
-/* Dev-mode only, and deliberately. The registry exists to be checked and has no other reader,
- * so in a production build `declareColours` is a function that hands its argument straight
- * back, the array folds out of the bundle, and nothing here costs the page anything. */
+/* Dev-mode only, and the whole audit with it. The registry exists FOR the check and has no
+ * other reader, so in a production build `declareColours` is a function that hands its
+ * argument straight back and everything below this line folds out of the bundle -- which is
+ * checkable, and checked: the built app.js contains none of the strings in this file. */
 var declared: Declared[] = [];
+var audited = false;
 
 /* Record a feature's colours and hand them straight back, so that the declaration IS the
  * assignment and there is no second way for a colour to reach the page:
@@ -38,31 +42,32 @@ var declared: Declared[] = [];
  *   var RESOURCE_COLOUR: Record<string, string> = declareColours("markers", { … });
  *   var STORAGE_COLOUR = declareColours("placements", { storage: "#…" }).storage;
  *
- * `owner` is the drawing MODULE, not the layer, because that is the line a comparison needs.
- * Colours are to be compared across owners and never within one: a step inside a single family
- * is deliberate and small -- the belts' 15.6 between slowest and fastest, the pipes' 15.7
- * between Mk1 and Mk2, the storage pair's 16.7, the poles' 16.2, the grounds' 17.1 where No
- * Man's Land borders the Rocky Desert -- and a rule that flagged those is a rule everybody
- * switches off. Sharing an owner is what says "these two are meant to look related". Not
- * sharing one is what says "these two must never be confused".
+ * `owner` is the drawing MODULE, not the layer, because that is the line the check needs.
+ * Colours are compared across owners and never within one: a step inside a single family is
+ * deliberate and small -- the belts' 15.6 between slowest and fastest, the pipes' 15.7 between
+ * Mk1 and Mk2, the storage pair's 16.7, the poles' 16.2, the grounds' 17.1 where No Man's Land
+ * borders the Rocky Desert -- and a rule that flagged those is a rule everybody switches off.
+ * Sharing an owner is what says "these two are meant to look related". Not sharing one is what
+ * says "these two must never be confused".
  *
  * There is no registration order to get right. Every module that declares is imported by
- * main.ts and an import graph is evaluated synchronously, so by the time anything on this page
- * has drawn a single pixel the table is complete.
+ * main.ts, an import graph is evaluated synchronously, and the microtask queued at the FIRST
+ * declaration cannot run until that whole graph has finished -- so the audit always sees the
+ * complete table, and a feature added tomorrow needs to do nothing but declare.
  */
 export function declareColours<T extends Record<string, string>>(owner: string, colours: T): T {
   if (import.meta.env.DEV) {
     var table = colours as Record<string, string>;
     Object.keys(table).forEach(function (name) {
       var hex = table[name]!;
-      // Six hex digits and nothing else. A short form or a named CSS colour would drop
-      // silently out of every comparison, which is the one failure a colour registry must
-      // not have -- it would look exactly like a colour nobody needed to check.
+      // The audit reads these as six hex digits and nothing else. A short form or a named CSS
+      // colour would drop silently out of every comparison, which is the one failure a colour
+      // registry must not have.
       if (!/^#[0-9a-f]{6}$/i.test(hex)) {
         console.error(owner + "/" + name + ' is "' + hex + '", not a #rrggbb — it is not compared');
       }
-      // Two colours under one name is one of them missing from the table, and the pair it
-      // would have been compared against is the pair the second one was added for.
+      // Two colours under one name is one of them missing from the audit, and the pair it
+      // would have caught is the pair the second one was added for.
       if (
         declared.some(function (other) {
           return other.owner === owner && other.name === name;
@@ -72,6 +77,291 @@ export function declareColours<T extends Record<string, string>>(owner: string, 
       }
       declared.push({ owner: owner, name: name, hex: hex });
     });
+    if (!audited) {
+      audited = true;
+      queueMicrotask(audit);
+    }
   }
   return colours;
+}
+
+/* sRGB to CIE Lab (D65, 2-degree observer), and CIE76 -- plain Euclidean distance in Lab.
+ *
+ * CIE76 rather than the later and better CIEDE2000, and that is a compatibility fact rather
+ * than a preference. Every dE already written down on this page was computed this way: the
+ * twenty-six numbers quoted in the feature files reproduce to the decimal under this function
+ * and under no other. CIEDE2000 would put the storage magenta 25.3 from the generator red
+ * where its own warrant says 51.8, and the chevron cream 18.7 from the extractor amber where
+ * the warrant says 45.5 -- so adopting it would mean re-deriving thirty published numbers and
+ * throwing away the only record of what anybody actually measured. The threshold below is
+ * calibrated against those numbers, so the formula and the threshold travel together.
+ */
+function lab(hex: string): [number, number, number] {
+  var channel = function (at: number): number {
+    var c = parseInt(hex.slice(at, at + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  var r = channel(1);
+  var g = channel(3);
+  var b = channel(5);
+  // Linear sRGB to XYZ, each axis already divided by the D65 white point.
+  var x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+  var y = r * 0.2126729 + g * 0.7151522 + b * 0.072175;
+  var z = (r * 0.0193339 + g * 0.119192 + b * 0.9503041) / 1.08883;
+  var f = function (t: number): number {
+    return t > 216 / 24389 ? Math.cbrt(t) : (841 / 108) * t + 4 / 29;
+  };
+  var fx = f(x);
+  var fy = f(y);
+  var fz = f(z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+/** The distance, at the one decimal every warrant on this page is written to. */
+function deltaE(a: string, b: string): number {
+  var one = lab(a);
+  var two = lab(b);
+  var d = Math.sqrt(
+    (one[0] - two[0]) * (one[0] - two[0]) +
+      (one[1] - two[1]) * (one[1] - two[1]) +
+      (one[2] - two[2]) * (one[2] - two[2])
+  );
+  return Math.round(d * 10) / 10;
+}
+
+/* dE 15, and it is the house step read off the page rather than a number from a standard.
+ *
+ * The four ramps this page draws inside one family -- the belts' 15.6, the pipes' 15.7, the
+ * storage pair's 16.7, the poles' 16.2 -- are the smallest steps anyone here has looked at and
+ * accepted, and the smallest ground step accepted is 17.1. All five are same-owner and none of
+ * them reaches this test. Fifteen sits just under the lot, so that two colours from different
+ * modules landing as close as a deliberate ramp is exactly the thing that gets called out.
+ */
+var LIMIT = 15;
+
+/** `owner/name`, which is how a colour is named below and in every message the audit prints. */
+function key(owner: string, name: string): string {
+  return owner + "/" + name;
+}
+
+/** Two names in a fixed order, so a pair reads the same however the loop reached it. */
+function pairKey(a: string, b: string): string {
+  return a < b ? a + " <-> " + b : b + " <-> " + a;
+}
+
+/* A pair under the threshold that a warrant answers, with the distance it was answered at.
+ *
+ * `de` is not decoration. An exception whose distance has MOVED is an exception whose reason
+ * was written about two other colours, so the audit checks it and complains either way: a pair
+ * that drifted, and a pair listed here that is no longer close at all. The list can only be a
+ * ledger if it cannot quietly go stale.
+ */
+interface Exception {
+  a: string;
+  b: string;
+  de: number;
+  why: string;
+}
+
+/* The pairs an existing measurement already answers. There is exactly one, and that number is
+ * itself the finding: of the 1,290 cross-owner pairs this page now compares, 28 sit under the
+ * threshold and one of them was ever measured on purpose. The other 27 are below.
+ */
+var DISCHARGED: Exception[] = [
+  {
+    a: "markers/Desc_OreIron_C",
+    b: "routes/chevrons",
+    de: 10.1,
+    why:
+      "measured when the chevron cream was chosen, and discharged there: the mark is a thin V " +
+      "drawn on a pipe at 0.7 opacity, which composites to 11.9-13.0 from the iron dot, and " +
+      "the dot is a filled disc on open terrain. See CHEVRON_COLOUR in routes.ts.",
+  },
+];
+
+/* And the debt: pairs that are under the threshold today, that no warrant defends, and that
+ * are written down here so that making the discipline executable does not quietly turn into
+ * making it optional.
+ *
+ * None of these is a regression -- every one of them predates this file being able to check
+ * anything, and the swatches and the pixels are unchanged by the move that made it possible.
+ * What changed is that they are now countable, and the audit says how many at every dev boot.
+ * They are here rather than in DISCHARGED because an exception with an invented reason is
+ * worse than no rule at all, and moving any of these colours is a decision to make against the
+ * map rather than a line to change while refactoring.
+ *
+ * Grouped by what the two marks ARE, because that is the axis the one real warrant on this
+ * page turns on: the storage magenta was accepted at dE 27.4 from the raw-quartz dot on the
+ * grounds that a rectangle inside a factory and a disc on open terrain "are never asked to be
+ * told apart in the same square metre". That reasoning is worth something. It is not worth
+ * assuming, which is why each group says how far the argument actually reaches.
+ */
+interface Standing {
+  /** What these pairs have in common, and how far the argument for tolerating them goes. */
+  note: string;
+  /** `[owner/name, owner/name, dE as measured today]`. */
+  pairs: [string, string, number][];
+}
+
+var STANDING: Standing[] = [
+  {
+    note:
+      "A node dot on the ground it lies on. Every one of these is the game's own coal tint, " +
+      "which is near black because coal is, against biome tints that are dark on purpose -- " +
+      "and a coal dot is drawn ON the cell rather than beside it, so this IS the same square " +
+      "metre and the storage argument does not reach it. What saves it in practice is the " +
+      "stroke and the fill opacity rather than the hue, which is a weaker thing than a " +
+      "measurement and is why the pairs are listed rather than waved through.",
+    pairs: [
+      ["markers/Desc_Coal_C", "regions/A", 6.3],
+      ["markers/Desc_Coal_C", "regions/N", 10.0],
+      ["markers/Desc_Coal_C", "regions/M", 11.9],
+      ["markers/Desc_Coal_C", "regions/Q", 12.9],
+      ["markers/Desc_Coal_C", "regions/I", 14.1],
+      ["markers/Desc_Coal_C", "regions/H", 14.3],
+      ["markers/Desc_Coal_C", "regions/P", 14.8],
+      ["markers/Desc_Coal_C", "regions/B", 14.9],
+    ],
+  },
+  {
+    note:
+      "The concrete against the ground it is poured on, and the hole in it. STRUCTURE_COLOUR " +
+      "in placements.ts says the concrete is 'cool enough to read as built against the " +
+      "biomes'; at 6.6 from Abyss Cliffs that sentence is a hope rather than a measurement, " +
+      "and it is the only claim in this codebase the executable version contradicts outright. " +
+      "Mitigated, not answered, by REGION_BLEND: the biome cells are faded to 0.45 over the " +
+      "map render wherever there is imagery, so the pair is at full strength only on plain.",
+    pairs: [
+      ["placements/foundations", "regions/A", 6.6],
+      ["placements/foundations", "routes/lift fill", 10.4],
+      ["regions/A", "routes/lift fill", 11.0],
+      ["placements/foundations", "regions/B", 11.1],
+      ["placements/foundations", "regions/P", 12.8],
+      ["placements/foundations", "regions/M", 14.3],
+    ],
+  },
+  {
+    note:
+      "A dot and a filled box. This is where the storage argument is strongest -- a disc on " +
+      "terrain against a rectangle inside a factory -- and where it has one genuine hole: a " +
+      "water extractor stands exactly on a water node, which is the case raiseNodeDots() " +
+      "exists for, so the water dot and the machine blue really are asked to be told apart in " +
+      "one square metre. What has kept that from being noticed is that the extractor drawn " +
+      "there is amber rather than blue.",
+    pairs: [
+      ["markers/somersloop", "placements/generators", 4.7],
+      ["markers/Desc_Coal_C", "placements/foundations", 7.4],
+      ["markers/Desc_Water_C", "placements/machines", 8.6],
+      ["markers/hard_drive", "placements/machines", 8.7],
+    ],
+  },
+  {
+    note:
+      "A dot beside the line that runs past it, and the group with two things in it worth " +
+      "saying out loud. PIPE_COLOUR's warrant in routes.ts states that its nearest neighbour " +
+      "on the page is the copper-ore dot at dE 22; the bauxite dot has been in the palette " +
+      "since this map's first commit and is 4.9 away, so the pipe rust was measured against a " +
+      "set that did not include it. And the closest pair anywhere on the page is the " +
+      "crashed-drop-pod marker against the belt steel at 2.1, which is two grey-blues nobody " +
+      "ever compared: the belts predate the pickup categories, and the categories were handed " +
+      "out one per kind rather than measured against anything.",
+    pairs: [
+      ["markers/crashed_drop_pod", "routes/belts", 2.1],
+      ["markers/Desc_OreBauxite_C", "routes/pipe mk2", 4.8],
+      ["markers/Desc_OreBauxite_C", "routes/pipes", 4.9],
+      ["markers/crashed_drop_pod", "routes/belt fast", 6.2],
+      ["markers/crashed_drop_pod", "routes/belt slow", 9.8],
+      ["markers/Desc_OreBauxite_C", "routes/pipe mk1", 12.2],
+      ["markers/Desc_Geyser_C", "routes/pipe mk2", 12.5],
+      ["markers/Desc_Stone_C", "routes/belt fast", 13.2],
+      ["markers/tape_pickup", "routes/pipe mk2", 13.8],
+    ],
+  },
+];
+
+/** Every listed pair, keyed the way the audit's loop will name it, and which list it came
+ *  from -- because "answered" and "owed" are counted differently at the end. */
+function allowed(): Record<string, { de: number; owed: boolean }> {
+  var out: Record<string, { de: number; owed: boolean }> = {};
+  DISCHARGED.forEach(function (entry) {
+    out[pairKey(entry.a, entry.b)] = { de: entry.de, owed: false };
+  });
+  STANDING.forEach(function (group) {
+    group.pairs.forEach(function (pair) {
+      out[pairKey(pair[0], pair[1])] = { de: pair[2], owed: true };
+    });
+  });
+  return out;
+}
+
+/* The check itself, run once, in dev, after the whole table has declared.
+ *
+ * Three failures, and they are three different mistakes. A NEW pair under the threshold is a
+ * colour chosen without looking at the rest of the page. A listed pair whose distance has
+ * MOVED is a reason that now describes two other colours. A listed pair that is no longer
+ * close is an entry outliving its subject, which is how a ledger turns back into a mute
+ * button. The count of undefended pairs is said once, as a number, for the same reason: a debt
+ * nobody is reminded of is a debt nobody pays.
+ */
+function audit(): void {
+  var known = allowed();
+  var seen: Record<string, boolean> = {};
+  var owed = 0;
+  var closest = LIMIT;
+  var worst = "";
+  for (var i = 0; i < declared.length; i++) {
+    for (var j = i + 1; j < declared.length; j++) {
+      var one = declared[i]!;
+      var two = declared[j]!;
+      if (one.owner === two.owner) continue;
+      var pair = pairKey(key(one.owner, one.name), key(two.owner, two.name));
+      var distance = deltaE(one.hex, two.hex);
+      var listed = known[pair];
+      if (listed === undefined) {
+        if (distance < LIMIT) {
+          console.error(
+            "palette: " + pair + " is dE " + distance + ", under " + LIMIT + " — two modules " +
+              "chose colours that cannot be told apart. Move one, or list the pair in " +
+              "DISCHARGED in palette.ts with what makes it safe."
+          );
+        }
+        continue;
+      }
+      seen[pair] = true;
+      if (distance !== listed.de) {
+        console.error(
+          "palette: " + pair + " is dE " + distance + ", listed at " + listed.de + " — the " +
+            "reason written beside it was measured about a colour that has since changed."
+        );
+      } else if (distance >= LIMIT) {
+        console.error(
+          "palette: " + pair + " is dE " + distance + " and needs no exception any more — " +
+            "delete the entry from palette.ts."
+        );
+      }
+      if (listed.owed && distance < LIMIT) {
+        owed++;
+        if (distance < closest) {
+          closest = distance;
+          worst = pair;
+        }
+      }
+    }
+  }
+  Object.keys(known).forEach(function (pair) {
+    if (!seen[pair]) {
+      console.error(
+        "palette: " + pair + " is listed in palette.ts but one of those colours is no longer " +
+          "declared — the entry outlived its subject."
+      );
+    }
+  });
+  // Everything above is a defect. This is not: it is the size of the debt the executable
+  // version of this file found already in place, said once so that it stays visible.
+  if (owed) {
+    console.warn(
+      "palette: " + owed + " cross-owner pairs are under dE " + LIMIT + " with no warrant " +
+        "(nearest " + closest + ", " + worst + ") — see STANDING in palette.ts."
+    );
+  }
 }
