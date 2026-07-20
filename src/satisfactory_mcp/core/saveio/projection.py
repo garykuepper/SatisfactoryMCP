@@ -37,7 +37,11 @@ from .. import atomic
 #: since schema 11, so the new key is that edge list's positional twin (``wires[i]`` is the
 #: span of ``graph["power"][i]``) rather than a second, disagreeable copy of who is wired to
 #: whom.
-SCHEMA_VERSION = 17
+#: 18 added ``crates`` -- the death and dismantle crates lying on the ground, and what is in
+#: each one. Additive and its own key rather than more ``storage`` rows: a container is
+#: infrastructure the player built and a crate is a situation the player got into, and a
+#: pickle written under 17 simply has no such key rather than disagreeing about one.
+SCHEMA_VERSION = 18
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3

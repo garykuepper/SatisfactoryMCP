@@ -21,7 +21,8 @@ on committed fixtures with no game install, and this one is the exception, becau
 projection is only meaningful against the save it came from.
 
 **Why the bank is not re-banked, ever.** The projection has since grown a placement yaw and a
-``belts`` key (schema 12), a ``pipes`` key (schema 13) and a ``storage`` key (schema 15). None
+``belts`` key (schema 12), a ``pipes`` key (schema 13), a ``storage`` key (schema 15), a
+``power`` key (schema 17) and a ``crates`` key (schema 18). None
 of those fields existed while
 the oracle did, so it never had an opinion about them, and re-recording the bank against this
 parser would replace an independent measurement with this parser's own output -- the one thing
@@ -35,7 +36,7 @@ list is keyed by what was added and annotated with which schema added it.
 
 **And the list is pinned in both directions**, because a hand-maintained list of exceptions
 fails by omission rather than by error. Until ``test_a_new_top_level_key_cannot_escape_the
-_comparison`` a schema-17 key added to the projection and forgotten here would simply not be
+_comparison`` a schema-18 key added to the projection and forgotten here would simply not be
 compared -- silently, on every save, for ever, with no test failing to say so. That test
 reads the committed fixture and demands that what it holds beyond the bank is EXACTLY
 ``POST_11_ADDITIONS["keys"]``: a new key with no entry fails, and a stale entry for a key
@@ -101,7 +102,17 @@ POST_11_ADDITIONS = {
     #: would move that digest on all 31 saves and fail here. That is the intended reading: the
     #: geometry is new and outside the oracle's scope, the connectivity is not new and is
     #: still being checked against it.
-    "keys": ("belts", "pipes", "attachments", "storage", "power"),
+    #:
+    #: **Schema 18's ``crates`` is a new top-level name and is listed, and what it did NOT
+    #: touch is the point.** A crate's contents have been inside ``inventories["machine"]``
+    #: since schema 11 -- the bucket rule files a component called ``Inventory`` on a
+    #: non-storage, non-player owner with the smelter buffers -- and schema 18 leaves that
+    #: exactly where it is. So there is no second ``_unfix`` here: the new key reports the
+    #: same stacks per crate, and the banked total goes on being compared unfiltered, which
+    #: means a crate this parser started miscounting still moves ``inventories`` on all 31
+    #: saves. That is the difference between an addition and a correction, and it is why 18
+    #: costs one line where 16 cost a function.
+    "keys": ("belts", "pipes", "attachments", "storage", "power", "crates"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
     #: schema-11 number; leaving the current number here would report drift on every save on
@@ -296,8 +307,8 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    seventeen = {
-        "schema_version": 17,
+    eighteen = {
+        "schema_version": 18,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -348,6 +359,22 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
                 "slots": 10,
             },
         ],
+        # Schema 18, populated for the reason ``power`` above is. The Rubber in it is
+        # DELIBERATELY the same 5 units the machine bucket holds: a crate's contents have
+        # been inside ``inventories["machine"]`` since schema 11 and stay there, so dropping
+        # this key must leave that bucket untouched -- an ``_unfix_16``-style subtraction
+        # here would be the bug, not the fix.
+        "crates": [
+            {
+                "cls": "BP_Crate_C",
+                "instance": "x.BP_Crate_C_3",
+                "pos": [7.0, 8.0, 9.0],
+                "yaw": -90.0,
+                "kind": "death",
+                "items": [["Desc_Rubber_C", 5]],
+                "slots": 1,
+            }
+        ],
         "inventories": {
             "player": {"Desc_Wire_C": 7},
             "storage": {"Desc_IronPlate_C": 100},
@@ -355,14 +382,14 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    filtered = as_schema_11(seventeen)
+    filtered = as_schema_11(eighteen)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(seventeen)
-    moved["machines"] = [{**seventeen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(eighteen)
+    moved["machines"] = [{**eighteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
     )
@@ -371,13 +398,13 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
     # that RESTORES a value rather than dropping one: a reconstruction that simply copied the
     # bank's shape would pass the equality above and hide every stack in the key for ever. A
     # container the two parsers would have read differently still has to move the digest.
-    misread = dict(seventeen)
+    misread = dict(eighteen)
     misread["storage"] = [
-        {**seventeen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
-        seventeen["storage"][1],
+        {**eighteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
+        eighteen["storage"][1],
     ]
     misread["inventories"] = {
-        **seventeen["inventories"],
+        **eighteen["inventories"],
         "storage": {"Desc_IronPlate_C": 101},
     }
     assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
@@ -390,7 +417,7 @@ def test_a_new_top_level_key_cannot_escape_the_comparison(banked, projection):
 
     **The list of exceptions is hand-maintained, and a hand-maintained list fails by
     omission.** Everything above pins what the filter DOES; nothing pinned what it was given
-    to do. So a schema-18 key added to ``extract`` and not added here would be compared
+    to do. So a schema-19 key added to ``extract`` and not added here would be compared
     against a bank that has never heard of it -- ``proj[key]`` would raise on the first save
     and the fix would look like adding a line to this list, which is exactly the reflex that
     would have retired the key from the comparison for ever, silently, with no reviewer
@@ -458,7 +485,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             pool, present, lambda item: _projection(item[2]), width=width
         ):
             assert "error" not in proj, (name, proj.get("detail"))
-            assert proj["schema_version"] == 17, (name, "unexpected schema for the filter")
+            assert proj["schema_version"] == 18, (name, "unexpected schema for the filter")
             proj = as_schema_11(proj)
             for key, want in entry.items():
                 if key == "n_objects_value":

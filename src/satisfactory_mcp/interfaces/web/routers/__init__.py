@@ -22,9 +22,11 @@ from fastapi import APIRouter
 
 from . import (
     collectibles,
+    crates,
     events,
     factories,
     floors,
+    icons,
     inspect,
     nodes,
     placements,
@@ -55,6 +57,17 @@ __all__ = ["ALL_ROUTERS"]
 #: The last four are indices 14..17, the tail of that same manifest and one endpoint each:
 #: ``/api/factories``, ``/api/floors``, ``/api/collectibles``, ``/api/events``. With them the
 #: tuple is the whole surface, and ``path_order`` is the list this order produces.
+#:
+#: **``crates`` is the first append since the split finished, and it lands at index 18.** The
+#: W-series ended with the tuple reproducing ``api.py``'s decorator order exactly, which is
+#: what made the last append's ``/openapi.json`` diff empty; this one is not empty, and is
+#: not supposed to be. A NEW path at the END of ``paths`` is precisely the shape of diff the
+#: append-only rule exists to produce -- nothing before index 18 moves, so every previously
+#: generated ``operations[...]`` entry keeps its position, and the schema grows by exactly
+#: the one endpoint that was added. Regenerating ``api-schema.d.ts`` belongs with whatever
+#: change teaches the page to draw crates, not with the endpoint that serves them.
+#:
+#: ``icons`` follows it at index 19, on the same terms and with the same reading.
 ALL_ROUTERS: tuple[APIRouter, ...] = (
     world.router,
     nodes.router,
@@ -69,4 +82,6 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     floors.router,
     collectibles.router,
     events.router,
+    crates.router,
+    icons.router,
 )

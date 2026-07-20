@@ -149,6 +149,57 @@ def test_the_productivity_window_is_not_the_constant_it_looks_like(proj):
     )
 
 
+def test_the_crate_census_extract_and_the_endpoint_cite(proj):
+    """``core/saveio/extract._crates`` and ``routers/crates.py``, schema 18.
+
+    Two crates, and the pair is the whole argument for the ``kind`` field existing: one
+    says what it is and one cannot. The dismantle crate was made under a build that has
+    ``mCrateType``; the other predates the property entirely -- it first appears in this
+    world's saves under build 201717 and still reads ``none`` under 495413, which is why
+    ``CRATE_KINDS`` argues that ``none`` is an answer rather than a failure.
+
+    Also the join, asserted rather than assumed: a crate's contents come off a component
+    named ``inventory`` on THIS save and ``Inventory`` on others, and a case-sensitive test
+    would leave both of these rows holding nothing while still reporting two crates.
+    """
+    crates = proj["crates"]
+    assert len(crates) == 2, "core/saveio/extract.py:_crates and routers/crates.py quote this"
+    assert [c["kind"] for c in crates] == ["dismantle", "none"], "sorted by kind, then instance"
+    assert all(c["cls"] == "BP_Crate_C" for c in crates), "CRATE_CLASSES is a list of one"
+    assert all(c["yaw"] is not None and c["pos"] for c in crates)
+    dismantle, unknown = crates
+    assert dismantle["items"] == [
+        ["Desc_IronPlate_C", 15],
+        ["Desc_SteelPlateReinforced_C", 4],
+        ["Desc_SAM_C", 3],
+        ["Desc_Rotor_C", 2],
+    ], "biggest first, ties by class -- and the join found them at all"
+    assert dismantle["slots"] == 4
+    assert unknown["items"] == [["Desc_Coal_C", 17], ["Desc_Cement_C", 7]]
+    assert unknown["slots"] == 2
+
+
+def test_a_crate_is_not_counted_as_a_container_or_as_a_building(proj):
+    """The three keys schema 18 deliberately did NOT touch, pinned so a merge cannot happen.
+
+    A crate is not in ``storage`` (schema 15 joins a written-down list of container classes
+    and ``BP_Crate_C`` is not one), not in ``building_counts`` (it is not a ``Build_`` actor
+    and the extractor ``continue``s past it before the tally), and its contents are still in
+    ``inventories["machine"]`` where the schema-11 bucket rule put them -- which is what lets
+    the parity bank go on comparing that key unfiltered. All three are the reasons ``crates``
+    is its own key; a change to any of them is a schema decision, not a refactor.
+    """
+    assert not any("Crate" in row["cls"] for row in proj["storage"])
+    assert not any("Crate" in cls for cls in proj["building_counts"])
+    machine = proj["inventories"]["machine"]
+    for crate in proj["crates"]:
+        for item, amount in crate["items"]:
+            assert machine.get(item, 0) >= amount, (
+                f"{item} left the machine bucket -- schema 18 is additive, and moving it is "
+                "a correction that owes test_savparse_parity an _unfix"
+            )
+
+
 def test_the_reference_projection_reports_no_losses(proj):
     """``warnings`` empty, which is what makes every count above a count of the world.
 
@@ -157,4 +208,4 @@ def test_the_reference_projection_reports_no_losses(proj):
     file rather than just one line of it. See ``core/saveio/extract._drop_notes``.
     """
     assert proj["warnings"] == []
-    assert proj["schema_version"] == 17
+    assert proj["schema_version"] == 18
