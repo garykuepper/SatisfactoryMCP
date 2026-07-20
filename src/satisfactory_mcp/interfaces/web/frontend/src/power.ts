@@ -29,6 +29,7 @@ import { popup } from "./dom";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { pixelsPerMetre } from "./map";
+import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
 import { ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
 
@@ -53,7 +54,7 @@ import type { PoleRow, PowerResponse, WireRow } from "./api-types";
  * are comfortably past the dE 22 the pipe rust was accepted at and nowhere near the dE 4.5
  * that disqualified a brighter pipe. The pipes themselves are dE 58 away and could not be
  * confused with this at any size. */
-var WIRE_COLOUR = "#7d76a8";
+var WIRE_COLOUR = declareColours("power", { wires: "#7d76a8" }).wires;
 
 /* The poles, one value step up the same hue -- the grammar the belts, the pipes and the
  * storage boxes all use for a distinction inside one family. Here the distinction is not a
@@ -66,14 +67,14 @@ var WIRE_COLOUR = "#7d76a8";
  * assumed safe, because a ramp can walk a colour into a neighbour -- this one moves away from
  * the ground (dE 45.6, up from 34.8) and its nearest colour on the page is the hard-drive
  * pickup dot at dE 19.9. */
-var POLE_COLOUR = "#a8a0d2";
+var POLE_COLOUR = declareColours("power", { poles: "#a8a0d2" }).poles;
 
 /* How big a pole's disc is, in PIXELS, by what the pole is.
  *
  * Pixels and not metres, which is the opposite of every other placement on this map and is a
  * decision about what the mark MEANS. A machine is drawn at its measured footprint because the
  * question there is "does this fit"; a pole is drawn at a fixed size because the question is
- * "is there one here", which is the node dots' grammar (PURITY_RADIUS in palette.ts) and the
+ * "is there one here", which is the node dots' grammar (PURITY_RADIUS in markers.ts) and the
  * reason `_fixed` exists in routes.ts. A true-size pole would be a fifth of a pixel at the
  * world view and would make the mark disappear at exactly the zoom the layer is most useful.
  *

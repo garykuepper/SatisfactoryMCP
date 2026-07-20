@@ -18,7 +18,7 @@ import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { footprintCorners } from "./map";
 import { raiseNodeDots } from "./markers";
-import { KIND_COLOUR, STORAGE_COLOUR, STORAGE_FLUID_COLOUR } from "./palette";
+import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
 
 import type {
@@ -46,7 +46,8 @@ import type {
  * leaves hairline seams between neighbouring tiles at low zoom, and a stroke in any other
  * colour draws an 8 m grid. Same colour, weight 1, and a slab reads as one platform.
  */
-var STRUCTURE_COLOUR = "#3a4148"; // concrete, cool enough to read as built against the biomes.
+// Concrete, cool enough to read as built against the biomes.
+var STRUCTURE_COLOUR = declareColours("placements", { foundations: "#3a4148" }).foundations;
 
 export function drawStructures(data: StructuresResponse): void {
   // First of the built band, because the concrete is what everything else in it stands on
@@ -95,6 +96,15 @@ registerFetch<StructuresResponse>({
  * rotates to itself. A null yaw draws axis-aligned; see footprintCorners in map.ts for why that is
  * not the same statement as a yaw of zero. */
 var MACHINE_FALLBACK_M = 6;
+
+/* Blue, amber, red -- the page's oldest three colours, and the ones every measured warrant
+ * since has had to get out of the way of: the pipe rust was chosen against this amber, the
+ * storage magenta against this red, and the wire violet against all three. */
+var KIND_COLOUR: Record<string, string> = declareColours("placements", {
+  machines: "#4aa3df",
+  extractors: "#e0a33f",
+  generators: "#d9534f",
+});
 
 /* The three layers /api/machines answers with, and the one row shape all three carry.
  * Spelled as a tuple rather than inferred, so `data[kind]` is a PlacementRow[] rather than
@@ -206,6 +216,41 @@ registerFetch<MachinesResponse>({
  * OFF BY DEFAULT, and NOT part of the reveal a factory label triggers -- see FACTORY_LAYERS in
  * labels.ts for that decision and its reasoning.
  */
+
+/* Storage, and picked the way the pipe rust was: by measuring, not by taste.
+ *
+ * A container is drawn as a filled footprint box, so the colours it has to separate from are
+ * the other filled boxes -- the three machine kinds, the belt attachments, and the concrete it
+ * stands on -- and then, more weakly, everything else on the page. Magenta is what is left: the
+ * page already spends blue on machines, amber on extractors, red on generators, steel on belts
+ * and rust on pipes, and the whole warm half is taken.
+ *
+ * In CIE Lab, this is dE 51.8 from its nearest filled box (the generator red) and 48.5 from
+ * the nearest biome ground, which are the two comparisons that decide whether a box reads. Its
+ * nearest neighbour ANYWHERE on the page is the raw-quartz node dot at dE 27.4 -- a small disc
+ * on open terrain rather than a rectangle inside a factory, so the two are never asked to be
+ * told apart in the same square metre. The alternatives measured beside it were all worse on
+ * one of the two: a lighter magenta (#c76bb0) lands dE 17.7 from that same quartz dot, a
+ * violet (#8c72c4) dE 19.1 from the crude-oil dot and only 37.3 from the machine blue, and a
+ * sea green dE 10.5 from the pickup teal.
+ *
+ * And the fluid buffers, one value step down the same hue -- the grammar the belts and pipes
+ * use for their tiers, borrowed for a distinction that is not a tier: a tank and a box are two
+ * kinds of container rather than two grades of one, and one family with a step inside it says
+ * "same layer, different thing" without spending a second hue on it.
+ *
+ * The step is the house step: dE 16.7, against the belts' 15.6 between their slowest and
+ * fastest and the pipes' 15.7 between Mk1 and Mk2. Re-measured rather than assumed safe,
+ * because a ramp can walk a colour into a neighbour -- this one moves AWAY from everything,
+ * ending dE 34.0 from its nearest colour on the page (the crude-oil dot) and 37.6 from the
+ * nearest ground, both further off than the box tone above.
+ */
+var STORAGE = declareColours("placements", {
+  storage: "#ad4f96",
+  "storage fluid": "#7f3169",
+});
+var STORAGE_COLOUR = STORAGE.storage;
+var STORAGE_FLUID_COLOUR = STORAGE["storage fluid"];
 
 /* A container the docs dump carries no clearance for: the HUB's own box, the Blueprint
  * Designer's, and the Dimensional Depot uploader. The same arrangement, and the same reason, as

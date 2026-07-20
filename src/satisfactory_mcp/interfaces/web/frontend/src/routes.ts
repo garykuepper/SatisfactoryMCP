@@ -21,6 +21,7 @@ import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { footprintCorners, map, pixelsPerMetre } from "./map";
 import { raiseNodeDots } from "./markers";
+import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
 import { state } from "./state";
 
@@ -257,13 +258,20 @@ function retessellate(piece: L.Polyline, ppm: number): boolean {
  * routes it was also, briefly, the loudest thing on a page that now has real terrain under
  * it. A mid tone is darker than the sand and lighter than the concrete, which is the only
  * value that has contrast both ways without being bright. */
-var BELT_COLOUR = "#93a5b4";
-var LIFT_FILL = "#252a30"; // the hole the ring is drawn around.
-
-/* The three tier tones, one step of value either side of BELT_COLOUR -- which stays the
- * middle one, so the swatch in the layer control is still the network's own colour. */
-var BELT_SLOW = "#7f8f9d";
-var BELT_FAST = "#a7b9c7";
+/* The three tier tones are one step of value either side of the middle one, which stays the
+ * network's colour and the swatch in the layer control. The step is dE 15.6 between slowest
+ * and fastest and it is the page's house step -- the pipes' 15.7 below, the storage pair's
+ * 16.7 and the poles' 16.2 all match it. */
+var BELTS = declareColours("routes", {
+  belts: "#93a5b4",
+  "belt slow": "#7f8f9d",
+  "belt fast": "#a7b9c7",
+  "lift fill": "#252a30", // the hole the ring is drawn around.
+});
+var BELT_COLOUR = BELTS.belts;
+var LIFT_FILL = BELTS["lift fill"];
+var BELT_SLOW = BELTS["belt slow"];
+var BELT_FAST = BELTS["belt fast"];
 
 /* Tier as value. `items_per_min` is the dump's own figure for the class -- 60, 120, 270,
  * 480, 780 -- so this is a banding of a measurement rather than a parse of "Mk3" out of a
@@ -578,7 +586,7 @@ export function styleRoutes() {
  * saturated amber a pipe suggests first, #d99a3e, is dE 4.5 from the extractors and would
  * have been indistinguishable from them. Warm where the belts are cool, and dark enough not
  * to shout over a photographic map. */
-var PIPE_COLOUR = "#a8613c";
+var PIPE_COLOUR = declareColours("routes", { pipes: "#a8613c" }).pipes;
 
 /* The two tier tones, one step of value either side of PIPE_COLOUR -- which stays the middle
  * one, so the swatch in the layer control is still the network's own colour. The step is the
@@ -591,8 +599,9 @@ var PIPE_COLOUR = "#a8613c";
  * base sits at 27.6, so the ramp moves away from it rather than toward -- and the extractor
  * amber that ruled out a brighter pipe stays 40.9 and 32.4 away, against the dE 4.5 that
  * disqualified #d99a3e. */
-var PIPE_MK1 = "#944d28";
-var PIPE_MK2 = "#bc7550";
+var PIPE_TIER = declareColours("routes", { "pipe mk1": "#944d28", "pipe mk2": "#bc7550" });
+var PIPE_MK1 = PIPE_TIER["pipe mk1"];
+var PIPE_MK2 = PIPE_TIER["pipe mk2"];
 
 /* Tier as value, the same banding the belts use and for the same reason -- and for one more.
  * `flow_m3_min` is the dump's own figure for the class -- 300 on Mk1, 600 on Mk2 -- so this
@@ -708,7 +717,7 @@ var CHEVRON_WEIGHT_PX = 1.5;
  * while the nearest colour anywhere else on the page is the iron-ore dot at dE 11.9 to 13.0,
  * which is a filled disc on terrain rather than a thin V on a line. The extractor amber that
  * ruled out a brighter pipe in the first place stays dE 45.5 away from the swatch. */
-var CHEVRON_COLOUR = "#e8cbb4";
+var CHEVRON_COLOUR = declareColours("routes", { chevrons: "#e8cbb4" }).chevrons;
 var CHEVRON_OPACITY = 0.7;
 
 function chevronOpacity(ppm: number): number {

@@ -13,13 +13,7 @@ import { registerSection } from "./layercontrol";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { xy } from "./map";
-import {
-  PICKUP_COLOUR,
-  PICKUP_FALLBACK,
-  PLAYER_COLOUR,
-  PURITY_RADIUS,
-  RESOURCE_COLOUR,
-} from "./palette";
+import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
 import { state } from "./state";
 import { fail } from "./toast";
@@ -49,6 +43,30 @@ export function raiseNodeDots() {
     });
   });
 }
+
+// Ore colours follow the in-game item tints closely enough to be recognisable without
+// shipping a single game asset: they are hex strings, not textures.
+var RESOURCE_COLOUR: Record<string, string> = declareColours("markers", {
+  Desc_OreIron_C: "#c8b6a6",
+  Desc_OreCopper_C: "#e08a4b",
+  Desc_Stone_C: "#cfcfcf",
+  Desc_Coal_C: "#4c4c4c",
+  Desc_OreGold_C: "#e3c74a",
+  Desc_Sulfur_C: "#e8e35c",
+  Desc_RawQuartz_C: "#e59ce0",
+  Desc_OreBauxite_C: "#b06a4a",
+  Desc_OreUranium_C: "#7ce07c",
+  Desc_LiquidOil_C: "#6b4bb0",
+  Desc_NitrogenGas_C: "#6ec5e0",
+  Desc_Water_C: "#3f8fd0",
+  Desc_SAM_C: "#b04bd0",
+  Desc_Geyser_C: "#d97b4f", // synthetic label; a geyser is a placement target, not an item
+});
+
+/* How big a node dot is, in pixels, by purity -- the grammar POLE_RADIUS_PX in power.ts calls
+ * "is there one here": a fixed size, because the question a dot answers is whether there is a
+ * node, not how much room it takes up. */
+var PURITY_RADIUS: Record<string, number> = { impure: 3, normal: 4.5, pure: 6 };
 
 export function drawNodes(data: NodesResponse): void {
   var byResource: Record<string, NodeRow[]> = {};
@@ -158,6 +176,10 @@ registerFetch<NodesResponse>({
  * empty case reaches the registry directly: it clears a group that exists and creates nothing
  * if one does not.
  */
+/* Near-white and warm, the one thing on the page that is not a colour ABOUT anything: it is
+ * not an ore, not a tier and not a biome, so it is the value nothing else on the map spends. */
+var PLAYER_COLOUR = declareColours("markers", { player: "#f5f0e8" }).player;
+
 export function drawPlayer(p: SummaryResponse["player"]): void {
   // The object is always sent; its fields are what go null on a save with no pawn.
   if (p.x_m === null || p.y_m === null) {
@@ -184,6 +206,29 @@ export function drawPlayer(p: SummaryResponse["player"]): void {
     )
     .addTo(group);
 }
+
+// One colour per pickup category, so ten separate checkboxes stop drawing one
+// indistinguishable teal dot. Unlisted categories share the old teal as the fallback below.
+var PICKUP_COLOUR: Record<string, string> = declareColours("markers", {
+  somersloop: "#e05c5c",
+  mercer_sphere: "#b06ae0",
+  hard_drive: "#6ea8d8",
+  loot_cache: "#d8b46e",
+  crashed_drop_pod: "#9aa8b8",
+  power_slug_blue: "#5cc8e8",
+  power_slug_yellow: "#e8d55c",
+  power_slug_purple: "#c85ce8",
+  mushroom: "#a8c86e",
+  tape_pickup: "#e09a6e",
+});
+
+/* The old single teal, kept for the categories the table above does not name -- and DECLARED
+ * rather than left as a bare literal, because a world with a category nobody has coloured yet
+ * draws this one for real: `customization_unlock_pickup` is a row on the reference save. A
+ * stand-in that reaches the screen is a colour on the page and belongs in the comparison. */
+var PICKUP_FALLBACK = declareColours("markers", { "pickup fallback": "#7fd1b9" })[
+  "pickup fallback"
+];
 
 export function drawCollectibles(data: CollectiblesResponse): void {
   var byCategory: Record<string, CollectibleRow[]> = {};

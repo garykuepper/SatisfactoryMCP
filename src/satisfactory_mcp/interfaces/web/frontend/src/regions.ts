@@ -11,12 +11,12 @@ import { esc } from "./dom";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { map } from "./map";
-import { REGION_COLOUR } from "./palette";
+import { declareColours } from "./palette";
 import { state } from "./state";
 
 import type { RegionsResponse } from "./api-types";
 
-var REGION_FILL = 1; // see REGION_COLOUR in palette.ts: opaque cells, or the shared borders become a grid.
+var REGION_FILL = 1; // see REGION_COLOUR below: opaque cells, or the shared borders become a grid.
 
 /* How much of the base map shows through the region fill when BOTH are drawn.
  *
@@ -114,6 +114,63 @@ export function noteRegionChoice(event: L.LeafletEvent): void {
   if (!armed || applying) return;
   if ((event as L.LayersControlEvent).layer === state.layers["regions"]) chosen = true;
 }
+
+/* One muted colour per biome letter, keyed exactly like /api/regions' legend. Hand-picked to
+ * read as ground at a glance -- sand for the deserts, greens for the forests, teal along the
+ * coast, murk for the swamp -- and, like the ore palette in markers.ts, they are 19 hex strings
+ * rather than a single pixel of anyone's artwork.
+ *
+ * Dark on purpose, and every CELL is painted at full opacity, always: a translucent cell has to
+ * blend against whatever is at its edges too, and 768 of them sharing borders turns that blend
+ * into a visible 256 m grid. These are the blended values, baked in, so the cells of one region
+ * merge into one shape. Transparency over the map render is therefore NOT done here -- see
+ * REGION_BLEND above, which fades the finished composite once, at the pane.
+ *
+ * Keyed by the legend letter `data/region_names.json` assigns, which is alphabetical by region
+ * name -- so the letters moved when the region layer was re-derived from the game's own map
+ * areas and three wiki-only names went with it. Every colour below is the one that region
+ * already had; what changed is which letter it hangs on, plus one new entry.
+ *
+ * Gone: Eastern Dune Forest (#4e5c3d), Snaketree Forest (#415037), Western Beaches (#736d56).
+ * The game names none of those three anywhere on the map.
+ *
+ * The letter is also the name this declares each colour under, because it is the API's own key
+ * and inventing a second name for one thing is how two names drift apart. The trailing comment
+ * on each line is the region it belongs to.
+ */
+var REGION_COLOUR: Record<string, string> = declareColours("regions", {
+  A: "#3e3e3c", // Abyss Cliffs
+  B: "#284e5a", // Blue Crater
+  C: "#2e5348", // Crater Lakes
+  D: "#654e37", // Desert Canyons
+  E: "#726443", // Dune Desert
+  F: "#3b5a3b", // Grass Fields
+  G: "#294834", // Jungle Spires
+  H: "#32544d", // Lake Forest
+  I: "#594a37", // Maze Canyons
+  /* No Man's Land: the game's own name for the outer coast and the ocean, and 287 of the
+   * 768 painted cells -- so it is the largest thing on this layer and the one that must NOT
+   * read as a biome. Bare, pale and desaturated, one step brighter than any ground here.
+   *
+   * Measured like the pipe rust and the storage magenta. In CIE Lab it is dE 17.1 from its
+   * nearest neighbour (Rocky Desert, which it borders for most of the west coast), 18.4 from
+   * Dune Desert and 20.6 from Western Dune Forest -- above the ~15.6 step the belts use and
+   * comfortably above the pipes' 15.7. The alternatives measured beside it were all worse
+   * against that same Rocky Desert border: the render's own no-man's-land tone (#7c7a6c) lands
+   * at dE 12.6, a warm sand (#807a68) at 13.3, and anything darker collapses onto it (#5a5750
+   * is dE 3.9). Cool greys were rejected for the other end: #46484a is dE 5.1 from Abyss
+   * Cliffs. */
+  J: "#8a8478", // No Man's Land
+  K: "#2e4637", // Northern Forest
+  L: "#65423b", // Red Bamboo Fields
+  M: "#4e3937", // Red Jungle
+  N: "#5c5b4e", // Rocky Desert
+  O: "#335041", // Southern Forest
+  P: "#295258", // Spire Coast
+  Q: "#374232", // Swamp
+  R: "#294233", // Titan Forest
+  S: "#585d40", // Western Dune Forest
+});
 
 /* The base map: one flat rectangle per 256 m raster cell, plus a name per region.
  *

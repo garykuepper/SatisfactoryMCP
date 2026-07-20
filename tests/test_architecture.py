@@ -267,21 +267,34 @@ WEB_TILES_PY = WEB / "routers" / "tiles.py"
 FRONTEND_SRC = FRONTEND / "src"
 FRONTEND_MAIN_TS = FRONTEND_SRC / "main.ts"
 
-#: The MECHANISM side of the page: four modules that hold a list and run it, and know none of
+#: The MECHANISM side of the page: five modules that hold a list and run it, and know none of
 #: the names in it.
 #:
 #: ``load.ts`` runs the two waves, ``registry.ts`` holds what is in them, ``layers.ts`` hands
-#: out the named groups, and ``layercontrol.ts`` is the widget listing them. Every feature on
-#: the page reaches at least one of these; none of the four may reach a feature. That is what
-#: makes each of them a seam rather than a habit -- see the two rules below for the two
-#: different things that sentence has to mean.
+#: out the named groups, ``layercontrol.ts`` is the widget listing them, and ``palette.ts``
+#: records what colour each feature chose and checks the choices against each other. Every
+#: feature on the page reaches at least one of these; none of the five may reach a feature.
+#: That is what makes each of them a seam rather than a habit -- see the two rules below for
+#: the two different things that sentence has to mean.
 FRONTEND_MECHANISM = (
     FRONTEND_SRC / "load.ts",
     FRONTEND_SRC / "registry.ts",
     FRONTEND_SRC / "layers.ts",
     FRONTEND_SRC / "layercontrol.ts",
+    FRONTEND_SRC / "palette.ts",
 )
 FRONTEND_REGISTRY_TS = FRONTEND_SRC / "registry.ts"
+FRONTEND_PALETTE_TS = FRONTEND_SRC / "palette.ts"
+
+#: A colour VALUE, in any of the four CSS hex forms, anywhere in ``palette.ts`` -- code or
+#: comment, because the file's old header quoted the values it was arguing about and quoting
+#: one is the same mistake as declaring one: it is a colour the audit cannot see.
+#:
+#: Deliberately loose about length. ``#abc``, ``#abcd``, ``#abcdef`` and ``#abcdef12`` are all
+#: colours, and the two lengths CSS does not accept are worth catching anyway -- a five-digit
+#: one is a six-digit one somebody mistyped, and it would reach ``lab()`` and come back out as
+#: a colour nobody chose.
+HEX_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 
 #: A registration, which is a call at MODULE SCOPE and has to be: it runs when the module is
 #: evaluated, which is the whole point of it. Anchoring on the margin is what tells the three
@@ -1131,6 +1144,41 @@ def test_no_mechanism_module_imports_a_module_that_imports_it():
     assert not values, (
         "registry.ts imports something at runtime -- everything that draws imports it, so "
         "whatever this is would be evaluated before all of them:\n" + "\n".join(values)
+    )
+
+
+def test_no_colour_value_lives_in_palette_ts():
+    """``palette.ts`` is the comparison, not the table, and the difference is checkable.
+
+    The file used to hold every colour on the page, on the argument that colours picked
+    against each other only stay defensible while they are in one place to be compared. That
+    argument was about the COMPARISON and it kept the values by mistake -- which put each
+    measured warrant ("dE 34 from the terrain", "dE 4.5 from the extractors, which is why that
+    one was rejected") in a different file from the width, the tier ramp and the reasoning it
+    was part of, and left the two networks that had refused to split as a carve-out in the
+    file's own header.
+
+    Now the values sit with their warrants and ``declareColours`` records them, so the audit
+    compares the same table the header always argued about. This rule is what stops the old
+    arrangement growing back one colour at a time: the first hex to reappear here would be a
+    colour with no owner and no warrant, and it would look exactly like the file being helpful.
+
+    Comments included, and that is not pedantry. The old header quoted the values it compared,
+    and a quoted hex is the same failure as a declared one -- a colour written down where the
+    audit cannot reach it. The exception list names its pairs as ``owner/name`` for that same
+    reason, and the messages the audit prints carry no values either.
+    """
+    text = FRONTEND_PALETTE_TS.read_text(encoding="utf-8")
+    found = [
+        f"  line {n}: {hit.group(0)}  in  {line.strip()[:88]}"
+        for n, line in enumerate(text.splitlines(), start=1)
+        for hit in [HEX_COLOUR.search(line)]
+        if hit
+    ]
+    assert not found, (
+        "palette.ts holds a colour value. It holds the comparison; the values belong to the "
+        "module that draws with them, declared through declareColours so the dE audit can "
+        "see them -- a hex here is a colour with no owner and no warrant:\n" + "\n".join(found)
     )
 
 
