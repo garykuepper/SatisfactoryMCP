@@ -11,6 +11,14 @@ save-derived solve inputs, so recording it at save time and comparing it on reca
 exactly the case that matters: *the plan did not change, the world did*. Recall reports
 the drift instead of pretending the old answer still holds.
 
+``plan_id`` covers the world moving. It does NOT cover the ARGUMENTS changing meaning,
+which they can: ``sources: ["region:Spire Coast"]`` is a name resolved through a table
+this repository generates, and re-deriving that table took the name from 51 nodes to 18
+with no argument touched and no id disturbed -- the recall re-solved over a different
+sixth of the map and said nothing. So a plan also records what its selectors RESOLVED
+to, and recall re-resolves them; ``planning.provenance`` owns that, including why the
+answer to a plan that predates the record is "cannot be checked" and not "unchanged".
+
 Stored per world under ``saveIdentifier``, beside the factory labels and for the same
 reason: a plan for one world is meaningless in another, and neither belongs in the cache
 that ``cache_prune`` wipes.
@@ -65,6 +73,11 @@ class Plan:
     #: Optional factory label this plan is for, so a diff can be scoped to it.
     factory: str = ""
     created: str = ""
+    #: What each source selector RESOLVED to when this plan was saved -- see
+    #: ``planning.provenance`` for the shape and for why plan_id cannot cover it.
+    #: Defaulted, so a plan file written before this existed still loads; empty then
+    #: means "not recorded", which a recall reports as such rather than as "unchanged".
+    provenance: dict = field(default_factory=dict)
 
     def kwargs(self) -> dict:
         """Stored arguments, filtered to those a planning call still accepts."""
@@ -133,6 +146,7 @@ class PlanStore:
         notes: str = "",
         factory: str = "",
         when: str = "",
+        provenance: dict | None = None,
     ) -> Plan:
         existing = self.find(name)
         if existing is None:
@@ -144,6 +158,12 @@ class PlanStore:
             k: v for k, v in args.items() if k in PLAN_ARGS and v not in (None, [], {})
         }
         existing.plan_id = plan_id
+        # Rewritten WITH the arguments, never left behind them: a record describing the
+        # previous `sources` would be checked against the new ones on the next recall and
+        # report drift that is really an edit. None means "this caller has no record to
+        # offer" -- the world could not be read -- and leaves whatever was there alone.
+        if provenance is not None:
+            existing.provenance = provenance
         if notes:
             existing.notes = notes
         if factory:

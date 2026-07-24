@@ -2,9 +2,16 @@
 
 A stored plan is a stored planning REQUEST, so merging one back in is a planning
 decision rather than an argument-parsing detail of the tool that happens to take it.
+
+It is also the one place every planning tool passes through -- plan_factory, plan_layout,
+diff_vs_save, commission_plan and rank_unlocks all reach a stored plan through here -- so
+it is where the field check belongs. Written into each tool instead it would be five
+copies, and the copy that was forgotten would be the tool that answered silently.
 """
 
 from __future__ import annotations
+
+from . import provenance as prov
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -61,4 +68,26 @@ def recall_plan(st, plan: str | None, supplied: dict) -> tuple[dict, str, list[s
             f"plan {stored.name!r} overridden this call: {', '.join(changed)} "
             "(not saved -- pass save_as to keep it)"
         )
+    notes.extend(_field_notes(st, stored, merged))
     return merged, stored.name, notes
+
+
+def _field_notes(st, stored, merged: dict) -> list[str]:
+    """Whether the stored selectors still mean what they meant. See ``provenance``.
+
+    Two conditions buy silence, and both are the right kind. A caller who passed
+    ``sources`` this call is not planning over the stored field at all, so a note about it
+    would describe a plan that is not being run. And a state with no game data attached
+    cannot resolve a selector -- the test doubles in this suite are exactly that -- so
+    there is nothing to compare and nothing to claim.
+    """
+    game = getattr(st, "game", None)
+    if game is None or merged.get("sources") != stored.kwargs().get("sources"):
+        return []
+    try:
+        return prov.notes(game, st, stored)
+    except FileNotFoundError:
+        # The node or region table is not on this machine. The solve is about to fail on
+        # the same missing file with a better message; a recall must not pre-empt it with
+        # a traceback out of the staleness check.
+        return []

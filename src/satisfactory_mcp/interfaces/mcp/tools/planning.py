@@ -11,6 +11,7 @@ from pydantic import Field
 from ....domain.factories.select import SelectorError
 from ....domain.planning import bom as bom_mod
 from ....domain.planning import compare
+from ....domain.planning import provenance as prov
 from ....domain.planning.carrier import resolve_tiers
 from ....domain.planning.commission_service import build_commission_report
 from ....domain.planning.diff_service import build_diff_report
@@ -50,12 +51,25 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
             "Pass save_as=<name> to plan_factory to store one.",
         )
     rows = []
+    unrecorded = []
+    drifted = False
     for stored in st.plans.plans:
+        status = []
         try:
             req = build_scenario(st.game, st, **stored.kwargs())
-            drift = "" if req.plan_id == stored.plan_id else "world moved"
+            if req.plan_id != stored.plan_id:
+                status.append("world moved")
+            # Eager, not lazy, because it was measured rather than guessed: re-resolving
+            # one selector over the 608-row node table is 0.7 ms, against the full
+            # build_scenario this loop already pays per plan. A "check it yourself" marker
+            # would have cost the reader a round trip to save nothing.
+            for drift in prov.compare(st.game, st, stored):
+                status.append(f"field {drift.then}->{drift.now}")
+                drifted = True
+            if not prov.recorded(stored):
+                unrecorded.append(stored.name)
         except Exception as exc:  # a stored plan can outlive the thing it referenced
-            drift = f"broken: {type(exc).__name__}"
+            status.append(f"broken: {type(exc).__name__}")
         args = stored.args
         rows.append(
             (
@@ -64,21 +78,36 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
                 args.get("target_item") or "-",
                 ",".join(args.get("sources") or [])[:28] or "whole map",
                 stored.factory or "-",
-                drift,
+                "; ".join(status),
                 stored.notes[:30],
             )
+        )
+    notes = [
+        (
+            "'world moved' means the plan is unchanged but the solve inputs are not "
+            "-- an unlock, a freed node or a new building. Re-run it to see how"
+        )
+    ]
+    if drifted:
+        notes.append(
+            "'field N->M' means the plan's own selectors no longer resolve to the nodes it "
+            "was saved against -- the map layer under a name was re-cut, so the plan now "
+            "plans over a different part of the world. Recall it for which nodes moved"
+        )
+    if unrecorded:
+        # Named rather than counted: "2 plans" is a statistic, and the reader needs to
+        # know WHICH ones are unchecked before trusting a blank status column.
+        notes.append(
+            f"no recorded field, so the check above cannot run: {', '.join(unrecorded)} "
+            "-- these predate it. A blank status is 'not checked', not 'unchanged'; "
+            "re-run one with save_as=<its own name> to record what its selectors mean"
         )
     return render.envelope(
         f"# {st.age_note}\n# {len(rows)} saved plan(s)",
         render.table(
             ("name", "objective", "target", "sources", "factory", "status", "notes"), rows
         ),
-        [
-            (
-                "'world moved' means the plan is unchanged but the solve inputs are not "
-                "-- an unlock, a freed node or a new building. Re-run it to see how"
-            )
-        ],
+        notes,
     )
 
 
@@ -234,6 +263,11 @@ def plan_factory(
     save_as_note = ""
     if save_as and report.prepared.failure is None:
         plan_id = report.prepared.request.plan_id
+        # What the selectors resolved to, stored WITH the request. plan_id hashes the
+        # extractor census, so it moves when the world does -- it cannot move when a
+        # selector starts meaning a different part of the map, which is a different
+        # staleness and the one that re-planned this world's reference plan in silence.
+        field = prov.record(g, st, plan_kwargs.get("sources"))
         stored = st.plans.put(
             save_as,
             plan_kwargs,
@@ -241,11 +275,14 @@ def plan_factory(
             notes=plan_notes_text,
             factory=for_factory,
             when=str(st.header.get("save_datetime") or st.header.get("filename") or ""),
+            provenance=field,
         )
         path = st.plans.save()
+        pinned = "; ".join(f"{e['selector']}={e['count']} node(s)" for e in field["selectors"])
         save_as_note = (
             f"saved as {stored.name!r} (plan_id {plan_id}) in {path}. "
             f"Recall with plan={stored.name!r} on plan_factory, plan_layout or diff_vs_save"
+            + (f". Field recorded: {pinned}" if pinned else "")
         )
 
     return render_plan_factory(

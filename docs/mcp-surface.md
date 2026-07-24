@@ -84,6 +84,26 @@ save-derived solve inputs (§ scenario), so recording it at save time and compar
 recall detects exactly the interesting case: **the plan did not change, the world did.**
 `list_plans` reports that as `world moved`.
 
+**What `plan_id` cannot see: the arguments changing meaning.** `sources:
+["region:Spire Coast"]` is a *name*, resolved through a table this repository generates.
+Re-deriving that table from the game's own `FGMapAreaTexture` took the name from 51 nodes
+to 18 — no argument touched, no id disturbed, and every recall since re-planned over a
+different sixth of the map in silence. A region name is advisory *by design*
+(§ regions); a stored plan whose meaning moves without saying so is not.
+
+So a plan also records **what each selector resolved to**: its count, a hash over the
+node names, the names themselves (capped at 250 — a whole-map spec is 608 rows), and the
+**bounding box those nodes occupied, in metres**. On recall each selector is re-resolved
+and compared; on a difference the response says which selector, how many nodes then and
+now, which appeared and vanished, and offers the box as a `bbox:` rewrite — the same move
+`tests/conftest.py` made by hand after the re-cut, because a box cannot be re-cut under a
+stored plan. The plan still recalls; the note is the deliverable. An unchanged field says
+nothing at all. `list_plans` reports a moved one as `field 51->18`.
+
+A plan saved before any of this carries **no record**, which is reported as *cannot be
+checked* — never as unchanged — together with what its selectors resolve to today and
+that field's box, so the reader can settle it themselves. Re-saving records it.
+
 **The defaults trap.** MCP fills declared defaults in before a tool sees them, so
 `objective` always arrives as `"max_mw"` and a naive merge would clobber every recalled
 plan with it. `PLAN_DEFAULTS` records each argument's declared default, and a supplied
