@@ -13,7 +13,7 @@ import { L } from "./leaflet";
 import { map } from "./map";
 import { friendly } from "./toast";
 
-import type { Elevation, InspectResponse } from "./api-types";
+import type { Elevation, InspectResponse } from "./api-shapes";
 import type { Row } from "./dom";
 import type { InspectedEvent } from "./leaflet-private";
 

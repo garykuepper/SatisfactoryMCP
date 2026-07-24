@@ -6,7 +6,7 @@
  * about the same fact at two different clicks.
  */
 
-import type { Region } from "./api-types";
+import type { Region } from "./api-shapes";
 
 /* A resource class as the short name the whole page uses: Desc_OreIron_C -> OreIron. */
 export function shortResource(resource: string | null | undefined): string {

@@ -1,36 +1,36 @@
-/* What the API actually sends, as the frontend's claim rather than the API's.
+/* What the API sends, for the endpoints that do not yet say so themselves.
  *
- * `api-schema.d.ts` is generated from the server's own `/openapi.json` and is the authority
- * for the things FastAPI knows: which paths exist, which query parameters each takes, and
- * what a validation error looks like. It is NOT the authority for most response bodies,
- * because almost every endpoint in `api.py` is annotated `-> dict`, and a bare dict carries
- * no schema at all -- so the generated file types those responses as `unknown`.
+ * A SHRINKING FILE. `api-schema.d.ts` is generated from the server's own `/openapi.json`,
+ * and every router that declares a `response_model` has its whole body described there;
+ * `api-shapes.ts` re-exports those components under the names this page uses. What is left
+ * below is the endpoints still annotated `-> Any`, which publish no response schema at all,
+ * so the generated file types their `200` as `unknown` and something has to fill the gap.
  *
- * The interfaces below fill that gap, and it matters where they came from: they were read
- * off real payloads from a real save, not from the server's source. That makes them an
- * observation, and an observation can be wrong in one specific direction -- a field that is
- * always populated in the world it was read from can be null in another. So every field the
- * drawing code already guards against is declared nullable here even where the sample had a
- * value, because the guard IS the evidence: `m.clock === null ? null : ...` in placements.ts
- * is the page saying it has seen a null clock, and this file should not contradict it.
+ * It matters where these came from: they were read off real payloads from a real save, not
+ * from the server's source. That makes them an observation, and an observation can be wrong
+ * in one specific direction -- a field that is always populated in the world it was read
+ * from can be null in another. So every field the drawing code already guards against is
+ * declared nullable here even where the sample had a value, because the guard IS the
+ * evidence: `m.clock === null ? null : ...` in placements.ts is the page saying it has seen
+ * a null clock, and this file should not contradict it.
  *
  * That rule has a second edge, and it is the one this file kept losing: a `| null` nobody can
  * produce is as wrong as a missing one. It makes the drawing code carry a branch for a value
  * the server has no way to send, and the branch is then untestable and untested -- so it is
- * where the wrong fallback hides. Every nullable below has now been read back against the
- * expression in `api.py` that fills it, and the ones that could not be null say WHICH
- * expression, so the next reader checks the server rather than guessing from a sample again.
+ * where the wrong fallback hides. Every nullable below has been read back against the
+ * expression in the router that fills it, and the ones that could not be null say WHICH
+ * expression -- which is also what the conversion transcribes from, one endpoint at a time.
  *
- * They are deliberately not exhaustive. `/api/summary` returns a large object of which this
- * page reads four branches, and typing the other twenty would be inventing a contract for
- * data nothing here looks at. What is declared is what is read.
+ * `ApiError` is the exception that will outlive the rest: FastAPI publishes no schema for the
+ * `{"error": ...}` a 4xx carries, because a failing handler returns a JSONResponse and skips
+ * its own response model. It is the frontend's claim about the whole surface and stays a
+ * claim; `api-shapes.ts` joins it onto every generated body.
  *
- * The right fix is response models on `api.py`, which would make this file generated too.
- * That is a change to the server's public surface and belongs in its own commit -- but it
- * has started. `/api/floors` declares one, so its body is in `api-schema.d.ts` as
- * `FloorsResponse` and there is deliberately NO floors interface below: a hand-written copy
- * of a generated type is the second place to update, and it is always the one that goes
- * stale. Anything converted after it should leave this file the same way.
+ * `WorldsResponse` is the awkward one and it is deliberate, not pending. `/api/worlds`
+ * forwards the loader's own dicts -- a thirteen-key save header per save -- so a faithful
+ * response model there is `dict[str, Any]`, which says nothing, and a useful one deletes
+ * eight keys from every row, which is a change to the body. See the comment above `worlds()`
+ * in routers/world.py. Converting it means changing what it SENDS.
  */
 
 /** A point in game metres, `[x, y]`. Latitude is `-y`; see `xy` in map.ts. */
@@ -42,31 +42,7 @@ export type Point3M = [number, number, number];
 /** `[x_min, y_min, x_max, y_max]`, game axes. The y ends swap on the way to Leaflet. */
 export type BboxM = [number, number, number, number];
 
-/** A region lookup. `confidence` is never dropped: the raster is 256 m per cell. */
-export interface Region {
-  name: string;
-  confidence: string;
-  accuracy_m: number;
-  certain: boolean;
-  text: string;
-}
-
 /* ------------------------------------------------------------------- rows */
-
-export interface NodeRow {
-  id: string;
-  resource: string;
-  name: string;
-  kind: string;
-  purity: string;
-  x_m: number;
-  y_m: number;
-  z_m: number;
-  occupied: boolean;
-  occupant_cls: string | null;
-  occupant_name: string | null;
-  region: Region | null;
-}
 
 export interface StructureRow {
   /* Nullable, and it always was: `saveio.rows` types every piece's `cls` as `str | None`, and
@@ -337,12 +313,6 @@ export interface ApiError {
   error?: string;
 }
 
-export interface NodesResponse extends ApiError {
-  nodes: NodeRow[];
-  /** Present and non-null when the save could not be read: nodes drawn, occupancy unknown. */
-  save_error: string | null;
-}
-
 export interface StructuresResponse extends ApiError {
   structures: StructureRow[];
   /** The grid edge every one of these classes snaps to; the page paints one tile per piece.
@@ -391,88 +361,6 @@ export interface MachinesResponse extends ApiError {
 
 export interface CollectiblesResponse extends ApiError {
   rows: CollectibleRow[];
-}
-
-/** The four branches of `/api/summary` this page reads. The rest is not typed; see above. */
-export interface SummaryResponse extends ApiError {
-  header: { session_name: string };
-  age_note: string;
-  power: {
-    generation_mw: number;
-    draw_mw: number;
-    /* Never null. `PowerReport` starts this at 0.0 and only ever adds to it, and a machine
-     * with no usable monitor is charged in FULL rather than skipped -- "no monitor is not
-     * evidence of idleness", so the figure can only be conservative, never absent. A save
-     * with nothing built reports 0.0, which is a measurement and not a missing one. */
-    measured_draw_mw: number;
-  };
-  progression: { game_phase: string | null };
-  /* The object is always there; its three fields are what go null. `/api/summary` sends
-   * `_xyz(player_position())`, and `_xyz` answers `{x_m: null, y_m: null, z_m: null}` for a
-   * save with no pawn rather than dropping the branch -- so "no position" is three nulls, not
-   * a missing player. */
-  player: { x_m: number | null; y_m: number | null; z_m: number | null };
-}
-
-/** What the right-click inspector lays out. Every field here is read by elevationRows. */
-export interface Elevation {
-  radius_m: number;
-  terrain_m: number | null;
-  terrain_source: string | null;
-  terrain_accuracy_m: number | null;
-  terrain_water_m: number | null;
-  /** Null wherever the ground under the water was not measured well enough to subtract. */
-  terrain_water_depth_m: number | null;
-  terrain_water_note: string | null;
-  /** Why `terrain_m` is null, when it is. The server has exactly two answers -- no field on
-   * this machine (with the generator to run), or a coordinate the field has no data for --
-   * and it sends whichever applied. Same job as `fill_note` next door. */
-  terrain_note: string | null;
-  ground_m: number | null;
-  ground_spread_m: number | null;
-  ground_count: number;
-  built_m: number | null;
-  built_count: number;
-  fill_m: number | null;
-  fill_note: string | null;
-}
-
-/* One of the five nodes nearest a right-clicked point.
- *
- * `id` and `name` were left out of this interface, not out of the payload: `_nearest_nodes`
- * in api.py has always sent both -- the full instance path, and the leaf that IS the `node:`
- * selector every dot's own popup prints. Declaring them is what lets the inspector offer the
- * copyable selector too, so the two surfaces answering "what is here" answer it in the same
- * spellable form. See markers.ts, which builds the same row from the same field. */
-export interface NearestNode {
-  id: string;
-  /** The instance's leaf, which is what `node:<name>` selects. */
-  name: string;
-  resource: string;
-  purity: string;
-  distance_m: number;
-  occupied: boolean;
-}
-
-export interface InspectResponse extends ApiError {
-  at: { x_m: number; y_m: number };
-  region: Region | null;
-  elevation: Elevation;
-  nearest: NearestNode[];
-  save_error: string | null;
-}
-
-export interface RegionsResponse extends ApiError {
-  /** One string per raster row, one character per 256 m cell; "." is void. */
-  grid: string[];
-  cell_m: number;
-  x0_m: number;
-  y0_m: number;
-  /* `label_m` is never null: `_label_anchor` returns the centroid when the centroid's own cell
-   * carries the region's letter, the centre of the nearest cell that does when it does not,
-   * and the centroid again when the search finds nothing -- three branches, two floats each.
-   * What it can be is DIFFERENT from `centroid_m`, which is the whole reason it exists. */
-  regions: Record<string, { centroid_m: PointM; bbox_m: BboxM; label_m: PointM }>;
 }
 
 /* Both fields are always sent together, exactly like every other response above: `/api/worlds`

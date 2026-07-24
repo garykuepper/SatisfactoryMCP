@@ -20,7 +20,7 @@ import { phaseText } from "./format";
 import { drawPlayer } from "./markers";
 import { registerFetch } from "./registry";
 
-import type { SummaryResponse } from "./api-types";
+import type { SummaryResponse } from "./api-shapes";
 
 function drawHeader(s: SummaryResponse): void {
   drawPlayer(s.player);

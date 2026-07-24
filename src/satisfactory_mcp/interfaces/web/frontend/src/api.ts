@@ -26,12 +26,13 @@
  * `fetch` either. `tilePath` below is the one place their path is spelled, which is what
  * keeps the probe and the pyramid asking about the same layer.
  *
- * `get` is generic over the response, and the type is supplied by the caller because the
- * server cannot supply it: every endpoint in `api.py` is annotated `-> dict`, so the
- * generated schema says `unknown` for all sixteen. What IS taken from the generated schema
- * is the path -- `ApiPath` below is the union of the paths the server actually serves, so a
- * typo in a URL is a compile error rather than a toast at runtime. See api-types.ts for
- * where the response shapes come from and why they are the frontend's claim.
+ * `get` is generic over the response, and the caller supplies the type because only the
+ * caller knows which endpoint it asked. Where that type comes FROM is now two places and
+ * moving: api-shapes.ts for the endpoints that declare a `response_model` (the server's own
+ * schema, generated), api-types.ts for the ones still annotated `-> Any` (the frontend's
+ * claim, observed). What has always been taken from the generated schema is the path --
+ * `ApiPath` below is the union of the paths the server actually serves, so a typo in a URL
+ * is a compile error rather than a toast at runtime.
  */
 
 import type { paths } from "./api-schema";

@@ -14,7 +14,7 @@ import { map } from "./map";
 import { declareColours } from "./palette";
 import { state } from "./state";
 
-import type { RegionsResponse } from "./api-types";
+import type { RegionsResponse } from "./api-shapes";
 
 var REGION_FILL = 1; // see REGION_COLOUR below: opaque cells, or the shared borders become a grid.
 
