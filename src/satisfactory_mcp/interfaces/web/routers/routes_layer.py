@@ -12,11 +12,24 @@ FastAPI routers reads as the framework's own word for the endpoint table, which 
 WARNING: the function names are the operation_ids -- rename one and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
 is generated off it.
+
+**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
+FILTERS -- both rules are written out at length on ``FloorsResponse`` in routers/floors.py.
+
+The nullability line this file draws is the one ``routers/placements.py`` states: an ACTOR
+record always carries a class and an INTERNED table row may not. A belt piece and a pipe
+piece are interned -- their class is an INDEX into a legend and ``saveio.rows`` answers
+``None`` for an index past the end -- so ``BeltRow.cls`` and ``PipeRow.cls`` are nullable,
+and so are the ``name``s that ``building_name`` renders from them ("``None`` in, ``None``
+out"). An ATTACHMENT is not interned: it is an ordinary actor record, written behind
+``cls.startswith("Build_")``, so ``AttachmentRow.cls`` is a string. ``api-types.ts`` said
+otherwise -- "nullable on the same terms as BeltRow's" -- and the terms are not the same;
+that hand-written note generalised from the row above it and this is the correction.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -27,6 +40,37 @@ from ..serial import _fail, _m, _state, _xyz, _yaw
 __all__ = ["router"]
 
 router = APIRouter(prefix="/api")
+
+
+# ------------------------------------------------------------ the shared route geometry
+
+
+#: A point on a route, ``[x, y, z]`` in game metres.
+#:
+#: A tuple rather than ``list[float]``, and that is the only way a schema can say "exactly
+#: three": JSON has no triple, so pydantic emits ``prefixItems`` and ``npm run typegen``
+#: turns it into a ``[number, number, number]`` the page indexes without a length guard.
+#: The same device ``RegionExtent`` in routers/regions.py uses for its pairs.
+#:
+#: Not nullable, in any position. ``rows._points`` drops a point whose x, y or z will not
+#: read as a number, so a point that reaches ``_m`` is three floats and ``_m`` of a float is
+#: a float.
+Point3M = tuple[float, float, float]
+
+#: The tangents that bend ONE span of a route, ``[leave, arrive]`` in game metres.
+#:
+#: ``leave`` is the tangent leaving the point behind the span and ``arrive`` the one arriving
+#: at the point ahead of it -- the pair a cubic Hermite between those two points takes. They
+#: are displacements in the same space as the points, so whatever transform a client applies
+#: to a point applies to these unchanged.
+SpanCurveM = tuple[Point3M, Point3M]
+
+#: A route's curve, one entry per span, in step with ``points_m``. **Nullable at two levels
+#: and they mean different things.** ``null`` in a SLOT: that span is straight and is drawn
+#: as the line it already was. ``null`` for the WHOLE field: the route has no bend anywhere
+#: in it, or the projection predates the column -- both of which mean the same thing to a
+#: client, which is why ``_curve_m`` spells them the same way.
+RouteCurveM = list[SpanCurveM | None] | None
 
 
 # ---------------------------------------------------------------------- belts
@@ -40,7 +84,76 @@ router = APIRouter(prefix="/api")
 LIFT_NATIVE = "FGBuildableConveyorLift"
 
 
-def _belt_class(st: WorldState, cls: str | None) -> dict[str, Any]:
+class BeltClass(TypedDict):
+    """What one belt class is. Spread into every ``BeltRow``; see the note there."""
+
+    cls: str | None
+    name: str | None
+    lift: bool | None
+    items_per_min: float | None
+
+
+class BeltRow(TypedDict):
+    """One conveyor piece, as the polyline it was actually built along.
+
+    ``chain`` first and then the four fields ``_belt_class`` resolves, because the handler
+    writes ``{"chain": ..., **resolved[...], "points_m": ..., "curve_m": ...}`` and
+    declaration order is wire order. ``BeltClass`` is spelled as its own TypedDict for the
+    same reason the helper is its own function -- it is resolved once per CLASS and shared
+    by every piece of it -- but its fields are restated here rather than inherited, because
+    inheritance would put them at the front and the wire has them in the middle.
+
+    ``cls`` and ``name`` are nullable: this is the interned table, and see the module
+    docstring. ``lift`` is nullable and the third answer is not a false one -- it is read
+    off the docs dump's own native class and a class the dump has no entry for gets
+    ``null``, because "not a lift" would be a guess and the map draws a lift and a belt as
+    different things. ``items_per_min`` is a float (``Building.items_per_min`` is
+    ``float``), ``null`` where the dump is silent.
+    """
+
+    chain: int
+    cls: str | None
+    name: str | None
+    lift: bool | None
+    items_per_min: float | None
+    points_m: list[Point3M]
+    curve_m: RouteCurveM
+
+
+class AttachmentRow(TypedDict):
+    """A splitter or a merger: a piece of the belt network, drawn by the belt layer.
+
+    ``cls`` and ``name`` are NOT nullable, unlike the belt row above it, and the module
+    docstring says why: an attachment is an actor record and its class is written out.
+
+    ``x_m``/``y_m``/``z_m`` ARE nullable -- an actor whose transform did not decode has no
+    ``pos`` and ``_xyz`` answers with a triple of nulls. ``yaw`` is null where the
+    projection predates schema 12. ``w_m``/``l_m`` are null on all four of these classes
+    today, because the dump carries no clearance for any of them.
+    """
+
+    instance_leaf: str
+    cls: str
+    name: str
+    x_m: float | None
+    y_m: float | None
+    z_m: float | None
+    yaw: float | None
+    w_m: float | None
+    l_m: float | None
+
+
+class BeltsResponse(TypedDict):
+    """What ``/api/belts`` sends on a 200. An error is a 4xx with ``{"error": ...}``."""
+
+    belts: list[BeltRow]
+    count: int
+    chains: int
+    attachments: list[AttachmentRow]
+    attachment_count: int
+
+
+def _belt_class(st: WorldState, cls: str | None) -> BeltClass:
     """What one belt class is, resolved once per class rather than once per piece."""
     building = st.game.buildings.get(cls) if cls else None
     return {
@@ -57,7 +170,7 @@ def _belt_class(st: WorldState, cls: str | None) -> dict[str, Any]:
     }
 
 
-def _curve_m(spans: Any, points: list) -> list | None:
+def _curve_m(spans: Any, points: list) -> RouteCurveM:
     """A route's spline tangents as metres, or ``None`` where the route is straight.
 
     Schema 15's fourth belt column and fifth pipe column, translated into this module's units
@@ -96,7 +209,7 @@ def _curve_m(spans: Any, points: list) -> list | None:
     return out if any(out) else None
 
 
-def _attachment_row(st: WorldState, row: dict) -> dict:
+def _attachment_row(st: WorldState, row: dict) -> AttachmentRow:
     """One splitter or merger: where it stands, which way it faces, and what it is.
 
     Shorter than ``_record_row`` on purpose. A splitter has no recipe, no clock and nothing
@@ -120,7 +233,7 @@ def _attachment_row(st: WorldState, row: dict) -> dict:
     }
 
 
-@router.get("/belts")
+@router.get("/belts", response_model=BeltsResponse)
 def belts(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every conveyor belt and lift, as the polyline it was actually built along.
 
@@ -176,7 +289,7 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
     except Exception as exc:
         return _fail(f"could not read save: {exc}", 404)
 
-    resolved: dict[int, dict[str, Any]] = {}
+    resolved: dict[int, BeltClass] = {}
     rows = []
     for seg in saverows.iter_belt_segments(st.projection):
         if seg.class_index not in resolved:
@@ -207,7 +320,73 @@ def belts(request: Request, save: str | None = None, world: str | None = None) -
 # ---------------------------------------------------------------------- pipes
 
 
-def _pipe_class(st: WorldState, cls: str | None) -> dict[str, Any]:
+#: Which way the fluid goes, where the network settles it.
+PipeDirection = Literal["forward", "reverse", "unknown"]
+
+#: What the direction was INFERRED FROM: the four values ``domain/world/flow.py`` defines,
+#: and there is no fifth. ``pipes()`` writes ``flow.get("basis", "unresolved")``, so the
+#: field is always one of these and never null -- the missing-flow case defaults to the same
+#: ``unresolved`` the resolver itself sends when it declines.
+#:
+#: A closed union rather than ``str``, because the PAGE has to map it: ``PIPE_FLOW_BASIS``
+#: in routes.ts is a ``Record`` keyed by exactly these four, which is what makes a fifth
+#: basis a compile error there instead of an "→ inferred" that says nothing. Declaring it
+#: here is what keeps that record typed once ``api-schema.d.ts`` is where the union comes
+#: from -- and it makes a fifth basis a loud failure on this side too, which is the right
+#: way round for a vocabulary that lives in one module and is published by another.
+PipeFlowBasis = Literal["machine port", "pump", "propagated", "unresolved"]
+
+
+class PipeClass(TypedDict):
+    """What one pipe class is. Spread into every ``PipeRow``; see the note there."""
+
+    cls: str | None
+    name: str | None
+    flow_m3_min: float | None
+
+
+class PipeRow(TypedDict):
+    """One fluid pipe, as the polyline it was built along, and what it carries.
+
+    The class fields sit in the MIDDLE, after the network join and before the geometry,
+    because that is where ``**resolved[seg.class_index]`` lands in the handler -- the same
+    arrangement ``BeltRow`` has and for the same reason. ``cls``/``name`` nullable: interned
+    table, see the module docstring. ``flow_m3_min`` is a float
+    (``Building.flow_m3_min`` is ``float``), null where the dump is silent.
+
+    ``row`` is an ``int`` and is this pipe's position in the RAW segments table -- the join
+    ``/api/floors`` keys a pipe run by, sent rather than counted so that a torn row leaves a
+    gap here instead of silently renumbering everything after it.
+
+    ``network`` is an ``int`` and NOT a float: it is the game's own ``FGPipeNetwork`` id
+    forwarded whole, so declaring it ``float`` would validate 40 into 40.0 and rewrite the
+    bytes. Null for a pipe no network claims, which is also what a network entry that is not
+    a dict gives.
+    """
+
+    row: int
+    direction: PipeDirection
+    basis: PipeFlowBasis
+    network: int | None
+    fluid: str | None
+    fluid_name: str | None
+    cls: str | None
+    name: str | None
+    flow_m3_min: float | None
+    points_m: list[Point3M]
+    curve_m: RouteCurveM
+
+
+class PipesResponse(TypedDict):
+    """What ``/api/pipes`` sends on a 200. An error is a 4xx with ``{"error": ...}``."""
+
+    pipes: list[PipeRow]
+    count: int
+    networks: int
+    directed: int
+
+
+def _pipe_class(st: WorldState, cls: str | None) -> PipeClass:
     """What one pipe class is, resolved once per class rather than once per piece."""
     building = st.game.buildings.get(cls) if cls else None
     return {
@@ -220,7 +399,7 @@ def _pipe_class(st: WorldState, cls: str | None) -> dict[str, Any]:
     }
 
 
-@router.get("/pipes")
+@router.get("/pipes", response_model=PipesResponse)
 def pipes(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every fluid pipe, as the polyline it was actually built along, and what it carries.
 
@@ -286,7 +465,7 @@ def pipes(request: Request, save: str | None = None, world: str | None = None) -
     # row's position in the raw table rather than a count of what decoded, which is what
     # keeps the two lists lined up when a row is torn.
     flows = st.pipe_flow
-    resolved: dict[int, dict[str, Any]] = {}
+    resolved: dict[int, PipeClass] = {}
     rows = []
     for seg in saverows.iter_pipe_segments(st.projection):
         if seg.class_index not in resolved:

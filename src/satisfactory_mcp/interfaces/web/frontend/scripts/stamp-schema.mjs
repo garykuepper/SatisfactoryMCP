@@ -31,9 +31,11 @@ const HEADER = `/**
  * that file says at the top, along with what such an observation is worth.
  *
  * Converted so far: \`/api/floors\` (\`FloorsResponse\` and the six schemas under it),
- * \`/api/nodes\`, \`/api/inspect\`, \`/api/regions\` and \`/api/summary\`. What this file has
- * always been authoritative for is the other half and still is: which paths exist, which
- * query parameters each takes, and what a validation error looks like.
+ * \`/api/nodes\`, \`/api/inspect\`, \`/api/regions\`, \`/api/summary\`, \`/api/machines\`,
+ * \`/api/structures\`, \`/api/belts\`, \`/api/pipes\` and \`/api/storage\`. Still \`unknown\`:
+ * \`/api/worlds\`, \`/api/power\`, \`/api/factories\`, \`/api/collectibles\`, \`/api/crates\`.
+ * What this file has always been authoritative for is the other half and still is: which
+ * paths exist, which query parameters each takes, and what a validation error looks like.
  *
  * NOTHING IMPORTS THE COMPONENT NAMES FROM HERE DIRECTLY except \`api-shapes.ts\`, which
  * re-exports them under the names the page already used. One indirection, so that a

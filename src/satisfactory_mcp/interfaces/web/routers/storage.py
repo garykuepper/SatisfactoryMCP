@@ -9,11 +9,25 @@ shares.
 WARNING: the function name is the operation_id -- rename it and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
 is generated off it.
+
+**TWO ROW MODELS, NOT ONE WITH OPTIONAL HALVES, and this is the file where that mattered.**
+``_storage_row`` builds a common prefix and then ``update``s it with one of two tails: the
+other side's fields are ABSENT rather than null, because a container does not have an empty
+fluid level -- it has no fluid level. A single TypedDict with ``total=False`` on the tails
+would describe that, and would also DESTROY it: pydantic serialises in declaration order and
+drops the keys that are absent, so a solid row validated against a model that declares the
+fluid tail first comes back with its own five fields RE-KEYED into the gaps the missing ones
+left. The bytes move without a field changing. So each variant is declared whole, in its own
+emission order, and the response is a union of the two -- which is also what the page wants:
+``kind`` is a discriminator and a reader should branch on it, not test for a key.
+
+**Declaration order is wire order** and a ``response_model`` FILTERS; routers/floors.py
+writes both rules out at length.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -39,7 +53,113 @@ router = APIRouter(prefix="/api")
 STORAGE_ITEMS_SHOWN = 6
 
 
-def _storage_row(st: WorldState, row: dict) -> dict:
+class StoredItem(TypedDict):
+    """One kind of thing in a container, resolved to a display name by the server.
+
+    ``count`` is an ``int``, which is what the projection interns: a stack amount is a
+    number of items. Declaring it ``float`` would validate 4,800 into 4800.0 and rewrite
+    the bytes on every row. (The ``isinstance`` guard in ``total`` below is protecting the
+    SUM from a torn table, not evidence that a real amount is ever fractional.)
+    """
+
+    cls: str
+    name: str
+    count: int
+
+
+class StorageSolid(TypedDict):
+    """A storage container: what is in it, and how much of the box that is.
+
+    The nine fields above ``kind`` are the common prefix ``_storage_row`` builds first, in
+    its order; the five below are its solid tail, in ``update``'s order. Both halves are
+    spelled out here rather than inherited from a shared base, because inheritance is how
+    the field order gets decided somewhere other than where the emission is, and the whole
+    reason this type is split in two is that the order is the payload.
+
+    ``cls`` and ``name`` are not nullable: a container is an ACTOR record and its class is
+    written out past ``cls.startswith("Build_")`` -- the same line routers/placements.py
+    draws between an actor and an interned table row. The coordinates ARE nullable, because
+    an actor whose transform did not decode has no ``pos`` and ``_xyz`` says so with three
+    nulls; the reference world has one such row in the fixture's torn-projection test.
+
+    ``w_m``/``l_m`` are null for the four classes the docs dump carries no clearance for --
+    the HUB's built-in container, the Blueprint Designer's, the Dimensional Depot uploader
+    -- exactly as a machine's are, and for the same reason: a size invented here would
+    arrive indistinguishable from a measured one.
+
+    ``slots`` is ``int | None``: it is the inventory component's own slot count forwarded
+    whole, and a row the projection wrote no ``slots`` for sends null rather than 0.
+    ``total`` and ``item_kinds`` are counts of what the row holds and are ints; ``more`` is
+    how many kinds the truncation left off and is 0 rather than null when it left off none.
+    """
+
+    instance_leaf: str
+    cls: str
+    name: str
+    x_m: float | None
+    y_m: float | None
+    z_m: float | None
+    yaw: float | None
+    w_m: float | None
+    l_m: float | None
+    kind: Literal["solid"]
+    items: list[StoredItem]
+    more: int
+    item_kinds: int
+    total: int
+    slots: int | None
+
+
+class StorageFluid(TypedDict):
+    """A fluid buffer: what is in it, how much it holds, and the fraction those two make.
+
+    The same nine-field prefix as ``StorageSolid`` and then the fluid tail. Declared whole
+    rather than sharing a base with it, for the reason the module docstring gives: these two
+    orders are the two payloads, and a shared prefix that decided them elsewhere is exactly
+    the re-keying this split exists to prevent.
+
+    ``fluid`` comes off the ``FGPipeNetwork`` that claims the buffer rather than off the
+    buffer itself -- the same join ``/api/pipes`` uses -- so it is null for a buffer no
+    network claims, and ``fluid_name`` is null with it.
+
+    ``stored_m3`` is null where the ``mFluidBox`` float would not read: the projection
+    writes the null itself. ``capacity_m3`` is the docs dump's ``mStorageCapacity`` and is
+    null for a class the dump does not carry, on the same terms as every footprint here.
+    ``fill`` is the two divided and REFUSES rather than dividing by a missing capacity or a
+    missing level -- which is why all three are nullable independently.
+    """
+
+    instance_leaf: str
+    cls: str
+    name: str
+    x_m: float | None
+    y_m: float | None
+    z_m: float | None
+    yaw: float | None
+    w_m: float | None
+    l_m: float | None
+    kind: Literal["fluid"]
+    fluid: str | None
+    fluid_name: str | None
+    stored_m3: float | None
+    capacity_m3: float | None
+    fill: float | None
+
+
+class StorageResponse(TypedDict):
+    """What ``/api/storage`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+
+    ``filled`` and ``items_total`` are about the SOLID rows only -- a fluid buffer has no
+    item count to add -- and both are ints for the reason ``StoredItem.count`` is.
+    """
+
+    storage: list[StorageSolid | StorageFluid]
+    count: int
+    filled: int
+    items_total: int
+
+
+def _storage_row(st: WorldState, row: dict) -> StorageSolid | StorageFluid:
     """One container or fluid buffer: where it stands, how big it is, and what is in it.
 
     Two record shapes behind one row shape, told apart by ``kind``. A solid container carries
@@ -119,7 +239,7 @@ def _storage_row(st: WorldState, row: dict) -> dict:
     return out
 
 
-@router.get("/storage")
+@router.get("/storage", response_model=StorageResponse)
 def storage(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every storage container and fluid buffer, and what is inside each one.
 

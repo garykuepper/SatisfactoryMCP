@@ -16,9 +16,11 @@
  * that file says at the top, along with what such an observation is worth.
  *
  * Converted so far: `/api/floors` (`FloorsResponse` and the six schemas under it),
- * `/api/nodes`, `/api/inspect`, `/api/regions` and `/api/summary`. What this file has
- * always been authoritative for is the other half and still is: which paths exist, which
- * query parameters each takes, and what a validation error looks like.
+ * `/api/nodes`, `/api/inspect`, `/api/regions`, `/api/summary`, `/api/machines`,
+ * `/api/structures`, `/api/belts`, `/api/pipes` and `/api/storage`. Still `unknown`:
+ * `/api/worlds`, `/api/power`, `/api/factories`, `/api/collectibles`, `/api/crates`.
+ * What this file has always been authoritative for is the other half and still is: which
+ * paths exist, which query parameters each takes, and what a validation error looks like.
  *
  * NOTHING IMPORTS THE COMPONENT NAMES FROM HERE DIRECTLY except `api-shapes.ts`, which
  * re-exports them under the names the page already used. One indirection, so that a
@@ -921,6 +923,103 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AttachmentRow
+         * @description A splitter or a merger: a piece of the belt network, drawn by the belt layer.
+         *
+         *     ``cls`` and ``name`` are NOT nullable, unlike the belt row above it, and the module
+         *     docstring says why: an attachment is an actor record and its class is written out.
+         *
+         *     ``x_m``/``y_m``/``z_m`` ARE nullable -- an actor whose transform did not decode has no
+         *     ``pos`` and ``_xyz`` answers with a triple of nulls. ``yaw`` is null where the
+         *     projection predates schema 12. ``w_m``/``l_m`` are null on all four of these classes
+         *     today, because the dump carries no clearance for any of them.
+         */
+        AttachmentRow: {
+            /** Instance Leaf */
+            instance_leaf: string;
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number | null;
+            /** Y M */
+            y_m: number | null;
+            /** Z M */
+            z_m: number | null;
+            /** Yaw */
+            yaw: number | null;
+            /** W M */
+            w_m: number | null;
+            /** L M */
+            l_m: number | null;
+        };
+        /**
+         * BeltRow
+         * @description One conveyor piece, as the polyline it was actually built along.
+         *
+         *     ``chain`` first and then the four fields ``_belt_class`` resolves, because the handler
+         *     writes ``{"chain": ..., **resolved[...], "points_m": ..., "curve_m": ...}`` and
+         *     declaration order is wire order. ``BeltClass`` is spelled as its own TypedDict for the
+         *     same reason the helper is its own function -- it is resolved once per CLASS and shared
+         *     by every piece of it -- but its fields are restated here rather than inherited, because
+         *     inheritance would put them at the front and the wire has them in the middle.
+         *
+         *     ``cls`` and ``name`` are nullable: this is the interned table, and see the module
+         *     docstring. ``lift`` is nullable and the third answer is not a false one -- it is read
+         *     off the docs dump's own native class and a class the dump has no entry for gets
+         *     ``null``, because "not a lift" would be a guess and the map draws a lift and a belt as
+         *     different things. ``items_per_min`` is a float (``Building.items_per_min`` is
+         *     ``float``), ``null`` where the dump is silent.
+         */
+        BeltRow: {
+            /** Chain */
+            chain: number;
+            /** Cls */
+            cls: string | null;
+            /** Name */
+            name: string | null;
+            /** Lift */
+            lift: boolean | null;
+            /** Items Per Min */
+            items_per_min: number | null;
+            /** Points M */
+            points_m: [
+                number,
+                number,
+                number
+            ][];
+            /** Curve M */
+            curve_m: ([
+                [
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number
+                ]
+            ] | null)[] | null;
+        };
+        /**
+         * BeltsResponse
+         * @description What ``/api/belts`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         */
+        BeltsResponse: {
+            /** Belts */
+            belts: components["schemas"]["BeltRow"][];
+            /** Count */
+            count: number;
+            /** Chains */
+            chains: number;
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentRow"][];
+            /** Attachment Count */
+            attachment_count: number;
+        };
+        /**
          * Elevation
          * @description One probe as JSON. The nullables here are the point of the endpoint, not slack in it.
          *
@@ -1218,6 +1317,21 @@ export interface components {
             save_error: string | null;
         };
         /**
+         * MachinesResponse
+         * @description What ``/api/machines`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         *
+         *     Three keys and no counts, which is the payload's own shape: the handler is a dict
+         *     comprehension over the three projection keys and the page reads ``data[kind]``.
+         */
+        MachinesResponse: {
+            /** Machines */
+            machines: components["schemas"]["PlacementRow"][];
+            /** Extractors */
+            extractors: components["schemas"]["PlacementRow"][];
+            /** Generators */
+            generators: components["schemas"]["PlacementRow"][];
+        };
+        /**
          * NearestNode
          * @description One of the five nodes nearest a right-clicked point.
          *
@@ -1317,6 +1431,141 @@ export interface components {
             occupied: number | null;
             /** Save Error */
             save_error: string | null;
+        };
+        /**
+         * PipeRow
+         * @description One fluid pipe, as the polyline it was built along, and what it carries.
+         *
+         *     The class fields sit in the MIDDLE, after the network join and before the geometry,
+         *     because that is where ``**resolved[seg.class_index]`` lands in the handler -- the same
+         *     arrangement ``BeltRow`` has and for the same reason. ``cls``/``name`` nullable: interned
+         *     table, see the module docstring. ``flow_m3_min`` is a float
+         *     (``Building.flow_m3_min`` is ``float``), null where the dump is silent.
+         *
+         *     ``row`` is an ``int`` and is this pipe's position in the RAW segments table -- the join
+         *     ``/api/floors`` keys a pipe run by, sent rather than counted so that a torn row leaves a
+         *     gap here instead of silently renumbering everything after it.
+         *
+         *     ``network`` is an ``int`` and NOT a float: it is the game's own ``FGPipeNetwork`` id
+         *     forwarded whole, so declaring it ``float`` would validate 40 into 40.0 and rewrite the
+         *     bytes. Null for a pipe no network claims, which is also what a network entry that is not
+         *     a dict gives.
+         */
+        PipeRow: {
+            /** Row */
+            row: number;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "forward" | "reverse" | "unknown";
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "machine port" | "pump" | "propagated" | "unresolved";
+            /** Network */
+            network: number | null;
+            /** Fluid */
+            fluid: string | null;
+            /** Fluid Name */
+            fluid_name: string | null;
+            /** Cls */
+            cls: string | null;
+            /** Name */
+            name: string | null;
+            /** Flow M3 Min */
+            flow_m3_min: number | null;
+            /** Points M */
+            points_m: [
+                number,
+                number,
+                number
+            ][];
+            /** Curve M */
+            curve_m: ([
+                [
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number
+                ]
+            ] | null)[] | null;
+        };
+        /**
+         * PipesResponse
+         * @description What ``/api/pipes`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         */
+        PipesResponse: {
+            /** Pipes */
+            pipes: components["schemas"]["PipeRow"][];
+            /** Count */
+            count: number;
+            /** Networks */
+            networks: number;
+            /** Directed */
+            directed: number;
+        };
+        /**
+         * PlacementRow
+         * @description A machine, an extractor or a generator: one row shape, three layers.
+         *
+         *     ``cls`` and ``name`` are NOT nullable, which is a claim about these three keys of the
+         *     projection rather than about ``_record_row``. They are actor records and every one of
+         *     them was written past ``cls.startswith("Build_")``, so the id is there and
+         *     ``building_name`` resolves it or renders it -- see the module docstring for the line
+         *     this draws against ``/api/structures`` next door.
+         *
+         *     Everything a coordinate helper touches IS nullable, and each for its own reason.
+         *     ``x_m``/``y_m``/``z_m``: an actor whose transform did not decode has no ``pos`` and
+         *     ``_xyz`` answers with a triple of nulls -- the page's ``drawPlacements`` skips on
+         *     exactly that. ``yaw``: ``null`` means the projection predates schema 12 and the facing
+         *     was never recorded, which is a different claim from a facing of zero.
+         *
+         *     ``clock`` is ``float | None`` and the float is load-bearing: ``mCurrentPotential``
+         *     reaches the projection through ``round(float(...), 6)``, so 250% is ``2.5`` and 200% is
+         *     ``2.0`` -- an ``int`` here would reject the first and a machine with no overclock
+         *     property at all sends no ``clock`` key, which is the null. ``recipe_name`` is null on
+         *     the same terms ``pretty_class`` is: no recipe in, no words out.
+         *
+         *     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
+         *     -- for the 470 of 539 buildings the docs dump carries no ``mClearanceData`` for. All
+         *     three are floats where they are anything: ``Footprint`` is metres already and this
+         *     layer only rounds.
+         */
+        PlacementRow: {
+            /** Instance Leaf */
+            instance_leaf: string;
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number | null;
+            /** Y M */
+            y_m: number | null;
+            /** Z M */
+            z_m: number | null;
+            /** Recipe */
+            recipe: string | null;
+            /** Recipe Name */
+            recipe_name: string | null;
+            /** Clock */
+            clock: number | null;
+            /** Paused */
+            paused: boolean;
+            /** Yaw */
+            yaw: number | null;
+            /** W M */
+            w_m: number | null;
+            /** L M */
+            l_m: number | null;
+            /** H M */
+            h_m: number | null;
         };
         /**
          * PlayerPosition
@@ -1505,6 +1754,201 @@ export interface components {
             regions: {
                 [key: string]: components["schemas"]["RegionExtent"];
             };
+        };
+        /**
+         * StorageFluid
+         * @description A fluid buffer: what is in it, how much it holds, and the fraction those two make.
+         *
+         *     The same nine-field prefix as ``StorageSolid`` and then the fluid tail. Declared whole
+         *     rather than sharing a base with it, for the reason the module docstring gives: these two
+         *     orders are the two payloads, and a shared prefix that decided them elsewhere is exactly
+         *     the re-keying this split exists to prevent.
+         *
+         *     ``fluid`` comes off the ``FGPipeNetwork`` that claims the buffer rather than off the
+         *     buffer itself -- the same join ``/api/pipes`` uses -- so it is null for a buffer no
+         *     network claims, and ``fluid_name`` is null with it.
+         *
+         *     ``stored_m3`` is null where the ``mFluidBox`` float would not read: the projection
+         *     writes the null itself. ``capacity_m3`` is the docs dump's ``mStorageCapacity`` and is
+         *     null for a class the dump does not carry, on the same terms as every footprint here.
+         *     ``fill`` is the two divided and REFUSES rather than dividing by a missing capacity or a
+         *     missing level -- which is why all three are nullable independently.
+         */
+        StorageFluid: {
+            /** Instance Leaf */
+            instance_leaf: string;
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number | null;
+            /** Y M */
+            y_m: number | null;
+            /** Z M */
+            z_m: number | null;
+            /** Yaw */
+            yaw: number | null;
+            /** W M */
+            w_m: number | null;
+            /** L M */
+            l_m: number | null;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "fluid";
+            /** Fluid */
+            fluid: string | null;
+            /** Fluid Name */
+            fluid_name: string | null;
+            /** Stored M3 */
+            stored_m3: number | null;
+            /** Capacity M3 */
+            capacity_m3: number | null;
+            /** Fill */
+            fill: number | null;
+        };
+        /**
+         * StorageResponse
+         * @description What ``/api/storage`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         *
+         *     ``filled`` and ``items_total`` are about the SOLID rows only -- a fluid buffer has no
+         *     item count to add -- and both are ints for the reason ``StoredItem.count`` is.
+         */
+        StorageResponse: {
+            /** Storage */
+            storage: (components["schemas"]["StorageSolid"] | components["schemas"]["StorageFluid"])[];
+            /** Count */
+            count: number;
+            /** Filled */
+            filled: number;
+            /** Items Total */
+            items_total: number;
+        };
+        /**
+         * StorageSolid
+         * @description A storage container: what is in it, and how much of the box that is.
+         *
+         *     The nine fields above ``kind`` are the common prefix ``_storage_row`` builds first, in
+         *     its order; the five below are its solid tail, in ``update``'s order. Both halves are
+         *     spelled out here rather than inherited from a shared base, because inheritance is how
+         *     the field order gets decided somewhere other than where the emission is, and the whole
+         *     reason this type is split in two is that the order is the payload.
+         *
+         *     ``cls`` and ``name`` are not nullable: a container is an ACTOR record and its class is
+         *     written out past ``cls.startswith("Build_")`` -- the same line routers/placements.py
+         *     draws between an actor and an interned table row. The coordinates ARE nullable, because
+         *     an actor whose transform did not decode has no ``pos`` and ``_xyz`` says so with three
+         *     nulls; the reference world has one such row in the fixture's torn-projection test.
+         *
+         *     ``w_m``/``l_m`` are null for the four classes the docs dump carries no clearance for --
+         *     the HUB's built-in container, the Blueprint Designer's, the Dimensional Depot uploader
+         *     -- exactly as a machine's are, and for the same reason: a size invented here would
+         *     arrive indistinguishable from a measured one.
+         *
+         *     ``slots`` is ``int | None``: it is the inventory component's own slot count forwarded
+         *     whole, and a row the projection wrote no ``slots`` for sends null rather than 0.
+         *     ``total`` and ``item_kinds`` are counts of what the row holds and are ints; ``more`` is
+         *     how many kinds the truncation left off and is 0 rather than null when it left off none.
+         */
+        StorageSolid: {
+            /** Instance Leaf */
+            instance_leaf: string;
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number | null;
+            /** Y M */
+            y_m: number | null;
+            /** Z M */
+            z_m: number | null;
+            /** Yaw */
+            yaw: number | null;
+            /** W M */
+            w_m: number | null;
+            /** L M */
+            l_m: number | null;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "solid";
+            /** Items */
+            items: components["schemas"]["StoredItem"][];
+            /** More */
+            more: number;
+            /** Item Kinds */
+            item_kinds: number;
+            /** Total */
+            total: number;
+            /** Slots */
+            slots: number | null;
+        };
+        /**
+         * StoredItem
+         * @description One kind of thing in a container, resolved to a display name by the server.
+         *
+         *     ``count`` is an ``int``, which is what the projection interns: a stack amount is a
+         *     number of items. Declaring it ``float`` would validate 4,800 into 4800.0 and rewrite
+         *     the bytes on every row. (The ``isinstance`` guard in ``total`` below is protecting the
+         *     SUM from a torn table, not evidence that a real amount is ever fractional.)
+         */
+        StoredItem: {
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** Count */
+            count: number;
+        };
+        /**
+         * StructureRow
+         * @description One lightweight buildable: a foundation, a ramp, a wall, a catwalk.
+         *
+         *     ``cls`` is nullable HERE and not on ``PlacementRow``, and the module docstring says why:
+         *     this is the interned table, a class is an index into a legend, and a row whose index
+         *     points past the end is a real piece at a real place with no name. ``saveio.rows`` types
+         *     it that way and this endpoint passes ``piece.cls`` straight through.
+         *
+         *     The three coordinates are NOT nullable, and that is ``iter_structures``' own refusal
+         *     rather than this layer's: a row whose x, y or z will not read as a number is DROPPED
+         *     there, so a piece that reaches ``_m`` here has all three and ``_m`` of a float is a
+         *     float. This is the same shape of claim ``/api/nodes`` makes about its own triple --
+         *     ``_xyz`` is broad because it also serves placements, whose transforms can fail, and
+         *     neither of those two endpoints has a transform to fail.
+         *
+         *     ``yaw`` is the one that survives being unreadable: ``null`` for a schema-11 row with no
+         *     fifth column at all, and for the schema-16 rotation that will not decode.
+         */
+        StructureRow: {
+            /** Cls */
+            cls: string | null;
+            /** X M */
+            x_m: number;
+            /** Y M */
+            y_m: number;
+            /** Z M */
+            z_m: number;
+            /** Yaw */
+            yaw: number | null;
+        };
+        /**
+         * StructuresResponse
+         * @description What ``/api/structures`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         *
+         *     ``tile_m`` is a float because ``FOUNDATION_M`` is ``8.0``: declaring it ``int`` would
+         *     validate 8.0 into 8 and rewrite the bytes on the wire.
+         */
+        StructuresResponse: {
+            /** Structures */
+            structures: components["schemas"]["StructureRow"][];
+            /** Count */
+            count: number;
+            /** Tile M */
+            tile_m: number;
         };
         /**
          * SummaryResponse
@@ -1887,7 +2331,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MachinesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1919,7 +2363,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StructuresResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1951,7 +2395,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BeltsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1983,7 +2427,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PipesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2015,7 +2459,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StorageResponse"];
                 };
             };
             /** @description Validation Error */
