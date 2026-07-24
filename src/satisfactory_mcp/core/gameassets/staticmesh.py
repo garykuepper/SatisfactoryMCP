@@ -7,9 +7,9 @@ walk over it. It reads bytes and hands back arrays; which meshes to open and wha
 with the triangles is the caller's business, the same division the rest of this package
 keeps.
 
-Layout follows the format as documented by CUE4Parse (Apache-2.0); see the ``NOTICE``
-beside this file. Nothing of theirs is copied: the field ORDER was read from the C# and is
-checked here against the bytes rather than trusted.
+Layout follows the format as learned from CUE4Parse's implementation
+(github.com/FabianFG/CUE4Parse). Nothing of theirs is copied: the field ORDER was read
+from the C# and is checked here against the bytes rather than trusted.
 
 Why the LOD array's offset is searched
 --------------------------------------

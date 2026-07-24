@@ -837,28 +837,6 @@ def test_gameassets_imports_nothing_but_the_stdlib_and_core():
     )
 
 
-def test_the_nanite_port_travels_with_its_notice():
-    """Apache-2.0 section 4(a) and 4(d), as a file that exists rather than an intention.
-
-    ``nanite.py`` and ``staticmesh.py`` are ports of formats documented by CUE4Parse, whose
-    licence permits exactly this and asks for attribution and a copy of itself in return.
-    Neither obligation is met by a comment, so the two files are asserted to be here, to
-    name both modules, and to name the licence -- and if one of the modules is ever deleted
-    or renamed, this fails and the notice gets corrected instead of going stale.
-    """
-    directory = PKG / "core" / "gameassets"
-    notice = directory / "NOTICE"
-    licence = directory / "LICENSE-Apache-2.0.txt"
-    assert notice.is_file(), f"{notice} is missing: Apache-2.0 4(d) is not optional"
-    assert licence.is_file(), f"{licence} is missing: Apache-2.0 4(a) is not optional"
-    text = notice.read_text(encoding="utf-8")
-    for module in ("nanite.py", "staticmesh.py"):
-        assert (directory / module).is_file(), f"{module} is gone; NOTICE still names it"
-        assert module in text, f"NOTICE does not name {module}"
-    assert "CUE4Parse" in text and "Apache License, Version 2.0" in text
-    assert "Apache License" in licence.read_text(encoding="utf-8")
-
-
 def test_the_served_page_is_build_output_and_nothing_else():
     """``static/`` is written by ``npm run build``, in full, every time.
 

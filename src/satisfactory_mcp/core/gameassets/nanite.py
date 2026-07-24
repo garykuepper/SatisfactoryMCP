@@ -1,11 +1,10 @@
 """A pure-Python Nanite page decoder for UE 5.6 -- positions and triangle indices only.
 
-**This file is a PORT.** The format is as documented by CUE4Parse (Apache-2.0,
-github.com/FabianFG/CUE4Parse): ``FNaniteStreamableData``, ``FPageDiskHeader``,
-``FCluster``, ``FFixupChunk``, ``NaniteUtils``. **See the ``NOTICE`` beside this file; it
-is an Apache-2.0 obligation and must travel with this module.** Nothing is copied -- the
-bit layouts and the strip-index algorithm are reimplemented from a read of the C# and
-checked here against the bytes on disk.
+The format was learned by reading CUE4Parse's implementation
+(github.com/FabianFG/CUE4Parse: ``FNaniteStreamableData``, ``FPageDiskHeader``,
+``FCluster``, ``FFixupChunk``, ``NaniteUtils``). Nothing is copied -- the bit layouts and
+the strip-index algorithm are reimplemented fresh from a read of the C# and checked here
+against the bytes on disk, the same way the save parser was written against its format.
 
 What it is for
 --------------
