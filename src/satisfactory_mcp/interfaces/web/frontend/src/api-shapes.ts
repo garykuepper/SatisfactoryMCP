@@ -23,8 +23,16 @@
  * these usable as response types rather than decoration.
  *
  * NOT EVERYTHING IS HERE YET. `api-types.ts` still declares the payloads of the endpoints
- * that have no response model, and the page still imports those from there. This file grows
- * by one line per endpoint converted; that file shrinks by one block.
+ * that have no response model -- `/api/worlds`, `/api/power`, `/api/factories`,
+ * `/api/collectibles` -- and the page still imports those from there. This file grows by one
+ * line per endpoint converted; that file shrinks by one block.
+ *
+ * TWO THINGS IN THAT FILE ARE NOT PENDING and will not arrive here. `ApiError`, above. And
+ * the route SHAPES -- `Point3M`, `PointM`, `BboxM`, `SpanCurveM`, `RouteCurveM`, `RouteShape`
+ * -- which are the page's own words for the tuples it draws with. The server describes the
+ * same structures inside the payloads below (a `points_m` is a `[number, number, number][]`
+ * either way), but hermite() takes a point rather than a payload, and `RouteShape` is a thing
+ * the page BUILDS and hangs on a polyline, which no endpoint sends at all.
  */
 
 import type { components } from "./api-schema";
@@ -57,6 +65,41 @@ export type RegionsResponse = Body<"RegionsResponse">;
  *  `player` is always sent and its three fields are what go null; markers.ts branches on
  *  that, and reads the branch off this type as `SummaryResponse["player"]`. */
 export type SummaryResponse = Body<"SummaryResponse">;
+
+/* -------------------------------------------- /api/machines and /api/structures */
+
+export type PlacementRow = Schema["PlacementRow"];
+export type MachinesResponse = Body<"MachinesResponse">;
+export type StructureRow = Schema["StructureRow"];
+export type StructuresResponse = Body<"StructuresResponse">;
+
+/* ------------------------------------------------ /api/belts and /api/pipes */
+
+export type BeltRow = Schema["BeltRow"];
+export type AttachmentRow = Schema["AttachmentRow"];
+export type BeltsResponse = Body<"BeltsResponse">;
+
+export type PipeRow = Schema["PipeRow"];
+export type PipesResponse = Body<"PipesResponse">;
+
+/** The two closed vocabularies `/api/pipes` publishes, read off the row's own fields rather
+ *  than restated. `PIPE_FLOW_BASIS` in routes.ts is a `Record` keyed by the second, so a
+ *  fifth basis in `domain/world/flow.py` is still a missing key and a compile error here --
+ *  which is what these being unions rather than `string` is for, and why the server
+ *  declares them as `Literal`s. */
+export type PipeDirection = PipeRow["direction"];
+export type PipeFlowBasis = PipeRow["basis"];
+
+/* --------------------------------------------------------------- /api/storage */
+
+export type StoredItem = Schema["StoredItem"];
+
+/** A container or a fluid buffer, discriminated by `kind`. TWO shapes on the server and
+ *  two here: the other kind's fields are ABSENT rather than null, so a reader branches on
+ *  `kind` and gets the half it is looking at with every field required -- see the module
+ *  docstring in routers/storage.py for why that is not one model with optional halves. */
+export type StorageRow = Schema["StorageSolid"] | Schema["StorageFluid"];
+export type StorageResponse = Body<"StorageResponse">;
 
 /* ------------------------------------------------------------------ both, and shared */
 

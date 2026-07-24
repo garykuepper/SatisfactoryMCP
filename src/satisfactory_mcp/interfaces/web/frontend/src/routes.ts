@@ -33,11 +33,10 @@ import type {
   PipeFlowBasis,
   PipeRow,
   PipesResponse,
-  Point3M,
-  PointM,
-  RouteCurveM,
-  SpanCurveM,
-} from "./api-types";
+} from "./api-shapes";
+/* The four the SERVER does not name: the page's own words for the tuples in the payloads
+ * above, plus `PointM`, which is the projected pair nothing on the wire carries. */
+import type { Point3M, PointM, RouteCurveM, SpanCurveM } from "./api-types";
 
 /* The row that names the thing the reader just clicked, for the three route popups whose
  * subject is a resolved class.

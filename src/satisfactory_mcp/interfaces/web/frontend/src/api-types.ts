@@ -31,6 +31,13 @@
  * response model there is `dict[str, Any]`, which says nothing, and a useful one deletes
  * eight keys from every row, which is a change to the body. See the comment above `worlds()`
  * in routers/world.py. Converting it means changing what it SENDS.
+ *
+ * The route SHAPES at the top are the other thing that stays, and they are not payloads at
+ * all: `PointM`, `Point3M`, `BboxM`, `SpanCurveM` and `RouteCurveM` are the page's own words
+ * for the tuples the server sends -- structurally the same types `api-schema.d.ts` generates,
+ * named here so that hermite() and spanFlatnessM() can say what they take -- and `RouteShape`
+ * is a thing the page BUILDS and hangs on a polyline, which no server describes. They belong
+ * to the drawing code, so they outlive the observations around them.
  */
 
 /** A point in game metres, `[x, y]`. Latitude is `-y`; see `xy` in map.ts. */
@@ -42,47 +49,7 @@ export type Point3M = [number, number, number];
 /** `[x_min, y_min, x_max, y_max]`, game axes. The y ends swap on the way to Leaflet. */
 export type BboxM = [number, number, number, number];
 
-/* ------------------------------------------------------------------- rows */
-
-export interface StructureRow {
-  /* Nullable, and it always was: `saveio.rows` types every piece's `cls` as `str | None`, and
-   * `/api/structures` passes `piece.cls` straight through. A torn row is still a real piece at
-   * a real place -- it is drawn, because the only thing this layer needs is the position. */
-  cls: string | null;
-  // Nullable because drawStructures skips on it: a placement whose transform did not
-  // decode has no position, and the projection sends the row anyway.
-  x_m: number | null;
-  y_m: number | null;
-  z_m: number | null;
-  // Null means the projection predates schema 12 and the facing was never recorded, which
-  // is a different claim from a recorded facing of zero. See footprintCorners in map.ts.
-  yaw: number | null;
-}
-
-/** A machine, an extractor or a generator: one row shape, three layers. */
-export interface PlacementRow {
-  instance_leaf: string;
-  cls: string;
-  name: string;
-  x_m: number | null;
-  y_m: number | null;
-  z_m: number | null;
-  recipe: string | null;
-  recipe_name: string | null;
-  clock: number | null;
-  paused: boolean;
-  yaw: number | null;
-  // Null for the classes the docs dump carries no clearance data for; the page falls back
-  // to MACHINE_FALLBACK_M and says so. All three go null TOGETHER -- one clearance box,
-  // read whole or not at all -- which is what lets the floor view read a null `h_m` as
-  // "never recorded" rather than as "not tall".
-  w_m: number | null;
-  l_m: number | null;
-  /** How tall it stands above its own deck. The one dimension a top-down map cannot draw,
-   *  and the evidence behind the floor view's ghost outlines. */
-  h_m: number | null;
-}
-
+/* ---------------------------------------------------- the page's own route shapes */
 
 /** The tangents that bend one span of a route, `[leave, arrive]` in game metres.
  *
@@ -112,123 +79,21 @@ export interface RouteShape {
   steps: number[];
 }
 
-/* `cls` and `name`, on the four rows the server resolves a class for.
- *
- * Both are nullable and both for one reason: `_belt_class`, `_pipe_class` and the two
- * placement builders in `api.py` all take `row.get("cls")`, which is `str | None` in
- * `saveio.rows`, and hand it to `GameData.building_name`, which is `None` in, `None` out --
- * in as many words: "an occupant that is not there is not a building with an unknown name".
- *
- * So a torn row reaches the page with no title at all, and `name || cls` is then `null`.
- * popup() drops a null row, which would silently delete the one row naming the thing the
- * reader just clicked -- see `titleRow` in routes.ts for what is printed instead. */
-export interface BeltRow {
-  chain: number;
-  cls: string | null;
-  name: string | null;
-  /** True: vertical, so its top-down polyline is one point and it is drawn as a ring.
-   *
-   * `null` is a third answer and not a false one. The server reads this off the docs dump's
-   * own native class (`api.py`, `_belt_class`) and refuses to guess for a class the dump has
-   * no entry for, in as many words: "not a lift would be a guess, and the map draws a lift and
-   * a belt as different things". Typing it `boolean` made the page collapse that refusal into
-   * "belt" at the first `if`, which is the one thing the server declined to say. */
-  lift: boolean | null;
-  items_per_min: number | null;
-  points_m: Point3M[];
-  curve_m: RouteCurveM;
-}
-
-/** A splitter or a merger: a piece of the belt network, drawn by the belt layer. */
-export interface AttachmentRow {
-  instance_leaf: string;
-  /** Nullable on the same terms as BeltRow's; see the note above it. */
-  cls: string | null;
-  name: string | null;
-  x_m: number | null;
-  y_m: number | null;
-  z_m: number | null;
-  yaw: number | null;
-  w_m: number | null;
-  l_m: number | null;
-}
-
-/** Which way the fluid goes, where the network settles it. */
-export type PipeDirection = "forward" | "reverse" | "unknown";
-
-/* What the direction was inferred from: the four values `domain/world/flow.py` defines, and
- * there is no fifth. `/api/pipes` writes `flow.get("basis", "unresolved")`, so the field is
- * always one of these and never null -- the missing-flow case defaults to the same
- * `unresolved` the resolver itself sends when it declines.
- *
- * A closed union rather than `string | null`, because the page has to MAP it: PIPE_FLOW_BASIS
- * in routes.ts is keyed by these, and typing that record by this union is what makes a fifth
- * basis on the server a compile error here instead of an "→ inferred" that says nothing. */
-export type PipeFlowBasis = "machine port" | "pump" | "propagated" | "unresolved";
-
-export interface PipeRow {
-  /** This pipe's position in the RAW segments table, and the join `/api/floors` keys a pipe
-   *  run by. Sent rather than counted: a torn row leaves a gap here that this list's own
-   *  index would silently close, which is the case the field exists for. */
-  row: number;
-  direction: PipeDirection;
-  basis: PipeFlowBasis;
-  network: number | null;
-  fluid: string | null;
-  fluid_name: string | null;
-  /** Nullable on the same terms as BeltRow's; see the note above it. */
-  cls: string | null;
-  name: string | null;
-  flow_m3_min: number | null;
-  points_m: Point3M[];
-  curve_m: RouteCurveM;
-}
-
-/** One kind of thing in a container, resolved to a display name by the server. */
-export interface StoredItem {
-  cls: string;
-  name: string;
-  count: number;
-}
-
-/** A storage container or a fluid buffer. Two record shapes behind one row, keyed by `kind`.
- *
- * The fields of the other kind are ABSENT rather than null -- a box has no fluid level, it does
- * not have an empty one -- so the optional markers below are the type saying which half of the
- * union it is looking at, and `kind` is what a reader should branch on. */
-export interface StorageRow {
-  instance_leaf: string;
-  cls: string;
-  name: string;
-  x_m: number | null;
-  y_m: number | null;
-  z_m: number | null;
-  yaw: number | null;
-  /** Null for the classes the docs dump carries no clearance for -- the HUB's own container,
-   * the Blueprint Designer's, the Dimensional Depot uploader. The page falls back and says so,
-   * exactly as it does for a machine. */
-  w_m: number | null;
-  l_m: number | null;
-  kind: "solid" | "fluid";
-  /** Solid containers: the biggest few kinds, with `more` counting what was left off. */
-  items?: StoredItem[];
-  more?: number;
-  item_kinds?: number;
-  total?: number;
-  slots?: number | null;
-  /** Fluid buffers: what is in it, how much it holds, and the fraction those two make. */
-  fluid?: string | null;
-  fluid_name?: string | null;
-  stored_m3?: number | null;
-  capacity_m3?: number | null;
-  fill?: number | null;
-}
+/* ------------------------------------------------------------------- rows */
 
 /** A power pole, wall outlet or tower platform.
  *
- * `cls` and `name` are nullable on the same terms as a BeltRow's; see the note above it. The
- * three coordinates are NOT: `/api/power` builds them from `saveio.rows.iter_power_poles`,
- * which drops a row whose position will not read, so a pole that reaches this page has one.
+ * `cls` and `name` are nullable for one reason, and it used to be stated on `BeltRow` above --
+ * which is now the server's, in `routers/routes_layer.py`. A pole is decoded out of an
+ * INTERNED table, so its class is an index into a legend and `saveio.rows` answers `None` for
+ * an index past the end; `GameData.building_name` is `None` in, `None` out, so a torn row
+ * reaches the page with no title at all and `name || cls` is `null`. popup() drops a null row,
+ * which would silently delete the one row naming the thing the reader just clicked -- see
+ * `titleRow` in routes.ts for what is printed instead.
+ *
+ * The three coordinates are NOT nullable: `/api/power` builds them from
+ * `saveio.rows.iter_power_poles`, which drops a row whose position will not read, so a pole
+ * that reaches this page has one.
  *
  * `connections` is a count off `graph["power"]` and is never null -- a pole nothing is wired to
  * reports 0, which is a measurement: the pole is in the geometry table and in no edge. */
@@ -313,27 +178,6 @@ export interface ApiError {
   error?: string;
 }
 
-export interface StructuresResponse extends ApiError {
-  structures: StructureRow[];
-  /** The grid edge every one of these classes snaps to; the page paints one tile per piece.
-   *  Never null: `/api/structures` sends the `FOUNDATION_M` constant, which exists precisely
-   *  so the page does not hardcode 8. */
-  tile_m: number;
-}
-
-export interface BeltsResponse extends ApiError {
-  belts: BeltRow[];
-  attachments?: AttachmentRow[];
-}
-
-export interface PipesResponse extends ApiError {
-  pipes: PipeRow[];
-}
-
-export interface StorageResponse extends ApiError {
-  storage: StorageRow[];
-}
-
 /** `edge_count` is the one field here that is not a length of a list beside it.
  *
  * It is how many power EDGES the projection holds, and `wire_count` how many of them published
@@ -351,12 +195,6 @@ export interface PowerResponse extends ApiError {
 export interface FactoriesResponse extends ApiError {
   labels: FactoryRow[];
   proposals: ProposalRow[];
-}
-
-export interface MachinesResponse extends ApiError {
-  machines: PlacementRow[];
-  extractors: PlacementRow[];
-  generators: PlacementRow[];
 }
 
 export interface CollectiblesResponse extends ApiError {

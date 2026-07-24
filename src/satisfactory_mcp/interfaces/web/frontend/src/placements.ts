@@ -26,7 +26,7 @@ import type {
   StorageResponse,
   StorageRow,
   StructuresResponse,
-} from "./api-types";
+} from "./api-shapes";
 
 /* The player's floor plan: one 8 m tile per placed foundation, ramp, wall or catwalk.
  *
@@ -61,7 +61,11 @@ export function drawStructures(data: StructuresResponse): void {
   // fallback was a second copy of the number the field exists to stop the page hardcoding.
   var half = data.tile_m / 2;
   data.structures.forEach(function (s, row) {
-    if (s.x_m === null || s.y_m === null) return;
+    // No position guard, and its removal is the schema saying something the observation
+    // could not: `iter_structures` DROPS a row whose x, y or z will not read as a number, so
+    // a piece that arrives here has three of them and `StructureRow` now declares that. The
+    // guard that used to be on this line was reading a lightweight buildable as if it were a
+    // machine, whose transform genuinely can fail -- and it was skipping nothing.
     var piece = L.polygon(footprintCorners(s.x_m, s.y_m, half, half, s.yaw), {
       color: STRUCTURE_COLOUR,
       weight: 1,
@@ -73,9 +77,9 @@ export function drawStructures(data: StructuresResponse): void {
     });
     // The only name a lightweight buildable has is its place in this list, so that is what
     // the floor filter joins on -- `deck_rows` in `/api/floors` indexes exactly this. The
-    // index is taken from the payload rather than from a counter, so a row skipped by the
-    // guard above does not shift every piece after it by one. See floors.ts.
-    piece._floor = { row: row, x_m: s.x_m, y_m: s.y_m, z_m: s.z_m === null ? undefined : s.z_m };
+    // index is taken from the payload rather than from a counter, which is what keeps the
+    // two sides lined up whatever this loop does with a row. See floors.ts.
+    piece._floor = { row: row, x_m: s.x_m, y_m: s.y_m, z_m: s.z_m };
     piece.addTo(group);
   });
 }
@@ -319,7 +323,11 @@ function storagePopup(s: StorageRow): Row[] {
   storageContents(s).forEach(function (row) {
     rows.push(row);
   });
-  rows.push(["slots", s.slots ? s.slots + " slots" : null]);
+  // Asked of a container and not of a tank, which is what the two row types now make the
+  // compiler insist on: `slots` was an optional field on one model that a buffer simply
+  // never carried, so this line read as "a tank with no slots" rather than "a tank has no
+  // slots". Same row, one guard, and the guard is the discriminator.
+  rows.push(["slots", s.kind === "solid" && s.slots ? s.slots + " slots" : null]);
   rows.push(["footprint", s.w_m && s.l_m ? s.w_m + " x " + s.l_m + " m" : null]);
   rows.push(["facing", s.yaw === null || s.yaw === undefined ? null : Math.round(s.yaw) + "°"]);
   rows.push(["at", s.x_m + ", " + s.y_m + " m"]);
