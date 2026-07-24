@@ -36,6 +36,7 @@ __all__ = [
     "build_scenario",
     "match_recipes",
     "resolve_item",
+    "select_for",
 ]
 
 #: Quoted verbatim whenever an export token is refused. Both facts here cost a real
@@ -104,6 +105,29 @@ def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
     if exact:
         return exact
     return [rid for rid in pool if q in game.recipes[rid].name.casefold()]
+
+
+def select_for(game: GameData, state: WorldState, sources: list[str] | None) -> Selection:
+    """Resolve a source spec against this world -- the ONE place that wiring lives.
+
+    The player position goes in as ``player``, NOT as ``origin``. origin would also turn
+    every direction selector into a cone from the player, so "north" would quietly stop
+    meaning the northern half of the map and start meaning "north of where I am standing"
+    -- a different question, and one that silently changed every plan scoped by direction.
+
+    Shared with ``planning.provenance``, and that is the point: a stored plan records what
+    its selectors resolved to, and a recall re-resolves them. If those two ever resolved by
+    a different route from the solve, the check would be measuring something the plan does
+    not actually plan over -- a staleness gate that is itself stale.
+    """
+    table = nodes_mod.load_nodes()
+    here = state.player_position()
+    return select_nodes(
+        sources,
+        table.nodes,
+        resolve_resource=lambda q: resolve_item(game, q),
+        player=(here[0], here[1]) if here else None,
+    )
 
 
 @dataclass
@@ -218,19 +242,7 @@ def build_scenario(
         rate = float(rate)
         raw_caps[resolved] = rate + max(1e-6, abs(rate) * 1e-6)
 
-    table = nodes_mod.load_nodes()
-    # The player position goes in as `player`, NOT as `origin`. origin would also
-    # turn every direction selector into a cone from the player, so "north" would
-    # quietly stop meaning the northern half of the map and start meaning "north of
-    # where I am standing" -- a different question, and one that silently changed
-    # every plan scoped by direction.
-    here = state.player_position()
-    sel = select_nodes(
-        sources,
-        table.nodes,
-        resolve_resource=lambda q: resolve_item(game, q),
-        player=(here[0], here[1]) if here else None,
-    )
+    sel = select_for(game, state, sources)
     scoped = nodes_mod.annotate(sel.nodes, game, state.projection, state.unlocked_building_ids)
     # Keep the pre-filter set: what got dropped here, and why, is the whole answer to
     # "this plan cannot get Nitrogen Gas".
