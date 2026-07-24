@@ -23,19 +23,27 @@ const HEADER = `/**
  * against, so a diff here is the server's surface changing and is worth reading. It is
  * also why \`npm run check\` needs no running server.
  *
- * READ WHAT THIS DOES AND DOES NOT SAY. Every endpoint in \`interfaces/web/api.py\` is
- * annotated \`-> dict\` and publishes no response schema, so almost every \`200\` below is
- * \`unknown\`. What this file is authoritative for is the other half: which paths exist,
- * which query parameters each takes, and what a validation error looks like. The rest of
- * the response bodies are declared by hand in \`api-types.ts\`, from observed payloads, and
- * that file says so at the top.
+ * READ WHAT THIS DOES AND DOES NOT SAY, because the answer is changing endpoint by
+ * endpoint. Everything under \`interfaces/web/routers/\` that declares a \`response_model\`
+ * has its whole body described below and is authoritative for it. Everything still
+ * annotated \`-> Any\` publishes no response schema at all, so its \`200\` is \`unknown\` here
+ * and its shape is declared by hand in \`api-types.ts\`, from observed payloads -- which
+ * that file says at the top, along with what such an observation is worth.
  *
- * ONE EXCEPTION, and it is the direction of travel: \`/api/floors\` declares a response
- * model, so its whole body IS described here -- \`FloorsResponse\` and the six schemas under
- * it. The floor view in \`floors.ts\` reads them from this file and \`api-types.ts\` declares
- * nothing about floors at all, which is the arrangement that endpoint was converted to get:
- * one description of the body, generated from the server, with no hand-written twin to go
- * stale beside it.
+ * Converted so far: \`/api/floors\` (\`FloorsResponse\` and the six schemas under it),
+ * \`/api/nodes\`, \`/api/inspect\`, \`/api/regions\` and \`/api/summary\`. What this file has
+ * always been authoritative for is the other half and still is: which paths exist, which
+ * query parameters each takes, and what a validation error looks like.
+ *
+ * NOTHING IMPORTS THE COMPONENT NAMES FROM HERE DIRECTLY except \`api-shapes.ts\`, which
+ * re-exports them under the names the page already used. One indirection, so that a
+ * converted endpoint changes one line in one file rather than every module that draws its
+ * payload -- and so that the page's names stay the page's while their DEFINITIONS come
+ * from the server. \`floors.ts\` predates it and reaches in here itself.
+ *
+ * Committed on purpose (see above), which is also why regenerating it after a server
+ * change is part of the same commit: a checked-in record that lags the server is worse
+ * than none, because a diff here is supposed to mean the surface moved.
  */
 `;
 

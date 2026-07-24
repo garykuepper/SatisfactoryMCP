@@ -12,7 +12,7 @@ is generated off it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -28,7 +28,49 @@ router = APIRouter(prefix="/api")
 # -------------------------------------------------------------------- regions
 
 
-@router.get("/regions")
+class RegionExtent(TypedDict):
+    """Where one region is: its mean, its box, and where to print its name.
+
+    Three fixed-length lists, spelled as tuples because that is how a schema says "exactly
+    two" -- JSON has no pair, and ``prefixItems`` is what survives ``npm run typegen`` as a
+    ``[number, number]`` the page can index without a length guard.
+
+    ``label_m`` is never null and is often DIFFERENT from ``centroid_m``, which is the whole
+    reason it exists: ``_label_anchor`` below returns the centroid when the centroid's own
+    cell carries the region's letter, the centre of the nearest cell that does when it does
+    not, and the centroid again when the search finds nothing -- three branches, two floats
+    each.
+    """
+
+    centroid_m: tuple[float, float]
+    bbox_m: tuple[float, float, float, float]
+    label_m: tuple[float, float]
+
+
+class RegionsResponse(TypedDict):
+    """What ``/api/regions`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+
+    **DECLARED BUT NOT ENFORCED, and deliberately.** This handler returns a ``JSONResponse``
+    -- it has a ``Cache-Control`` to set, and this payload is the same for every save -- and
+    FastAPI skips response_model validation for a handler that returns a ``Response``
+    itself. So nothing below filters the wire or rejects a bad row; the model exists purely
+    so ``/openapi.json`` describes the body and ``api-schema.d.ts`` can be generated from
+    it, which is the same reason every other endpoint declares one. Read it as documentation
+    that a generator consumes, not as a guard.
+
+    Declaration order is wire order for the rest of the surface; here it is the order the
+    payload is built in below, kept the same so the two never have to be read apart.
+    """
+
+    grid: list[str]
+    legend: dict[str, str]
+    cell_m: float
+    x0_m: float
+    y0_m: float
+    regions: dict[str, RegionExtent]
+
+
+@router.get("/regions", response_model=RegionsResponse)
 def regions() -> Any:
     """The biome raster: a 30x30 character grid, its legend, and each region's extent.
 

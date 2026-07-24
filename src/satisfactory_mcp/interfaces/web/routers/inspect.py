@@ -12,7 +12,7 @@ is generated off it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -22,7 +22,7 @@ from ....domain.spatial import nodes as spatial_nodes
 from ....domain.spatial import regions as spatial_regions
 from ....domain.world.state import WorldState
 from .. import terrain
-from ..serial import _fail, _label_json, _state, _xyz
+from ..serial import Region, _fail, _label_json, _state, _xyz
 
 __all__ = ["INSPECT_NEAREST", "INSPECT_RADIUS_M", "router"]
 
@@ -41,7 +41,92 @@ INSPECT_RADIUS_M = 200.0
 INSPECT_NEAREST = 5
 
 
-def _elevation_json(near: spatial_elevation.Elevation) -> dict:
+class InspectAt(TypedDict):
+    """The coordinate that was asked about, rounded to the decimetre it was answered at.
+
+    Neither field is nullable: both are required query parameters, so a request that carries
+    no coordinate is a 422 before the handler runs and never reaches this shape.
+    """
+
+    x_m: float
+    y_m: float
+
+
+class Elevation(TypedDict):
+    """One probe as JSON. The nullables here are the point of the endpoint, not slack in it.
+
+    Named for the payload rather than for ``spatial_elevation.Elevation``, which is the
+    domain object this is built FROM: that one holds populations, this one holds the four
+    labelled answers plus the reason for every number it declines to give. See
+    ``_elevation_json`` below for what each field means and which of the two causes each
+    note names.
+
+    **Declaration order is wire order**, so these are in the order ``_elevation_json``
+    emits; see routers/floors.py for the rule at length. **A response_model FILTERS**, which
+    is why ``counts`` is here even though nothing on the map page reads it -- leaving it out
+    would delete it from the wire rather than merely from the types.
+
+    ``radius_m``, ``ground_count`` and ``built_count`` are the three that cannot be null:
+    the radius is a module constant and the two counts are lengths of lists. Everything
+    else goes through ``_round``, which is ``None`` in, ``None`` out.
+    """
+
+    radius_m: float
+    terrain_m: float | None
+    terrain_source: str | None
+    terrain_accuracy_m: float | None
+    terrain_water_m: float | None
+    terrain_water_depth_m: float | None
+    terrain_water_note: str | None
+    terrain_note: str | None
+    ground_m: float | None
+    ground_spread_m: float | None
+    ground_count: int
+    built_m: float | None
+    built_count: int
+    fill_m: float | None
+    fill_note: str | None
+    counts: dict[str, int]
+
+
+class NearestNode(TypedDict):
+    """One of the five nodes nearest a right-clicked point.
+
+    The same coordinates ``/api/nodes`` sends and non-nullable for the same reason -- the
+    static table's own three floats; routers/nodes.py's ``NodeRow`` states the evidence.
+    ``occupant_cls`` is null wherever the occupancy join found nothing, and is null for ALL
+    five whenever the save could not be read, which ``save_error`` says out loud.
+    """
+
+    id: str
+    name: str
+    resource: str
+    kind: str
+    purity: str
+    x_m: float
+    y_m: float
+    z_m: float
+    occupied: bool
+    occupant_cls: str | None
+    distance_m: float
+
+
+class InspectResponse(TypedDict):
+    """What ``/api/inspect`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+
+    ``region`` is ``null`` for ocean and off-map -- ``_label_json``'s refusal, which this
+    layer must not undo. ``save_error`` is non-null exactly when the save would not load,
+    and the answer is still a real answer: the node table is static and needs no ``.sav``.
+    """
+
+    at: InspectAt
+    region: Region | None
+    elevation: Elevation
+    nearest: list[NearestNode]
+    save_error: str | None
+
+
+def _elevation_json(near: spatial_elevation.Elevation) -> Elevation:
     """A probe as JSON, with the reason for every number it declines to give.
 
     Four sources, and each is labelled as what it is. ``terrain_m`` is one texel of the
@@ -132,13 +217,13 @@ def _elevation_json(near: spatial_elevation.Elevation) -> dict:
     }
 
 
-def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[dict]:
+def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[NearestNode]:
     """The closest ``limit`` nodes to a point, centimetres in, metres out."""
     ranked = sorted(
         ((geo.distance_m((x, y), (n["x"], n["y"])), n) for n in table.nodes),
         key=lambda pair: pair[0],
     )
-    out = []
+    out: list[NearestNode] = []
     for distance_m, n in ranked[:limit]:
         held = taken.get(n["instance"])
         out.append(
@@ -157,7 +242,7 @@ def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[d
     return out
 
 
-@router.get("/inspect")
+@router.get("/inspect", response_model=InspectResponse)
 def inspect(
     request: Request,
     x_m: float,

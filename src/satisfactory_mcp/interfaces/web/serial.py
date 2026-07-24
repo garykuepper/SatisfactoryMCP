@@ -21,7 +21,7 @@ That is what ``_fail`` is, and it is the only shape an error takes here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -29,7 +29,31 @@ from fastapi.responses import JSONResponse
 from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
 
-__all__ = ["_fail", "_label_json", "_m", "_state", "_xyz", "_yaw"]
+__all__ = ["Region", "_fail", "_label_json", "_m", "_state", "_xyz", "_yaw"]
+
+
+class Region(TypedDict):
+    """What ``_label_json`` sends: a region lookup that never arrives without its doubt.
+
+    Declared HERE rather than in a router because two routers publish it -- ``/api/nodes``
+    hangs one off every node row and ``/api/inspect`` answers with one for the clicked
+    point -- and they must publish the SAME schema. Two identical TypedDicts of this name in
+    two modules would be two components with a mangled name apiece, which is the generated
+    ``api-schema.d.ts`` inheriting a copy-paste.
+
+    ``name`` is not nullable and the field is not optional: the whole dict is ``None`` for
+    ocean and off-map, which is ``_label_json``'s own refusal and the one thing this layer
+    must not soften. ``accuracy_m`` is an ``int`` because ``Label.accuracy_m`` is -- declaring
+    it ``float`` would validate 256 into 256.0 and rewrite the bytes on the wire.
+
+    Declaration order is wire order; see the note on ``FloorsResponse`` in routers/floors.py.
+    """
+
+    name: str
+    confidence: str
+    accuracy_m: int
+    certain: bool
+    text: str
 
 
 def _m(value: float | None) -> float | None:
@@ -77,7 +101,7 @@ def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     return request.app.state.load_state(save, world)
 
 
-def _label_json(label: spatial_regions.Label) -> dict | None:
+def _label_json(label: spatial_regions.Label) -> Region | None:
     """A region lookup as JSON, or ``None`` for ocean and off-map.
 
     ``None`` rather than a nearest-land guess, which is the refusal ``label_for`` already
