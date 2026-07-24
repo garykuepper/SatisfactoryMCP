@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from . import geo
 from .regions import load_regions
 
-__all__ = ["SELECTOR_HELP", "Selection", "select_nodes"]
+__all__ = ["SELECTOR_HELP", "Selection", "select_nodes", "split_spec"]
 
 SELECTOR_HELP = (
     "selectors: north|south|east|west|northeast|... , region:<name>, grid:X3Y4, "
@@ -74,6 +74,29 @@ def _numbers(text: str, count: int) -> list[float] | None:
         return [float(p) for p in parts]
     except ValueError:
         return None
+
+
+def split_spec(spec: list[str] | str | None) -> tuple[list[str], list[str]]:
+    """Partition a source spec into its LOCATION selectors and the filters that narrow them.
+
+    Filters are per-node predicates, so filtering each location set and then unioning gives
+    exactly the same nodes as filtering the union -- which is what lets a caller ask what
+    ONE selector of a multi-selector spec contributed without re-deriving the whole spec.
+    A stored plan uses that to record its field selector by selector, so a note can name
+    which one changed meaning rather than only that the total moved.
+    """
+    if spec is None:
+        return [], []
+    if isinstance(spec, str):
+        spec = [spec]
+    locations: list[str] = []
+    filters: list[str] = []
+    for entry in (e.strip() for e in spec):
+        if not entry:
+            continue
+        prefix, _value = _split(entry)
+        (filters if prefix in _FILTER_PREFIXES else locations).append(entry)
+    return locations, filters
 
 
 def select_nodes(
