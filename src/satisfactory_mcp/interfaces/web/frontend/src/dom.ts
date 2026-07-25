@@ -32,18 +32,11 @@ export interface Markup {
   html: string;
 }
 
-/* One row of a popup table: a key, and a value. Either cell is data (escaped) or finished
- * markup (not). `undefined` is in the value's union because half the rows are conditional
+/* One row of a popup table: a key, and a value that is either data (escaped) or finished
+ * markup (not). `undefined` is in the union because half the rows are conditional
  * expressions that evaluate to null when there is nothing to say, and those rows are
- * dropped rather than printed empty -- a KEY is never absent, which is why the two unions
- * are not the same one.
- *
- * The key was a plain string until the item icons arrived, and it is widened rather than
- * worked around because of where a picture belongs: an icon is part of naming the thing,
- * not part of counting it, so "[img] Iron Plate | 15" is the row and "Iron Plate | [img] 15"
- * would be a picture filed with the number. Nothing is loosened by the widening -- Markup is
- * still only reachable through html(), so escaping stays the default in both columns. */
-export type Row = [string | Markup, string | number | Markup | null | undefined];
+ * dropped rather than printed empty. */
+export type Row = [string, string | number | Markup | null | undefined];
 
 /* A pre-built fragment for the rows that genuinely need markup. Everything interpolated
  * into it still goes through esc() at the call site -- html() only marks the result as
@@ -56,12 +49,6 @@ export function code(text: unknown): Markup {
   return html("<code>" + esc(text) + "</code>");
 }
 
-/** One cell's finished HTML: markup passes through, everything else is escaped. The whole
- *  of the "escaped by default" rule, in one place now that both columns can hold either. */
-function cell(value: string | number | Markup | null | undefined): string {
-  return value && (value as Markup).html !== undefined ? (value as Markup).html : esc(value);
-}
-
 export function popup(pairs: Row[]): string {
   return (
     "<table>" +
@@ -70,21 +57,35 @@ export function popup(pairs: Row[]): string {
         return p[1] !== null && p[1] !== undefined && p[1] !== "";
       })
       .map(function (p) {
-        return '<tr><td class="popup-key">' + cell(p[0]) + "</td><td>" + cell(p[1]) + "</td></tr>";
+        var cell = p[1];
+        var value = cell && (cell as Markup).html !== undefined ? (cell as Markup).html : esc(cell);
+        return '<tr><td class="popup-key">' + esc(p[0]) + "</td><td>" + value + "</td></tr>";
       })
       .join("") +
     "</table>"
   );
 }
 
-/* An item's own picture, beside its own name -- the one thing on this page that is the
- * reader's game rather than this repository's data.
+/* ------------------------------------------------- what is in a container, as the game draws it */
+
+/* THE INVENTORY GRID: a container's contents as tiles of the reader's own game artwork with
+ * the quantity in the corner, rather than as a table of names.
  *
- * WHY IT IS ONE FUNCTION AND NOT TWO. The picture and the word are a single label: the `alt`
- * IS the name, a class the icon directory has no file for has to leave the name standing on
- * its own, and no caller has ever wanted one without the other. Splitting them would make
- * every call site compose two halves and get the fallback right by hand, which is the
- * arrangement in which a popup eventually loses a name to a missing PNG.
+ * Here rather than in either feature because there are two callers -- a crate and a storage
+ * box -- and "what is in it" has to be one idea on this map rather than two that resemble
+ * each other. It was a list of `[picture + name | count]` rows first, which was readable and
+ * was also the wrong shape: a reader who opens a container is scanning for a THING, and a
+ * thing is recognised by its picture in about the time it takes to read one word of its name.
+ * Twelve names down the left edge of a card is a list to be read; twelve tiles is an
+ * inventory to be looked at, and the game has already taught everyone who will ever open one
+ * of these popups to read exactly that.
+ *
+ * THE NAMES DO NOT GO AWAY, which is the one thing a grid must not get wrong. Every tile
+ * carries its name three times over: `title` for a pointer, `alt` for a screen reader and for
+ * the tile whose picture never arrives, and once more as text in the caption line under the
+ * grid -- which is the copy that needs no pointer, no hover and no working icon directory.
+ * The caption is why this returns ROWS rather than one lump of markup: the grid and the names
+ * are one answer, and a caller assembling them itself could leave one out.
  *
  * THE URL IS UNTAGGED, and that is a decision about caching rather than an oversight.
  * `/api/icons/{desc}` will serve a `?v=<build>` request `immutable` for a year and an
@@ -101,41 +102,107 @@ export function popup(pairs: Row[]): string {
  * its DOM on the click, so these <img> tags are markup rather than requests for as long as
  * the card is shut. That is what makes the lazy half free: a world with 151 containers and 2
  * crates on it loads exactly zero icons, and a reader who opens one crate loads twelve.
- *
- * A MISSING ICON REMOVES ITSELF. `onerror` is inline because the failure has to be handled by
- * the element that failed, inside markup that is a string until Leaflet inserts it -- there is
- * no node to attach a listener to at the moment this is built, and a card-opened hook would
- * put the page's most ordinary state (no icons generated at all) behind a second mechanism.
  */
-/* How wide a card carrying a contents list may get, in pixels, handed to `bindPopup` by the
+
+/** One kind of thing in a container: the class its picture is named by, the name a reader
+ *  reads, and how many. The record `/api/crates` and `/api/storage` both send. */
+export interface Stack {
+  cls: string;
+  name: string;
+  count: number;
+}
+
+/* How wide a card carrying an inventory grid may get, in pixels, handed to `bindPopup` by the
  * two layers that draw one.
  *
  * Leaflet's default is 300, and it is right for every other popup on this page: those are
- * short keys against short values, and a card wider than it needs to be is a card that covers
- * more of the map than it has to. A contents list is a different shape -- an item's NAME in
- * the key column, which `.item-name` refuses to break across lines, plus a 21 px picture in
- * front of it -- and at 300 the longest names in the game push the table past the cap Leaflet
- * clamps the content box to, which does not wrap them, it spills them out of the card.
- *
- * 380 is measured against the widest thing that can appear: "Assembly Director System" and
- * "Magnetic Field Generator" are about 190 px with their icon, and the count column beside
- * them is at most "24,000". Here rather than in either feature because the two must agree,
- * and because it is the same fact as the CSS rule it pays for.
+ * short keys against short values, and a card wider than it needs to be is a card covering
+ * more of the map than it has to. A grid is a different shape, and this number is arithmetic
+ * rather than taste -- at 380 the value cell fits SEVEN 38 px tiles to a row, which makes the
+ * twelve kinds `/api/crates` sends two rows and the six `/api/storage` sends one. Six to a row
+ * would leave the twelve as a ragged 6+6; eight would need 424 px and start covering the thing
+ * that was clicked. Measured with the widest card either layer can produce, not derived.
  */
 export var CONTENTS_POPUP_PX = 380;
 
-export function icon(desc: string, name: string): Markup {
-  // The wrapper is not decoration: it is what keeps a picture attached to the first line of
-  // the name it belongs to. "Encased Industrial Beam" wraps over three lines in a popup cell,
-  // and inline text flow puts the image at the start of the RUN rather than beside the word,
-  // so without this the icon sits alone on line one. See .item-name in style.css.
-  return html(
-    '<span class="item-name"><img class="item-icon" src="/api/icons/' +
-      encodeURIComponent(desc) +
-      '" alt="' +
-      esc(name) +
-      '" onerror="this.remove()">' +
-      esc(name) +
-      "</span>"
+/** Thousands separators, because these are counts of things and they get large: a full
+ *  Industrial Storage Container holds 24,000 Wire, and a badge whose digits have to be counted
+ *  is not a reading. Shared, so a tile's badge and the total under the grid cannot disagree. */
+export function count(n: number): string {
+  return n.toLocaleString("en-GB");
+}
+
+/* One tile: the picture, the quantity over its bottom-right corner, and the name underneath
+ * all of it -- underneath literally. `.item-abbr` sits in the tile the whole time and is
+ * revealed when the <img> stacked over it gives up.
+ *
+ * THAT IS THE MISSING-ICON ANSWER, and it is a tile rather than a hole on purpose. Six of the
+ * game's 750 classes ship no picture, and a reader who never ran the generator has none at
+ * all -- so a failed icon is the ordinary state here rather than the edge case, and a grid
+ * with gaps in it would be a grid lying about how many kinds are in the box. The name takes
+ * the tile instead, clipped to fit, and the count stays exactly where it was.
+ *
+ * `onerror` is inline because the failure has to be handled by the element that failed, inside
+ * markup that is a string until Leaflet inserts it: there is no node to attach a listener to
+ * at the moment this is built, and a card-opened hook would put the page's most ordinary state
+ * behind a second mechanism. It ADDS a class rather than assigning one, so a tile that grows a
+ * second class later cannot be silently undressed by this line.
+ */
+function tile(item: Stack): string {
+  return (
+    '<span class="item-tile" title="' +
+    esc(item.name + " — " + count(item.count)) +
+    '"><img class="item-icon" src="/api/icons/' +
+    encodeURIComponent(item.cls) +
+    '" alt="' +
+    esc(item.name) +
+    "\" onerror=\"this.parentNode.classList.add('item-tile-bare');this.remove()\">" +
+    '<span class="item-abbr">' +
+    esc(item.name) +
+    '</span><b class="item-count">' +
+    esc(count(item.count)) +
+    "</b></span>"
   );
+}
+
+/* What is in one container, as the two popup rows that say it: the grid, and the names under
+ * it.
+ *
+ * `more` is the SERVER's truncation and not this file's. `/api/crates` sends the biggest
+ * twelve kinds and `/api/storage` the biggest six, each with a count of what it left off, and
+ * a grid cannot show what it was never sent. It is drawn as a tile of its own rather than
+ * dropped, because a grid that simply stops is a container that looks emptier than it is --
+ * the same reason the list this replaced ended in "and 26 more". What HAS changed is who the
+ * limit is for: twelve was chosen server-side as "what a popup can show without scrolling",
+ * and a grid makes that sentence false, so the cap is now arithmetic belonging to the router
+ * rather than to the page, and raising it is a decision to make over there.
+ */
+export function contentsRows(items: Stack[], more: number): Row[] {
+  var stacks = items || [];
+  // Said in words, because an empty grid and a container this page failed to read are the
+  // same picture, and one of the two is an answer.
+  if (!stacks.length) return [["contents", more ? "not shown" : "empty"]];
+  var tiles = stacks.map(tile).join("");
+  if (more) {
+    tiles +=
+      '<span class="item-tile item-tile-more" title="' +
+      esc(more + " more kinds — the server sends the biggest few") +
+      '">+' +
+      esc(String(more)) +
+      "</span>";
+  }
+  /* The caption, and it is the half that keeps a grid honest: a tile says what a thing is to
+   * anyone who recognises the picture, and the names say it to everyone else -- including
+   * anyone with no pointer to hover with, which on a touch screen is everyone. A middle dot
+   * rather than a comma, because several item names have a comma in them and none has this. */
+  var names = stacks
+    .map(function (s) {
+      return s.name;
+    })
+    .join(" · ");
+  if (more) names += " · and " + more + " more";
+  return [
+    ["contents", html('<span class="item-grid">' + tiles + "</span>")],
+    ["", html('<span class="item-names">' + esc(names) + "</span>")],
+  ];
 }

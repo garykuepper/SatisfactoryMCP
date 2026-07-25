@@ -17,7 +17,7 @@
  * shape has to say "crate" rather than "one more small rectangle".
  */
 
-import { CONTENTS_POPUP_PX, code, icon, popup } from "./dom";
+import { CONTENTS_POPUP_PX, code, contentsRows, count, popup } from "./dom";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
 import { declareColours } from "./palette";
@@ -148,12 +148,6 @@ function crateGlyph(kind: string): string {
   );
 }
 
-/** Thousands separators, for the reason the storage popup has its own: a death crate can hold
- *  a four-figure stack, and a table cell whose digits have to be counted is not a reading. */
-function count(n: number): string {
-  return n.toLocaleString("en-GB");
-}
-
 /* What the title row calls one, and the word for the third kind is the point.
  *
  * "unknown" would be wrong twice over: the save is not unreadable and the crate is not a
@@ -168,28 +162,6 @@ function crateTitle(kind: string): string {
   return "crate";
 }
 
-/* What is in one crate, as popup rows -- the reason a reader clicked it.
- *
- * The server has already taken the biggest twelve and counted what it left off, so this only
- * has to render them and SAY SO. Twelve rather than storage's six because the two hold
- * different sorts of thing: a container holds one or two kinds because the player filled it
- * deliberately, and a death crate holds whatever was in a pioneer's pockets -- 38 kinds in 55
- * slots on the fullest one on this machine. "and 26 more" is a row rather than an ellipsis,
- * because a list that simply stops reads as a crate holding twelve things.
- */
-function crateContents(c: CrateRow): Row[] {
-  var items = c.items || [];
-  // Emptied crates delete themselves, so this is very nearly unreachable -- and it is here
-  // rather than assumed away because the server will serve a row whose inventory would not
-  // read, and a card with a silent gap in it is worse than one that says "empty".
-  if (!items.length) return [["contents", "empty"]];
-  var rows: Row[] = items.map(function (item): Row {
-    return [icon(item.cls, item.name), count(item.count)];
-  });
-  if (c.more) rows.push(["", "and " + c.more + " more"]);
-  return rows;
-}
-
 /* One crate's whole card.
  *
  * Contents first, under the title, on the storage popup's terms exactly: a reader who clicks
@@ -202,7 +174,15 @@ function crateContents(c: CrateRow): Row[] {
  */
 function cratePopup(c: CrateRow): Row[] {
   var rows: Row[] = [[crateTitle(c.kind), c.kind_text || c.kind]];
-  crateContents(c).forEach(function (row) {
+  /* The same inventory grid a storage box gets, out of the same helper: "what is in it" is
+   * one question wherever it is asked, and a crate that answered it in a different shape
+   * would be the map claiming the two are different sorts of fact.
+   *
+   * The truncation is the server's -- `/api/crates` sends the biggest twelve kinds, against
+   * `/api/storage`'s six, because a container holds one or two kinds the player chose and a
+   * death crate holds whatever was in a pioneer's pockets: 38 kinds in 55 slots on the
+   * fullest one this machine has cut. Twelve fills the grid's first two rows exactly. */
+  contentsRows(c.items || [], c.more || 0).forEach(function (row) {
     rows.push(row);
   });
   // How much is out there, and only when the list did not already show all of it: repeating
