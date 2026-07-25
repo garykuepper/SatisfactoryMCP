@@ -457,6 +457,21 @@ select {
   color: #93a5b4;
 }
 
+/* The crate glyph's body: an SVG box at a fixed pixel size, drawn by crateGlyph() in
+   crates.ts, which owns the colour and the shape. Everything left for CSS is the two things a
+   divIcon does not get for free -- `line-height: 0` so the inline SVG sits on the icon's own
+   box instead of on a text baseline three pixels below it, and a pointer, because the popup
+   IS this layer and a mark that does not look clickable will not be clicked.
+
+   A drop shadow rather than a second stroke: a 13 px box has to be findable against bright
+   terrain and against the concrete alike, and a dark halo does that without spending another
+   colour or thickening the outline the dashed kind depends on being able to show. */
+.crate-mark {
+  line-height: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 0 2px rgba(6, 8, 10, 0.9));
+}
+
 /* The one ACTION on a popup card, and the only button inside one. Full width and under the
    rows, so it reads as what the card offers rather than as one more row of what it says. */
 .card-action {
@@ -601,4 +616,43 @@ select {
 .popup-key {
   color: #9aa0a8;
   padding-right: 0.5rem;
+}
+
+/* An item named in a contents list: its picture out of the reader's own install, and its
+   name. See icon() in dom.ts and routers/icons.py.
+
+   A flex row rather than inline text, and it earns its place: "Encased Industrial Beam" wraps
+   over three lines in the key column of a popup, and in inline flow the image belongs to the
+   START of that run, so the icon ends up alone on the first line with the words underneath it.
+   As a flex line the image is one item and the whole name is the other, so the picture stays
+   beside the name however many lines the name takes. `flex-start` rather than `center`
+   because centring a 16 px icon against a three-line block puts it opposite the middle word.
+
+   The gap is the flex gap rather than a space in the markup, for the case that matters most:
+   a missing icon removes itself outright, and a typed space would have survived it as a stray
+   indent on the one row with no picture -- which is every row on a machine that never ran the
+   generator. */
+.item-name {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  /* An item's name is a NAME, so it is not broken across lines: "Encased Industrial Beam"
+     stacked three high beside a two-digit count is a list a reader has to parse instead of
+     scan, and the icon's 21 px is what pushed the longest names over the edge. The two popups
+     that carry contents ask for a wider card to pay for it -- see CONTENTS_POPUP_PX in
+     dom.ts, which is also why this cannot overflow: the widest name in the game is about
+     190 px with its icon and the cap is 380. */
+  white-space: nowrap;
+}
+
+/* 16 px, which is the text's own line: a row with a picture is exactly as tall as a row
+   without one, so a twelve-kind death crate is still a card rather than a scrolling one.
+   Fixed on BOTH axes and never shrunk, because the generator writes square PNGs at one size
+   and neither a stray non-square file nor a long name may squeeze one; `object-fit: contain`
+   makes that a letterbox rather than a stretch. */
+.item-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
 }

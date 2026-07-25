@@ -11,7 +11,7 @@
  * data rather than from a fixed set of rows.
  */
 
-import { code, popup } from "./dom";
+import { CONTENTS_POPUP_PX, code, icon, popup } from "./dom";
 import type { Row } from "./dom";
 import { refreshFloors } from "./floors";
 import { L } from "./leaflet";
@@ -301,8 +301,14 @@ function storageContents(s: StorageRow): Row[] {
   }
   var items = s.items || [];
   if (!items.length) return [["contents", "empty"]];
+  /* The item's own picture beside its own name, out of the reader's install -- the second of
+   * the two popups that got them, the first being the crates. A container's contents are the
+   * reason this layer exists, and a row that reads "[iron plate] Iron Plate | 24,000" is
+   * recognisable at the speed the game's own inventory is; "Iron Plate | 24,000" has to be
+   * read. The name is still there either way: see icon() in dom.ts for what a class with no
+   * generated PNG does, which on a machine that never ran the generator is every class. */
   var rows: Row[] = items.map(function (item): Row {
-    return [item.name, count(item.count)];
+    return [icon(item.cls, item.name), count(item.count)];
   });
   if (s.more) rows.push(["", "and " + s.more + " more"]);
   return rows;
@@ -346,7 +352,10 @@ export function drawStorage(data: StorageResponse): void {
       // warehouse a reader wants at a glance and the map can say without being asked: an empty
       // box is a place with room in it. Same device the machines use for `paused`.
       fillOpacity: s.kind === "fluid" ? (s.fill ? 0.7 : 0.15) : s.total ? 0.7 : 0.15,
-    }).bindPopup(popup(storagePopup(s)));
+    })
+      // Wider than the page's other cards, because this one lists item names against counts
+      // and a name is not broken across lines. See CONTENTS_POPUP_PX in dom.ts.
+      .bindPopup(popup(storagePopup(s)), { maxWidth: CONTENTS_POPUP_PX });
     // WHERE it stands, and deliberately no instance id: `/api/floors` does not decompose
     // storage, so there is no band listing this box and a mark carrying an id would be a
     // join that always misses. Position is the honest one, and floors.ts says so.
