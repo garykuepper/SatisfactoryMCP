@@ -9,11 +9,22 @@ that nothing else on this surface wants.
 WARNING: the function name is the operation_id -- rename it and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
 is generated off it.
+
+**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
+FILTERS -- routers/floors.py writes both rules out at length.
+
+**THE TWO ROWS SIT ON OPPOSITE SIDES OF THE ONE LINE THIS SURFACE KEEPS REDRAWING**, which
+routers/placements.py states as a file-level fact: an ACTOR record always carries a class
+and an INTERNED table row may not. A pole is interned, so its ``cls`` is an index into a
+legend and ``saveio.rows`` answers ``None`` for an index past the end -- and its ``name``
+with it, because ``building_name`` is None in, None out. Its COORDINATES are the other way
+round: ``iter_power_poles`` drops a row whose class index or position will not read, so a
+pole that reaches this payload has three floats, exactly as ``/api/structures`` does.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -28,6 +39,72 @@ router = APIRouter(prefix="/api")
 
 
 # ---------------------------------------------------------------------- power
+
+
+class PoleRow(TypedDict):
+    """A power pole, wall outlet or tower platform: where it stands and how busy it is.
+
+    ``cls`` and ``name`` are nullable on the interned-table terms above; the three
+    coordinates are not, because the iterator drops a row that has none. ``yaw`` is null on
+    ``_yaw``'s own terms -- a projection older than schema 12 carries no rotation, which is a
+    different claim from "this pole is axis-aligned".
+
+    ``connections`` is an ``int`` and is never null: a pole nothing is wired to reports 0,
+    which is a measurement rather than a missing value -- it is in the geometry table and in
+    no edge, and 2 of this world's 701 are exactly that.
+    """
+
+    cls: str | None
+    name: str | None
+    x_m: float
+    y_m: float
+    z_m: float
+    yaw: float | None
+    connections: int
+
+
+#: One power wire, as the straight line between the two connectors it is strung between.
+#:
+#: FUNCTIONAL SYNTAX, and only for that reason: ``from`` is a Python keyword, so the field
+#: cannot be spelled in a class body at all. The key is the wire's own, it is what the page
+#: already reads, and renaming it to please the language would be changing the payload to
+#: suit the declaration.
+#:
+#: ``a_m`` and ``b_m`` are TUPLES, which is the only way a schema says "exactly three":
+#: pydantic emits ``prefixItems`` and typegen turns it into a ``[number, number, number]``
+#: the page indexes without a length guard. ``iter_wires`` drops a row that is not six
+#: readable numbers, so each end is three floats or the wire is not here -- the same bar
+#: ``RegionExtent`` and the route splines are declared at.
+#:
+#: ``from`` and ``to`` are null where the projection carries no record naming that actor: 40
+#: of the reference world's 2,594 endpoints land on a hypertube entrance, a drop pod or the
+#: AWESOME Sink, and a name guessed for those would arrive looking like a reading.
+WireRow = TypedDict(
+    "WireRow",
+    {
+        "a_m": tuple[float, float, float],
+        "b_m": tuple[float, float, float],
+        "from": str | None,
+        "to": str | None,
+        "span_m": float,
+    },
+)
+
+
+class PowerResponse(TypedDict):
+    """The two lists and the three counts, in emission order.
+
+    ``edge_count`` is the one number here that is not the length of a list beside it: it is
+    how many power EDGES the projection holds, and ``wire_count`` how many of those published
+    a span. They are equal on every save cut by a sidecar new enough to read the geometry, so
+    the pair is what tells "there is nothing to draw" from "there is nothing here".
+    """
+
+    poles: list[PoleRow]
+    pole_count: int
+    wires: list[WireRow]
+    wire_count: int
+    edge_count: int
 
 
 def _power_names(st: WorldState) -> dict[str, str]:
@@ -65,7 +142,7 @@ def _power_names(st: WorldState) -> dict[str, str]:
     return out
 
 
-@router.get("/power")
+@router.get("/power", response_model=PowerResponse)
 def power(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every power pole and tower, and the span of every wire between them.
 

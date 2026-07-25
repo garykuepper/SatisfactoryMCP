@@ -9,11 +9,22 @@ only their count.
 WARNING: the function name is the operation_id -- rename it and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
 is generated off it.
+
+**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
+FILTERS -- routers/floors.py writes both rules out at length.
+
+**THE BOXES ARE TUPLES, NOT LISTS**, and that is what the page's label card is built on:
+``centroid_m`` is exactly two numbers and ``bbox_m`` exactly four, so pydantic emits
+``prefixItems`` and typegen turns them into ``[number, number]`` and
+``[number, number, number, number]`` -- which labels.ts then indexes without a length
+guard. Declared ``list[float]`` they would arrive as ``number[]``, and every ``b[3]`` in
+the fly-to code would be an unchecked read the compiler waved through. ``RegionExtent`` in
+routers/regions.py is the same device one file over.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -29,7 +40,56 @@ router = APIRouter(prefix="/api")
 # ------------------------------------------------------------------ factories
 
 
-@router.get("/factories")
+class FactoryRow(TypedDict):
+    """A factory the player named, and the extent of the machines it is anchored to.
+
+    ``centroid_m`` is never null: ``Label.centroid`` is a ``tuple[float, float]`` with a
+    default, so a label always remembers where it was even when nothing it named is still
+    standing. ``bbox_m`` IS null in exactly that case -- ``geo.bbox`` refuses to invent a
+    zero box at the world centre for an empty set, and this layer does not undo the refusal.
+    The pair is the honest report: a demolished factory keeps its name and its remembered
+    middle, and loses only the ability to be flown to.
+
+    ``notes`` is not nullable either. ``Label.notes`` is ``str = ""`` in the label store, so
+    an unannotated factory sends the empty string, which popup() drops for the same reason
+    it drops a null.
+    """
+
+    name: str
+    centroid_m: tuple[float, float]
+    bbox_m: tuple[float, float, float, float] | None
+    machines: int
+    notes: str
+
+
+class ProposalRow(TypedDict):
+    """A cluster the coherence pass found that no label speaks for.
+
+    ``index`` is the position in the FULL proposal list rather than in this filtered one, so
+    a ``proposal:N`` selector resolves to the same cluster here and in the MCP tools; it is
+    an ``int`` because it is a list position.
+
+    ``score`` and ``spread_m`` are floats and had to be checked rather than assumed: they are
+    ``round(Proposal.cohesion, 3)`` and ``round(Candidate.spread_m, 1)``, both declared
+    ``float = 0.0`` in domain/factories -- and a proposal whose weakest internal link is
+    exactly 0.0 sends ``0.0``, which is what declaring them ``int`` would have truncated.
+    """
+
+    index: int
+    label: str
+    centroid_m: tuple[float, float]
+    bbox_m: tuple[float, float, float, float] | None
+    machines: int
+    score: float
+    spread_m: float
+
+
+class FactoriesResponse(TypedDict):
+    labels: list[FactoryRow]
+    proposals: list[ProposalRow]
+
+
+@router.get("/factories", response_model=FactoriesResponse)
 def factories(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Named factories and the coherence-scored proposals for the unnamed rest.
 

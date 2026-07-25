@@ -8,17 +8,21 @@
  * against, so a diff here is the server's surface changing and is worth reading. It is
  * also why `npm run check` needs no running server.
  *
- * READ WHAT THIS DOES AND DOES NOT SAY, because the answer is changing endpoint by
- * endpoint. Everything under `interfaces/web/routers/` that declares a `response_model`
- * has its whole body described below and is authoritative for it. Everything still
- * annotated `-> Any` publishes no response schema at all, so its `200` is `unknown` here
- * and its shape is declared by hand in `api-types.ts`, from observed payloads -- which
- * that file says at the top, along with what such an observation is worth.
+ * READ WHAT THIS DOES AND DOES NOT SAY. Every JSON endpoint under
+ * `interfaces/web/routers/` is self-typed -- it declares a `response_model`, so its whole
+ * body is described below and this file is authoritative for it -- EXCEPT `/api/worlds`,
+ * whose `200` is `unknown` because it is deferred rather than missed. It forwards the
+ * loader's own save headers, so a faithful model is `dict[str, Any]` and a useful one
+ * deletes eight keys from every row: converting it means changing what it SENDS, which is
+ * a commit about the body and not a typing item. The comment above `worlds()` in
+ * routers/world.py is the long version. `/api/mapimage`, `/api/maptiles/…`,
+ * `/api/icons/…` and `/api/events` send pictures and a stream and have no JSON body to
+ * describe at all.
  *
- * Converted so far: `/api/floors` (`FloorsResponse` and the six schemas under it),
- * `/api/nodes`, `/api/inspect`, `/api/regions`, `/api/summary`, `/api/machines`,
- * `/api/structures`, `/api/belts`, `/api/pipes` and `/api/storage`. Still `unknown`:
- * `/api/worlds`, `/api/power`, `/api/factories`, `/api/collectibles`, `/api/crates`.
+ * That one endpoint's rows are therefore still the FRONTEND's claim, read off real payloads
+ * rather than off the server, and are declared by hand on the page -- with what such an
+ * observation is worth stated where they are declared.
+ *
  * What this file has always been authoritative for is the other half and still is: which
  * paths exist, which query parameters each takes, and what a validation error looks like.
  *
@@ -1020,6 +1024,178 @@ export interface components {
             attachment_count: number;
         };
         /**
+         * CollectibleRow
+         * @description One map placement, and what this save says about it.
+         *
+         *     The three coordinates are NOT nullable, and this is the one field group here that had to
+         *     be read back rather than copied: ``_xyz`` can answer three nulls, but its argument is
+         *     ``removed.placements``' own ``(row["x"], row["y"], row["z"])`` off the generated
+         *     placement table, where a row without all three does not exist. The same shape of claim
+         *     ``/api/nodes`` and ``/api/structures`` already make about their triples.
+         *
+         *     ``observed`` is the placement table's scan of every save on disk rather than of the
+         *     loaded one, and it is null for two different reasons that mean the same thing here: a
+         *     row this save has COLLECTED gets no observed state at all, and a state this build does
+         *     not know is answered ``None`` rather than with a nearest guess.
+         *
+         *     ``distance_m`` is populated only by ``mode=nearest``, which is the one mode that
+         *     resolves an origin -- so it is null on every row of every other mode, and null is the
+         *     honest "not measured from anywhere" rather than a zero.
+         */
+        CollectibleRow: {
+            /** Category */
+            category: string;
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number;
+            /** Y M */
+            y_m: number;
+            /** Z M */
+            z_m: number;
+            /** Collected */
+            collected: boolean;
+            /** Observed */
+            observed: string | null;
+            /** Distance M */
+            distance_m: number | null;
+        };
+        /**
+         * CollectiblesResponse
+         * @description The view ``collect_view`` decided, in emission order.
+         *
+         *     ``mode`` is a CLOSED union and ``kind`` on ``/api/crates`` deliberately is not, which is
+         *     the same distinction read from two sides. This one is closed because the guard that
+         *     fills it is next door and exhaustive: ``collect_view`` refuses anything outside these
+         *     four before a view exists at all, so a fifth mode cannot reach the wire without
+         *     ``service.py`` changing -- and then it should be loud here. A crate's ``kind`` comes
+         *     from the PROJECTION, which is versioned and read from disk, so a fourth value must be
+         *     served whole rather than 500ed on.
+         *
+         *     ``rows`` is a list and never null. The view's own ``rows`` is ``None`` for
+         *     ``mode=census``, which counts off the removed list instead of listing anything, and the
+         *     handler spells that as the empty list it has always sent.
+         *
+         *     ``counts`` is an open map on purpose: its keys are observed STATES -- ``standing``,
+         *     ``never_streamed``, ``gone_in_a_later_save``, ``collected`` -- and a save whose rows are
+         *     all in one of them sends a one-key object. Declaring the four would make a missing key
+         *     look like a schema, when it is a tally. ``where`` is ``str`` and never null: it is
+         *     ``""`` for every mode that measures no distance, which is the same "" the view defaults.
+         */
+        CollectiblesResponse: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "census" | "collected" | "remaining" | "nearest";
+            /** Group */
+            group: string | null;
+            /** Rows */
+            rows: components["schemas"]["CollectibleRow"][];
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Hidden Pedestals */
+            hidden_pedestals: number;
+            /** Save Only */
+            save_only: boolean;
+            /** Where */
+            where: string;
+        };
+        /**
+         * CrateItem
+         * @description One kind of thing in a crate, resolved to a display name by the server.
+         *
+         *     The same three fields as ``StoredItem`` in routers/storage.py, and deliberately NOT the
+         *     same type. Sharing it would mean moving it to ``serial.py`` -- a router may not import
+         *     another router, and rightly -- which would put a row shape into the module that holds
+         *     the unit conversions, on the strength of a coincidence: these two are alike because both
+         *     are a stack, and they are filled by two expressions with two different truncation limits.
+         *     ``Region`` is in ``serial.py`` because ONE function builds it for two routers, which is
+         *     the case this is not.
+         *
+         *     ``count`` is an ``int``: a stack amount is a number of items, and declaring it ``float``
+         *     would validate 15 into 15.0 and rewrite every row.
+         */
+        CrateItem: {
+            /** Cls */
+            cls: string;
+            /** Name */
+            name: string;
+            /** Count */
+            count: number;
+        };
+        /**
+         * CrateRow
+         * @description One crate: what kind it is, where it is, and what is inside it.
+         *
+         *     ``cls`` is not nullable and the coordinates are, which is the actor-record line
+         *     routers/placements.py draws: a crate is an ordinary actor written out with its class, so
+         *     the class is there; its TRANSFORM is what can fail to decode, and ``_xyz`` answers three
+         *     nulls when it did. A container next door is declared on exactly these terms.
+         *
+         *     ``kind`` is a plain ``str`` and NOT a ``Literal``, which is the opposite call from
+         *     ``mode`` on ``/api/collectibles`` and for a stated reason: this value arrives from the
+         *     PROJECTION, which is versioned and read off disk, and ``_crate_row`` uses ``.get`` on
+         *     ``CRATE_KIND_TEXT`` precisely so that a projection cut by a later extractor that learned
+         *     a fourth ``EFGCrateType`` is still served -- with the word it used and no gloss. A closed
+         *     union here would turn that into a 500 on a key this build has not heard of.
+         *     ``kind_text`` is the null that says so.
+         *
+         *     ``slots`` is ``int | None`` on ``StorageSolid``'s terms: it is the inventory component's
+         *     own slot count forwarded whole, and a projection that wrote none sends null rather than
+         *     0. ``more``, ``item_kinds`` and ``total`` are counts and are ints -- ``more`` is 0 rather
+         *     than null when the truncation left nothing off.
+         */
+        CrateRow: {
+            /** Instance Leaf */
+            instance_leaf: string;
+            /** Cls */
+            cls: string;
+            /** Kind */
+            kind: string;
+            /** Kind Text */
+            kind_text: string | null;
+            /** X M */
+            x_m: number | null;
+            /** Y M */
+            y_m: number | null;
+            /** Z M */
+            z_m: number | null;
+            /** Yaw */
+            yaw: number | null;
+            /** Items */
+            items: components["schemas"]["CrateItem"][];
+            /** More */
+            more: number;
+            /** Item Kinds */
+            item_kinds: number;
+            /** Total */
+            total: number;
+            /** Slots */
+            slots: number | null;
+        };
+        /**
+         * CratesResponse
+         * @description The list and the three numbers a header wants, in emission order.
+         *
+         *     ``deaths`` is the one a player cares about and is not a length of anything: it is how
+         *     many of these rows are somebody's death, which on a world of crates that all predate
+         *     ``mCrateType`` is 0 against a non-zero ``count`` -- the same "there is nothing to say"
+         *     against "there is nothing here" pair ``/api/power``'s ``edge_count`` makes.
+         */
+        CratesResponse: {
+            /** Crates */
+            crates: components["schemas"]["CrateRow"][];
+            /** Count */
+            count: number;
+            /** Deaths */
+            deaths: number;
+            /** Items Total */
+            items_total: number;
+        };
+        /**
          * Elevation
          * @description One probe as JSON. The nullables here are the point of the endpoint, not slack in it.
          *
@@ -1073,6 +1249,48 @@ export interface components {
             counts: {
                 [key: string]: number;
             };
+        };
+        /** FactoriesResponse */
+        FactoriesResponse: {
+            /** Labels */
+            labels: components["schemas"]["FactoryRow"][];
+            /** Proposals */
+            proposals: components["schemas"]["ProposalRow"][];
+        };
+        /**
+         * FactoryRow
+         * @description A factory the player named, and the extent of the machines it is anchored to.
+         *
+         *     ``centroid_m`` is never null: ``Label.centroid`` is a ``tuple[float, float]`` with a
+         *     default, so a label always remembers where it was even when nothing it named is still
+         *     standing. ``bbox_m`` IS null in exactly that case -- ``geo.bbox`` refuses to invent a
+         *     zero box at the world centre for an empty set, and this layer does not undo the refusal.
+         *     The pair is the honest report: a demolished factory keeps its name and its remembered
+         *     middle, and loses only the ability to be flown to.
+         *
+         *     ``notes`` is not nullable either. ``Label.notes`` is ``str = ""`` in the label store, so
+         *     an unannotated factory sends the empty string, which popup() drops for the same reason
+         *     it drops a null.
+         */
+        FactoryRow: {
+            /** Name */
+            name: string;
+            /** Centroid M */
+            centroid_m: [
+                number,
+                number
+            ];
+            /** Bbox M */
+            bbox_m: [
+                number,
+                number,
+                number,
+                number
+            ] | null;
+            /** Machines */
+            machines: number;
+            /** Notes */
+            notes: string;
         };
         /**
          * FloorBand
@@ -1585,6 +1803,56 @@ export interface components {
             z_m: number | null;
         };
         /**
+         * PoleRow
+         * @description A power pole, wall outlet or tower platform: where it stands and how busy it is.
+         *
+         *     ``cls`` and ``name`` are nullable on the interned-table terms above; the three
+         *     coordinates are not, because the iterator drops a row that has none. ``yaw`` is null on
+         *     ``_yaw``'s own terms -- a projection older than schema 12 carries no rotation, which is a
+         *     different claim from "this pole is axis-aligned".
+         *
+         *     ``connections`` is an ``int`` and is never null: a pole nothing is wired to reports 0,
+         *     which is a measurement rather than a missing value -- it is in the geometry table and in
+         *     no edge, and 2 of this world's 701 are exactly that.
+         */
+        PoleRow: {
+            /** Cls */
+            cls: string | null;
+            /** Name */
+            name: string | null;
+            /** X M */
+            x_m: number;
+            /** Y M */
+            y_m: number;
+            /** Z M */
+            z_m: number;
+            /** Yaw */
+            yaw: number | null;
+            /** Connections */
+            connections: number;
+        };
+        /**
+         * PowerResponse
+         * @description The two lists and the three counts, in emission order.
+         *
+         *     ``edge_count`` is the one number here that is not the length of a list beside it: it is
+         *     how many power EDGES the projection holds, and ``wire_count`` how many of those published
+         *     a span. They are equal on every save cut by a sidecar new enough to read the geometry, so
+         *     the pair is what tells "there is nothing to draw" from "there is nothing here".
+         */
+        PowerResponse: {
+            /** Poles */
+            poles: components["schemas"]["PoleRow"][];
+            /** Pole Count */
+            pole_count: number;
+            /** Wires */
+            wires: components["schemas"]["WireRow"][];
+            /** Wire Count */
+            wire_count: number;
+            /** Edge Count */
+            edge_count: number;
+        };
+        /**
          * PowerSummary
          * @description ``WorldState.power_report()`` verbatim, because a response_model FILTERS.
          *
@@ -1659,6 +1927,43 @@ export interface components {
             purchased_schematics: number;
             /** Available Recipes */
             available_recipes: number;
+        };
+        /**
+         * ProposalRow
+         * @description A cluster the coherence pass found that no label speaks for.
+         *
+         *     ``index`` is the position in the FULL proposal list rather than in this filtered one, so
+         *     a ``proposal:N`` selector resolves to the same cluster here and in the MCP tools; it is
+         *     an ``int`` because it is a list position.
+         *
+         *     ``score`` and ``spread_m`` are floats and had to be checked rather than assumed: they are
+         *     ``round(Proposal.cohesion, 3)`` and ``round(Candidate.spread_m, 1)``, both declared
+         *     ``float = 0.0`` in domain/factories -- and a proposal whose weakest internal link is
+         *     exactly 0.0 sends ``0.0``, which is what declaring them ``int`` would have truncated.
+         */
+        ProposalRow: {
+            /** Index */
+            index: number;
+            /** Label */
+            label: string;
+            /** Centroid M */
+            centroid_m: [
+                number,
+                number
+            ];
+            /** Bbox M */
+            bbox_m: [
+                number,
+                number,
+                number,
+                number
+            ] | null;
+            /** Machines */
+            machines: number;
+            /** Score */
+            score: number;
+            /** Spread M */
+            spread_m: number;
         };
         /**
          * Region
@@ -1990,6 +2295,27 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WireRow */
+        WireRow: {
+            /** A M */
+            a_m: [
+                number,
+                number,
+                number
+            ];
+            /** B M */
+            b_m: [
+                number,
+                number,
+                number
+            ];
+            /** From */
+            from: string | null;
+            /** To */
+            to: string | null;
+            /** Span M */
+            span_m: number;
         };
     };
     responses: never;
@@ -2491,7 +2817,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PowerResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2523,7 +2849,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FactoriesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2592,7 +2918,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CollectiblesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2644,7 +2970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CratesResponse"];
                 };
             };
             /** @description Validation Error */

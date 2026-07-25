@@ -23,17 +23,21 @@ const HEADER = `/**
  * against, so a diff here is the server's surface changing and is worth reading. It is
  * also why \`npm run check\` needs no running server.
  *
- * READ WHAT THIS DOES AND DOES NOT SAY, because the answer is changing endpoint by
- * endpoint. Everything under \`interfaces/web/routers/\` that declares a \`response_model\`
- * has its whole body described below and is authoritative for it. Everything still
- * annotated \`-> Any\` publishes no response schema at all, so its \`200\` is \`unknown\` here
- * and its shape is declared by hand in \`api-types.ts\`, from observed payloads -- which
- * that file says at the top, along with what such an observation is worth.
+ * READ WHAT THIS DOES AND DOES NOT SAY. Every JSON endpoint under
+ * \`interfaces/web/routers/\` is self-typed -- it declares a \`response_model\`, so its whole
+ * body is described below and this file is authoritative for it -- EXCEPT \`/api/worlds\`,
+ * whose \`200\` is \`unknown\` because it is deferred rather than missed. It forwards the
+ * loader's own save headers, so a faithful model is \`dict[str, Any]\` and a useful one
+ * deletes eight keys from every row: converting it means changing what it SENDS, which is
+ * a commit about the body and not a typing item. The comment above \`worlds()\` in
+ * routers/world.py is the long version. \`/api/mapimage\`, \`/api/maptiles/…\`,
+ * \`/api/icons/…\` and \`/api/events\` send pictures and a stream and have no JSON body to
+ * describe at all.
  *
- * Converted so far: \`/api/floors\` (\`FloorsResponse\` and the six schemas under it),
- * \`/api/nodes\`, \`/api/inspect\`, \`/api/regions\`, \`/api/summary\`, \`/api/machines\`,
- * \`/api/structures\`, \`/api/belts\`, \`/api/pipes\` and \`/api/storage\`. Still \`unknown\`:
- * \`/api/worlds\`, \`/api/power\`, \`/api/factories\`, \`/api/collectibles\`, \`/api/crates\`.
+ * That one endpoint's rows are therefore still the FRONTEND's claim, read off real payloads
+ * rather than off the server, and are declared by hand on the page -- with what such an
+ * observation is worth stated where they are declared.
+ *
  * What this file has always been authoritative for is the other half and still is: which
  * paths exist, which query parameters each takes, and what a validation error looks like.
  *

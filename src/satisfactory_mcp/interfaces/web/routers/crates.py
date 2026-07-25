@@ -10,11 +10,14 @@ moment they are emptied. Two rows that are events do not belong among 151 that a
 WARNING: the function name is the operation_id -- rename it and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
 is generated off it.
+
+**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
+FILTERS -- routers/floors.py writes both rules out at length.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 
@@ -54,7 +57,79 @@ CRATE_KIND_TEXT = {
 }
 
 
-def _crate_row(st: WorldState, row: dict) -> dict:
+class CrateItem(TypedDict):
+    """One kind of thing in a crate, resolved to a display name by the server.
+
+    The same three fields as ``StoredItem`` in routers/storage.py, and deliberately NOT the
+    same type. Sharing it would mean moving it to ``serial.py`` -- a router may not import
+    another router, and rightly -- which would put a row shape into the module that holds
+    the unit conversions, on the strength of a coincidence: these two are alike because both
+    are a stack, and they are filled by two expressions with two different truncation limits.
+    ``Region`` is in ``serial.py`` because ONE function builds it for two routers, which is
+    the case this is not.
+
+    ``count`` is an ``int``: a stack amount is a number of items, and declaring it ``float``
+    would validate 15 into 15.0 and rewrite every row.
+    """
+
+    cls: str
+    name: str
+    count: int
+
+
+class CrateRow(TypedDict):
+    """One crate: what kind it is, where it is, and what is inside it.
+
+    ``cls`` is not nullable and the coordinates are, which is the actor-record line
+    routers/placements.py draws: a crate is an ordinary actor written out with its class, so
+    the class is there; its TRANSFORM is what can fail to decode, and ``_xyz`` answers three
+    nulls when it did. A container next door is declared on exactly these terms.
+
+    ``kind`` is a plain ``str`` and NOT a ``Literal``, which is the opposite call from
+    ``mode`` on ``/api/collectibles`` and for a stated reason: this value arrives from the
+    PROJECTION, which is versioned and read off disk, and ``_crate_row`` uses ``.get`` on
+    ``CRATE_KIND_TEXT`` precisely so that a projection cut by a later extractor that learned
+    a fourth ``EFGCrateType`` is still served -- with the word it used and no gloss. A closed
+    union here would turn that into a 500 on a key this build has not heard of.
+    ``kind_text`` is the null that says so.
+
+    ``slots`` is ``int | None`` on ``StorageSolid``'s terms: it is the inventory component's
+    own slot count forwarded whole, and a projection that wrote none sends null rather than
+    0. ``more``, ``item_kinds`` and ``total`` are counts and are ints -- ``more`` is 0 rather
+    than null when the truncation left nothing off.
+    """
+
+    instance_leaf: str
+    cls: str
+    kind: str
+    kind_text: str | None
+    x_m: float | None
+    y_m: float | None
+    z_m: float | None
+    yaw: float | None
+    items: list[CrateItem]
+    more: int
+    item_kinds: int
+    total: int
+    slots: int | None
+
+
+class CratesResponse(TypedDict):
+    """The list and the three numbers a header wants, in emission order.
+
+    ``deaths`` is the one a player cares about and is not a length of anything: it is how
+    many of these rows are somebody's death, which on a world of crates that all predate
+    ``mCrateType`` is 0 against a non-zero ``count`` -- the same "there is nothing to say"
+    against "there is nothing here" pair ``/api/power``'s ``edge_count`` makes.
+    """
+
+    crates: list[CrateRow]
+    count: int
+    deaths: int
+    items_total: int
+
+
+def _crate_row(st: WorldState, row: dict) -> CrateRow:
     """One crate: what kind it is, where it is, and what is inside it.
 
     One record shape, unlike ``/api/storage``'s two: there is no fluid crate. What replaces
@@ -98,7 +173,7 @@ def _crate_row(st: WorldState, row: dict) -> dict:
     }
 
 
-@router.get("/crates")
+@router.get("/crates", response_model=CratesResponse)
 def crates(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every crate lying on the ground, what kind it is, and what is inside it.
 
