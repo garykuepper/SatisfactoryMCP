@@ -78,6 +78,18 @@ module that imports it. The narrow rule is about the bundle; this one is about r
 would be evaluated before all of them, and ``regions.ts`` (which draws and fetches nothing)
 is exactly the import the narrow rule would wave through.
 
+The ninth is the API's own description of itself, and it is the last one the web refactor
+installs. Every GET handler under ``routers/`` must pass a ``response_model``, or return a
+``Response`` subclass and say so in its annotation, or be named in ``RESPONSE_MODEL_EXEMPT``
+with the reason. Without it, ``/openapi.json`` types an endpoint's ``200`` as ``unknown``,
+the generated ``api-schema.d.ts`` does too, and the page has no choice but to declare the
+payload itself -- from observed bytes, which is a claim about one save rather than about the
+API. That file existed; it reached 438 lines and got three nullability notes wrong before it
+was deleted. The failure this catches is silent in the usual way: the new endpoint compiles,
+serves and is correct, and nothing says anything until somebody needs its type. The
+exemptions are held to ``WHITELIST``'s discipline, so one that stops being needed fails
+rather than lingering.
+
 The third ratchet is the parser. ``src/pioneersav`` is a standalone library that
 happens to live in this repository, and the subprocess boundary in front of it is
 load-bearing for reasons that have nothing to do with layering -- crash isolation,
@@ -393,6 +405,61 @@ ROUTER_EXTRA_EDGES: frozenset[tuple[str, str]] = frozenset(
 #:     factories.py 95   nodes.py 94   events.py 75   collectibles.py 74
 #:     __init__.py 72   world.py 68
 ROUTER_MAX_LINES = 700
+
+#: The classes FastAPI treats as "this handler answers for itself".
+#:
+#: A handler annotated with one of these is returning a ``Response`` rather than a body to be
+#: serialised, so there is nothing for a ``response_model`` to describe and FastAPI skips
+#: inference for it. Matched on the terminal NAME of the annotation, because these are spelled
+#: both ways in this package -- ``StreamingResponse`` imported, and ``fastapi.responses.X``
+#: reached through the module -- and the AST sees an ``ast.Name`` in one case and an
+#: ``ast.Attribute`` in the other.
+RESPONSE_CLASSES = frozenset(
+    {
+        "Response",
+        "JSONResponse",
+        "StreamingResponse",
+        "FileResponse",
+        "HTMLResponse",
+        "PlainTextResponse",
+        "RedirectResponse",
+        "ORJSONResponse",
+        "UJSONResponse",
+    }
+)
+
+#: The GET handlers allowed to publish no response schema, by function name, each with the
+#: reason. Held to the same discipline as ``WHITELIST``: an entry that stops being needed
+#: fails ``test_no_stale_response_model_exemption``, so this list can only shrink by accident.
+#:
+#: Four of the five send BYTES. ``mapimage``, ``maptiles``, ``maptiles_layer`` and ``icon``
+#: answer with a picture, a 204 or a 404 that names the generator, and they are ``-> Any``
+#: rather than ``-> FileResponse`` because each one really can return either -- annotating
+#: them into the clause above would be narrowing a signature to satisfy a test.
+#:
+#: The fifth is the whole reason this rule is stated with exemptions instead of as "every
+#: handler". ``/api/worlds`` is DEFERRED and not missed: it forwards the loader's own
+#: ``World`` dataclasses, whose ``saves`` are the sidecar's thirteen-key save headers, so a
+#: faithful model is ``dict[str, Any]`` -- which says nothing -- and a useful one DELETES
+#: eight keys from every row, because a response_model filters. Either way the endpoint stops
+#: sending what it sends today, which is a commit about the body and not a typing one. The
+#: comment above ``worlds()`` in ``routers/world.py`` is the long version and is where this
+#: entry points a reader who wants to remove it.
+#:
+#: ``events`` is deliberately NOT here: it is annotated ``-> StreamingResponse`` and the
+#: clause above carries it, which is the arrangement worth having -- an exemption should be
+#: needed only where the signature cannot say so itself.
+RESPONSE_MODEL_EXEMPT: dict[str, str] = {
+    "mapimage": "serves a PNG, a 204 or a 404 -- there is no JSON body to describe",
+    "maptiles": "serves a tile, a 204 or a 404 -- there is no JSON body to describe",
+    "maptiles_layer": "serves a tile, a 204 or a 404 -- there is no JSON body to describe",
+    "icon": "serves a PNG, a 204 or a 404 -- there is no JSON body to describe",
+    "worlds": (
+        "deferred, not missed: it forwards the loader's opaque save headers, so a faithful "
+        "model says nothing and a useful one deletes eight keys from every row -- see the "
+        "comment above worlds() in routers/world.py"
+    ),
+}
 
 # --------------------------------------------------------------------- the generators
 
@@ -1369,6 +1436,125 @@ def test_no_router_grows_back_into_a_one_file_api():
         f"a router module is over {ROUTER_MAX_LINES} lines -- that is a second concern, and "
         "it wants its own file and its own entry at the END of ALL_ROUTERS (never in the "
         "middle: the tuple's order is the committed schema's path order):\n" + "\n".join(over)
+    )
+
+
+def _annotation_name(node: ast.expr | None) -> str | None:
+    """The terminal name of a return annotation, however it is spelled.
+
+    ``StreamingResponse`` is an ``ast.Name``; ``fastapi.responses.FileResponse`` is an
+    ``ast.Attribute`` whose ``attr`` is the name. Both appear in this package, and a rule
+    that read only one of them would wave the other through.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.rsplit(".", 1)[-1]
+    return None
+
+
+def _get_routes() -> list[tuple[str, str, int, ast.Call, ast.expr | None]]:
+    """Every handler in ``routers/`` that answers a GET, read off the AST.
+
+    ``(module, function, lineno, decorator call, return annotation)``. Both registration
+    forms are walked: ``@router.get(...)``, and ``@router.api_route(..., methods=[...])``
+    where the list contains GET -- the form the four byte-serving endpoints use because they
+    answer HEAD from the same handler. A rule that matched only ``.get`` would have found no
+    violation among them no matter what they did, which is the wrong kind of passing.
+
+    By AST rather than by importing the app, for the reason every other rule here gives: this
+    module's first promise is that it runs on the standard library alone.
+    """
+    found: list[tuple[str, str, int, ast.Call, ast.expr | None]] = []
+    for path in _router_sources():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for deco in node.decorator_list:
+                if not isinstance(deco, ast.Call) or not isinstance(deco.func, ast.Attribute):
+                    continue
+                if not (isinstance(deco.func.value, ast.Name) and deco.func.value.id == "router"):
+                    continue
+                verb = deco.func.attr
+                if verb == "api_route":
+                    methods = next((k.value for k in deco.keywords if k.arg == "methods"), None)
+                    names = (
+                        {e.value for e in methods.elts if isinstance(e, ast.Constant)}
+                        if isinstance(methods, (ast.List, ast.Tuple))
+                        else set()
+                    )
+                    if "GET" not in names:
+                        continue
+                elif verb != "get":
+                    continue
+                found.append((path.stem, node.name, node.lineno, deco, node.returns))
+    return found
+
+
+def test_every_get_says_what_it_sends():
+    """The last ratchet of the refactor, and the one the whole T series exists to install.
+
+    A handler with no ``response_model`` publishes no response schema, so ``/openapi.json``
+    types its ``200`` as ``unknown``, so ``api-schema.d.ts`` does, so the page has to declare
+    the payload itself -- from OBSERVED bytes, which is a claim about the save it was read
+    from rather than about the API. That file existed, it was called ``api-types.ts``, it
+    reached 438 lines, and three of its nullability notes were wrong in the two directions a
+    guess can be wrong: a ``| null`` nobody could produce, and a null the page did not guard.
+    It is gone. This is what stops the next one.
+
+    The failure is silent in the ordinary way: adding an endpoint without a response model
+    compiles, serves, and is correct. Nothing says anything until somebody needs its type on
+    the page and writes one down.
+
+    GET only, because GET is all this surface has. Stated as the decorators it walks rather
+    than as "every handler", so that adding the first POST is a decision somebody makes here
+    rather than a hole that opens quietly.
+    """
+    missing = []
+    for module, name, lineno, deco, returns in _get_routes():
+        if any(k.arg == "response_model" for k in deco.keywords):
+            continue
+        if _annotation_name(returns) in RESPONSE_CLASSES:
+            continue
+        if name in RESPONSE_MODEL_EXEMPT:
+            continue
+        missing.append(f"  routers/{module}.py:{lineno}  {name}()")
+    assert not missing, (
+        "these GET handlers publish no response schema, so the page cannot be typed from the "
+        "server and will type itself from observed payloads instead -- which is the file this "
+        "ratchet exists to keep deleted. Declare a TypedDict in EMISSION order and pass it as "
+        "response_model (routers/floors.py writes the two rules out), or, if the handler "
+        "returns a Response subclass, say so in its return annotation:\n" + "\n".join(missing)
+    )
+
+
+def test_no_stale_response_model_exemption():
+    """An exemption that stops being needed must lose its entry, or the ratchet slips.
+
+    ``WHITELIST``'s discipline one layer down: a list of allowed violations is only a ratchet
+    while every line on it is still load-bearing. A name left here after its handler grew a
+    ``response_model`` is a hole nobody can see, and it is exactly the hole the next handler
+    of the same name would fall through.
+    """
+    routes = _get_routes()
+    named = {name for _module, name, _line, _deco, _returns in routes}
+    unknown = sorted(set(RESPONSE_MODEL_EXEMPT) - named)
+    assert not unknown, (
+        "RESPONSE_MODEL_EXEMPT names GET handlers that no longer exist in routers/ -- a "
+        f"renamed or deleted endpoint leaves its exemption behind: {unknown}"
+    )
+    declared = {
+        name
+        for _module, name, _line, deco, _returns in routes
+        if any(k.arg == "response_model" for k in deco.keywords)
+    }
+    fixed = sorted(declared & set(RESPONSE_MODEL_EXEMPT))
+    assert not fixed, (
+        "these handlers now declare a response_model and no longer need their exemption; "
+        f"delete the entry from RESPONSE_MODEL_EXEMPT: {fixed}"
     )
 
 
