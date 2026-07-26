@@ -57,6 +57,7 @@ import { loadWorlds } from "./worlds";
  * layers and the declutter pass. They are repeated here anyway: the set of modules that
  * fetch is a fact worth reading in one place, and a rule with two exceptions in it is a rule
  * nobody can check at a glance. */
+import "./crates";
 import "./header";
 import "./labels";
 import "./markers";

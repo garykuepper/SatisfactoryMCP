@@ -457,6 +457,21 @@ select {
   color: #93a5b4;
 }
 
+/* The crate glyph's body: an SVG box at a fixed pixel size, drawn by crateGlyph() in
+   crates.ts, which owns the colour and the shape. Everything left for CSS is the two things a
+   divIcon does not get for free -- `line-height: 0` so the inline SVG sits on the icon's own
+   box instead of on a text baseline three pixels below it, and a pointer, because the popup
+   IS this layer and a mark that does not look clickable will not be clicked.
+
+   A drop shadow rather than a second stroke: a 13 px box has to be findable against bright
+   terrain and against the concrete alike, and a dark halo does that without spending another
+   colour or thickening the outline the dashed kind depends on being able to show. */
+.crate-mark {
+  line-height: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 0 2px rgba(6, 8, 10, 0.9));
+}
+
 /* The one ACTION on a popup card, and the only button inside one. Full width and under the
    rows, so it reads as what the card offers rather than as one more row of what it says. */
 .card-action {
@@ -598,7 +613,134 @@ select {
   display: none;
 }
 
+/* The label column of every popup card. `nowrap` because these are LABELS and not sentences:
+   the longest one on the page is "through this floor" at about 110 px, and the widest card is
+   380, so nothing here can push a popup out of shape. What it prevents is the opposite --
+   "dismantle crate" folding into two lines because the value beside it happened to be a long
+   sentence, which is auto table layout deciding which column loses and picking the wrong one. */
 .popup-key {
   color: #9aa0a8;
   padding-right: 0.5rem;
+  white-space: nowrap;
+}
+
+/* THE INVENTORY GRID: what is in a crate or a container, drawn the way the game draws a
+   container. See contentsRows() in dom.ts, and routers/icons.py for where the pictures
+   come from.
+
+   A wrapping flex row rather than `display: grid`, and the difference is what happens to the
+   last row: a grid with a fixed column count reserves the empty cells, so a container holding
+   nine kinds draws five tiles and five holes. These are stacks, not slots -- the save gives no
+   slot ORDER, only what is in the box -- so the picture must not imply a layout the data does
+   not have. The tiles are one size, they wrap, and the last row is as long as it is.
+
+   The width is the cap the popup was widened for: 7 x 38 + 6 x 4 = 290, inside the value cell
+   of a 380 px card. See CONTENTS_POPUP_PX in dom.ts, which holds the arithmetic.
+
+   `width` and not `max-width`, which is the difference between a grid that is seven wide and
+   one that is seven wide when nothing else on the card wanted the room. A wrapping flex box
+   has a min-content width of ONE tile, so under `max-width` the table hands this column
+   whatever is left after every other row has had its say -- and the same twelve stacks then
+   wrap 7+5 on one card and 6+6 on another, which makes the grid look like it is measuring
+   something. Asking for the width outright makes the shape a property of the grid. */
+.item-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 290px;
+  padding: 2px 0;
+}
+
+/* One tile. `position: relative` is the whole trick of the thing: it is what lets the count
+   sit ON the picture the way it does in the game, rather than beside it in a column that
+   would make this a table again.
+
+   The frame and the wash under it are doing a real job and not a decorative one -- an item
+   icon is a transparent PNG of a mostly-dark object, and a row of them on the popup's own
+   panel colour reads as a scatter of shapes rather than as a set of things in a box. */
+.item-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+/* 34 px inside a 38 px tile, so the artwork has a hairline of frame around it and the count
+   in the corner has something other than the picture to sit against. Never shrunk and never
+   stretched: the generator writes square PNGs at one size, and `contain` makes a stray
+   non-square file a letterbox rather than a distortion. */
+.item-icon {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+/* The quantity, over the bottom-right corner, which is where the game puts it and therefore
+   where a reader's eye already goes. Not a box: a badge with a background would cover a
+   quarter of the artwork on every tile, and the artwork is the thing being identified. What
+   makes it legible over a picture of any brightness is the ring of shadow, which is the same
+   device the region labels use over terrain. */
+.item-count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #f2f4f6;
+  text-shadow:
+    1px 0 1px rgba(6, 8, 10, 0.95),
+    -1px 0 1px rgba(6, 8, 10, 0.95),
+    0 1px 1px rgba(6, 8, 10, 0.95),
+    0 -1px 1px rgba(6, 8, 10, 0.95),
+    0 0 3px rgba(6, 8, 10, 0.9);
+}
+
+/* The tile for a class with no picture, and it is a TILE and not a hole. Six of the game's
+   750 item classes ship no icon, and a reader who never ran the generator has none at all --
+   so this is the ordinary state rather than the edge case, and a grid with gaps in it would
+   be a grid lying about how many kinds are in the box. Hidden until the <img> above it fails
+   and removes itself; see tile() in dom.ts. */
+.item-abbr {
+  display: none;
+}
+
+.item-tile-bare .item-abbr {
+  display: block;
+  /* The bottom 11 px are the count's, so a name that needs three lines is clipped rather
+     than printed under the number. The count is the one thing on a tile that is never
+     ambiguous, and a text tile is already the degraded case -- the full name is on the tile's
+     `title` and in the caption line either way. */
+  padding: 2px 2px 11px;
+  font-size: 9px;
+  line-height: 1.1;
+  text-align: center;
+  color: #b8bec6;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* ...and the tile that stands for the kinds the server did not send. Muted, because it is a
+   statement about the list rather than a thing in the box. */
+.item-tile-more {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9aa0a8;
+}
+
+/* The names under the grid, and the half that keeps a grid honest: a picture identifies a
+   thing to whoever recognises it, and this identifies it to everyone else -- with no pointer
+   to hover, no screen reader, and no icon directory. Small and muted so that it reads as the
+   caption it is, and never nowrap: it is a sentence, and it is meant to wrap. */
+.item-names {
+  display: inline-block;
+  color: #9aa0a8;
+  font-size: 11px;
+  line-height: 1.35;
 }

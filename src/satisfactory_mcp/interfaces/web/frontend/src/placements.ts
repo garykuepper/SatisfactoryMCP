@@ -11,7 +11,7 @@
  * data rather than from a fixed set of rows.
  */
 
-import { code, popup } from "./dom";
+import { CONTENTS_POPUP_PX, code, contentsRows, count, popup } from "./dom";
 import type { Row } from "./dom";
 import { refreshFloors } from "./floors";
 import { L } from "./leaflet";
@@ -273,19 +273,15 @@ var STORAGE_FLUID_COLOUR = STORAGE["storage fluid"];
  * clickable at the zoom the layer is meant to be read at. */
 var STORAGE_FALLBACK_M = 4;
 
-/* Thousands separators, because these are counts of things and they get large: a full
- * Industrial Storage Container holds 24,000 Wire, and "24000" in a table cell is a number a
- * reader has to count the digits of. */
-function count(n: number): string {
-  return n.toLocaleString("en-GB");
-}
-
 /* What is in one container, as popup rows.
  *
- * The server has already picked the biggest few and counted what it left off, so this only has
- * to render them -- and to say so. "and 6 more" is a row rather than an ellipsis because a list
- * that simply stops reads as a container holding six things, which is a different claim from
- * the truth and one the reader has no way to notice.
+ * TWO KINDS, AND ONLY ONE OF THEM GETS A GRID. A solid container holds stacks of things you
+ * would recognise by their pictures, which is exactly what `contentsRows` draws; a fluid
+ * buffer holds ONE fluid and a level, and a grid of a single tile would be a picture claiming
+ * to be a set. Worse, the tile has nowhere to put the reading: what a reader wants off a tank
+ * is "1,441 m³ of 2,400 — 60% full", and a corner badge cannot say a denominator. So the
+ * fluid branch stays the sentence it always was, and the split is on `kind`, which is what
+ * the server says to branch on.
  */
 function storageContents(s: StorageRow): Row[] {
   if (s.kind === "fluid") {
@@ -303,13 +299,11 @@ function storageContents(s: StorageRow): Row[] {
       ["level", level],
     ];
   }
-  var items = s.items || [];
-  if (!items.length) return [["contents", "empty"]];
-  var rows: Row[] = items.map(function (item): Row {
-    return [item.name, count(item.count)];
-  });
-  if (s.more) rows.push(["", "and " + s.more + " more"]);
-  return rows;
+  // ...and a solid container is an inventory, so it is drawn as one -- the same grid a crate
+  // gets, out of the same helper, because "what is in it" is one question wherever it is
+  // asked. The truncation is the server's: `/api/storage` sends the biggest six kinds and
+  // counts the rest, and `more` is what the grid's last tile stands for.
+  return contentsRows(s.items || [], s.more || 0);
 }
 
 /* One container's whole card: what it is, what is in it, and where it stands.
@@ -354,7 +348,10 @@ export function drawStorage(data: StorageResponse): void {
       // warehouse a reader wants at a glance and the map can say without being asked: an empty
       // box is a place with room in it. Same device the machines use for `paused`.
       fillOpacity: s.kind === "fluid" ? (s.fill ? 0.7 : 0.15) : s.total ? 0.7 : 0.15,
-    }).bindPopup(popup(storagePopup(s)));
+    })
+      // Wider than the page's other cards, because this one lists item names against counts
+      // and a name is not broken across lines. See CONTENTS_POPUP_PX in dom.ts.
+      .bindPopup(popup(storagePopup(s)), { maxWidth: CONTENTS_POPUP_PX });
     // WHERE it stands, and deliberately no instance id: `/api/floors` does not decompose
     // storage, so there is no band listing this box and a mark carrying an id would be a
     // join that always misses. Position is the honest one, and floors.ts says so.
