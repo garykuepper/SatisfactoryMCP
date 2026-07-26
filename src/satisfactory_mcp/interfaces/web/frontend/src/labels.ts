@@ -17,7 +17,8 @@ import { registerFetch } from "./registry";
 import { state } from "./state";
 import { note } from "./toast";
 
-import type { BboxM, FactoriesResponse, FactoryRow, PointM, ProposalRow } from "./api-types";
+import type { FactoriesResponse, FactoryRow, ProposalRow } from "./api-shapes";
+import type { BboxM, PointM } from "./geometry";
 import type { Row } from "./dom";
 
 /* `machines`, `belts` and `pipes` are all off at the whole-world zoom on purpose: 438

@@ -17,8 +17,7 @@
  * the build succeeds, the page loads, and the layer is simply never fetched.
  */
 
-import type { ApiUrl } from "./api";
-import type { ApiError } from "./api-types";
+import type { ApiError, ApiUrl } from "./api";
 
 /* The two waves, which are a claim about the DATA rather than about the code: nodes,
  * concrete and routes change when the player builds; machines, pickups and the header change

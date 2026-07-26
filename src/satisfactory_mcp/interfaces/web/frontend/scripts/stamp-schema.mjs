@@ -34,9 +34,12 @@ const HEADER = `/**
  * \`/api/icons/…\` and \`/api/events\` send pictures and a stream and have no JSON body to
  * describe at all.
  *
- * That one endpoint's rows are therefore still the FRONTEND's claim, read off real payloads
- * rather than off the server, and are declared by hand on the page -- with what such an
- * observation is worth stated where they are declared.
+ * \`api-types.ts\` IS GONE, and that is what the paragraph above is worth saying. It held the
+ * frontend's own observations of the endpoints that published no schema, read off real
+ * payloads from a real save; those endpoints publish one now, and \`api-shapes.ts\` re-exports
+ * the components below under the names the page uses. What was in that file and was never a
+ * payload lives with the code that uses it instead: the drawing tuples in \`geometry.ts\`,
+ * \`ApiError\` in \`api.ts\`, and \`/api/worlds\`' deferred rows in \`state.ts\` and \`worlds.ts\`.
  *
  * What this file has always been authoritative for is the other half and still is: which
  * paths exist, which query parameters each takes, and what a validation error looks like.

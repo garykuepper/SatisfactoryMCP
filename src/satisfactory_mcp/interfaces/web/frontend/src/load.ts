@@ -27,8 +27,7 @@ import { drawRegions } from "./regions";
 import { state } from "./state";
 import { fail, friendly } from "./toast";
 
-import type { ApiUrl } from "./api";
-import type { ApiError } from "./api-types";
+import type { ApiError, ApiUrl } from "./api";
 import type { Registered } from "./registry";
 
 export function loadRegions() {

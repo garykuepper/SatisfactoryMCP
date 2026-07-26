@@ -41,7 +41,7 @@ export interface FloorMark {
   run?: { kind: "belt" | "pipe"; key: number };
   /** The two ends of this piece in game metres, so a connector's glyph can be put on the
    *  end that is actually on this floor. `[x, y, z]`, the payload's own order. */
-  ends?: [import("./api-types").Point3M, import("./api-types").Point3M];
+  ends?: [import("./geometry").Point3M, import("./geometry").Point3M];
   /** A piece's position in `/api/structures`, which is what `deck_rows` indexes. */
   row?: number;
   /** Where it stands, in game metres. For storage, which no band lists, and for the
@@ -102,7 +102,7 @@ declare module "leaflet" {
      * A curved route is drawn at whatever subdivision the current scale earns, so the piece
      * has to remember the curve it came from -- the drawn latlngs are an output and cannot be
      * re-subdivided from themselves. See routeShape and styleRoutes in routes.ts. */
-    _route?: import("./api-types").RouteShape;
+    _route?: import("./geometry").RouteShape;
   }
 
   interface Marker {

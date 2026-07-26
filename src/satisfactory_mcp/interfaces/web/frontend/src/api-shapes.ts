@@ -14,29 +14,31 @@
  * one line in one file. floors.ts predates this and reaches into the schema itself; it is
  * the older arrangement rather than the intended one.
  *
- * `ApiError` is the one thing here the server does not describe. FastAPI publishes no schema
- * for the `{"error": "..."}` a 4xx carries -- an endpoint that fails returns a JSONResponse
- * and skips its own response model -- so the error branch is the frontend's claim, declared
- * in `api-types.ts` beside the other claims, and joined on here. `get()` in api.ts is
- * generic over `T extends ApiError`, and `ApiError` has only optional members, so a body
- * type with no `error` field at all is not assignable to it: the intersection is what makes
- * these usable as response types rather than decoration.
+ * `ApiError` is the one thing joined on here that the server does not describe, and it lives
+ * in api.ts -- the module that turns it into a throw -- with the reason it can never come
+ * from the schema. `get()` there is generic over `T extends ApiError`, and `ApiError` has
+ * only optional members, so a body type with no `error` field at all is not assignable to
+ * it: the intersection below is what makes these usable as response types rather than
+ * decoration.
  *
- * NOT EVERYTHING IS HERE YET. `api-types.ts` still declares the payloads of the endpoints
- * that have no response model -- `/api/worlds`, `/api/power`, `/api/factories`,
- * `/api/collectibles` -- and the page still imports those from there. This file grows by one
- * line per endpoint converted; that file shrinks by one block.
+ * EVERYTHING IS HERE NOW, which is a change of tense and the end of the conversion.
+ * `api-types.ts` is gone: every endpoint that had a hand-written payload in it declares a
+ * `response_model` and appears below instead. The one exception is `/api/worlds`, which is
+ * DEFERRED rather than converted -- it forwards opaque save headers, so a response model is
+ * either useless or lossy -- and its rows are the page's own claim, declared in state.ts
+ * where they are stored and wrapped in worlds.ts where they are fetched.
  *
- * TWO THINGS IN THAT FILE ARE NOT PENDING and will not arrive here. `ApiError`, above. And
- * the route SHAPES -- `Point3M`, `PointM`, `BboxM`, `SpanCurveM`, `RouteCurveM`, `RouteShape`
- * -- which are the page's own words for the tuples it draws with. The server describes the
- * same structures inside the payloads below (a `points_m` is a `[number, number, number][]`
- * either way), but hermite() takes a point rather than a payload, and `RouteShape` is a thing
- * the page BUILDS and hangs on a polyline, which no endpoint sends at all.
+ * WHAT IS NOT HERE, and is not missing. The route SHAPES -- `PointM`, `Point3M`, `BboxM`,
+ * `SpanCurveM`, `RouteCurveM`, `RouteShape` -- are in geometry.ts, which imports nothing:
+ * the server describes the same structures inside the payloads below, but hermite() takes a
+ * point rather than a payload and `RouteShape` is a thing the page builds. And `/api/crates`,
+ * which the server describes in full, has no line here because no module draws it yet -- a
+ * re-export nobody imports is a name to keep in step for no reader, and the first crate popup
+ * adds it as one line.
  */
 
 import type { components } from "./api-schema";
-import type { ApiError } from "./api-types";
+import type { ApiError } from "./api";
 
 type Schema = components["schemas"];
 
@@ -100,6 +102,38 @@ export type StoredItem = Schema["StoredItem"];
  *  docstring in routers/storage.py for why that is not one model with optional halves. */
 export type StorageRow = Schema["StorageSolid"] | Schema["StorageFluid"];
 export type StorageResponse = Body<"StorageResponse">;
+
+/* ----------------------------------------------------------------- /api/power */
+
+/** `cls` and `name` are nullable and the three coordinates are not, which is the server's
+ *  own reading of the two halves: a pole is decoded out of an INTERNED table, so its class is
+ *  an index into a legend that can point past the end, while `iter_power_poles` DROPS a row
+ *  whose position will not read. popup() drops a null title row -- see `titleRow` in
+ *  routes.ts for what is printed instead. */
+export type PoleRow = Schema["PoleRow"];
+
+/** Its ends are `[number, number, number]` rather than `number[]`, because the router spells
+ *  them as tuples and typegen carries `prefixItems` through -- so `w.a_m[2]` needs no length
+ *  guard. `from`/`to` are null for the 40 endpoints of 2,594 that land on an actor no record
+ *  list names. */
+export type WireRow = Schema["WireRow"];
+
+export type PowerResponse = Body<"PowerResponse">;
+
+/* ------------------------------------------------------------- /api/factories */
+
+export type FactoryRow = Schema["FactoryRow"];
+export type ProposalRow = Schema["ProposalRow"];
+export type FactoriesResponse = Body<"FactoriesResponse">;
+
+/* ---------------------------------------------------------- /api/collectibles */
+
+export type CollectibleRow = Schema["CollectibleRow"];
+
+/** Seven keys, where the hand-written twin declared one. `rows` is still all markers.ts
+ *  reads, but a response model FILTERS, so the server had to declare the whole payload --
+ *  and `mode` arrived a closed union of the four `collect_view` accepts. */
+export type CollectiblesResponse = Body<"CollectiblesResponse">;
 
 /* ------------------------------------------------------------------ both, and shared */
 

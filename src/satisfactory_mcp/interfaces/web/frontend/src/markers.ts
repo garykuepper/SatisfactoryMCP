@@ -20,8 +20,13 @@ import { fail } from "./toast";
 
 import type { OnMap } from "./leaflet-private";
 
-import type { NodeRow, NodesResponse, SummaryResponse } from "./api-shapes";
-import type { CollectibleRow, CollectiblesResponse } from "./api-types";
+import type {
+  CollectibleRow,
+  CollectiblesResponse,
+  NodeRow,
+  NodesResponse,
+  SummaryResponse,
+} from "./api-shapes";
 
 /* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
  * An extractor is drawn exactly on the node it drains, and whichever of /api/nodes and

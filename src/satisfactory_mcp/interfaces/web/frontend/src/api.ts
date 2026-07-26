@@ -27,25 +27,42 @@
  * keeps the probe and the pyramid asking about the same layer.
  *
  * `get` is generic over the response, and the caller supplies the type because only the
- * caller knows which endpoint it asked. Where that type comes FROM is now two places and
- * moving: api-shapes.ts for the endpoints that declare a `response_model` (the server's own
- * schema, generated), api-types.ts for the ones still annotated `-> Any` (the frontend's
- * claim, observed). What has always been taken from the generated schema is the path --
- * `ApiPath` below is the union of the paths the server actually serves, so a typo in a URL
- * is a compile error rather than a toast at runtime.
+ * caller knows which endpoint it asked. That type now comes from ONE place -- api-shapes.ts,
+ * which re-exports the server's own generated schema under the names the page uses -- for
+ * every endpoint but `/api/worlds`, which is deferred and whose rows worlds.ts still claims
+ * by hand. What has always been taken from the generated schema is the path: `ApiPath` below
+ * is the union of the paths the server actually serves, so a typo in a URL is a compile error
+ * rather than a toast at runtime.
  */
 
 import type { paths } from "./api-schema";
-import type { ApiError } from "./api-types";
 import { state } from "./state";
 
 /** Every path the server serves, straight out of its own OpenAPI document. */
 export type ApiPath = keyof paths;
 
+/* The error branch any reply may carry instead of its payload, and the one shape on this
+ * page the server does not describe.
+ *
+ * FastAPI publishes no schema for the `{"error": "..."}` a 4xx carries, and the reason is
+ * structural rather than an omission: a handler that fails returns a JSONResponse, which
+ * SKIPS its own response model, so the document has no way to know the branch exists. It is
+ * therefore the frontend's claim about the whole surface and stays one -- which is why it
+ * lives here, in the module that turns it into a throw, rather than in api-shapes.ts where
+ * everything else resolves to a generated component.
+ *
+ * Its members are all OPTIONAL on purpose. `get` is generic over `T extends ApiError`, and a
+ * body type with no `error` field at all would not be assignable to a required one; the
+ * intersection in api-shapes.ts is what makes the generated bodies usable as response types
+ * rather than decoration. */
+export interface ApiError {
+  error?: string;
+}
+
 /* The base layers `/api/maptiles/{layer}/…` serves, as the frontend's claim.
  *
- * Hand-written for the same reason the response shapes in api-types.ts are: the generated
- * schema cannot supply it. `layer` is a plain `str` path parameter, so `api-schema.d.ts`
+ * Hand-written for the same reason `ApiError` above is: the generated schema cannot supply
+ * it. `layer` is a plain `str` path parameter, so `api-schema.d.ts`
  * types it `string` -- the names live in `MAP_LAYERS` in routers/tiles.py, which the document
  * never sees, and an unknown one comes back as a 404 listing the real ones rather than as a
  * 422 about a parameter.

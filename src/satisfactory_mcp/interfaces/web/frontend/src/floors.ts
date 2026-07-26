@@ -42,7 +42,7 @@ import { state } from "./state";
 import { friendly, note } from "./toast";
 
 import type { components } from "./api-schema";
-import type { Point3M } from "./api-types";
+import type { Point3M } from "./geometry";
 import type { Row } from "./dom";
 import type { FloorMark } from "./leaflet-private";
 import type { FloorChoice } from "./layercontrol";

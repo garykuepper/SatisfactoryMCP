@@ -35,7 +35,7 @@ import { ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
 
 import type { Row } from "./dom";
 
-import type { PoleRow, PowerResponse, WireRow } from "./api-types";
+import type { PoleRow, PowerResponse, WireRow } from "./api-shapes";
 
 /* Slate violet, and picked by measuring in CIE Lab against every colour already on the page,
  * the way the pipe rust and the storage magenta were.

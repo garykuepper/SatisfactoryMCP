@@ -58,9 +58,10 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
 | `src/format.ts` | resource short name, region line, phase name | 37 |
 | `src/palette.ts` | every colour chosen against the others, in one table | 121 |
-| `src/api.ts` | `get()`, and the two query parameters every endpoint takes | 98 |
-| `src/api-types.ts` | the response shapes, hand-written from observed payloads | 438 |
-| `src/api-schema.d.ts` | generated from `/openapi.json`; paths and query parameters | 1545 |
+| `src/api.ts` | `get()`, the two query parameters every endpoint takes, and the error branch no schema describes | 116 |
+| `src/api-shapes.ts` | the response shapes, one line each, re-exported from the generated schema | 142 |
+| `src/geometry.ts` | the page's own words for what it draws with: points, boxes, route curves. Imports nothing | 53 |
+| `src/api-schema.d.ts` | generated from `/openapi.json`; paths, query parameters and every response body | 3049 |
 | `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 124 |
 | `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 219 |
 | `src/fragment.ts` | the address bar as an input: re-reading `#…` when it changes under an open tab | 125 |
@@ -142,23 +143,30 @@ that the old code happened to answer correctly: a fragment with no `z`, a sectio
 has folded yet, a session name seen once. They are now written down as answers rather than
 left as luck.
 
-Two files carry the API, and they are authoritative for different halves.
+One file carries the API, and it is generated. There used to be two.
 
 - **`src/api-schema.d.ts` is generated** by `npm run typegen` from the server's own
   `/openapi.json`, and committed. It is the authority for which paths exist, which query
-  parameters each takes, and what a validation error looks like — `get()` only accepts a path
-  the server actually serves. It says **nothing** about response bodies: every endpoint in
-  `api.py` is annotated `-> dict`, so FastAPI publishes no response schema and all sixteen
-  `200`s come out as `unknown`. Regenerating rewrites the file whole, so its provenance header
-  is re-stamped by `scripts/stamp-schema.mjs`, which `typegen` chains.
-  `/api/floors` is the one exception and now has a client: `floors.ts` reads `FloorsResponse`
-  and the six schemas under it straight out of this file, and `api-types.ts` says nothing about
-  floors at all. Adding a field to that endpoint therefore means running `typegen`, not editing
-  two files.
-- **`src/api-types.ts` is hand-written**, from payloads observed against a real save. It is the
-  frontend's claim about the API, not the API's claim about itself, and it says so at the top.
-  The proper fix is response models on `api.py`, which would make this file generated too —
-  that is a change to the server's public surface and belongs in its own commit.
+  parameters each takes, what a validation error looks like — `get()` only accepts a path the
+  server actually serves — **and now for every response body too**: each router under
+  `interfaces/web/routers/` declares a `response_model`, so its whole payload is described
+  here. Adding a field to an endpoint therefore means running `typegen`, not editing two files.
+  Regenerating rewrites the file whole, so its provenance header is re-stamped by
+  `scripts/stamp-schema.mjs`, which `typegen` chains.
+- **`src/api-shapes.ts` re-exports those components** under the names the page already used,
+  one line apiece and no fields of its own. The indirection is so that a change to an endpoint
+  moves one line in one file rather than every module that draws its payload, and so the page's
+  names stay the page's while their definitions come from the server. `floors.ts` predates it
+  and reaches into the schema itself.
+- **`src/api-types.ts` is gone.** It held the frontend's claim about the API — response shapes
+  read off real payloads — and it died when the last endpoint started describing itself. What
+  was in it that was never a payload lives with the code that uses it: the drawing tuples in
+  `geometry.ts`, `ApiError` in `api.ts`, and the rows of the one deferred endpoint below.
+- **`/api/worlds` is the exception, and it is deferred rather than missed.** It forwards the
+  loader's own save headers, so a faithful response model is `dict[str, Any]` and a useful one
+  deletes eight keys from every row: converting it changes what it SENDS. Its `200` is
+  `unknown` in the schema, and the page's own claim about its rows is in `state.ts`, which
+  stores them, and `worlds.ts`, which fetches them. See `worlds()` in `routers/world.py`.
 
 What is still `any`, in full:
 
