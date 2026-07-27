@@ -25,53 +25,13 @@ import { registerFetch } from "./registry";
 
 import type { Row } from "./dom";
 
-import type { ApiError } from "./api-types";
-
-/* What `/api/crates` sends, as the frontend's claim rather than the server's schema.
- *
- * Declared HERE and not in api-shapes.ts because there is nothing in api-shapes.ts to declare
- * it from: `crates()` is annotated `-> Any`, so its OpenAPI response is `unknown` and there is
- * no `components["schemas"]["CratesResponse"]` to alias. The moment the router grows a
- * `response_model` these move to api-shapes.ts as two `Body<K>` lines and this block is
- * deleted; until then it is an observed payload, and it lives beside the code that observed it
- * rather than in api-types.ts, which is being emptied rather than added to.
- *
- * The absences are as load-bearing as the fields. There is no `w_m`/`l_m` -- see above -- and
- * NO OWNER: `mCrateType` is the actor's only saved property, so a co-op world's crate cannot
- * say whose it is, and the popup below must not put a name on one.
- */
-interface CrateItem {
-  cls: string;
-  name: string;
-  count: number;
-}
-
-interface CrateRow {
-  instance_leaf: string;
-  cls: string | null;
-  /** `death`, `dismantle`, `none` -- or a word a later extractor learned and this build has
-   *  not, which the server forwards unglossed rather than 500ing on. Hence `string`. */
-  kind: string;
-  /** The server's own sentence for the kind, or null for a kind it has no gloss for. */
-  kind_text: string | null;
-  x_m: number | null;
-  y_m: number | null;
-  z_m: number | null;
-  yaw: number | null;
-  /** The biggest twelve kinds; `more` counts what was left off. Both are of the WHOLE crate. */
-  items: CrateItem[];
-  more: number;
-  item_kinds: number;
-  total: number;
-  slots: number | null;
-}
-
-interface CratesResponse extends ApiError {
-  crates: CrateRow[];
-  count: number;
-  deaths: number;
-  items_total: number;
-}
+/* The payload types come off the server's own schema now -- T3 gave /api/crates a
+ * response_model, which is the moment this module's original observed-payload block said
+ * it would move to api-shapes.ts and die. The absences remain as load-bearing as the
+ * fields: no w_m/l_m, and NO OWNER -- `mCrateType` is the actor's only saved property, so
+ * a co-op world's crate cannot say whose it is, and the popup below must not put a name
+ * on one. */
+import type { CrateRow, CratesResponse } from "./api-shapes";
 
 /* Spring green, and picked by measuring against every colour already declared on this page,
  * the way the pipe rust, the storage magenta and the wire violet were.

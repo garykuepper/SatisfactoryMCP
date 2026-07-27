@@ -120,6 +120,12 @@ export type WireRow = Schema["WireRow"];
 
 export type PowerResponse = Body<"PowerResponse">;
 
+/* ------------------------------------------------------------- /api/crates */
+/* T3 typed the router before any page code fetched it and deliberately added no line
+ * here -- "a re-export nobody imports". crates.ts imports these now, so they exist. */
+export type CrateRow = Schema["CrateRow"];
+export type CratesResponse = Body<"CratesResponse">;
+
 /* ------------------------------------------------------------- /api/factories */
 
 export type FactoryRow = Schema["FactoryRow"];
