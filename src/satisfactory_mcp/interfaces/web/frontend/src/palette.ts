@@ -164,8 +164,14 @@ interface Exception {
 }
 
 /* The pairs an existing measurement already answers. There is exactly one, and that number is
- * itself the finding: of the 1,290 cross-owner pairs this page now compares, 28 sit under the
+ * itself the finding: of the 1,349 cross-owner pairs this page now compares, 28 sit under the
  * threshold and one of them was ever measured on purpose. The other 27 are below.
+ *
+ * 1,349 and not the 1,290 this file was written with, because the power layer went from two
+ * declared colours to three when its wires were given a casing -- and the 28 did not move.
+ * That is the check doing the job it was built for: three colours were chosen against the
+ * whole table before any of them was drawn, the nearest cross-owner neighbour any of them has
+ * is dE 22.8, and nothing below needed a line adding to it. See CASING_COLOUR in power.ts.
  */
 var DISCHARGED: Exception[] = [
   {

@@ -8,9 +8,15 @@
  * Its own file rather than a third case inside `routes.ts`, because almost nothing is shared
  * at the drawing level: a wire has no spline, no tier, no direction and no curve to
  * tessellate, and a pole is a mark rather than a route. What IS shared is the three passes
- * `routes.ts` runs by name over ROUTE_LAYERS -- the hairline floor on zoom, the sink that
+ * `routes.ts` runs by name over ROUTE_LAYERS -- the width restyle on zoom, the sink that
  * keeps a line from stealing a machine's click -- and `power` is in that list, so this file
- * imports `sinkRoutes` and declares no pass of its own.
+ * imports `sinkRoutes` and declares no pass of its own. The one thing it no longer shares is
+ * the FLOOR those passes size it against: see ROUTE_FLOOR_PX.
+ *
+ * IT IS ALSO THE ONE NETWORK FLOOR MODE CANNOT LOOK UP. `/api/floors` groups belt chains and
+ * pipe rows and has never carried a wire, so `floors.ts` places this layer geometrically off
+ * the endpoint heights below. That is why every piece drawn here carries a `_floor` mark and
+ * why the fetch says `refilters: true`; both are stated at the bottom of this file.
  *
  * A WIRE IS DRAWN AS A STRAIGHT CHORD, and in game it is a catenary: it sags. Nothing in the
  * save records the sag -- `mCachedLength` is the same straight chord between the two endpoints,
@@ -31,43 +37,85 @@ import { BAND, layer } from "./layers";
 import { pixelsPerMetre } from "./map";
 import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
-import { ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
+import { ROUTE_FLOOR_PX, ROUTE_WIDTH_M, routeWeight, sinkRoutes } from "./routes";
 
 import type { Row } from "./dom";
 
-import type { PoleRow, PowerResponse, WireRow } from "./api-types";
+import type { Point3M, PoleRow, PowerResponse, WireRow } from "./api-types";
 
-/* Slate violet, and picked by measuring in CIE Lab against every colour already on the page,
- * the way the pipe rust and the storage magenta were.
+/* CASED LINES: a dark, wider casing under a lighter core, which is the oldest trick on a
+ * printed map and is here because the honest version failed.
  *
- * A wire has to separate from three things: the ground it crosses for kilometres at a time,
- * the belts it runs beside inside a factory, and the pipes on the other side of them. The
- * violet quarter is what the page had left -- blue is the machines, amber the extractors, red
- * the generators, magenta the storage, steel the belts and rust the pipes -- and it is the
- * best of the free hues on the comparison that matters most: at dE 34.8 from its nearest biome
- * tint it is further from the GROUND than any of the greens and khakis measured beside it,
- * which sat at 25 to 29 and would have read as scrub wherever a line crossed open country.
+ * The layer used to be one slate violet hairline, #7d76a8, chosen by measuring it against
+ * every colour already on the page -- and every number in that warrant was true. It was dE
+ * 23.3 from its nearest neighbour anywhere on the map, dE 24.2 from the nearest belt tone,
+ * and dE 26.7 from the nearest tone of the actual artwork it is drawn over. On the evidence
+ * the palette can see, that colour was fine. The owner's words for what it looked like were
+ * "barely visible", and the screenshots agree: over the game's own map the wires were gone.
  *
- * Nearest neighbour anywhere on the page is the water node dot at dE 23.3 -- a filled disc on
- * open terrain against a hairline -- and the nearest belt tone is dE 24.2, which is the
- * separation that has to hold because a wire and a belt genuinely do run side by side. Both
- * are comfortably past the dE 22 the pipe rust was accepted at and nowhere near the dE 4.5
- * that disqualified a brighter pipe. The pipes themselves are dE 58 away and could not be
- * confused with this at any size. */
-var WIRE_COLOUR = declareColours("power", { wires: "#7d76a8" }).wires;
+ * WHAT THE MEASUREMENT MISSED IS THAT dE IS ABOUT A SWATCH AND A WIRE IS NOT ONE. A 1.5 px
+ * stroke at 0.85 opacity puts almost no fully-covered pixel on the screen -- the canvas
+ * antialiases it across two or three, so what a reader actually sees is the colour composited
+ * over the ground at something like 0.6, at which a dE 26.7 swatch is worth about dE 15 of
+ * real contrast, spread over one pixel. Measuring the swatch answered a question nobody was
+ * asking.
+ *
+ * So the fix is not a louder violet. It is the casing, and the casing is what makes the pair
+ * work on grounds that have nothing in common: the game's artwork is a pale warm tan with cyan
+ * water -- binned to a 16-level cube over the three terrains this was judged on, the six
+ * commonest tones are #486878, #888878, #a8a898, #988878, #4898a8 and #989888 -- while `plain`
+ * mode is near-black. A single colour cannot be far from both. A dark casing and a light core
+ * can, because whichever way the ground goes, one half of the pair separates from it and the
+ * other half is the reason the line still has a colour.
+ *
+ * All three below are measured in CIE Lab against the CURRENT full table -- which is the
+ * lesson the ledger's first finding taught, the pipe rust having been measured against a set
+ * that was missing the bauxite dot. The distances quoted are cross-owner nearest neighbours;
+ * palette.ts checks them at every dev boot and would say so if any of them moved.
+ */
+
+/* The casing: a deep indigo, and the furthest any colour on this page sits from all the
+ * others. Nearest cross-owner neighbour is the fluid-storage magenta at dE 33.7 and the
+ * nearest after that the oil node at 34.6; the dark neighbourhood it might have collided with
+ * -- the lift fill at dE 38.8, the concrete at 41.3, the coal dot at 45.4 -- is not close.
+ * That is the reward for keeping it violet instead of black: a near-black casing would have
+ * landed among four greys that are already the tightest cluster on the map.
+ *
+ * Against the artwork it is dE 48.4 from the nearest ground tone on the desert and the coast
+ * and 54.3 on the forest, and 61.6 to 71.2 on the mean weighted by how much of the map each
+ * tone covers -- which is where its whole job is done: the ground under a wire is pale, and
+ * this is not. */
+var CASING_COLOUR = declareColours("power", { casing: "#1c1550" }).casing;
+
+/* The core: the same violet quarter the layer has always had, taken up to where it reads as a
+ * line rather than as a smudge. The violet is still the free hue -- blue is the machines,
+ * amber the extractors, red the generators, magenta the storage, steel the belts, rust the
+ * pipes -- so this is the old decision at a new value, not a new decision.
+ *
+ * Nearest cross-owner neighbour is the raw-quartz dot at dE 22.8, then the hard-drive pickup at
+ * 25.6, the water dot at 28.2 and the machine blue at 28.3. The belts, which are the comparison
+ * that has to hold because a wire and a belt genuinely do run side by side inside a factory, are
+ * dE 33.2, 33.5 and 36.5 away across their three tones -- further than the old hairline managed
+ * at 24.2. Against the artwork it is dE 39.1 to 40.2 from the nearest ground tone. */
+var WIRE_COLOUR = declareColours("power", { wires: "#b8b0f8" }).wires;
 
 /* The poles, one value step up the same hue -- the grammar the belts, the pipes and the
  * storage boxes all use for a distinction inside one family. Here the distinction is not a
  * tier but a KIND: the line and the thing the line ends at.
  *
- * The step is the house step, dE 16.2, against the belts' 15.6 between their slowest and
- * fastest, the pipes' 15.7 between Mk1 and Mk2 and the storage pair's 16.7. Lighter rather
- * than darker on purpose: a pole sits on top of the four wires that meet at it, so it has to
- * read against its own layer before it reads against the ground. Re-measured rather than
- * assumed safe, because a ramp can walk a colour into a neighbour -- this one moves away from
- * the ground (dE 45.6, up from 34.8) and its nearest colour on the page is the hard-drive
- * pickup dot at dE 19.9. */
-var POLE_COLOUR = declareColours("power", { poles: "#a8a0d2" }).poles;
+ * The step is still the house step, dE 16.0, against the belts' 15.6 between their slowest and
+ * fastest, the pipes' 15.7 between Mk1 and Mk2 and the storage pair's 16.7 -- the pair moved
+ * and the distance between them did not. Lighter rather than darker on purpose, and the
+ * original reason has been overtaken by a better one: a pole used to have to out-value the
+ * four wires that meet at it, and now it has the casing as a RIM instead (see the disc below),
+ * which is a stronger separation than any step. What lighter still buys is the world view,
+ * where a pole is the mark that says a base is here.
+ *
+ * Re-measured rather than assumed safe, because a ramp can walk a colour into a neighbour.
+ * Nearest cross-owner neighbour is the fast belt at dE 23.6, then the crashed drop pod at 25.0
+ * and the limestone dot at 26.1 -- all further away than the old pole colour's 19.9 -- and the
+ * nearest ground tone is dE 28.4 on the forest and 31.7 on the desert and the coast. */
+var POLE_COLOUR = declareColours("power", { poles: "#d8c8f8" }).poles;
 
 /* How big a pole's disc is, in PIXELS, by what the pole is.
  *
@@ -81,20 +129,26 @@ var POLE_COLOUR = declareColours("power", { poles: "#a8a0d2" }).poles;
  * The steps are a MEASUREMENT and not a decoration. A pole's mark is how many wires it can
  * carry, which the reference save states outright: the busiest Mk1 on the world carries
  * exactly 4, the busiest Mk2 exactly 7 and the busiest Mk3 exactly 10, which are the game's
- * own three limits. So the ramp is 2.5 / 3.2 / 4 px -- bigger node, more wires -- and the wall
- * outlets sit under Mk1 at 2 px because a socket on a wall is the smallest thing here.
+ * own three limits. So the ramp is 3.2 / 4.2 / 5.2 px -- bigger node, more wires -- and the
+ * wall outlets sit under Mk1 at 2.5 px because a socket on a wall is the smallest thing here.
+ *
+ * EVERY ONE OF THOSE WENT UP, by 0.5 px at the bottom and 1.2 at the top, and the step between
+ * them went from 0.7-0.8 px to 1.0. The old ramp was drawn before there was a base map: on
+ * plain dark ground a 2.5 px disc is a clear mark, and over the game's own artwork it is a
+ * speck. The wider step is the same argument one level down -- three sizes 0.7 px apart are
+ * three sizes nobody can tell apart at the zoom the difference is supposed to be read at.
  *
  * A class this table has never heard of gets the Mk1 size rather than nothing: an unrecognised
  * pole is still a place where wires end. */
 var POLE_RADIUS_PX: Record<string, number> = {
-  Build_PowerPoleWall_C: 2,
-  Build_PowerPoleWall_Mk2_C: 2,
-  Build_PowerPoleWallDouble_Mk2_C: 2,
-  Build_PowerPoleMk1_C: 2.5,
-  Build_PowerPoleMk2_C: 3.2,
-  Build_PowerPoleMk3_C: 4,
+  Build_PowerPoleWall_C: 2.5,
+  Build_PowerPoleWall_Mk2_C: 2.5,
+  Build_PowerPoleWallDouble_Mk2_C: 2.5,
+  Build_PowerPoleMk1_C: 3.2,
+  Build_PowerPoleMk2_C: 4.2,
+  Build_PowerPoleMk3_C: 5.2,
 };
-var POLE_FALLBACK_PX = 2.5;
+var POLE_FALLBACK_PX = 3.2;
 
 /* A Power Tower is drawn as a RING and every other pole as a filled disc, and the shape is
  * doing the work a size could not.
@@ -105,14 +159,38 @@ var POLE_FALLBACK_PX = 2.5;
  * say "a pole with more connections", which is what the ramp above already means and is not
  * what a tower is. A ring says "structure, seen from above" -- the same thing the conveyor
  * lift's ring says in the belts layer, and for the same reason: an outline is what a thing you
- * could stand inside looks like from directly overhead. */
+ * could stand inside looks like from directly overhead.
+ *
+ * BIGGEST BUMP ON THE LAYER, 5 px to 7.5 and a 1.5 px stroke to 2, because a tower is the one
+ * mark here whose job is the whole-world view. There are 137 of them, they carry every wire on
+ * this world longer than 300 m, and at 5 px they were the same size as a Mk3 pole plus one --
+ * which is to say invisible as a landmark at exactly the zoom where "the long spans start
+ * here" is the only thing about this layer worth reading. */
 var TOWER_CLASS = "Build_PowerTowerPlatform_C";
-var TOWER_RADIUS_PX = 5;
-var TOWER_WEIGHT_PX = 1.5;
+var TOWER_RADIUS_PX = 7.5;
+var TOWER_WEIGHT_PX = 2;
 
-/* The wire's own opacity, matching the belts and pipes at 0.85. It is a hairline at world zoom
- * and a hairline reads as lighter than it is, so there is nothing to gain by going lower --
- * and the two networks it has to be told apart from are both drawn at this. */
+/* How much wider the casing is than the core it sits under, in SCREEN pixels, so the rim is
+ * the same thickness at every zoom -- which is what a casing is. Two, so 1 px shows either
+ * side: enough to be a rim on a 2.5 px line and not so much that the pair reads as a road.
+ *
+ * A pixel constant and not a width in metres, and that is the whole difference between this
+ * and ROUTE_WIDTH_M next door. A casing is not part of what a wire IS. It is a drawing
+ * technique for making a thin thing survive a busy background, so it is stated in the units
+ * the background is measured in. See `_widen` in styleRoutes, which re-adds it on every zoom.
+ *
+ * The same number widens the ring under a power tower, because it is the same rim. */
+var WIRE_CASING_PX = 2;
+
+/* And how thick the rim around a pole's DISC is. Smaller than the wires' casing on purpose: a
+ * disc has an outline all the way round rather than two edges, so it needs less of one to read
+ * as edged -- and 2 px of rim on a 2.5 px wall socket would be a dark dot with a highlight. */
+var POLE_RIM_PX = 1;
+
+/* One opacity for the whole layer, casing and core alike, matching the belts and pipes at
+ * 0.85. Two would be a knob: at a 1 px rim the difference between 0.85 and full is a fraction
+ * of one pixel's worth of ground showing through, which is not a thing anybody can see and is
+ * a thing somebody would later have to explain. */
 var WIRE_OPACITY = 0.85;
 
 function poleRadius(cls: string | null): number {
@@ -180,40 +258,121 @@ export function drawPower(data: PowerResponse): void {
    * factory. Judged on a screenshot at that zoom, not on the counts alone.
    *
    * The poles are the half that does NOT survive it, and they are drawn anyway: 701 fixed
-   * 2.5 px discs cluster into the same shape the wires already make, so they cost nothing
-   * legible and they are the layer at factory zoom. Splitting them into a second checkbox
-   * would be two rows for one idea. */
+   * discs cluster into the same shape the wires already make, so they cost nothing legible
+   * and they are the layer at factory zoom. Splitting them into a second checkbox would be two
+   * rows for one idea.
+   *
+   * THAT PARAGRAPH WAS TRUE AND THE LAYER STILL DID NOT DO IT. Everything above is about what
+   * this data is worth at the world view; none of it is about whether the drawing was strong
+   * enough to deliver it, and it was not -- 1.5 px of violet at 0.85 over the game's own pale
+   * artwork is a rumour of a network rather than a network. What this function draws now is
+   * the same geometry cased and widened, which is the difference between the argument being
+   * right and the layer being right. See CASING_COLOUR above. */
   // Third of the three networks and last of them, under the belts and the pipes: the grid is
   // what joins this world's bases rather than what moves anything through one.
   var group = layer("power", true, WIRE_COLOUR, [BAND.built, 30, "power"]);
-  // The same expression the zoom pass restyles these with, off the same table -- see
+  // The same expression the zoom pass restyles these with, off the same two tables -- see
   // routeWeight in routes.ts, which is exported for exactly this line.
-  var weight = routeWeight(ROUTE_WIDTH_M.power!, pixelsPerMetre());
+  var weight = routeWeight(ROUTE_WIDTH_M.power!, pixelsPerMetre(), ROUTE_FLOOR_PX.power);
+
+  /* THE CORES FIRST AND THE CASINGS AFTER THEM, WHICH IS WHAT PUTS THE CASINGS UNDERNEATH.
+   *
+   * That is backwards from how it reads, and it is not a mistake. Draw order on this canvas
+   * is ADD order, so adding the casing second would indeed leave it on top -- except that
+   * `sinkRoutes` runs at the end of this function and REVERSES the runs: it calls
+   * `bringToBack` down the list, and every call puts its caller below everything already
+   * sunk, so the piece sunk last ends up at the very bottom. See the note on sinkRoutes.
+   *
+   * All the cores and then all the casings, rather than a pair at a time. Interleaved, the
+   * same reversal would leave each wire's casing above the NEXT wire's core, and a crossing
+   * would show one line breaking the other for no reason anyone could name. Two passes make
+   * the layer two clean sheets: every casing under every core.
+   *
+   * The casing is not interactive, so the click-through is exactly what it was before there
+   * was one: a wire's popup is on its core, at the core's width, and the 1 px of rim either
+   * side belongs to no piece at all. Making it clickable would have put 1,297 more hit-tested
+   * paths on the canvas to answer with the popup the core already answers with.
+   */
+  function chord(w: WireRow): L.LatLngTuple[] {
+    return [
+      [-w.a_m[1], w.a_m[0]],
+      [-w.b_m[1], w.b_m[0]],
+    ];
+  }
+
+  /* Both endpoints, in the payload's own [x, y, z] order, which is the shape the floor
+   * filter reads a two-ended piece by. A wire is the only thing in this layer that can be on
+   * two storeys at once, and the z of each end is the whole of the evidence for which. */
+  function ends(w: WireRow): [Point3M, Point3M] {
+    return [w.a_m, w.b_m];
+  }
 
   data.wires.forEach(function (w) {
-    L.polyline(
-      [
-        [-w.a_m[1], w.a_m[0]],
-        [-w.b_m[1], w.b_m[0]],
-      ],
-      { color: WIRE_COLOUR, weight: weight, opacity: WIRE_OPACITY }
-    )
-      .bindPopup(wirePopup(w))
-      .addTo(group);
+    var core = L.polyline(chord(w), {
+      color: WIRE_COLOUR,
+      weight: weight,
+      opacity: WIRE_OPACITY,
+    });
+    core._floor = { power: "wire", ends: ends(w) };
+    core.bindPopup(wirePopup(w)).addTo(group);
   });
+
+  data.wires.forEach(function (w) {
+    var cased = L.polyline(chord(w), {
+      color: CASING_COLOUR,
+      weight: weight + WIRE_CASING_PX,
+      opacity: WIRE_OPACITY,
+      interactive: false,
+    });
+    cased._widen = WIRE_CASING_PX;
+    // The same ends as the core it sits under, so the filter reaches the same verdict about
+    // the two without having to be told they belong together. `casing` rather than `wire`
+    // is what keeps it from earning a second connector glyph on top of its core's.
+    cased._floor = { power: "casing", ends: ends(w) };
+    cased.addTo(group);
+  });
+
+  /* A tower's casing is a second RING, for the reason a wire's is a second line, and it is
+   * collected here rather than added in place: the same reversal applies inside the glyphs,
+   * so the casings have to go in after every disc and every core ring. */
+  var towerCasings: L.CircleMarker[] = [];
 
   data.poles.forEach(function (p) {
     var tower = p.cls === TOWER_CLASS;
+    var radius = poleRadius(p.cls);
     var piece = L.circleMarker([-p.y_m, p.x_m], {
-      radius: poleRadius(p.cls),
-      color: POLE_COLOUR,
-      weight: tower ? TOWER_WEIGHT_PX : 1,
+      radius: radius,
+      // A DISC IS CASED BY ITS OWN OUTLINE. A stroke is already drawn around every one of
+      // these; all that changed is that it is now the casing colour instead of the fill's,
+      // which turns a flat dot into an edged mark for no extra path at all. A ring cannot do
+      // that -- its stroke IS the mark -- so a tower gets the second ring below instead.
+      color: tower ? POLE_COLOUR : CASING_COLOUR,
+      weight: tower ? TOWER_WEIGHT_PX : POLE_RIM_PX,
       // A ring for a tower and a disc for everything else; see TOWER_CLASS above.
       fillColor: POLE_COLOUR,
       fillOpacity: tower ? 0 : 0.9,
     });
     piece._fixed = true;
+    // Where it stands, which is how the floor filter places a thing no band lists -- the
+    // storage boxes' own join, and for the same reason: a pole is a placement the floor
+    // decomposition never decomposed. See `power` in FloorMark.
+    piece._floor = { power: "pole", x_m: p.x_m, y_m: p.y_m, z_m: p.z_m };
     piece.bindPopup(polePopup(p)).addTo(group);
+    if (!tower) return;
+    var cased = L.circleMarker([-p.y_m, p.x_m], {
+      radius: radius,
+      color: CASING_COLOUR,
+      weight: TOWER_WEIGHT_PX + WIRE_CASING_PX,
+      fillOpacity: 0,
+      interactive: false,
+    });
+    cased._fixed = true;
+    cased._floor = { power: "casing", x_m: p.x_m, y_m: p.y_m, z_m: p.z_m };
+    towerCasings.push(cased);
+  });
+
+  towerCasings.forEach(function (piece) {
+    piece.addTo(group);
   });
 
   sinkRoutes();
@@ -223,16 +382,21 @@ export function drawPower(data: PowerResponse): void {
  * game autosaves. The header's power figures come from a different endpoint on the other
  * wave, which is why a save write updates the number without redrawing the network.
  *
- * `refilters: false`, and it is one of two entries that say so. Nothing this draws is a thing
- * a storey contains -- floors.ts filters the concrete, the machines and the routes, and a
- * circuit is a pool rather than a placement -- so the pass would find nothing of its own to
- * do. See `refilters` in registry.ts for why that is stated here rather than assumed. */
+ * `refilters: true`, AND IT USED TO BE FALSE, on the argument that "a circuit is a pool rather
+ * than a placement" so floor mode would find nothing of its own to do here. That argument was
+ * about the API's decomposition and it was right about it -- `/api/floors` still says nothing
+ * about a wire -- but it was answering the wrong question. What a reader in floor mode sees is
+ * a factory's storey, and the cables running through that storey are part of it; leaving them
+ * unfiltered drew every wire of every floor at once over one deck's plan. floors.ts now places
+ * this layer geometrically, off the endpoint heights the payload already carries, so a redraw
+ * during floor mode owes the filter a pass exactly as the belts and the pipes do. See `power`
+ * in FloorMark and the power branch in applyFilter. */
 registerFetch<PowerResponse>({
   wave: "static",
   rank: 50,
   path: "/api/power",
   label: "power",
   clears: ["power"],
-  refilters: false,
+  refilters: true,
   draw: drawPower,
 });

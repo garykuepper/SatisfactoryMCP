@@ -9,12 +9,16 @@
  *
  * A THIRD NETWORK HAS ARRIVED, and it is drawn by `power.ts` rather than here -- but by these
  * same three passes, which is what that paragraph was written to buy. `power` is in
- * ROUTE_LAYERS and in ROUTE_WIDTH_M at the bottom of this file, so a wire is floored at the
- * same hairline a belt and a pipe are and is sunk under the machines by the same rule. What
- * lives in `power.ts` is only what is specific to it: two colours, a pole glyph, and a popup.
- * The import goes one way -- power.ts reads `sinkRoutes` from here and nothing here reads
- * power.ts -- so the shared passes stay in the file that owns them.
- */
+ * ROUTE_LAYERS and in ROUTE_WIDTH_M at the bottom of this file, so a wire is sized by the same
+ * expression a belt and a pipe are and is sunk under the machines by the same rule. What lives
+ * in `power.ts` is only what is specific to it: three colours, a pole glyph, and a popup. The
+ * import goes one way -- power.ts reads `sinkRoutes` from here and nothing here reads power.ts
+ * -- so the shared passes stay in the file that owns them.
+ *
+ * WHAT IT NO LONGER SHARES IS THE FLOOR. The wires were floored at ROUTE_MIN_PX like the other
+ * two and the owner could not see them: 1.5 px is where a line stops being DRAWN, which is the
+ * right floor for a layer you turn on to look at and the wrong one for the layer that is on at
+ * the whole-world view. So the floor became a parameter and the table below has one entry. */
 
 import { code, popup } from "./dom";
 import { L } from "./leaflet";
@@ -326,11 +330,17 @@ var ATTACHMENT_FALLBACK_M = 4;
  * network layers agree completely: a belt is two metres, a pipe is 1.3 and a wire is 0.2, and
  * past the floor each is drawn at whatever that is worth on screen right now.
  *
- * Exported for `power.ts`, together with the width table below, so that the wires are drawn at
+ * Exported for `power.ts`, together with the two tables below, so that the wires are drawn at
  * their first width by the same expression the zoom pass restyles them with. Two copies of it
- * would be a layer that changed thickness the first time anybody touched the map. */
-export function routeWeight(width_m: number, ppm: number): number {
-  return Math.max(ROUTE_MIN_PX, width_m * ppm);
+ * would be a layer that changed thickness the first time anybody touched the map.
+ *
+ * THE FLOOR IS A PARAMETER because it stopped being one number. It is a statement about
+ * VISIBILITY -- "below this a stroked line stops being seen" -- and the answer is not the same
+ * for a belt as for a wire: a belt reaches its true width a zoom step or two out and spends
+ * most of its life above the floor, while a wire is 0.2 m and never reaches anything. See
+ * ROUTE_FLOOR_PX. Omitted, it is ROUTE_MIN_PX, which is what the belts and the pipes pass. */
+export function routeWeight(width_m: number, ppm: number, floor_px?: number): number {
+  return Math.max(floor_px === undefined ? ROUTE_MIN_PX : floor_px, width_m * ppm);
 }
 
 function beltWeight(ppm: number): number {
@@ -523,7 +533,7 @@ export function styleRoutes() {
   ROUTE_LAYERS.forEach(function (name) {
     var group = state.layers[name];
     if (!group || !map.hasLayer(group)) return;
-    var weight = routeWeight(ROUTE_WIDTH_M[name]!, ppm);
+    var weight = routeWeight(ROUTE_WIDTH_M[name]!, ppm, ROUTE_FLOOR_PX[name]);
     group.eachLayer(function (layer) {
       // Not everything in these groups is drawn GEOMETRY any more: floor mode puts a
       // connector's up/down glyph in the layer its run belongs to, and that glyph is a
@@ -547,7 +557,12 @@ export function styleRoutes() {
       else if (piece.setRadius) {
         if (!piece._fixed) piece.setRadius(radius);
       } else if (!(piece instanceof L.Polygon)) {
-        piece.setStyle({ weight: weight });
+        // `_widen` is the casing asking for the pixels that make it a casing. It is added
+        // here rather than baked in at the draw, because a casing is a fixed rim in SCREEN
+        // pixels around a line whose own width follows the scale -- so the two have to be
+        // recombined at every zoom or the rim would grow with the map and stop being a rim.
+        // Nothing but power.ts sets it, and everything else reads `|| 0`.
+        piece.setStyle({ weight: weight + (piece._widen || 0) });
         // And the geometry, not just the stroke: a curve is subdivided for the scale it is
         // seen at, so the zoom that changes the width is the zoom that changes how many
         // pieces the bend is worth. Skipped for everything straight and for everything whose
@@ -893,6 +908,29 @@ export var ROUTE_WIDTH_M: Record<string, number> = {
   belts: BELT_WIDTH_M,
   pipes: PIPE_WIDTH_M,
   power: 0.2,
+};
+
+/* And where each layer's width STOPS being allowed to fall, for the layers whose answer is
+ * not ROUTE_MIN_PX. One entry, and the entry is the finding.
+ *
+ * ROUTE_MIN_PX is 1.5 because that is where a stroked line stops being drawn at all, which is
+ * the right floor for a network you are looking AT: turn the belts on and you are already
+ * inside a factory. The wires are the one layer that is on at the whole-world view, where it
+ * has to read as a network across 7 km -- and 1.5 px of a colour at 0.85 over the game's own
+ * artwork is not a network, it is a rumour. The owner's words were "barely visible".
+ *
+ * 2.5 px, and the arithmetic says this is the whole width rule for this layer rather than a
+ * lower bound on one. 0.2 m reaches 2.5 px at 12.5 px to the metre; this map's maxZoom is 3
+ * and is worth 8.96, so a wire is at its floor at EVERY zoom the page has. That is not the
+ * floor swallowing a measurement -- it is the honest consequence of drawing a 20 cm cable on a
+ * map whose scale bar reads in hundreds of metres, and it puts a wire in the same grammar as
+ * the pole at its end: a MARK, sized to be seen, not a footprint. See POLE_RADIUS_PX in
+ * power.ts, which says the same thing about the discs.
+ *
+ * The belts and the pipes are deliberately absent rather than listed at 1.5. A layer with no
+ * entry gets routeWeight's default, so this table says only where the exceptions are. */
+export var ROUTE_FLOOR_PX: Record<string, number> = {
+  power: 2.5,
 };
 
 /* Which route layers carry direction chevrons. A BELT HAS A DIRECTION TOO -- its points are

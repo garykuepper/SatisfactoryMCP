@@ -29,16 +29,36 @@ import "leaflet";
  * is in it is the JOIN, never the answer -- which floor a piece is on is `/api/floors`'
  * business, and this is only enough to ask it.
  *
- * Every field is optional and the four are alternatives, because the four layers this filters
- * are joined four different ways: a machine by its instance id, a run by the chain or row
- * `/api/floors` keys it with, a foundation piece by its position in `/api/structures` (the
- * only name a lightweight buildable has), and the two layers the decomposition says nothing
- * about at all by where they stand. */
+ * Every field is optional and the groups are alternatives, because the layers this filters are
+ * joined five different ways: a machine by its instance id, a belt chain or pipe row by the
+ * key `/api/floors` groups it under, a foundation piece by its position in `/api/structures`
+ * (the only name a lightweight buildable has), a storage box by where it stands, and the power
+ * grid by where the ends of its wires are -- the two geometric ones being exactly the two the
+ * decomposition says nothing about. */
 export interface FloorMark {
   /** An instance leaf: how a band lists its machines and its belt attachments. */
   id?: string;
   /** A belt CHAIN or a pipe row, and which of the two number spaces it is in. */
   run?: { kind: "belt" | "pipe"; key: number };
+  /* A piece of the power grid, and WHICH piece, because this is the one network the floor
+   * decomposition says nothing at all about.
+   *
+   * `/api/floors` groups belt chains and pipe rows into `same-deck`, `connector`, `terrain`
+   * and `mixed` and hands the client the answer. It cannot do that for power: a circuit is
+   * a pool of supply and demand rather than a thing laid on a deck, the wiring graph is not
+   * in the same table as the splines, and the endpoint has never carried a wire. So the
+   * power layer is placed the way STORAGE is -- geometrically, on this side of the wire,
+   * against the one height rule this file owns.
+   *
+   *   `wire`   -- a drawn chord; `ends` carries both endpoints, and the two z values are
+   *               what decide which floors it touches. The one kind that can earn a
+   *               connector glyph, because it is the only one that can leave a floor.
+   *   `pole`   -- a mark at one point; `x_m`/`y_m`/`z_m`, exactly like storage.
+   *   `casing` -- the darker piece drawn under one of the other two. Same geometry, same
+   *               answer, no popup and no glyph: it is a drawing technique, not a thing.
+   *               Marked so the filter keeps a pair together without having to know it is
+   *               a pair. See drawPower in power.ts. */
+  power?: "wire" | "pole" | "casing";
   /** The two ends of this piece in game metres, so a connector's glyph can be put on the
    *  end that is actually on this floor. `[x, y, z]`, the payload's own order. */
   ends?: [import("./api-types").Point3M, import("./api-types").Point3M];
@@ -97,6 +117,13 @@ declare module "leaflet" {
      *  an element, and declaring a case the page cannot produce would put an untestable
      *  branch in the one place that has to put a card back exactly as it found it. */
     _floorCard?: string | HTMLElement | null;
+    /** Extra stroke width, in SCREEN pixels, on top of whatever this piece's layer is worth
+     *  at the current scale.
+     *
+     * The casing under a power line, and nothing else on this page. A casing is a fixed rim
+     * around a line whose own width follows the map, so the two cannot be added up once at
+     * the draw: styleRoutes re-adds this at every zoom. See WIRE_CASING_PX in power.ts. */
+    _widen?: number;
     /** The route this polyline was tessellated FROM, kept so it can be tessellated again.
      *
      * A curved route is drawn at whatever subdivision the current scale earns, so the piece
