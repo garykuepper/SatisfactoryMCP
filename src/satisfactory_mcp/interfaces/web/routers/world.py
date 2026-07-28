@@ -27,28 +27,94 @@ router = APIRouter(prefix="/api")
 # --------------------------------------------------------------------- worlds
 
 
-# THE ONE ENDPOINT HERE WITH NO ``response_model``, and it is not an oversight.
+# THE LAST ENDPOINT TO SAY WHAT IT SENDS, because saying so changed what it sends.
 #
 # Its rows are not built by this layer: ``asdict(w)`` hands over the loader's ``World``,
 # whose ``saves`` are the sidecar's save HEADERS -- thirteen keys apiece, the same thirteen
 # ``/api/summary`` passes through as ``header`` -- and ``unsupported`` is whatever
-# ``scan_saves`` chose to say about a file it could not read. Declaring those faithfully
-# means ``dict[str, Any]``, which types the page ``unknown`` and buys it nothing; declaring
-# them as the five fields the picker reads means a response_model DELETING the other eight
-# from the wire, which is a body change and not a typing item.
+# ``scan_saves`` chose to say about a file it could not read. A faithful model for that is
+# ``dict[str, Any]``, which types the page ``unknown`` and buys it nothing. The model below
+# is the USEFUL one instead, and a response_model FILTERS: declaring the five fields the
+# picker reads DELETES the other eight from every save row on the wire. That is a body
+# change, made deliberately and in its own commit, after checking who reads the endpoint:
+# the map page is its only consumer -- worlds.ts fetches it, state.ts stores it, and the
+# fields below are exactly the frontend's own hand-written claim about the rows, read off
+# real payloads back when the server declared nothing. The MCP surface never sees this
+# route at all; it calls ``projection.list_worlds`` in-process.
 #
-# There is no total=False middle either, and it was measured rather than assumed: pydantic
-# serialises a TypedDict in DECLARATION order and drops what is absent, so a partial row is
-# re-keyed rather than passed through -- the capture harness's own stub row
-# (``filename, mtime_ns, play_duration_s``) comes back in a different order from the one it
-# went in as, which the byte-identity gate reads as the API moving.
-#
-# So ``WorldsResponse``/``WorldRow``/``SaveRow`` stay hand-written in ``api-types.ts``,
-# where an observation of an opaque dict belongs and where that file's own header already
-# says what such a declaration is worth. Converting this endpoint means changing what it
-# SENDS -- building the picker's five fields explicitly instead of forwarding a header --
-# and that is a commit about the body, with its own before-and-after.
-@router.get("/worlds")
+# The handler still forwards the loader's dicts untouched. The model is what trims them,
+# which is the same division of labour every other router here has: the layer underneath
+# says everything it knows, and the declared body is the contract.
+
+
+class SaveRow(TypedDict):
+    """One save file, cut to the five keys the picker reads -- of the header's thirteen.
+
+    The eight deleted, by the filter that this model is: ``save_identifier`` (already
+    spent server-side -- it is how ``list_worlds`` grouped the rows, and ``world_id``
+    carries it), ``save_header_version``, ``save_version``, ``build_version``,
+    ``save_datetime_ticks``, ``is_modded``, ``is_creative`` and ``size``. Nothing on the
+    page ever read any of them; a client that wants a save's full header asks
+    ``/api/summary``, which forwards it whole.
+
+    ``path`` is the pin (``?save=`` takes it back verbatim), ``filename`` is what the pin
+    is spelled as in the URL fragment, ``mtime_ns`` orders the dropdown, and
+    ``play_duration_s`` is an ``int`` because ``pioneersav``'s ``SaveInfo`` declares it
+    one -- ``float`` here would rewrite the bytes on the wire.
+
+    Declaration order is wire order (see routers/floors.py), and it is the header's own
+    order with the deleted keys closed up.
+    """
+
+    path: str
+    filename: str
+    session_name: str
+    play_duration_s: int
+    mtime_ns: int
+
+
+class WorldRow(TypedDict):
+    """One world: ``asdict(World)``, plus the newest save's headline figures hoisted on.
+
+    The three hoisted fields are built by the handler, not forwarded: ``mtime`` is the
+    newest save's ``mtime_ns`` in SECONDS (a float, and the one place this surface speaks
+    epoch seconds -- the picker's "newest first" is the server's sort, this is what it
+    sorted by), and ``play_duration_s`` is the maximum across the world's saves, an
+    ``int`` for the same reason the row's is.
+    """
+
+    world_id: str
+    session_name: str
+    saves: list[SaveRow]
+    mtime: float
+    newest_filename: str
+    play_duration_s: int
+
+
+class UnsupportedFile(TypedDict):
+    """A file the scan could not read: which one, and the parser's own reason.
+
+    The sidecar says five things about such a file; the page prints these two in its
+    "no readable saves" diagnosis and nothing reads the rest, so ``path``, ``mtime_ns``
+    and ``size`` are filtered off the wire on the same terms as the save rows' eight.
+    """
+
+    filename: str
+    reason: str
+
+
+class WorldsResponse(TypedDict):
+    """What ``/api/worlds`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+
+    Both keys are always present together: the only reply without them is the error
+    branch, which returns a ``JSONResponse`` and skips this model entirely.
+    """
+
+    worlds: list[WorldRow]
+    unsupported: list[UnsupportedFile]
+
+
+@router.get("/worlds", response_model=WorldsResponse)
 def worlds() -> Any:
     """Every world the save directory holds, newest first."""
     try:

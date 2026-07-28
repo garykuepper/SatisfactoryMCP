@@ -26,23 +26,75 @@ from satisfactory_mcp.interfaces.web.app import create_app
 from satisfactory_mcp.interfaces.web.routers import world as web_world
 
 
+#: A save header exactly as the sidecar's ``header_info`` builds one -- all thirteen keys,
+#: in its emission order -- so the test below can show which eight the response model
+#: deletes rather than assert around them.
+_HEADER = {
+    "path": "C:/saves/a.sav",
+    "filename": "a.sav",
+    "session_name": "Han Solo",
+    "save_identifier": "X2faPVKjX06VaRzClNv5KQ",
+    "save_header_version": 13,
+    "save_version": 46,
+    "build_version": 372858,
+    "play_duration_s": 42,
+    "save_datetime_ticks": 638_000_000_000_000_000,
+    "is_modded": False,
+    "is_creative": False,
+    "mtime_ns": 1_700_000_000_000_000_000,
+    "size": 4_242_424,
+}
+
+
 def test_worlds_lists_the_save_picker_rows(client, monkeypatch):
-    """The picker's only source. ``list_worlds`` is stubbed so no save tree is scanned."""
+    """The picker's only source. ``list_worlds`` is stubbed so no save tree is scanned.
+
+    Pinned with ``==`` on whole dicts, because the response model on this endpoint is a
+    FILTER and the filtering is the contract: a thirteen-key header goes in and the five
+    keys the picker reads come out, with ``save_identifier``, ``save_header_version``,
+    ``save_version``, ``build_version``, ``save_datetime_ticks``, ``is_modded``,
+    ``is_creative`` and ``size`` deleted from the wire -- and an unsupported file's five
+    scanner keys come back as the two the page's diagnosis prints. Key order is asserted
+    too: declaration order is wire order, and it is the header's own order closed up.
+    """
     world = World(
         world_id="X2faPVKjX06VaRzClNv5KQ",
         session_name="Han Solo",
-        saves=[{"filename": "a.sav", "mtime_ns": 1_700_000_000_000_000_000, "play_duration_s": 42}],
+        saves=[dict(_HEADER)],
     )
-    monkeypatch.setattr(web_world.proj, "list_worlds", lambda: ([world], [{"file": "old.sav"}]))
+    unsupported = [
+        {
+            "path": "C:/saves/old.sav",
+            "filename": "old.sav",
+            "reason": "saveHeaderType 8 is pre-1.0",
+            "mtime_ns": 1_500_000_000_000_000_000,
+            "size": 999,
+        }
+    ]
+    monkeypatch.setattr(web_world.proj, "list_worlds", lambda: ([world], unsupported))
     body = client.get("/api/worlds").json()
-    assert len(body["worlds"]) == 1
+    assert body["worlds"] == [
+        {
+            "world_id": "X2faPVKjX06VaRzClNv5KQ",
+            "session_name": "Han Solo",
+            "saves": [
+                {
+                    "path": "C:/saves/a.sav",
+                    "filename": "a.sav",
+                    "session_name": "Han Solo",
+                    "play_duration_s": 42,
+                    "mtime_ns": 1_700_000_000_000_000_000,
+                }
+            ],
+            "mtime": pytest.approx(1.7e9),
+            "newest_filename": "a.sav",
+            "play_duration_s": 42,
+        }
+    ]
+    assert body["unsupported"] == [{"filename": "old.sav", "reason": "saveHeaderType 8 is pre-1.0"}]
     row = body["worlds"][0]
-    assert row["world_id"] == "X2faPVKjX06VaRzClNv5KQ"
-    assert row["session_name"] == "Han Solo"
-    assert row["newest_filename"] == "a.sav"
-    assert row["mtime"] == pytest.approx(1.7e9)
-    assert row["play_duration_s"] == 42
-    assert body["unsupported"] == [{"file": "old.sav"}]
+    assert list(row) == ["world_id", "session_name", "saves", "mtime", "newest_filename", "play_duration_s"]
+    assert list(row["saves"][0]) == ["path", "filename", "session_name", "play_duration_s", "mtime_ns"]
 
 
 def test_summary_reports_the_header_power_and_progression(client, state):
