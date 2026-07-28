@@ -748,7 +748,63 @@ every per-tool constant stayed with their tool. What moved is only what four cal
 sharing badly.
 
 
-## 20. Parked: the renders' two-regime sampler, and the ragged edge (2026-07-30)
+## 20. Built: the renders' two-regime sampler, and the ragged edge (parked 2026-07-30, built 2026-07-31)
+
+**Built, and two of its parts turned out to be wrong when the picture was looked at.** The
+design below is kept verbatim because it is what was implemented against; what shipped, what it
+measured and where it departed are in
+[`docs/spatial-and-map.md`](spatial-and-map.md#20-the-two-regime-sampler-and-a-smoothed-z7-2026-07-31).
+The half that was right and is unchanged: `tools/gen_map_renders.py` imports the heightmap
+generator's own sweep, mesh decode, cull rules and `MaxZRaster` and rasterises the same rocks
+into its own 32768² grid at 0.229 m, banded, once, shared by both layers.
+
+The two that were wrong, and neither would have been found by any statistic in this file:
+
+* **"Catmull-Rom on the 1 m landscape lattice and everywhere else" has to mean the LATTICE.**
+  Interpolating the composed field over a rim reconstructs its own 1 m fold — a texel just
+  outside a rock is still a cliff-top height, because a cliff-top texel is one of the four the
+  stencil reads — so the rim stays on the staircase the fold put it on at any output
+  resolution, and z7 then draws that staircase *more sharply* than a bilinear upscale of z6
+  did. The kernel is given the landscape and fill lattices with the cliff province removed,
+  and the rocks are composited on top at 0.229 m.
+* **The density plane cannot gate the composition, because where the worst rims are it is
+  zero.** `prov == 4` means the rasteriser reached the texel by interpolating a triangle wider
+  than itself, which is `density == 0` by construction; on the 234 m window with the highest
+  cliff fraction on the map, **0.00%** of texels meet "≥ 1 sample per output texel" at z7. A
+  weight built from that plane cannot reach those rims however it is shaped, and narrowing the
+  feather (measured, a sweep of seven widths) only moved 0.387 to 0.696 on the texels that do
+  qualify. What decides that the rocks are drawn is their own **coverage** of the pixel — the
+  same rule the field uses one metre coarser, with a smoothed positive part so a rock raises
+  the ground and never lowers it. The density plane says what to *call* the answer, and the
+  sidecar counts measurements against facets per province.
+
+Three smaller deviations, each with its reason:
+
+* **One sub-sample per texel, not a supersample.** The silhouette antialiasing is a
+  coverage-weighted 3×3 tent over the binary coverage. A 2×2 supersample costs 4× a pass that
+  already runs thirteen minutes, to antialias an edge already at 0.229 m. `--direct-subsamples`
+  runs it and the sidecar records which was used.
+* **The fill contour smoothing is a convolution, not a marching-squares polyline.** Smoothing
+  every level's indicator with one kernel and summing them is, by the linearity of a
+  convolution, the same array as smoothing the level field itself. Clamped to one 3.9 m step,
+  because an artifact is at most one step tall and a larger correction is a blur erasing a
+  scarp the raster did resolve.
+* **The @2x tree stayed at z5.** Cutting it from the 32768 sheet would give it a z6 weighing as
+  much as the entire 1x pyramid, for pixels a retina client gets by asking for the 1x tile one
+  level deeper — which is what Leaflet's own retina path does.
+
+And the seam trace, which had to be rebuilt twice because **both earlier versions passed
+everything**. Pooling around `w = 0.5` measures the one place a hard join has nothing to show,
+since a feather's second derivative is zero at its own midpoint by symmetry. Comparing against
+the two pure regimes measures the *terrain* once the composition is by coverage, because then
+the join is the rock's silhouette — a real cliff edge, where enormous curvature is correct.
+What ships is two bounds that both have to hold: against the hard `max` on the same texels
+(bound 1.0), and the design's own comparison against the terrain restricted to the texels where
+the two surfaces agree to within half a metre (bound 1.5), which is the premise it never had to
+state. The harness test drives both with a fade and with a one-texel join and requires the
+second to fail.
+
+---
 
 Heightfield v3 landed the density improvement — the cliff layer is the Nanite leaf now, 11.6×
 the triangles, world-space median triangle edge 2.48 m → 0.48 m, 73.0% of cliff texels

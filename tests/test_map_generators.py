@@ -65,13 +65,18 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     # cannot fail. What is still worth pinning is the arithmetic, which is a real claim
     # about two different sheets: the default depth stays z5, which is what an 8192 sheet
     # divides into and what a pyramid whose sidecar says nothing is assumed to be, while
-    # the renders are 16384 and say so in their own sidecar.
+    # the renders are 32768 and say so in their own sidecar.
     assert pyramid_top_z(gen_map_renders.SHEET_PX) == web_tiles.MAP_TILE_MAX_Z == 5
-    assert pyramid_top_z(gen_map_renders.RENDER_PX) == 6
-    # And the @2x tree is the same grid one level shallower, by arithmetic rather than by
-    # anybody's choice: 512 * 2**z runs out of sheet before 256 * 2**z does.
+    assert pyramid_top_z(gen_map_renders.RENDER_PX) == 7
+    # And the @2x tree is NOT simply one level shallower any more, which is the one place
+    # the two trees stopped being the same arithmetic. 512 * 2**z runs out of a 32768 sheet
+    # at z6, and cutting it there would cost as much again as the whole 1x pyramid for
+    # pixels a retina client gets by asking for the 1x tile one level deeper -- so the dense
+    # tree is cut from RENDER_2X_PX and stays exactly where it has always been, at z5.
     assert PYRAMID_TILE_2X_PX == 2 * PYRAMID_TILE_PX
-    assert pyramid_top_z(gen_map_renders.RENDER_PX, PYRAMID_TILE_2X_PX) == 5
+    assert gen_map_renders.RENDER_2X_PX == gen_map_renders.RENDER_PX // 2
+    assert pyramid_top_z(gen_map_renders.RENDER_2X_PX, PYRAMID_TILE_2X_PX) == 5
+    assert pyramid_top_z(gen_map_renders.RENDER_PX, PYRAMID_TILE_2X_PX) == 6
 
     pin = "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
     sidecar = gen_map_renders.build_sidecar(
@@ -82,13 +87,13 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
         },
         tiles={
             "tile_px": 256,
-            "max_z": 6,
-            "count": 5461,
-            "bytes": 240_000_000,
+            "max_z": 7,
+            "count": 21845,
+            "bytes": 900_000_000,
             "game_version_pinned": pin,
         },
         tiles_2x={"tile_px": 512, "max_z": 5, "count": 1365, "bytes": 240_000_000},
-        render={"width_px": 16384},
+        render={"width_px": 32768},
         extra={},
     )
     assert gen_map_renders.pinned_field_build(sidecar) == pin
@@ -103,7 +108,7 @@ def test_the_render_generator_writes_where_the_layered_route_looks(tmp_path, mon
     )
     monkeypatch.setattr(config, "data_dir", lambda: tmp_path)
     read_back = web_tiles._map_pyramid("terrain")
-    assert (read_back["tile_px"], read_back["max_z"]) == (256, 6)
+    assert (read_back["tile_px"], read_back["max_z"]) == (256, 7)
     assert (read_back["tile_2x_px"], read_back["max_2x_z"]) == (512, 5)
     assert web_tiles._map_bounds("terrain") == web_tiles.DEFAULT_MAP_BOUNDS_M
 
@@ -243,6 +248,407 @@ def test_water_whose_depth_was_never_measured_is_still_drawn_as_water():
     plane, measured, note = gen_map_renders.water_planes(_Old())
     assert plane.tolist() == [[1, 0], [1, 1]] and measured is plane
     assert "predates the quality byte" in note
+
+
+class _Field:
+    """The five things the two-regime stages ask of a loaded field, over a tiny grid.
+
+    A stand-in rather than a written field, for the same reason ``_FakeSheet`` below is a
+    stand-in for Pillow: these stages are arithmetic over three planes and a spacing, and
+    driving them through a 7500 px container would test zlib.
+    """
+
+    spacing_cm = 100.0
+
+    def __init__(self, height_dm, prov, density=None):
+        numpy = pytest.importorskip("numpy")
+        self._height_dm = numpy.asarray(height_dm, numpy.int16)
+        self._prov = numpy.asarray(prov, numpy.uint8)
+        self._density = None if density is None else numpy.asarray(density, numpy.uint8)
+        self.height, self.width = self._height_dm.shape
+        self.x0_cm = self.y0_cm = 0.0
+
+    def density_raster(self):
+        return self._density
+
+
+def test_the_density_plane_decides_per_texel_and_says_nothing_when_it_is_absent():
+    """``direct_weight``: the rule scales with the output texel, and absent is not zero.
+
+    Two claims, and the second one is the one that could ship a wrong picture quietly. The
+    rule is "one source vertex under an output texel", so halving the texel quadruples the
+    density a texel needs -- which is exactly why fewer texels are direct at z7 than at z6,
+    and it has to fall out of the arithmetic rather than out of a second constant.
+
+    And a field written before ``density.u8.z`` existed knows nothing about its own
+    density. ``None`` there is not "no samples anywhere": read that way, every cliff on the
+    map would silently drop to the kernel under a sidecar claiming the two-regime recipe.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    density = numpy.zeros((41, 41), numpy.uint8)
+    density[14:27, 14:27] = 10  # ten vertices in each of a 13 m square's metres
+    prov = numpy.full((41, 41), hf.PROV_CLIFF_DIRECT, numpy.uint8)
+    field = _Field(numpy.zeros((41, 41), numpy.int16), prov, density)
+
+    coarse, coarse_meta = gen_map_renders.direct_weight(field, 0.4578)  # a z6 texel
+    fine, fine_meta = gen_map_renders.direct_weight(field, 0.2289)  # a z7 texel
+    assert coarse_meta["density_min_per_field_texel"] == pytest.approx(4.77, abs=0.01)
+    assert fine_meta["density_min_per_field_texel"] == pytest.approx(19.09, abs=0.01)
+    # Ten vertices is enough for a z6 texel and not for a z7 one, from the same plane.
+    assert coarse.max() > 0, "a texel with ten samples answers a 0.458 m question"
+    assert fine.max() == 0, "and does not answer a 0.229 m one"
+    # A mask and not a weight: it labels the texels that qualify and nothing beside them,
+    # because a provenance label is a yes or a no and the average of two labels is neither.
+    assert set(numpy.unique(coarse)) == {0, 255}
+    assert coarse[20, 20] == 255 and coarse[20, 27] == 0
+
+    absent, absent_meta = gen_map_renders.direct_weight(_Field(field._height_dm, prov), 0.2289)
+    assert absent is None and hf.DENSITY_NAME in absent_meta["absent"]
+
+
+def test_the_rocks_are_composited_onto_the_lattice_and_can_only_raise_it():
+    """``blend_regimes``: the field's own composition rule, at the render's spacing.
+
+    Four things, and every one of them is a picture that would still look like terrain if it
+    were wrong. The weight has to be a coverage in [0, 1], or the height leaves both
+    surfaces. A rock has to be able to RAISE the ground and never lower it, or the tail of a
+    coverage reaching a texel the rock passes under draws a trench around the base of every
+    formation. That lift has to be smooth, or the hillshade draws a line where the rock
+    meets the ground. And where the lattice has nothing and the rock has something, the rock
+    is the whole answer and the pixel stops being no-data.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    size = 24
+    ground = numpy.full((size, size), 100.0, numpy.float32)
+    # A rock 100 m tall over the left half, and over the right half geometry that lies
+    # BELOW the ground -- an overhang's underside, which must not be allowed to dig.
+    z_cm = numpy.full((size, size), 5000.0, numpy.float32)
+    z_cm[:, : size // 2] = 20000.0
+    coverage = numpy.ones((size, size), numpy.uint8)
+    taps = (
+        gen_map_renders.taps_linear(numpy.arange(size, dtype=numpy.float64), size),
+        gen_map_renders.taps_linear(numpy.arange(size, dtype=numpy.float64), size),
+    )
+    missing = numpy.zeros((size, size), bool)
+
+    z_m, still_missing, w, switched = gen_map_renders.blend_regimes(
+        ground, missing, (z_cm, coverage), taps, 1
+    )
+    assert 0.0 <= w.min() and w.max() <= 1.0, "a coverage outside [0, 1] is not a coverage"
+    assert z_m[:, 0] == pytest.approx(200.0, abs=0.2), "the rock stands where it stands"
+    assert z_m[:, -1] == pytest.approx(100.0, abs=0.2), "and never digs below the ground"
+    assert (z_m >= ground - 1e-3).all(), "no texel anywhere was lowered by the geometry"
+    assert not still_missing.any()
+
+    # The lift is smooth: across the step from 200 m of rock to 50 m of underside, the
+    # drawn height must not be the hard max, which has a corner exactly where they cross.
+    knee = gen_map_renders.DIRECT_LIFT_KNEE_M
+    interior = slice(2, size // 2 - 2)
+    hard = numpy.maximum(z_cm / 100.0, ground)
+    delta = (z_m - hard)[:, interior]
+    assert (delta >= -1e-4).all(), "away from the silhouette it is never below the hard max"
+    assert delta.max() <= knee / 2 + 1e-4, "and never more than a half-knee above it"
+    assert set(numpy.unique(switched[:, interior].round(3))) == {200.0}
+    assert set(numpy.unique(switched[:, -6:].round(3))) == {100.0}
+
+    # Where a rock covers a pixel the lattice knows nothing about, the rock is the answer
+    # and the pixel stops being no-data; where neither has anything, it stays so.
+    blank = numpy.ones((size, size), bool)
+    none = numpy.zeros((size, size), numpy.uint8)
+    z_m, still_missing, w, _switch = gen_map_renders.blend_regimes(
+        ground, blank, (z_cm, coverage), taps, 1
+    )
+    assert z_m[:, 0] == pytest.approx(200.0) and not still_missing.any()
+    _z, all_missing, _w, _s = gen_map_renders.blend_regimes(ground, blank, (z_cm, none), taps, 1)
+    assert all_missing.all()
+
+
+def test_the_kernel_interpolates_the_lattice_and_not_the_fold_it_produced():
+    """``ground_lattice``: the one thing that decides whether a rim can smooth at all.
+
+    Interpolating the composed field over a rim reconstructs the FOLD -- a texel just
+    outside a rock is still a cliff-top height, because a cliff-top texel is one of the four
+    the stencil reads -- so the drop stays on the 1 m staircase the fold put it on however
+    fine the output grid is. That is why two attempts at this left the ragged rim in place.
+    What the kernel has to be given is the surface UNDERNEATH: the landscape and fill
+    lattices, which are continuous geometry the game evaluates itself.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    height = numpy.full((6, 6), 100, numpy.int16)
+    height[:, 2:4] = 400  # a rock, two texels wide, 30 m up
+    prov = numpy.full((6, 6), hf.PROV_LANDSCAPE, numpy.uint8)
+    prov[:, 2:4] = hf.PROV_CLIFF
+    field = _Field(height, prov)
+    ground, meta = gen_map_renders.ground_lattice(field, height.astype(numpy.float32))
+
+    assert (ground[:, 2:4] == hf.NODATA).all(), "the cliff province is not the ground"
+    assert (ground[:, :2] == 100).all() and (ground[:, 4:] == 100).all()
+    assert meta["removed_share_of_the_field"] == pytest.approx(100 * 2 / 6, abs=0.01)
+    # And the whole point of it: a stencil just outside the rock now reads only ground.
+    taps = (
+        gen_map_renders.taps_linear(numpy.arange(6, dtype=numpy.float64), 6),
+        gen_map_renders.taps_linear(numpy.arange(6, dtype=numpy.float64), 6),
+    )
+    values, missing = gen_map_renders.sample_surface(ground, taps, taps, hf.NODATA)
+    assert values[:, 1] == pytest.approx(100.0), "no cliff-top height leaks into the ground"
+    assert missing[:, 2:4].all(), "and under the rock the lattice says nothing, not zero"
+
+
+def test_the_silhouette_is_carried_by_its_own_coverage_and_not_by_zeros():
+    """``tent_coverage``: the one kernel that must not be a plain blur.
+
+    A texel just outside a rock has no height of its own -- the raster stores zero there --
+    so blurring the heights and the coverage separately would give it a fraction of zero and
+    draw a trench around every silhouette on the map. Weighted by the coverage it gets the
+    rock's own edge height at a fraction of a weight, which is what a partly covered texel
+    is. Asserted against the trench, because the trench is what the bug looks like.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    z_cm = numpy.zeros((5, 5), numpy.float32)
+    coverage = numpy.zeros((5, 5), numpy.uint8)
+    z_cm[2, 2] = 5000.0
+    coverage[2, 2] = 1
+    height, fraction = gen_map_renders.tent_coverage(z_cm, coverage.astype(numpy.float32))
+    assert height[2, 2] == pytest.approx(5000.0), "the covered texel keeps its own height"
+    assert height[2, 1] == pytest.approx(5000.0), "and its neighbour borrows it, not a zero"
+    assert 0.0 < fraction[2, 1] < fraction[2, 2] <= 1.0
+    assert fraction[0, 0] == pytest.approx(0.0), "two texels away is still outside"
+    # And a covered region much larger than the kernel keeps its weight in the middle: the
+    # tent sums to one, so it antialiases an edge without diluting an interior.
+    solid = numpy.ones((9, 9), numpy.float32)
+    _height, whole = gen_map_renders.tent_coverage(numpy.full((9, 9), 100.0, numpy.float32), solid)
+    assert whole[4, 4] == pytest.approx(1.0)
+
+
+def test_the_fill_province_is_de_terraced_by_no_more_than_one_of_its_own_steps():
+    """``deterraced_height``: the terraces go, the scarp stays, and nothing else moves.
+
+    The fill raster quantises Z to 3.9 m, so it draws the ocean shelf as flat plateaus that
+    no kernel can un-terrace. What makes the low pass safe is the clamp: an artifact is at
+    most one quantisation step tall, so a correction larger than one step is not
+    de-terracing, it is a blur erasing a scarp the raster really did resolve -- and this
+    province holds a 300 m drop at the map's edge.
+
+    The landscape beside it must not move at all, and no-data must survive as itself.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    step = gen_map_renders.FILL_QUANTISATION_M * hf.DM_PER_M
+    rows = 81
+    stair = (numpy.arange(rows) // 8) * step  # a terraced ramp, one step every 8 texels
+    height = numpy.tile(stair[:, None], (1, rows)).astype(numpy.int16)
+    height[:, -1] = hf.NODATA
+    prov = numpy.full((rows, rows), hf.PROV_FILL, numpy.uint8)
+    prov[:, :8] = hf.PROV_LANDSCAPE
+    prov[:, -1] = hf.PROV_NODATA
+    out, meta = gen_map_renders.deterraced_height(_Field(height, prov))
+
+    assert out[:, -1] == pytest.approx(hf.NODATA), "no data stays no data"
+    assert out[:, 2] == pytest.approx(height[:, 2]), "the landscape province is untouched"
+    middle = slice(20, 60)
+    # The terrace risers are gone: inside the province the step-to-step difference is
+    # spread over the cells instead of standing in one row.
+    before = numpy.diff(height[middle, 40].astype(float))
+    after = numpy.diff(out[middle, 40].astype(float))
+    assert before.max() == pytest.approx(step, abs=1.0)
+    assert after.max() < 0.55 * step, "a riser is now a ramp"
+    assert meta["moved_max_m"] <= gen_map_renders.FILL_QUANTISATION_M + 1e-6
+    assert 0.0 <= meta["clamped_share_of_the_province"] <= 100.0
+    # And it did not move the mean: a low pass that shifted the province would be a
+    # datum change dressed as an antialias.
+    inside = prov == hf.PROV_FILL
+    assert out[inside].mean() == pytest.approx(height[inside].mean(), abs=0.05 * step)
+
+
+def test_the_seam_trace_measures_the_join_and_says_what_it_cannot_measure():
+    """``SeamTrace``: what it reports, and the one thing it is honest about not being.
+
+    The design asked for a bound and there is no valid one to have here, which is a result
+    rather than an omission. Compositing a rock onto a lattice by the rock's own coverage
+    puts every join on a geometric feature, so a comparison against the ground beside it
+    measures the world; and the counterfactual that does isolate the join -- the hard max
+    over the same texels -- cannot fail, because a convex blend of two surfaces is bounded
+    by the extreme points of that blend and rounding the weight to 0 or 1 is exactly those.
+
+    So this pins the two things that ARE claims. The identity: a switch spends the whole
+    ceiling and reads 1.0. And the description: a fade over forty texels spends a small
+    fraction of it, which is the number the run prints and the sidecar records.
+    """
+    numpy = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+
+    rows, cols = 8, 400
+    spacing = 0.2289
+    x = numpy.arange(cols) * spacing
+    lattice = numpy.tile(2.0 * numpy.sin(x / 20.0), (rows, 1)).astype(numpy.float32)
+    rock = (lattice + 4.0).astype(numpy.float32)
+    delta = rock - lattice
+
+    def measure(w):
+        trace = gen_map_renders.SeamTrace()
+        drawn = w * rock + (1.0 - w) * lattice
+        switched = numpy.where(w >= gen_map_renders.SEAM_MID, rock, lattice)
+        trace.add(drawn, switched, w, spacing, delta)
+        return trace.result()
+
+    t = numpy.clip((numpy.arange(cols) - 180) / 40.0, 0.0, 1.0)
+    faded = measure(numpy.tile(t * t * (3.0 - 2.0 * t), (rows, 1)).astype(numpy.float32))
+    assert faded["measured"], faded
+    ceiling = gen_map_renders.SEAM_SWITCH_CEILING
+    assert faded["share_of_a_hard_switch"] < 0.1, faded
+    assert faded["share_of_a_hard_switch"] <= ceiling
+    # The reference the design named is still computed and still reported beside it, with
+    # the reason it is not the one that decides.
+    assert faded["against_the_pure_regimes"] is not None
+    assert faded["against_the_terrain_where_the_surfaces_agree"] is None, (
+        "four metres apart at the join is not two reconstructions of one surface"
+    )
+    assert "TERRAIN" in faded["reading"]
+
+    # A join that IS a switch spends the whole ceiling, exactly, which is the identity that
+    # makes this a description rather than a gate.
+    inside = (t > 0) & (t < 1)
+    alternating = numpy.where(numpy.arange(cols) % 2 == 0, 1.0, 0.0)
+    hard = numpy.tile(numpy.where(inside, alternating, t), (rows, 1)).astype(numpy.float32)
+    assert measure(hard)["share_of_a_hard_switch"] == pytest.approx(ceiling)
+
+    # And a render with no rocks in it says so rather than dividing by nothing.
+    none = numpy.zeros((rows, cols), numpy.float32)
+    assert measure(none)["measured"] is False
+
+
+def test_the_regime_table_counts_by_province_and_reports_the_unbucketed_weight():
+    """``RegimeCoverage``: three buckets and the mean behind them.
+
+    The direct bucket is split by what the density plane says the drawn answer WAS -- a
+    texel a source vertex landed in, or the plane of a triangle wider than the texel -- and
+    that split is the whole of what the plane does here. ``mean_w`` beside the buckets is
+    the unbucketed answer, because a bucket boundary at 0.98 hides a coverage doing real
+    work at 0.7.
+    """
+    numpy = pytest.importorskip("numpy")
+
+    prov = numpy.array([[hf.PROV_CLIFF_DIRECT] * 2 + [hf.PROV_LANDSCAPE] * 2] * 2, numpy.uint8)
+    w = numpy.array([[1.0, 0.5, 0.0, 0.0], [1.0, 0.5, 0.0, 0.0]], numpy.float32)
+    # The first cliff column is a measurement, the second is a facet the rasteriser
+    # interpolated -- both fully covered, and the table has to tell them apart.
+    measured = numpy.array([[True, True, False, False]] * 2)
+    table = gen_map_renders.RegimeCoverage()
+    table.add(prov, w, measured)
+    out = table.result()
+    cliff = out["per_province_pct_of_sheet"][hf.PROV_NAMES[hf.PROV_CLIFF_DIRECT]]
+    land = out["per_province_pct_of_sheet"][hf.PROV_NAMES[hf.PROV_LANDSCAPE]]
+    assert (cliff["direct_measured"], cliff["faded"], cliff["kernel"]) == (25.0, 25.0, 0.0)
+    assert cliff["direct_facet"] == 0.0
+    assert (land["direct_measured"], land["direct_facet"], land["kernel"]) == (0.0, 0.0, 50.0)
+    assert cliff["mean_w"] == pytest.approx(0.75) and land["mean_w"] == pytest.approx(0.0)
+    assert out["sheet_pct"]["mean_w"] == pytest.approx(0.375)
+
+
+def test_a_direct_cache_from_another_render_is_rebuilt_rather_than_drawn_from(tmp_path):
+    """``cached_direct``: three keys, and a mismatch on any of them is a different picture.
+
+    The raster is written once and read by both layers, which is the only reason it is on
+    disk at all -- so the question a reader has is whether the bytes under this run's
+    sidecar are of this run's grid, this run's sub-sampling and this run's build. Anything
+    else is last week's rocks, and the answer to that is to rasterise again rather than to
+    draw them.
+    """
+    numpy = pytest.importorskip("numpy")
+
+    stamp = gen_map_renders.direct_cache_stamp(8, 1, "build 495413")
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    numpy.zeros((8, 8), numpy.float32).tofile(tmp_path / gen_map_renders.DIRECT_Z_NAME)
+    numpy.zeros((8, 8), numpy.uint8).tofile(tmp_path / gen_map_renders.DIRECT_COVERAGE_NAME)
+    (tmp_path / gen_map_renders.DIRECT_CACHE_SIDECAR).write_text(
+        json.dumps({**stamp, "seconds": 1.0}), encoding="utf-8"
+    )
+    assert gen_map_renders.cached_direct(tmp_path, stamp) is not None
+    for other in (
+        gen_map_renders.direct_cache_stamp(16, 1, "build 495413"),
+        gen_map_renders.direct_cache_stamp(8, 2, "build 495413"),
+        gen_map_renders.direct_cache_stamp(8, 1, "build 500000"),
+    ):
+        assert gen_map_renders.cached_direct(tmp_path, other) is None
+    assert gen_map_renders.cached_direct(tmp_path / "nowhere", stamp) is None
+
+
+def test_the_direct_pass_applies_the_field_s_own_culls_and_lands_where_it_says(tmp_path):
+    """The placement culls are the generator's, and the raster is on the render's grid.
+
+    Two things are being pinned. First that the four culls are the same four the field was
+    built with -- an excluded owner, a mesh with no geometry, an arch, an oversized shell --
+    because a render blended with a field whose rocks are a different set of rocks is a
+    picture of a different world. Second that the grid the triangles land on is the frame's
+    own: a half-texel offset here would be invisible in every statistic and would draw every
+    rim in the wrong place.
+    """
+    numpy = pytest.importorskip("numpy")
+
+    # One unit square of two triangles, lying flat at z = 500 cm, one metre on a side.
+    verts = numpy.array([[0, 0, 500], [100, 0, 500], [100, 100, 500], [0, 100, 500]], numpy.float32)
+    tris = numpy.array([[0, 1, 2], [0, 2, 3]], numpy.int64)
+    geometry = {
+        "/World/Environment/Rock/Slab": (verts, tris),
+        # An arch decodes exactly as well as a slab does. It is dropped for what it IS --
+        # a max-Z field puts a roof over the ground beneath it -- so it has to be in the
+        # geometry, or the cull under test is the missing-geometry one wearing its name.
+        "/World/Environment/Rock/Arc_Slab": (verts, tris),
+    }
+    identity = (0.0, 0.0, 0.0)
+    unit = (1.0, 1.0, 1.0)
+    x0, y0 = gen_map_renders.BOUNDS_M["x_min_m"] * 100, gen_map_renders.BOUNDS_M["y_min_m"] * 100
+    sweep = {
+        "meshes": [
+            "/World/Environment/Rock/Slab",
+            "/World/Environment/Rock/Arc_Slab",
+            "/World/Environment/Rock/Missing",
+        ],
+        "owners": ["RockActor_C", next(iter(gen_map_renders.gen.EXCLUDED_OWNERS))],
+        "placements": numpy.array(
+            [
+                (0, 0, x0 + 1000, y0 + 1000, 0, *identity, *unit),  # drawn
+                (0, 1, x0 + 2000, y0 + 1000, 0, *identity, *unit),  # excluded owner
+                (1, 0, x0 + 3000, y0 + 1000, 0, *identity, *unit),  # an arch is a roof
+                (2, 0, x0 + 4000, y0 + 1000, 0, *identity, *unit),  # no cooked geometry
+                (0, 0, x0 + 5000, y0 + 1000, 0, *identity, 1e4, 1e4, 1e4),  # a sky dome
+            ],
+            numpy.float64,
+        ),
+    }
+    prepared, dropped = gen_map_renders.direct_placements(sweep, geometry)
+    assert len(prepared) == 1
+    assert dropped == {"owner": 1, "no_geometry": 1, "arch": 1, "oversize": 1}
+
+    # And it rasterises onto the frame's own grid at the frame's own spacing. A 1 m slab
+    # placed 10 m east of the frame's western edge covers exactly the z7 texels whose own
+    # centres fall in that metre, and no others -- which is the claim a half-texel offset
+    # would break invisibly, since a rim drawn one texel out still looks like a rim.
+    step_cm = (
+        (gen_map_renders.BOUNDS_M["x_max_m"] - gen_map_renders.BOUNDS_M["x_min_m"]) * 100 / 32768
+    )
+    # Four rows, because a 1 m slab is 4.4 texels of 0.229 m tall and the band is anchored
+    # at its northern edge: asking about a fifth row would be asking about ground the slab
+    # does not stand on.
+    rows, cols = 4, 64
+    first = int(numpy.ceil(1000.0 / step_cm - 0.5))
+    last = int(numpy.ceil(1100.0 / step_cm - 0.5))
+    band = gen_map_renders.rasterise_direct_band(
+        prepared, geometry, x0, y0 + 1000, step_cm, rows, cols, 1
+    )
+    z_cm, coverage = gen_map_renders.reduce_direct(band, rows, cols, 1)
+    assert coverage[:, first:last].all(), "every texel centred inside the slab is covered"
+    assert not coverage[:, :first].any() and not coverage[:, last:].any(), "and none outside"
+    assert z_cm[coverage > 0] == pytest.approx(500.0)
 
 
 def test_the_biome_palette_is_this_file_s_own_and_covers_what_the_game_ships():

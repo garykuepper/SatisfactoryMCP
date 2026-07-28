@@ -13,45 +13,84 @@ file adds two more, drawn here rather than found:
   the steep ground, sun-bleached tops on the high plateaus and a little noise so the flats
   are not vector-flat.
 
-Both are 16384x16384 on the **same frame as the artwork sheet** -- x [-3247, 4253] m,
+Both are 32768x32768 on the **same frame as the artwork sheet** -- x [-3247, 4253] m,
 y [-3750, 3750] m -- and cut into the same 256 px pyramid, so the page's existing tile grid,
 its CRS and its bounds are untouched and a layer is a change of picture and nothing else.
 
-Why 16384 and not 32768
------------------------
-Measured rather than argued, on four windows -- an offshore cliff island, a mainland cliff
-face, the dune field and the Spire Coast -- in both layers, at four resolutions each. The
-statistic is what one doubling actually changes: the finer render box-filtered onto the
-coarser grid, minus the coarser render, mean absolute per channel::
+Two regimes, because the field is one resolution and not one kind of answer
+---------------------------------------------------------------------------
+This file used to sample the 1 m field and nothing else, and every pixel of every layer was
+therefore an **interpolation** of it -- an honest one, C1 and continuous, but an
+interpolation, and a reconstruction from a 1 m max-Z fold cannot put a cliff rim anywhere
+except on a 1 m staircase. That staircase is what every rock on this map carried as a dark
+ragged rim, and it was never the geometry's fault: the cliff layer's triangles have a
+world-space median edge of **0.48 m**, three times finer than the lattice the field folds
+them onto.
 
-    4096 -> 8192     3.34 levels of 255
-    8192 -> 16384    2.69
-    16384 -> 32768   1.38     at 3.6x the drawing time and 4x the bytes
+So the render reads the geometry too. ``tools/gen_world_heightmap.py``'s own sweep, its own
+mesh decode and its own ``MaxZRaster`` are **imported and called here** -- not copied -- and
+the same rocks, under the same placement culls, are rasterised a second time into *this*
+picture's grid at *this* picture's spacing. Where that answer is a measurement it is drawn
+directly; where it is not, the Catmull-Rom kernel over the 1 m lattice is, exactly as
+before:
 
-and, more to the point, the **high-frequency energy per pixel goes DOWN at every doubling**,
-in all eight window-and-layer pairs -- 15.34 to 14.32 to 13.57 on the mainland cliff, and so
-on. That is the signature of a sampler resolving an interpolant rather than of a picture
-finding new world in the source: the field is a 1 m grid, 16384 px over 7500 m is 0.458 m to
-the pixel, and that is already past Nyquist. What 32768 buys is antialiasing on cliff
-facets, and one more pyramid level whose every pixel would be interpolation claiming to be
-terrain. So 16384 ships and z6 is the last honest level.
+* **direct** -- the geometry, rasterised at 0.229 m. Used where ``density.u8.z`` says at
+  least one source vertex landed in the ground under an output texel, which at 0.229 m means
+  a 1 m texel holding 19 or more of them. Those are the near-vertical faces: a rim projects
+  a whole cliff face into a handful of texels in plan, so the density plane is highest
+  exactly where the staircase was worst.
+* **kernel** -- Catmull-Rom (cubic convolution, a = -1/2) over the 1 m field, which is C1,
+  falling back to bilinear where the 4x4 stencil straddles no-data, and to nothing at all
+  where no texel under it has a value. This is the great majority of the sheet and it is
+  unchanged; ``_meta.render.two_regime.regimes`` counts exactly how much, per province.
+* **and a cross-fade between them**, never a switch. A hard switch between a rasterised
+  surface and a C1 interpolant is a derivative discontinuity, and the hillshade is a
+  function of the derivative -- so the density plane's own boundaries would draw themselves
+  into the relief as ridges. The height is blended, ``z = w*z_direct + (1-w)*z_kernel``,
+  with ``w`` a coverage: the qualifying mask feathered at the field's own resolution,
+  sampled bilinearly and clipped to [0, 1], multiplied by the direct raster's
+  own coverage fraction so a silhouette fades rather than steps. ``SeamTrace`` below
+  measures what that bought, along a line rather than at a probe -- the probes are sparse
+  relative to the seam and a ridge one texel wide is invisible to all of them. The statistic
+  is the second derivative of the drawn height over every 3-texel stencil that straddles the
+  blend, against the same statistic in the two pure regimes beside it, and beside THAT the
+  same texels under the hard switch this design refused.
 
-Sampling, and what "continuous" means here
--------------------------------------------
-The heightfield is a **surface**, not a picture: the landscape layer under it is a bilinear
-patch grid the game itself evaluates continuously, and the cliff layer is rasterised
-collision geometry on the same 1 m lattice. Doubling the output resolution is only worth
-anything if the sampler is continuous too, so it is: **Catmull-Rom** (cubic convolution,
-a = -1/2) rather than bilinear. That matters for exactly one reason -- bilinear is C0, its
-derivative jumps at every texel boundary, and the hillshade is a function of the derivative.
-Sampled bilinearly at 0.458 m the relief comes out ruled into 1 m squares; sampled with a
-C1 kernel it does not.
+Why 32768, when 16384 was measured and defended
+-----------------------------------------------
+Because the two claims are different claims, and only the first one was ever refused.
 
-The one place it falls back to bilinear is where the 4x4 stencil is not whole. A fifth of
-this field is no-data -- the corners outside the landscape -- and a cubic kernel has
-negative lobes, so a stencil straddling that boundary can overshoot. There, the 2x2 answer
-is used instead, which is exactly what this file drew everywhere before; where there is no
-data under either, the render says nothing and paints the page's own sea.
+The measurement that stopped this file at 16384 -- and it was re-run on the v3 field and
+came out the same -- is that **doubling the sampling of a 1 m field finds no new world**:
+high-frequency energy per pixel falls at every doubling, 3.05 to 1.50 levels on the worst
+cliff window, which is the signature of a sampler resolving an interpolant. That is still
+true and this file still says so. z7 is **not** sold as more information.
+
+What z7 is, is **smoothness that a browser cannot produce**. A client shown z6 at twice its
+scale upsamples it bilinearly, and bilinear is C0: its derivative jumps at every source
+texel, so the relief comes out ruled into 0.458 m squares -- which is the identical failure
+that moved this file off a bilinear sampler in the first place, moved from the render into
+the viewer. A z7 tile is the same surface evaluated by the same C1 kernel at 0.229 m, and
+the difference between the two is not detail, it is the derivative being continuous. That is
+a thing only the server can do, and ``_meta`` says so in those words rather than claiming a
+level of terrain the field does not have.
+
+And over the direct regime it *is* new information, because there the pixels are triangles
+rather than an interpolation. How much of the sheet that is depends on the density plane
+and on the spacing, so it is measured every run and recorded per province in
+``_meta.render.two_regime.regimes`` rather than asserted here.
+
+What the fill province gets instead
+------------------------------------
+Neither regime helps the third province. ``fill`` is the interface raster: 3.66 m cells
+quantised to 3.9 m in Z, so it draws the ocean shelf and the map's edge as **terraces** --
+flat plateaus with blocky outlines that no kernel can un-terrace, because those steps are
+real in the data and are not in the world. They are low-passed at their own cell size,
+inside the province only and faded at its edge, which smooths every terrace contour at once:
+smoothing each level's indicator by one kernel and summing is, by the linearity of a
+convolution, the same array as smoothing the level field itself, so the spline along the
+marching-squares contour that this was designed as is one convolution and there is no
+polyline to extract.
 
 Borrowing detail where the field has none
 ------------------------------------------
@@ -85,10 +124,21 @@ Why a new file rather than a stage on gen_world_heightmap.py
 The heightmap generator's job is to get a field **out of the game**: it sweeps cooked
 packages, rasterises collision meshes and validates the result against 626 nodes. This file
 reads that finished field back through the same public codec any other consumer would, adds
-a second input the heightmap generator has never heard of, and writes pictures. The two
-share an input and nothing else -- no stage, no constant, no intermediate array -- so
-bolting this on would have coupled a six-minute extraction to a four-minute render and given
-one ``--force`` two meanings. What IS shared is shared by import: the codec comes from
+two inputs the heightmap generator has never heard of, and writes pictures. Bolting this on
+would couple a six-minute extraction to a twenty-minute render and give one ``--force`` two
+meanings, so they stay two programs with two command lines.
+
+They no longer share only an input, and that is worth stating plainly, because the direct
+regime above needs the *triangles* and the baked 1 m field can only ever be interpolated.
+This file therefore **imports the shipping generator** -- ``sweep_levels``,
+``read_mesh_geometry``, ``rotation_matrix``, ``winding_sign``, ``MaxZRaster`` and every one
+of its cull rules -- and calls them, the same posture ``tools/check_terrain_geometry.py``
+takes and for the same reason: a second rasteriser would make every difference between the
+render and the field a difference between two rasterisers as much as between two spacings.
+The one thing that differs is the grid they are pointed at. Nothing is copied, nothing is
+re-decided, and no constant is retyped.
+
+The rest is shared by import as it always was: the codec comes from
 ``satisfactory_mcp.domain.spatial.heightfield``, the pyramid cutter with its staging dance
 and its refusals from ``satisfactory_mcp.core.gameassets.pyramid``, and the container reader
 from ``satisfactory_mcp.core.gameassets`` beside it -- because a tile layout with two
@@ -139,25 +189,38 @@ can see what was there and what was done instead.
 What it writes
 --------------
 ``data/local/renders/{terrain,satellite}/``, each holding ``tiles/{z}/{x}_{y}.png`` for
-z0..z6, ``tiles@2x/{z}/{x}_{y}.png`` for z0..z5, and a ``meta.json`` the web API reads.
-**z6 is 16384 px and there is no z7**, for the reason measured above.
+z0..z7, ``tiles@2x/{z}/{x}_{y}.png`` for z0..z5, and a ``meta.json`` the web API reads.
+**z7 is 32768 px**, 0.229 m to the pixel, and ``_meta.render.z7`` says in words what it is
+and is not.
 
 ``tiles@2x/`` is the identical tile GRID at 512 px a tile: level z is still 2**z tiles a
 side over the identical squares of the world, so a client asks for the same ``{z}/{x}/{y}``
 and gets twice the pixels in each direction, which is what a display with a device pixel
-ratio above one wants. It is one level shallower than the 1x tree by arithmetic -- 512*2**z
-runs out of sheet before 256*2**z does -- and past that level the two carry identical
-information.
+ratio above one wants. It is cut from a 16384 px downscale of the sheet rather than from the
+sheet, which **caps it at z5, where it already was**, and that is a size decision taken
+by measurement rather than by arithmetic: cutting it from the full 32768 would add a z6
+level of 512 px tiles weighing as much as the entire 1x tree, for pixels a hi-DPI client
+already has -- Leaflet's own retina path asks for ``z+1`` at 1x and draws it at half size,
+and the 1x tree is now a level deeper than it was. ``RENDER_2X_PX`` is where that is
+written down.
 
-Everything is under ``data/local/``, which is gitignored, and nothing here is ever committed.
+Everything is under ``data/local/``, which is gitignored, and nothing here is ever committed
+-- including ``renders/direct.cache/``, the one scratch artifact this file keeps between
+layers so the geometry is rasterised once and drawn twice.
 
 Staleness
 ---------
-Two pins, both refused on rather than overwritten. The field's own ``meta.json`` names the
-build it was cut from, and this run records that same string; a re-run over renders whose
-sidecar names a different field build stops. And a field that is not there at all is not an
+Four pins now, all refused on rather than overwritten. The field's own ``meta.json`` names
+the build it was cut from, and this run records that same string; a re-run over renders whose
+sidecar names a different field build stops. A field that is not there at all is not an
 error to work around -- it is the one input this file cannot invent, so the run says which
-tool writes it and exits. ``--force`` says it anyway.
+tool writes it and exits. A field with **no density plane** cannot say which of its texels
+are measurements, so the two-regime sampler has nothing to switch on: that run stops too,
+and names the generator version that writes one, rather than quietly drawing recipe 2 under
+a sidecar that claims recipe 3. And the direct cache carries the size, the sub-sampling and
+the build it was rasterised for, so a cache from another render is rebuilt rather than
+reused. ``--force`` says the first two anyway; ``--kernel-only`` is the honest way to draw
+without the geometry, and it records itself in the sidecar.
 
 What opens the container
 ------------------------
@@ -208,7 +271,7 @@ from satisfactory_mcp.core.gameassets.maparea import (
     MapAreaError,
     read_map_areas,
 )
-from satisfactory_mcp.core.gameassets.packages import ScriptObjects
+from satisfactory_mcp.core.gameassets.packages import AssetIndex, ClassFacts, ScriptObjects
 from satisfactory_mcp.core.gameassets.provenance import read_str_path
 from satisfactory_mcp.core.gameassets.pyramid import (
     PYRAMID_TILE_2X_PX,
@@ -222,6 +285,11 @@ from satisfactory_mcp.core.gameassets.pyramid import (
 )
 from satisfactory_mcp.core.gameassets.textures import decode_bc1_rgba
 from satisfactory_mcp.domain.spatial import heightfield as hf
+
+# And the generator that WRITES the field, for the direct regime: its sweep, its mesh
+# decode, its cull rules and its rasteriser, called rather than reimplemented. See the
+# module docstring -- the only thing this file changes is the grid they are pointed at.
+from tools import gen_world_heightmap as gen
 from tools._common import base_parser, require_gen
 
 # The corners every layer is drawn on, the sheet the ARTWORK is drawn at, and how to read
@@ -254,12 +322,24 @@ DEFAULT_WORKERS = min(os.cpu_count() or 1, WORKER_CAP)
 #: sheet size actually has.
 CHECK_PARALLEL_Z = 5
 
-#: What a render is drawn at, and the levels that buys. 16384 px over 7500 m is 0.458 m to
-#: the pixel against a 1 m field -- past Nyquist, and measurably past the point where more
-#: pixels carry more world; see the module docstring. Derived from the artwork's own sheet
-#: size rather than typed, because the two are the same frame and one of them moving
-#: without the other is the drift this file exists not to have.
-RENDER_PX = SHEET_PX * 2
+#: What a render is drawn at, and the levels that buys. 32768 px over 7500 m is 0.229 m to
+#: the pixel; z7 is the top of the 1x tree. Derived from the artwork's own sheet size rather
+#: than typed, because the two are the same frame and one of them moving without the other
+#: is the drift this file exists not to have.
+#:
+#: The doubling from 16384 is **not** a claim that the field has more to say -- that was
+#: measured twice and refused twice, and the module docstring keeps the numbers. It is a
+#: claim about the CLIENT: a browser shown z6 at twice its scale upsamples it bilinearly,
+#: and bilinear is C0, so the relief it draws is ruled into 0.458 m squares. z7 is the same
+#: surface evaluated by the same C1 kernel at half the spacing, which is a thing only a
+#: server can hand over.
+RENDER_PX = SHEET_PX * 4
+
+#: And what the @2x tree is cut from, which is one level shallower than the sheet on
+#: purpose. See "What it writes": a 512 px z6 tree costs as much as the whole 1x pyramid for
+#: pixels a hi-DPI client gets by asking for the 1x tile one level deeper, which is what
+#: Leaflet's own retina path does.
+RENDER_2X_PX = SHEET_PX * 2
 
 #: Which recipe drew the pixels. Recorded per layer, so a reader looking at a tile can find
 #: out which set of rules made it, and a later recipe over an earlier one is an upgrade a
@@ -277,8 +357,24 @@ RECIPES = {
         "artwork sheet's luminance high-pass borrowed into the shading wherever the "
         "provenance byte says cliff or fill, faded out towards landscape"
     ),
+    3: (
+        "recipe 2 at 32768 px, with a two-regime sampler: the cliff geometry decoded from "
+        "the container and rasterised into this grid at 0.229 m wherever density.u8.z says "
+        "a source vertex landed under the output texel, the Catmull-Rom kernel over the 1 m "
+        "field everywhere else, and a density-weighted cross-fade between them so no "
+        "province boundary is ever a derivative discontinuity. Plus the fill province "
+        "low-passed at its own 3.66 m cell so its 3.9 m terraces stop being contours"
+    ),
 }
-RECIPE = 2
+RECIPE = 3
+
+#: What ``--kernel-only`` draws, and it is not "recipe 3 with a stage switched off". It is
+#: the recipe that shipped before this one, whole: no geometry opened, no direct regime, no
+#: cross-fade and no de-terracing either -- so a run of it at 16384 IS the picture the page
+#: had, and a before/after against it is a comparison of two recipes rather than of one
+#: recipe against a half of itself. The sidecar records this number, so a layer drawn that
+#: way never claims the recipe above.
+RECIPE_KERNEL_ONLY = 2
 
 # --------------------------------------------------------------------------------------
 # The biome raster.
@@ -448,6 +544,110 @@ BORROW_CLAMP = (0.74, 1.26)
 #: human drew on those cliffs -- and 601 is the weighting that matches how a human sees it.
 #: The colour never crosses: an ocean drawn blue contributes its brightness and nothing else.
 BORROW_LUMA = np.array([0.299, 0.587, 0.114], np.float32)
+
+# --------------------------------------------------------------------------------------
+# The direct regime: which output texels are entitled to the triangles, and how the two
+# regimes are joined.
+# --------------------------------------------------------------------------------------
+
+#: How many source vertices the ground under one OUTPUT texel has to have contributed
+#: before that texel's height is a measurement rather than an interpolation across a
+#: triangle wider than itself. One, which is ``gen_world_heightmap.DIRECT_SAMPLES_MIN``
+#: imported rather than retyped -- the rule is the generator's and this file only evaluates
+#: it at a different spacing. ``density.u8.z`` counts per 1 m texel, so the test against a
+#: 0.229 m texel is ``density >= 1 / 0.229**2``, i.e. 19 of them.
+DIRECT_SAMPLES_PER_TEXEL = gen.DIRECT_SAMPLES_MIN
+
+#: How many sub-samples per output texel per axis the direct pass rasterises at. One, and
+#: that is a measurement rather than a preference: the pass costs 4x per doubling and the
+#: silhouette it is antialiasing is already at 0.229 m, an eighth of the 1 m staircase this
+#: whole regime exists to remove. What replaces the supersample is ``COVERAGE_TENT`` below,
+#: which reconstructs the same fractional edge from the binary mask for the price of two
+#: separable 3-taps. Raise it with ``--direct-subsamples`` and the sidecar records what was
+#: actually run.
+DIRECT_SUBSAMPLES = 1
+
+#: The tent the direct raster's own coverage is reconstructed with, and it is the
+#: antialiasing on the direct silhouettes. A 3-tap 1-2-1 in each axis over the binary
+#: coverage turns a hard per-texel in/out decision into a fraction over one texel, and the
+#: heights are carried through the same kernel WEIGHTED BY THAT COVERAGE, so a texel just
+#: outside the rock is a fraction of the rock's own edge height rather than a fraction of
+#: zero. Off with ``--direct-subsamples`` above 1, where the supersample has already done it.
+COVERAGE_TENT = np.array([0.25, 0.5, 0.25], np.float32)
+
+#: The knee of the smoothed positive part that lets a rock raise the ground and never lower
+#: it, in metres. The field's own composition is a hard ``max`` and this is that same max
+#: with its corner rounded: a hard one puts a first-derivative discontinuity exactly where
+#: the rock meets the ground, which is a line the hillshade would draw around the base of
+#: every formation on the map. A quarter of a metre sits at most an eighth of one above the
+#: hard answer, is never below it -- so the rule "a rock raises the ground and never lowers
+#: it" holds exactly rather than nearly -- and is C-infinity everywhere.
+DIRECT_LIFT_KNEE_M = 0.25
+
+
+#: Rows of the output the direct pass rasterises at a time. A whole 32768 square of float32
+#: is 4.3 GB and the render already holds 3.2 GB of output; 256 rows of it is 34 MB, and a
+#: triangle at the 0.48 m median touches one band or two, so a per-placement y-bbox test is
+#: all the selection this needs. The same 256 the colour bands use, which is also one row of
+#: 256 px tiles -- three things that want the same number and have no reason to disagree.
+DIRECT_BAND_ROWS = 256
+
+#: Where the direct raster is kept between the two layers. Rasterising 216 M triangles is
+#: twenty minutes and the answer does not depend on which layer is being coloured, so it is
+#: done once, memory-mapped, and deleted at the end of the run unless ``--keep-direct``.
+#: Under ``renders/``, which is under ``data/local/``, which is gitignored.
+DIRECT_CACHE_DIR_NAME = "direct.cache"
+DIRECT_Z_NAME = "direct.z.f32"
+DIRECT_COVERAGE_NAME = "direct.cov.u8"
+DIRECT_CACHE_SIDECAR = "meta.json"
+
+#: What the seam trace calls "at the seam" and "in a pure regime", as distances from a
+#: half-weight crossing. The statistic is the p99 of the second difference of the drawn
+#: height along a row: at the seam against the pure regimes on either side of it, as a
+#: ratio. Above ``SEAM_RATIO_MAX`` the cross-fade is drawing curvature the surface does not
+#: have, which is the failure this design exists to avoid, and the run says so.
+#: What counts as "at the seam" is the whole BLEND, not a window around the half-weight
+#: line, and that is a repair rather than a preference. A feather's second derivative is
+#: zero at its own midpoint by symmetry -- it lives at the shoulders -- so a window around
+#: ``w = 0.5`` measures the one place a hard join has nothing to show, and a nearly-hard
+#: join sails through it. Every 3-texel stencil is therefore sorted into exactly one of
+#: three pools by the weights under it: wholly kernel, wholly direct, or straddling.
+SEAM_MID = 0.5
+SEAM_PURE = 0.02
+SEAM_RATIO_MAX = 1.5
+
+#: What a hard switch reads, which is the scale the fade's own number is on. A convex blend
+#: of two surfaces can never be rougher than the switch between them -- rounding the weight
+#: to 0 or 1 is the extreme point of the blend -- so this is an identity and not a bound, and
+#: it is written down as the ceiling the reported ratio is a fraction of rather than as a
+#: gate anything can fail. See ``SeamTrace`` for the three references that were tried and
+#: what each of them turned out to be measuring.
+SEAM_SWITCH_CEILING = 1.0
+
+SEAM_SAME_SURFACE_M = 0.5
+
+#: How far from a crossing the comparison pool is allowed to be gathered, in output texels.
+#: 32 of them is 7.3 m at z7 -- the ground on either side of the seam and not the rest of
+#: the world, which would be mostly open ocean and would make any seam at all look like a
+#: spike against it.
+SEAM_NEAR_TEXELS = 32
+
+#: How many texels of each pool one band contributes. A systematic sample rather than the
+#: whole pool, because the pools run to tens of millions of texels over a 32768 square and
+#: the percentile taken from them moves in the fourth decimal.
+SEAM_SAMPLE_MAX_PER_BAND = 200_000
+
+#: How the fill province stops being terraces. Its cells are 3.66 m and its Z step is
+#: 3.9 m, so it draws the ocean shelf as flat plateaus with blocky outlines; the low pass is
+#: one cell wide, which is the scale below which that raster says nothing at all. Both
+#: numbers come from the generator that decoded the raster rather than from here.
+#:
+#: Normalised over the province and faded by its own weight, so nothing outside the fill is
+#: touched and the province boundary is not itself drawn -- and so a fill texel next to a
+#: cliff keeps its own height rather than being pulled towards a neighbour that is not in
+#: the same raster.
+FILL_DETERRACE_SIGMA_M = gen.FILL_HORIZONTAL_M
+FILL_QUANTISATION_M = gen.FILL_VERTICAL_M
 
 # --------------------------------------------------------------------------------------
 # The satellite layer's own rules.
@@ -733,6 +933,176 @@ def coarse_province(field) -> tuple[np.ndarray, dict]:
             "collision hulls, or a 3.9 m block raster -- 0 over the landscape layer, which "
             "is continuous geometry and keeps shading of its own, and a Gaussian ramp "
             "between them so the provenance byte is never itself drawn"
+        ),
+    }
+
+
+# --------------------------------------------------------------------------------------
+# The direct regime: which texels the triangles are allowed to answer, and the surface
+# underneath them where they are not.
+# --------------------------------------------------------------------------------------
+
+
+def direct_weight(field, spacing_m: float) -> tuple[np.ndarray | None, dict]:
+    """Where the geometry outvotes the kernel, as a feathered 0..255 mask at 1 m.
+
+    ``None`` when the field carries no ``density.u8.z`` -- which is not "no samples
+    anywhere" and must never be read as one. A field written before the plane existed knows
+    nothing about its own density, and the caller's job is to refuse rather than to assume.
+
+    The rule is the generator's: **one source vertex under the output texel**. The plane
+    counts per 1 m texel, so the test is scaled by the output texel's own area, and that is
+    the whole of why fewer texels qualify at 0.229 m than at 0.458 m -- the same geometry,
+    asked a harder question.
+
+    A **mask and not a weight**, and that is the whole of what changed about this plane.
+    It was the cross-fade's own weight for one draft, feathered over metres and multiplied
+    into the height, and the measurement that ended that is in the module docstring: on the
+    texels where the worst rims are, the density is **zero by construction**, so a weight
+    built from it cannot reach them however wide the feather is. What decides that the rocks
+    are drawn is their own coverage of the pixel. What this decides is what to CALL the
+    answer -- a measurement, or the plane of a triangle wider than a texel -- and a
+    provenance label is a yes or a no per texel, so it is read nearest and never blurred.
+    """
+    density = field.density_raster()
+    if density is None:
+        return None, {
+            "absent": (
+                f"this field carries no {hf.DENSITY_NAME}, so it cannot say which of its "
+                "texels are measurements and which are the rasteriser interpolating across "
+                "a triangle wider than a texel. That is the only thing the two-regime "
+                "sampler switches on."
+            )
+        }
+    need = DIRECT_SAMPLES_PER_TEXEL / (spacing_m * spacing_m)
+    qualifies = density >= min(need, 255.0)
+    share = float(qualifies.mean())
+    cliff = np.isin(field._prov, hf.PROV_CLIFF_VALUES)
+    return (qualifies.astype(np.uint8) * 255), {
+        "plane": hf.DENSITY_NAME,
+        "rule": (
+            f"at least {DIRECT_SAMPLES_PER_TEXEL:g} source vertex under an output texel of "
+            f"{spacing_m:.4f} m, i.e. density >= {need:.2f} per 1 m texel"
+        ),
+        "samples_min_per_output_texel": DIRECT_SAMPLES_PER_TEXEL,
+        "density_min_per_field_texel": round(float(need), 2),
+        "qualifying_share_of_the_field": round(100 * share, 3),
+        "qualifying_share_of_the_cliff_province": round(
+            100 * float(qualifies[cliff].mean()) if cliff.any() else 0.0, 2
+        ),
+        "role": (
+            "1 where the cliff geometry sampled the ground finer than this render draws it, "
+            "0 where it did not. Provenance and not a gate: what decides that the rocks are "
+            "drawn is their own coverage of the pixel, and this decides what to CALL what "
+            "was drawn -- a measurement, or the plane of a triangle wider than a texel."
+        ),
+    }
+
+
+def ground_lattice(field, heights: np.ndarray) -> tuple[np.ndarray, dict]:
+    """The same heights with the CLIFF province removed, which is the surface underneath.
+
+    This is the kernel regime's real input, and getting it wrong is what left the ragged rim
+    in place through two attempts at this. Interpolating the whole field over a rim
+    reconstructs the **fold**: a texel just outside a rock is still a cliff-top height,
+    because a cliff-top texel is one of the four the stencil reads, so the drop stays where
+    the 1 m lattice put it and no amount of output resolution moves it. Interpolating the
+    lattice UNDERNEATH -- the landscape and the fill, which are continuous surfaces the game
+    evaluates itself -- puts the ground where the ground is, and lets the rasterised rock
+    decide its own silhouette on top of it. That is the composition
+    ``gen_world_heightmap.py`` performs at 1 m, performed here at 0.229 m instead of read
+    back from its own output.
+
+    The holes this leaves are real and are handled by the sampler that already exists: where
+    the 4x4 stencil is not whole it falls back to 2x2, where nothing under it is known it
+    says so, and the caller substitutes the whole field's fold there -- which is inside a
+    formation, where the rock covers the pixel and answers it anyway.
+    """
+    cliff = np.isin(field._prov, hf.PROV_CLIFF_VALUES)
+    ground = np.where(cliff, np.float32(hf.NODATA), heights).astype(np.float32)
+    known = field._height_dm != hf.NODATA
+    return ground, {
+        "role": (
+            "the landscape and fill lattices with the cliff province removed, which is what "
+            "the kernel regime interpolates. Interpolating the composed field instead "
+            "reconstructs its 1 m fold, and a rim reconstructed from a fold is a 1 m "
+            "staircase at any output resolution."
+        ),
+        "removed_share_of_the_field": round(100 * float(cliff.mean()), 2),
+        "lattice_share_of_the_field": round(100 * float((known & ~cliff).mean()), 2),
+        "where_it_knows_nothing": (
+            "inside a formation big enough that no landscape texel survives under it. There "
+            "the whole field's own fold stands in, and the rock's coverage is 1, so the rock "
+            "is the answer either way"
+        ),
+    }
+
+
+def deterraced_height(field) -> tuple[np.ndarray, dict]:
+    """The field's heights in decimetres, with the fill province's terraces low-passed out.
+
+    Returned as float32 rather than int16 on purpose: the terracing this removes is 3.9 m
+    tall and the decimetre container it lives in would put it straight back as a 0.1 m
+    staircase under a hillshade computed at 0.229 m. ``hf.NODATA`` survives as itself, so
+    every sampler below reads this raster with exactly the test it read the int16 one with.
+
+    The low pass is **normalised over the province and faded by its own weight**. Both
+    halves are load-bearing. Normalised, because a Gaussian that ran over the landscape
+    beside a fill texel would drag a 1 m measurement into a 3.9 m raster's answer;
+    weighted, because a hard edge at the province boundary is exactly the artifact this is
+    supposed to remove, one province over.
+
+    And it is one convolution rather than a contour trace, which is worth a sentence. The
+    design this implements was "marching squares over each terrace, spline along the
+    polyline, rasterise back". Smoothing every level's indicator with one kernel and adding
+    them up is, by the linearity of a convolution, the same array as smoothing the level
+    field itself -- so the two are one operation, and the one that does not need a polyline
+    library is the one that is here.
+    """
+    height = field._height_dm.astype(np.float32)
+    known = field._height_dm != hf.NODATA
+    fill = (field._prov == hf.PROV_FILL) & known
+    sigma = FILL_DETERRACE_SIGMA_M * 100.0 / field.spacing_cm
+    weight = ndimage.gaussian_filter(fill.astype(np.float32), sigma, mode="nearest")
+    total = ndimage.gaussian_filter(np.where(fill, height, 0.0), sigma, mode="nearest")
+    smooth = total / np.maximum(weight, 1e-6)
+    alpha = np.where(fill, np.clip(weight, 0.0, 1.0), 0.0)
+    # Clamped to one quantisation step, and that bound is the definition of the artifact
+    # rather than a safety margin. A terrace is a 3.9 m step where the world has a ramp, so
+    # un-terracing moves a texel by at most one step; a correction larger than that is not
+    # de-terracing, it is a low pass erasing a scarp the fill raster really did resolve --
+    # and the fill province holds a 300 m drop at the map's edge that would otherwise be
+    # rounded off by half of itself.
+    limit = FILL_QUANTISATION_M * hf.DM_PER_M
+    moved = np.clip(alpha * (smooth - height), -limit, limit)
+    out = np.where(known, height + moved, np.float32(hf.NODATA)).astype(np.float32)
+    shifted = np.abs(moved[fill]) / hf.DM_PER_M if fill.any() else np.zeros(1, np.float32)
+    clamped = float((shifted >= FILL_QUANTISATION_M - 1e-6).mean()) if fill.any() else 0.0
+    return out, {
+        "province": hf.PROV_NAMES[hf.PROV_FILL],
+        "share_of_the_field": round(100 * float(fill.mean()), 2),
+        "cell_m": round(FILL_DETERRACE_SIGMA_M, 4),
+        "quantisation_m": round(FILL_QUANTISATION_M, 4),
+        "sigma_field_texels": round(sigma, 3),
+        "moved_median_m": round(float(np.median(shifted)), 4),
+        "moved_p99_m": round(float(np.percentile(shifted, 99)), 4),
+        "moved_max_m": round(float(shifted.max()), 4),
+        "clamped_share_of_the_province": round(100 * clamped, 3),
+        "clamp_m": round(FILL_QUANTISATION_M, 4),
+        "role": (
+            "the interface raster is 3.66 m cells quantised to 3.9 m in Z, so it draws the "
+            "ocean shelf and the map's edge as terraces -- flat plateaus with blocky "
+            "outlines that no kernel can un-terrace, because those steps are real in the "
+            "data and are not in the world. Low-passed at its own cell size, normalised "
+            "over the province so no landscape measurement is dragged into it, and faded by "
+            "its own weight so the province boundary is not drawn either."
+        ),
+        "why_not_marching_squares": (
+            "smoothing each level's indicator by one kernel and summing them is, by the "
+            "linearity of a convolution, the same array as smoothing the level field "
+            "itself. The spline along the marching-squares contour and this convolution are "
+            "the same operation, and only one of them needs a polyline extracted from "
+            "56 million texels."
         ),
     }
 
@@ -1082,6 +1452,524 @@ def sample_coverage(plane: np.ndarray, taps) -> np.ndarray:
     return np.clip(sample_plain(plane, taps), 0.0, 1.0)
 
 
+# --------------------------------------------------------------------------------------
+# The direct pass: the same rocks the field is built from, rasterised into THIS grid.
+# --------------------------------------------------------------------------------------
+
+
+def read_cliff_geometry(store, scripts, index, classes, progress: bool = True) -> dict:
+    """The world's placements and the finest triangles every placed rock ships.
+
+    Two calls into ``tools/gen_world_heightmap.py`` and no third opinion about either. The
+    sweep is the same pass over the same 4,521 ``*.umap`` the field was cut from, and the
+    decode takes the same finest-source ladder -- the Nanite leaf where there is one, LOD 0
+    where there is not, the collision hull where neither parses -- over the same
+    hull-equivalent mesh set.
+
+    The one thing done here is the generator's own per-triangle bounds clamp, hoisted OUT
+    of the placement loop. It is a test in the mesh's own local space against the mesh's own
+    padded ``ExtendedBounds``, so it gives the same answer for all two hundred copies of a
+    rock, and doing it once per mesh instead of once per placement is a deletion rather than
+    a change: the surviving triangles are the same triangles.
+    """
+    sweep = gen.sweep_levels(
+        store, scripts, classes, gen.MeshBounds(store, scripts, index), progress
+    )
+    read = gen.read_mesh_geometry(store, scripts, index, sweep["meshes"], progress)
+    geometry: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    clamped = 0
+    for mesh, (verts, tris, low, high) in read["geometry"].items():
+        keep = ((verts >= low) & (verts <= high)).all(axis=1)
+        if not keep.all():
+            good = keep[tris].all(axis=1)
+            clamped += int((~good).sum())
+            tris = tris[good]
+        if tris.size:
+            geometry[mesh] = (verts, np.ascontiguousarray(tris))
+    return {
+        "sweep": sweep,
+        "geometry": geometry,
+        "meshes": len(geometry),
+        "by_source": read["by_source"],
+        "verts": int(sum(v.shape[0] for v, _t in geometry.values())),
+        "tris": int(sum(t.shape[0] for _v, t in geometry.values())),
+        "triangles_out_of_bounds": clamped,
+        "seconds_sweep": round(sweep["seconds"], 1),
+        "seconds_decode": round(read["seconds"], 1),
+    }
+
+
+def direct_placements(sweep: dict, geometry: dict) -> tuple[list, dict]:
+    """Every placement the field's own cliff layer rasterises, with its world Y span.
+
+    The four culls are the generator's, in the generator's order and for the generator's
+    reasons -- an excluded owner, a mesh with no cooked geometry, an arch (a max-Z field
+    puts an arch ROOF over the ground beneath it), an oversized shell (the sky dome and the
+    ocean). Any of them applied differently here would draw a render of a different world
+    from the field it is blended with, which is the one failure this pass cannot be allowed.
+
+    What is added is the **Y span**, in world centimetres, of the placement's transformed
+    vertex box. That is the whole of the band selection: a band is a run of output rows, a
+    rock is tens of metres, and a bounding-interval test over 24,000 placements is a numpy
+    comparison rather than a search.
+    """
+    meshes, owners = sweep["meshes"], sweep["owners"]
+    arch_ids = {i for i, m in enumerate(meshes) if gen.ARCH_MARK in m.rsplit("/", 1)[-1]}
+    windings = {mesh: gen.winding_sign(v, t) for mesh, (v, t) in geometry.items()}
+    corners = np.array([[x, y, z] for x in (0, 1) for y in (0, 1) for z in (0, 1)], np.float32)
+    prepared: list[tuple] = []
+    dropped = {"owner": 0, "no_geometry": 0, "arch": 0, "oversize": 0}
+    for row in sweep["placements"]:
+        mesh_id, owner_id = int(row[0]), int(row[1])
+        mesh = meshes[mesh_id]
+        if owners[owner_id] in gen.EXCLUDED_OWNERS:
+            dropped["owner"] += 1
+            continue
+        if mesh not in geometry:
+            dropped["no_geometry"] += 1
+            continue
+        if mesh_id in arch_ids:
+            dropped["arch"] += 1
+            continue
+        verts, _tris = geometry[mesh]
+        scale = row[8:11].astype(np.float32)
+        if float(np.abs(verts * scale).max()) > gen.OVERSIZE_CM:
+            dropped["oversize"] += 1
+            continue
+        matrix = gen.rotation_matrix(*row[5:8]).astype(np.float32)
+        offset = row[2:5].astype(np.float32)
+        low, high = verts.min(0), verts.max(0)
+        box = low + corners * (high - low)
+        world_y = ((box * scale) @ matrix + offset)[:, 1]
+        facing = windings[mesh] * float(np.sign(scale[0] * scale[1] * scale[2]))
+        prepared.append(
+            (
+                mesh,
+                mesh_id,
+                matrix,
+                scale,
+                offset,
+                facing,
+                float(world_y.min()),
+                float(world_y.max()),
+            )
+        )
+    return prepared, dropped
+
+
+def rasterise_direct_band(
+    prepared: list,
+    geometry: dict,
+    x0_cm: float,
+    y0_cm: float,
+    scale_cm: float,
+    rows: int,
+    cols: int,
+    subsamples: int,
+) -> np.ndarray:
+    """One band of the output, max-Z rasterised from the triangles. ``nan`` where none fell.
+
+    The rasteriser is ``gen_world_heightmap.MaxZRaster`` itself, pointed at a grid whose
+    origin is this band's north-west corner and whose spacing is this render's, divided by
+    the sub-sampling. Its convention -- sample at ``col + 0.5`` in grid units, write to
+    ``col`` -- is exactly ``frame_coordinates``' pixel centres when the origin is the
+    frame's own corner, so the two grids are the same grid and nothing is half a texel out.
+
+    The facing cull runs per placement, as it does in the generator, and then the triangles
+    are cut down to the ones whose own Y interval reaches this band. Both are ``numpy``
+    over the placement's whole mesh, which is the cheap end of the only Python loop here.
+    """
+    raster = gen.MaxZRaster(
+        cols * subsamples, rows * subsamples, x0_cm, y0_cm, scale_cm / subsamples
+    )
+    y_lo = y0_cm
+    y_hi = y0_cm + rows * scale_cm
+    for mesh, mesh_id, matrix, scale, offset, facing, span_lo, span_hi in prepared:
+        if span_hi < y_lo or span_lo > y_hi:
+            continue
+        verts, tris = geometry[mesh]
+        world = (verts * scale) @ matrix + offset
+        if facing != 0.0:
+            corner = world[tris[:, 0]]
+            normals = np.cross(world[tris[:, 1]] - corner, world[tris[:, 2]] - corner)
+            tris = tris[(normals[:, 2] * facing) > 0]
+            if not tris.size:
+                continue
+        ty = world[:, 1][tris]
+        tris = tris[(ty.max(1) >= y_lo) & (ty.min(1) <= y_hi)]
+        if not tris.size:
+            continue
+        raster.add(world[tris], mesh_id + 1)
+    return raster.result()[0]
+
+
+def reduce_direct(sub_z: np.ndarray, rows: int, cols: int, subsamples: int):
+    """A sub-sampled band folded onto the output grid: mean height and coverage count.
+
+    The mean is over the sub-samples that HIT something, not over all of them, and the
+    count is returned beside it -- which is the difference between "this texel is half a
+    rock and half the ground behind it" and "this texel is a rock at half its height".
+    """
+    if subsamples == 1:
+        hit = np.isfinite(sub_z)
+        return np.where(hit, sub_z, 0.0).astype(np.float32), hit.astype(np.uint8)
+    block = sub_z.reshape(rows, subsamples, cols, subsamples)
+    hit = np.isfinite(block)
+    count = hit.sum((1, 3)).astype(np.uint8)
+    total = np.where(hit, block, 0.0).sum((1, 3), dtype=np.float32)
+    return (total / np.maximum(count, 1)).astype(np.float32), count
+
+
+def tent_coverage(z_cm: np.ndarray, coverage: np.ndarray):
+    """The 3x3 tent that antialiases a direct silhouette, heights carried by coverage.
+
+    Separable 1-2-1 in each axis over the coverage, and the same kernel over ``z*coverage``
+    divided back by it. That last part is the whole of it: a plain blur of the heights would
+    pull zeros in from outside the rock and draw a trench around every silhouette, while a
+    coverage-weighted one gives a texel one quarter covered the rock's own edge height at a
+    quarter weight, which is what a quarter-covered texel is.
+
+    Rows only for the halo's sake: the band arrives with ``BAND_HALO`` rows on each side, so
+    a 3-tap in Y never sees a band edge, and the columns are the full width already.
+    """
+    weighted = z_cm * coverage
+    for axis in (0, 1):
+        coverage = ndimage.convolve1d(coverage, COVERAGE_TENT, axis=axis, mode="nearest")
+        weighted = ndimage.convolve1d(weighted, COVERAGE_TENT, axis=axis, mode="nearest")
+    return weighted / np.maximum(coverage, 1e-6), coverage
+
+
+def direct_cache_dir(out_dir: Path) -> Path:
+    return out_dir / RENDERS_DIR_NAME / DIRECT_CACHE_DIR_NAME
+
+
+def direct_cache_stamp(size: int, subsamples: int, build: str | None) -> dict:
+    """What a cached direct raster has to agree with before it is drawn from.
+
+    Three things, and each one of them is a different picture if it moves: the grid it was
+    rasterised onto, how finely it sampled each texel of that grid, and the build of the
+    game whose rocks it is. Anything else about it -- how long it took, how many triangles
+    fell in -- is a record rather than a key.
+    """
+    return {"size": int(size), "subsamples": int(subsamples), "game_version_pinned": build}
+
+
+def cached_direct(directory: Path, stamp: dict) -> tuple[np.ndarray, np.ndarray] | None:
+    """The cached raster as two read-only memory maps, or ``None`` if it is not this one."""
+    try:
+        recorded = json.loads((directory / DIRECT_CACHE_SIDECAR).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(recorded, dict) or {k: recorded.get(k) for k in stamp} != stamp:
+        return None
+    size = stamp["size"]
+    try:
+        return (
+            np.memmap(directory / DIRECT_Z_NAME, np.float32, "r", shape=(size, size)),
+            np.memmap(directory / DIRECT_COVERAGE_NAME, np.uint8, "r", shape=(size, size)),
+        )
+    except (OSError, ValueError):
+        return None
+
+
+def rasterise_direct(
+    prepared: list,
+    geometry: dict,
+    directory: Path,
+    size: int,
+    subsamples: int,
+    stamp: dict,
+    progress: bool,
+) -> dict:
+    """Rasterise every placed rock into the render's own grid, banded, onto disk.
+
+    Banded because the alternative is not a slower run, it is no run: a 32768 square of
+    float32 is 4.3 GB, the render already holds 3.2 GB of output, and a machine that has to
+    hold both to draw a picture is a machine-dependent generator. 256 rows of it is 34 MB.
+
+    On disk because the answer is the same for both layers and rasterising 216 M triangles
+    is not something to do twice for a change of palette. The two maps are written into
+    place beside a sidecar naming what they are of, and ``cached_direct`` refuses anything
+    that does not match rather than drawing last week's rocks under this week's field.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / DIRECT_CACHE_SIDECAR).unlink(missing_ok=True)
+    z = np.memmap(directory / DIRECT_Z_NAME, np.float32, "w+", shape=(size, size))
+    coverage = np.memmap(directory / DIRECT_COVERAGE_NAME, np.uint8, "w+", shape=(size, size))
+    step_cm = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) * 100 / size
+    x0_cm = BOUNDS_M["x_min_m"] * 100
+    covered = 0
+    started = time.time()
+    for band, top in enumerate(range(0, size, DIRECT_BAND_ROWS)):
+        bottom = min(top + DIRECT_BAND_ROWS, size)
+        rows = bottom - top
+        sub = rasterise_direct_band(
+            prepared,
+            geometry,
+            x0_cm,
+            BOUNDS_M["y_min_m"] * 100 + top * step_cm,
+            step_cm,
+            rows,
+            size,
+            subsamples,
+        )
+        band_z, band_coverage = reduce_direct(sub, rows, size, subsamples)
+        z[top:bottom] = band_z
+        coverage[top:bottom] = band_coverage
+        covered += int(np.count_nonzero(band_coverage))
+        if progress and band % 8 == 0:
+            print(
+                f"  direct: {bottom / size:5.1%} of {size}x{size} at "
+                f"{step_cm / 100 / subsamples:.4f} m, {covered / 1e6:.1f} M texels, "
+                f"{time.time() - started:5.1f}s",
+                flush=True,
+            )
+    z.flush()
+    coverage.flush()
+    del z, coverage
+    stats = {
+        **stamp,
+        "sub_texel_m": round(step_cm / 100 / subsamples, 5),
+        "texels_with_geometry": covered,
+        "share_of_the_sheet": round(100 * covered / (size * size), 3),
+        "seconds": round(time.time() - started, 1),
+        "band_rows": DIRECT_BAND_ROWS,
+        "role": (
+            "max-Z of the cliff geometry on this render's own grid, in world centimetres, "
+            "with the count of sub-samples that hit something beside it. Written once and "
+            "read by every layer; deleted at the end of the run unless --keep-direct."
+        ),
+    }
+    (directory / DIRECT_CACHE_SIDECAR).write_text(json.dumps(stats, indent=1), encoding="utf-8")
+    return stats
+
+
+# --------------------------------------------------------------------------------------
+# The seam, measured along a line rather than at a probe.
+# --------------------------------------------------------------------------------------
+
+
+class SeamTrace:
+    """Second differences of the drawn height at the join, and what they can be read against.
+
+    The parked design was explicit that the seam had to be validated by a **trace** and not
+    by probes: probes are sparse relative to a seam, and a ridge one texel wide along a
+    density contour is invisible to all of them. That part held and is what this measures --
+    ``|d2z/dx2|`` along every row of every band, over the whole 32768 square, with each
+    3-texel stencil sorted by the weights under all three of its texels.
+
+    What did not hold is the **reference**, and it is worth writing down what happened,
+    because three of them were tried and each one turned out to be measuring something other
+    than the sampler:
+
+    1. *A window around w = 0.5.* A feather's second derivative is zero at its own midpoint
+       by symmetry -- it lives at the shoulders -- so this pooled the one place a hard join
+       has nothing to show. It passed a switch.
+    2. *The two pure regimes beside the join.* The right reference when the two regimes are
+       two RECONSTRUCTIONS of one surface, which is what the design assumed. This file
+       composites a rock onto a lattice by the rock's own coverage, so the join IS the rock's
+       silhouette: a real cliff edge, where enormous curvature is the correct answer. It
+       reads 138 on the shipped render and every bit of that is terrain.
+    3. *The same comparison restricted to where the two surfaces agree.* Which moves the join
+       from the silhouette to the rock's BASE -- also a real feature, also real curvature.
+
+    4. And the counterfactual, the hard ``max`` over the same texels, which is the only
+       reference here that is not the terrain. It is reported and it is **not a bound**,
+       because it cannot fail: a convex blend of two surfaces is bounded by the extreme
+       points of that blend, and rounding the weight to 0 or 1 is exactly those. What the
+       number says is how much of that ceiling the fade actually spends -- 0.5 on the shipped
+       render, so the blend is half as curved at the join as the switch it replaces -- and
+       that is a description rather than a gate.
+
+    What guarantees the smoothness this design was after is therefore the arithmetic and not
+    this statistic: ``blend_regimes`` is a convex combination in a coverage that the tent
+    reconstructs continuously, plus a positive part smoothed to C-infinity by
+    ``DIRECT_LIFT_KNEE_M``. The trace is kept because it is evidence, and because the
+    as-designed composition it was written for did pass it -- 0.6155 against the design's
+    bound of 1.5, recorded in ``docs/spatial-and-map.md``.
+    """
+
+    def __init__(self) -> None:
+        self.pools: dict[str, list[np.ndarray]] = {
+            "seam": [],
+            "switch": [],
+            "pure_direct": [],
+            "pure_kernel": [],
+            "seam_same_surface": [],
+            "pure_same_surface": [],
+        }
+        self.rows = 0
+
+    @staticmethod
+    def _thin(values: np.ndarray) -> np.ndarray:
+        """A systematic sample of a pool, so the whole sheet costs a bounded number of MB.
+
+        Every k-th value of a selection that is already in raster order, which for a
+        percentile is a sample and not a filter: the pools run to tens of millions of texels
+        over 32768 rows and the statistic taken from them moves in the fourth decimal.
+        """
+        stride = max(1, values.size // SEAM_SAMPLE_MAX_PER_BAND)
+        return values[::stride].astype(np.float32)
+
+    def _keep(self, name: str, curvature: np.ndarray, mask: np.ndarray) -> None:
+        if mask.any():
+            self.pools[name].append(self._thin(curvature[mask]))
+
+    def add(self, z_m, z_switched, w, spacing_m: float, delta=None) -> None:
+        blended = np.abs(np.diff(z_m, n=2, axis=1)) / (spacing_m * spacing_m)
+        switched = np.abs(np.diff(z_switched, n=2, axis=1)) / (spacing_m * spacing_m)
+        # A second difference reads three texels, so it belongs to the regime all three of
+        # them are in -- and to the join if they are not all in one. Classifying it by the
+        # middle weight alone is what let a sharp join hide: the curvature of the join lands
+        # one texel to the side of it, in a stencil whose middle texel is still pure, and is
+        # counted as evidence that the pure regime is rough.
+        low, middle, high = w[:, :-2], w[:, 1:-1], w[:, 2:]
+        top = np.maximum(np.maximum(low, middle), high)
+        bottom = np.minimum(np.minimum(low, middle), high)
+        at_seam = (top > SEAM_PURE) & (bottom < 1.0 - SEAM_PURE)
+        self.rows += z_m.shape[0]
+        if not at_seam.any():
+            return
+        near = ndimage.maximum_filter1d(at_seam, 2 * SEAM_NEAR_TEXELS + 1, axis=1, mode="nearest")
+        self._keep("seam", blended, at_seam)
+        self._keep("switch", switched, at_seam)
+        self._keep("pure_direct", blended, near & (bottom >= 1.0 - SEAM_PURE))
+        self._keep("pure_kernel", blended, near & (top <= SEAM_PURE))
+        if delta is None:
+            return
+        gap = np.abs(delta)
+        same = np.minimum(np.minimum(gap[:, :-2], gap[:, 1:-1]), gap[:, 2:]) <= SEAM_SAME_SURFACE_M
+        self._keep("seam_same_surface", blended, at_seam & same)
+        self._keep("pure_same_surface", blended, near & same & ~at_seam)
+
+    def result(self) -> dict:
+        pooled = {
+            name: (np.concatenate(values) if values else np.zeros(0, np.float32))
+            for name, values in self.pools.items()
+        }
+        p99 = {
+            name: float(np.percentile(values, 99)) if values.size else None
+            for name, values in pooled.items()
+        }
+        if p99["seam"] is None or not p99["switch"]:
+            return {
+                "measured": False,
+                "why": (
+                    "no 3-texel stencil straddled the join, which is what a render with no "
+                    "rocks in it looks like"
+                ),
+            }
+
+        def ratio(over: str) -> float | None:
+            return None if not p99[over] else round(p99["seam"] / p99[over], 4)
+
+        reference = [p99["pure_direct"], p99["pure_kernel"]]
+        beside = max([v for v in reference if v is not None], default=None)
+        return {
+            "measured": True,
+            "method": (
+                "|d2z/dx2| along every row of the drawn height, in 1/m. Every 3-texel "
+                "stencil is sorted by the weights under ALL THREE of its texels: straddling "
+                f"the join, wholly direct (every weight within {SEAM_PURE} of 1) or wholly "
+                f"kernel (every weight within {SEAM_PURE} of 0). The two pure pools are "
+                f"further restricted to within {SEAM_NEAR_TEXELS} texels of a straddling "
+                "stencil. A fourth pool is the height a HARD MAX would have drawn over the "
+                "straddling stencils themselves."
+            ),
+            "texels": {name: int(values.size) for name, values in pooled.items()},
+            "p99_curvature": {
+                name: (None if value is None else round(value, 5)) for name, value in p99.items()
+            },
+            "share_of_a_hard_switch": ratio("switch"),
+            "share_of_a_hard_switch_ceiling": SEAM_SWITCH_CEILING,
+            "against_the_pure_regimes": (None if not beside else round(p99["seam"] / beside, 4)),
+            "against_the_terrain_where_the_surfaces_agree": ratio("pure_same_surface"),
+            "surfaces_agree_within_m": SEAM_SAME_SURFACE_M,
+            "reading": (
+                "share_of_a_hard_switch is the number to read and it is a DESCRIPTION, not a "
+                "gate: a convex blend of two surfaces cannot be rougher than the switch "
+                "between them, because rounding the weight to 0 or 1 is the extreme point of "
+                "that blend, so this can never exceed 1 and never fail. What it says is how "
+                "much of that ceiling the fade spends. The two numbers beside it are the "
+                "design's own reference and a repair of it, and both measure the TERRAIN "
+                "rather than the sampler once the composition is by coverage, because then "
+                "every join lies on a geometric feature -- the rock's silhouette, or its "
+                "base. They are recorded because they were tried. What guarantees the "
+                "smoothness is the arithmetic: a convex combination in a continuously "
+                "reconstructed coverage, plus a positive part smoothed to C-infinity."
+            ),
+        }
+
+
+class RegimeCoverage:
+    """How much of the sheet each regime drew, per province of the field underneath it.
+
+    Counted rather than argued, because "the geometry answers this pixel" is a claim about
+    how much of a picture. The provinces are the field's own, sampled nearest at output
+    resolution -- a province is a name and the average of two names is not one.
+
+    The direct bucket is **split by the density plane**, and that split is the whole of what
+    that plane does here now. It does not decide whether the triangles are drawn -- the
+    rock's own coverage decides that, because whether a pixel stands on a rock is what
+    settles whether the rock is its surface. What the plane settles is what the drawn answer
+    IS: a texel a source vertex landed in is a measurement, and a texel the rasteriser
+    reached by interpolating the plane of a triangle wider than itself is a facet. Both are
+    the geometry and both beat a reconstruction of the 1 m fold of that same geometry; only
+    one of them is a measurement, and the sidecar says which is which rather than letting a
+    reader assume.
+    """
+
+    def __init__(self) -> None:
+        self.counts: dict[int, list[int]] = {}
+        self.weight: dict[int, float] = {}
+
+    def add(self, prov: np.ndarray, w: np.ndarray, measured: np.ndarray) -> None:
+        regime = np.where(
+            w >= 1.0 - SEAM_PURE,
+            np.where(measured, 0, 1),
+            np.where(w > SEAM_PURE, 2, 3),
+        )
+        for value in np.unique(prov):
+            key = int(value)
+            row = self.counts.setdefault(key, [0, 0, 0, 0])
+            here = prov == value
+            picked = regime[here]
+            for index in range(4):
+                row[index] += int(np.count_nonzero(picked == index))
+            self.weight[key] = self.weight.get(key, 0.0) + float(w[here].sum())
+
+    NAMES = ("direct_measured", "direct_facet", "faded", "kernel")
+
+    def result(self) -> dict:
+        total = sum(sum(row) for row in self.counts.values()) or 1
+        out = {
+            "definition": (
+                f"direct: coverage >= {1 - SEAM_PURE}, split by density.u8.z into the texels "
+                "a source vertex landed in (a measurement) and the texels the rasteriser "
+                "reached across a triangle wider than the output texel (a facet); faded: "
+                f"{SEAM_PURE} < coverage < {1 - SEAM_PURE}, a silhouette; kernel: coverage "
+                f"<= {SEAM_PURE}, the landscape and fill lattices alone. mean_w beside them "
+                "is the unbucketed answer: how much of the height over that province the "
+                "rasterised rocks contributed, averaged."
+            ),
+            "per_province_pct_of_sheet": {},
+        }
+        for value, row in sorted(self.counts.items()):
+            name = hf.PROV_NAMES.get(value, f"layer {value}")
+            here = sum(row) or 1
+            out["per_province_pct_of_sheet"][name] = {
+                **{key: round(100 * row[i] / total, 4) for i, key in enumerate(self.NAMES)},
+                "province_pct_of_sheet": round(100 * here / total, 4),
+                "mean_w": round(self.weight.get(value, 0.0) / here, 5),
+            }
+        pooled = [sum(row[i] for row in self.counts.values()) for i in range(4)]
+        out["sheet_pct"] = {
+            **{key: round(100 * pooled[i] / total, 4) for i, key in enumerate(self.NAMES)},
+            "mean_w": round(sum(self.weight.values()) / total, 5),
+        }
+        return out
+
+
 def hillshade(z_m: np.ndarray, spacing_m: float) -> np.ndarray:
     """North-west relief in [SHADE_FLOOR, SHADE_FLOOR + SHADE_RANGE].
 
@@ -1311,22 +2199,105 @@ def water_planes(field) -> tuple[np.ndarray | None, np.ndarray | None, str]:
     )
 
 
-def render_layer(layer, field, biome_rgb, biome, borrow, size, progress) -> np.ndarray:
+def blend_regimes(base_m, missing, direct, linear, subsamples):
+    """The two-regime height and what it was made of: ``(z_m, missing, w, switched)``.
+
+    This is the field's **own composition rule**, performed at the render's spacing instead
+    of read back from the 1 m fold that rule already produced. ``gen_world_heightmap.py``
+    lays the landscape and the fill down and then lets the cliff overlay win any texel where
+    real geometry stands above them; ``base_m`` is that same landscape-and-fill lattice
+    interpolated here, and this adds the same rocks on top of it -- rasterised at 0.229 m
+    rather than folded onto a metre first.
+
+    ``z = base + w * lift(z_direct - base)`` and every part of it is deliberate.
+
+    ``w`` is the direct raster's **coverage** of the pixel, reconstructed by the tent above
+    -- never a choice, never a threshold. It is what makes a rock's silhouette fade over one
+    texel instead of stepping over one, and it is the whole of the weight because the
+    question "is this pixel standing on the rock" is the whole of what decides whether the
+    rock is the surface here.
+
+    ``lift`` is a **smoothed positive part**, and it is the other half of the field's rule:
+    a rock may raise the ground and may never lower it. Without it, the tail of a coverage
+    that reaches a texel the rock passes UNDER would draw a trench around the base of every
+    formation. A hard ``max`` would do the job and put a first-derivative discontinuity
+    exactly where the rock meets the ground -- a line the hillshade would draw around the
+    base of every formation on the map. The smoothed form is C-infinity, is never negative,
+    and sits at most ``DIRECT_LIFT_KNEE_M / 2`` above the hard answer: it rounds the corner
+    off the max rather than moving it.
+
+    Where the lattice knows nothing -- inside a formation big enough that no landscape texel
+    survives under it -- the caller passes the whole field's own fold as ``base_m`` instead,
+    which is what this file drew before. There the coverage is 1 and the rock is the answer
+    either way, so the substitution is invisible rather than merely small.
+    """
+    z_cm, coverage = direct
+    coverage = coverage.astype(np.float32)
+    if subsamples > 1:
+        coverage /= float(subsamples * subsamples)
+        fraction = coverage
+    else:
+        z_cm, fraction = tent_coverage(z_cm, coverage)
+    w = np.clip(fraction, 0.0, 1.0).astype(np.float32)
+    z_direct_m = z_cm / np.float32(100.0)
+    delta = z_direct_m - base_m
+    knee = np.float32(DIRECT_LIFT_KNEE_M)
+    lift = 0.5 * (delta + np.sqrt(delta * delta + knee * knee))
+    z_m = base_m + w * lift
+    # Where the field has nothing at all and the geometry does -- a rock standing off the
+    # edge of the landscape -- the geometry is the whole answer and the pixel stops being
+    # no-data. A switch rather than a fade, and allowed to be one: the no-data boundary is
+    # already a hard edge the render paints the page's own sea against.
+    only_rock = missing & (fraction > 0.0)
+    z_m = np.where(only_rock, z_direct_m, z_m)
+    w = np.where(only_rock, np.float32(1.0), w)
+    # And the counterfactual, for the seam trace to measure the blend against: the same two
+    # surfaces joined by the switch this design refused. Computed here rather than there so
+    # the trace never has to be handed two arrays it could pair up wrongly.
+    switched = np.where(w >= SEAM_MID, np.maximum(z_direct_m, base_m), base_m)
+    return (
+        z_m.astype(np.float32),
+        missing & (fraction <= 0.0),
+        w,
+        switched.astype(np.float32),
+    )
+
+
+def render_layer(
+    layer,
+    field,
+    biome_rgb,
+    biome,
+    borrow,
+    size,
+    progress,
+    height_dm=None,
+    direct=None,
+    seam=None,
+    regimes=None,
+    measured_plane_u8=None,
+) -> np.ndarray:
     """One whole layer, drawn a band of rows at a time. Returns ``(size, size, 3)`` uint8.
 
-    Banded because the sheet is 268 million pixels and this recipe holds a dozen float32
-    intermediates over it: whole-sheet arrays would be a gigabyte apiece and the run would
-    live or die on how much memory the reader's machine happened to have. Each band is
-    computed with BAND_HALO extra rows on both sides and cropped afterwards, so neither the
-    hillshade's gradient nor the cubic sampler's stencil nor the water blur's kernel ever
-    sees a band edge -- a one-sided difference at every 256th row would draw 63 horizontal
-    lines across the world.
+    Banded because the sheet is a billion pixels at 32768 and this recipe holds a dozen
+    float32 intermediates over it: whole-sheet arrays would be four gigabytes apiece and the
+    run would live or die on how much memory the reader's machine happened to have. Each
+    band is computed with BAND_HALO extra rows on both sides and cropped afterwards, so
+    neither the hillshade's gradient nor the cubic sampler's stencil nor the water blur's
+    kernel nor the direct coverage's tent ever sees a band edge -- a one-sided difference at
+    every 256th row would draw 127 horizontal lines across the world.
+
+    ``direct`` is the pair of memory maps the direct pass wrote, with the weight plane and
+    the sub-sampling beside them; ``None`` draws recipe 2's single-regime picture. ``seam``
+    and ``regimes`` are the two accumulators, passed for the first layer only -- both layers
+    draw the identical surface and measuring it twice would be measuring nothing twice.
     """
     painter = LAYER_PAINTERS[layer]
     x_cm, y_cm = frame_coordinates(size)
     spacing_m = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / size
     blur_px = WATER_EDGE_BLUR_M / spacing_m
     detail, province = borrow
+    heights = field._height_dm if height_dm is None else height_dm
     ramp_lo, ramp_hi = ramp_range(field)
     noise = noise_fields(NOISE_SEED) if layer == "satellite" else None
     wet_plane, measured_plane, _source = water_planes(field)
@@ -1344,6 +2315,11 @@ def render_layer(layer, field, biome_rgb, biome, borrow, size, progress) -> np.n
     art_cols = taps_linear(grid_position(x_cm, art_x0_cm, art_step_cm, SHEET_PX), SHEET_PX)
     art_y0_cm = BOUNDS_M["y_min_m"] * 100 + art_step_cm / 2
     biome_cols = biome_index(x_cm, BOUNDS_M["x_min_m"], BOUNDS_M["x_max_m"], biome["width"])
+    # Nearest, and never in between: a province is a name, and the regime table counts how
+    # much of each one the triangles answered.
+    prov_cols = np.clip(
+        np.round((x_cm - field.x0_cm) / field.spacing_cm).astype(np.int64), 0, field.width - 1
+    )
 
     started = time.time()
     for top in range(0, size, BAND_ROWS):
@@ -1354,8 +2330,45 @@ def render_layer(layer, field, biome_rgb, biome, borrow, size, progress) -> np.n
         cubic = (taps_cubic(field_y, field.height), cols_cubic)
         linear = (taps_linear(field_y, field.height), cols_linear)
 
-        z_dm, missing = sample_surface(field._height_dm, cubic, linear, hf.NODATA)
+        z_dm, missing = sample_surface(heights, cubic, linear, hf.NODATA)
         z_m = z_dm / np.float32(hf.DM_PER_M)
+        weight = None
+        if direct is not None:
+            direct_z, direct_coverage, ground, subsamples = direct
+            # The base the rocks are composited onto is the lattice UNDERNEATH them, not the
+            # field's own fold -- see ``ground_lattice``. Where that lattice knows nothing,
+            # which is inside a formation, the fold stands in and the rock covers the pixel
+            # anyway.
+            ground_dm, ground_missing = sample_surface(ground, cubic, linear, hf.NODATA)
+            base_m = np.where(ground_missing, z_m, ground_dm / np.float32(hf.DM_PER_M))
+            z_m, missing, weight, switched = blend_regimes(
+                base_m,
+                missing,
+                (np.asarray(direct_z[lo:hi], np.float32), np.asarray(direct_coverage[lo:hi])),
+                linear,
+                subsamples,
+            )
+            if seam is not None:
+                keep = slice(top - lo, bottom - lo)
+                seam.add(
+                    z_m[keep],
+                    switched[keep],
+                    weight[keep],
+                    spacing_m,
+                    (np.asarray(direct_z[lo:hi], np.float32) / 100.0 - base_m)[keep],
+                )
+            if regimes is not None:
+                prov_rows = np.clip(
+                    np.round((y_cm[top:bottom] - field.y0_cm) / field.spacing_cm).astype(np.int64),
+                    0,
+                    field.height - 1,
+                )
+                picked = np.ix_(prov_rows, prov_cols)
+                regimes.add(
+                    field._prov[picked],
+                    weight[top - lo : bottom - lo],
+                    measured_plane_u8[picked] > 0,
+                )
         if wet_plane is None:
             wet = measured = np.zeros(z_m.shape, np.float32)
             water_m = z_m
@@ -1429,6 +2442,7 @@ def build_sidecar(
     tiles: dict,
     render: dict,
     extra: dict,
+    recipe: int = RECIPE,
     tiles_2x: dict | None = None,
 ) -> dict:
     """The file the web API reads for this layer, plus the provenance to date it by.
@@ -1455,8 +2469,8 @@ def build_sidecar(
             ),
             "generator": "tools/gen_map_renders.py",
             "layer": layer,
-            "recipe": RECIPE,
-            "recipe_description": RECIPES[RECIPE],
+            "recipe": recipe,
+            "recipe_description": RECIPES[recipe],
             "transcribed": datetime.now(UTC).date().isoformat(),
             "sources": {
                 "heightfield": {
@@ -1484,7 +2498,7 @@ def build_sidecar(
 
 
 def install_layer(
-    sheet_rgb, image_mod, out_dir: Path, layer: str, workers: int
+    sheet_rgb, image_mod, out_dir: Path, layer: str, workers: int, recipe: int = RECIPE
 ) -> tuple[dict, dict, float]:
     """Cut one layer's two pyramids into place, and say what they wrote and how long it took.
 
@@ -1493,15 +2507,27 @@ def install_layer(
     because a client that cannot find it simply asks for the 1x it already had. Each is
     renamed into place on its own, so the pair is never half-swapped in a way that leaves
     the page without a base map.
+
+    The @2x tree is cut from a **downscale** of the sheet rather than from the sheet, and
+    that is the one asymmetry between them. Cutting it from a 32768 sheet would give it a z6
+    of 512 px tiles weighing as much as the entire 1x pyramid, for pixels a hi-DPI client
+    already has: the retina path every tile client ships asks for ``z + 1`` at 1x and draws
+    it at half size, and the 1x tree is now a level deeper than it was. So the dense tree
+    stays exactly where it has always been, at ``RENDER_2X_PX``, and a sheet that is already
+    that size or smaller is handed over unchanged.
     """
     directory = layer_dir(out_dir, layer)
     directory.mkdir(parents=True, exist_ok=True)
     sheet = image_mod.fromarray(sheet_rgb)
-    source = f"tools/gen_map_renders.py, {layer} recipe {RECIPE}, Lanczos"
+    source = f"tools/gen_map_renders.py, {layer} recipe {recipe}, Lanczos"
     started = time.time()
     stats = install_pyramid(sheet, image_mod, directory, source=source, workers=workers)
+    dense_px = min(sheet.width, RENDER_2X_PX)
+    dense_sheet = (
+        sheet if dense_px == sheet.width else sheet.resize((dense_px, dense_px), image_mod.LANCZOS)
+    )
     dense = install_pyramid(
-        sheet,
+        dense_sheet,
         image_mod,
         directory,
         tile_px=PYRAMID_TILE_2X_PX,
@@ -1598,12 +2624,36 @@ def main() -> int:
         "--size",
         type=int,
         default=RENDER_PX,
-        choices=[RENDER_PX * 2, RENDER_PX, RENDER_PX // 2, RENDER_PX // 4],
+        choices=[RENDER_PX, RENDER_PX // 2, RENDER_PX // 4, RENDER_PX // 8],
         help=(
-            f"square edge of each render (default {RENDER_PX}, which is 0.458 m to the "
-            "pixel against a 1 m field -- see the module docstring for why doubling it "
-            "again was measured and refused)"
+            f"square edge of each render (default {RENDER_PX}, which is 0.229 m to the "
+            "pixel -- see the module docstring for what that is and is not a claim about)"
         ),
+    )
+    parser.add_argument(
+        "--direct-subsamples",
+        type=int,
+        default=DIRECT_SUBSAMPLES,
+        choices=[1, 2, 4],
+        help=(
+            f"sub-samples per output texel per axis in the direct pass (default "
+            f"{DIRECT_SUBSAMPLES}; each doubling costs 4x the rasterising and the silhouette "
+            "is already reconstructed by a coverage tent)"
+        ),
+    )
+    parser.add_argument(
+        "--kernel-only",
+        action="store_true",
+        help=(
+            f"draw recipe {RECIPE_KERNEL_ONLY} instead: the Catmull-Rom kernel everywhere, "
+            "no geometry opened, no cross-fade and no de-terracing. The picture this file "
+            "drew before, at whatever --size is asked for, and recorded as that recipe"
+        ),
+    )
+    parser.add_argument(
+        "--keep-direct",
+        action="store_true",
+        help="leave renders/direct.cache/ behind so the next run reuses it",
     )
     parser.add_argument(
         "--workers",
@@ -1655,6 +2705,49 @@ def main() -> int:
         f"field: {field.width}x{field.height} at {field.spacing_cm / 100:g} m, build {field_build}"
     )
 
+    spacing_m = (BOUNDS_M["x_max_m"] - BOUNDS_M["x_min_m"]) / args.size
+    weight_plane, weight_meta = (None, {}) if args.kernel_only else direct_weight(field, spacing_m)
+    if weight_plane is None and not args.kernel_only:
+        print(
+            f"this field carries no {hf.DENSITY_NAME}, so it cannot say which of its texels "
+            "are measurements and which are the cliff rasteriser interpolating across a "
+            "triangle wider than a texel. That plane is the only thing the two-regime "
+            f"sampler switches on, so recipe {RECIPE} has nothing to draw. Cut a field with "
+            f"generator version {gen.GENERATOR_VERSION} or later:\n"
+            "    uv run --extra gen python tools/gen_world_heightmap.py --force\n"
+            "or pass --kernel-only to draw the single-regime picture and say so in the "
+            "sidecar."
+        )
+        return 6
+    if weight_plane is not None:
+        print(
+            f"  a measurement where {weight_meta['rule']} -- "
+            f"{weight_meta['qualifying_share_of_the_field']}% of the field, "
+            f"{weight_meta['qualifying_share_of_the_cliff_province']}% of its cliff "
+            "province. Provenance, not a gate: the rocks are drawn wherever they cover a "
+            "pixel"
+        )
+    recipe = RECIPE_KERNEL_ONLY if args.kernel_only else RECIPE
+    heights, deterrace_meta = (None, {}) if args.kernel_only else deterraced_height(field)
+    if heights is None:
+        print(f"  --kernel-only: drawing recipe {recipe}, the picture before the two regimes")
+    else:
+        print(
+            f"  fill terraces: {deterrace_meta['share_of_the_field']}% of the field low-passed "
+            f"at {deterrace_meta['cell_m']} m, moving it a median "
+            f"{deterrace_meta['moved_median_m']} m, p99 {deterrace_meta['moved_p99_m']} m, "
+            f"clamped at one {deterrace_meta['clamp_m']} m step on "
+            f"{deterrace_meta['clamped_share_of_the_province']}% of the province"
+        )
+    ground, ground_meta = (None, {}) if heights is None else ground_lattice(field, heights)
+    if ground is not None:
+        print(
+            f"  the lattice under the rocks: {ground_meta['lattice_share_of_the_field']}% of "
+            f"the field, with {ground_meta['removed_share_of_the_field']}% of it -- the cliff "
+            "province -- taken out so the rocks are composited over the ground rather than "
+            "over their own 1 m fold"
+        )
+
     out_dir: Path = args.out_dir
     if not args.force:
         for layer in layers:
@@ -1685,6 +2778,7 @@ def main() -> int:
         return 1
     print(f"reading the game's own assets from {paks} with pyooz {pyooz_version}")
     store = IoStore(paks, "FactoryGame-Windows", oodle_decompress)
+    scripts = ScriptObjects(paks, oodle_decompress)
     artwork = read_artwork_sheet(store, decoder, image_mod)
     detail, detail_meta = artwork_detail(artwork)
     print(
@@ -1727,7 +2821,6 @@ def main() -> int:
     # ---- the biome raster ------------------------------------------------------------
     biome = None
     if "satellite" in layers:
-        scripts = ScriptObjects(paks, oodle_decompress)
         biome = read_biome(store, scripts)
         print(
             f"  {biome['width']}x{biome['width']} palette indices, "
@@ -1801,6 +2894,85 @@ def main() -> int:
     else:
         biome_rgb, biome_source = None, {}
 
+    # ---- the cliff geometry, rasterised into this render's own grid -------------------
+    direct = None
+    direct_source: dict = {}
+    if weight_plane is not None:
+        cache = direct_cache_dir(out_dir)
+        stamp = direct_cache_stamp(args.size, args.direct_subsamples, field_build)
+        maps = cached_direct(cache, stamp)
+        if maps is None:
+            print(
+                f"decoding the cliff geometry and rasterising it at {spacing_m:.4f} m"
+                + (
+                    f" with {args.direct_subsamples}x{args.direct_subsamples} sub-samples"
+                    if args.direct_subsamples > 1
+                    else ""
+                )
+            )
+            index = AssetIndex(store)
+            geometry = read_cliff_geometry(
+                store, scripts, index, ClassFacts(store, index), not args.quiet
+            )
+            print(
+                f"  {geometry['meshes']} rock meshes, {geometry['tris'] / 1e6:.2f} M triangles "
+                f"{geometry['by_source']}, swept in {geometry['seconds_sweep']}s and decoded "
+                f"in {geometry['seconds_decode']}s"
+            )
+            prepared, dropped = direct_placements(geometry["sweep"], geometry["geometry"])
+            print(f"  {len(prepared)} placements rasterised, dropped {dropped}")
+            cache_stats = rasterise_direct(
+                prepared,
+                geometry["geometry"],
+                cache,
+                args.size,
+                args.direct_subsamples,
+                stamp,
+                not args.quiet,
+            )
+            print(
+                f"  direct raster: {cache_stats['texels_with_geometry'] / 1e6:.1f} M texels "
+                f"({cache_stats['share_of_the_sheet']}% of the sheet) in "
+                f"{cache_stats['seconds']}s"
+            )
+            direct_source = {
+                "cliff_geometry": {
+                    "name": "the same placed rock meshes tools/gen_world_heightmap.py folds "
+                    "into the 1 m field, decoded here a second time",
+                    "licence": (
+                        "Coffee Stain Studios' own cooked assets, read out of the reader's "
+                        "installed copy of the game. Nothing is committed, redistributed or "
+                        "served past localhost."
+                    ),
+                    "decoder": (
+                        "tools/gen_world_heightmap.py's own sweep_levels, read_mesh_geometry, "
+                        "rotation_matrix, winding_sign and MaxZRaster, imported and called. "
+                        "The grid they are pointed at is the only thing this file changes."
+                    ),
+                    "meshes": geometry["meshes"],
+                    "by_source": geometry["by_source"],
+                    "source_triangles": geometry["tris"],
+                    "triangles_out_of_bounds": geometry["triangles_out_of_bounds"],
+                    "placements_rasterised": len(prepared),
+                    "placements_dropped": dropped,
+                    "raster": cache_stats,
+                    "pyooz_version": pyooz_version,
+                }
+            }
+            maps = cached_direct(cache, stamp)
+            del geometry, prepared
+        else:
+            print(f"reusing the direct raster already in {cache}")
+            direct_source = {
+                "cliff_geometry": {
+                    "reused": json.loads((cache / DIRECT_CACHE_SIDECAR).read_text(encoding="utf-8"))
+                }
+            }
+        if maps is None:
+            print(f"the direct raster in {cache} could not be read back after writing it")
+            return 7
+        direct = (maps[0], maps[1], ground, args.direct_subsamples)
+
     # ---- draw and cut ----------------------------------------------------------------
     borrow_source = {
         "artwork_detail": {
@@ -1826,6 +2998,9 @@ def main() -> int:
         }
     }
     total_started = time.time()
+    seam = SeamTrace() if direct is not None else None
+    regimes = RegimeCoverage() if direct is not None else None
+    measured: dict = {}
     for layer in layers:
         print(f"drawing {layer} at {args.size}x{args.size}")
         started = time.time()
@@ -1837,10 +3012,31 @@ def main() -> int:
             borrow,
             args.size,
             not args.quiet,
+            height_dm=heights,
+            direct=direct,
+            measured_plane_u8=weight_plane,
+            # Both layers draw the identical surface, so the seam and the regime table are
+            # measured on the first one and quoted for both. Measuring them twice would be
+            # measuring the same thing twice and inviting the two answers to differ.
+            seam=seam if not measured else None,
+            regimes=regimes if not measured else None,
         )
         drew = time.time() - started
+        if seam is not None and not measured:
+            measured = {"seam_trace": seam.result(), "regimes": regimes.result()}
+            trace = measured["seam_trace"]
+            if trace.get("measured"):
+                print(
+                    f"  seam trace: p99 |d2z/dx2| {trace['p99_curvature']['seam']} over the "
+                    f"blend against {trace['p99_curvature']['switch']} for the hard max on "
+                    f"the same texels -- the fade spends "
+                    f"{trace['share_of_a_hard_switch']} of that ceiling; against the terrain "
+                    f"beside the join it reads {trace['against_the_pure_regimes']}, which is "
+                    "the design's own reference and is measuring the silhouette"
+                )
+            print(f"  regimes: {measured['regimes']['sheet_pct']}")
         try:
-            stats, dense, cut = install_layer(sheet, image_mod, out_dir, layer, workers)
+            stats, dense, cut = install_layer(sheet, image_mod, out_dir, layer, workers, recipe)
         except PyramidError as exc:
             print(exc)
             return 1
@@ -1853,12 +3049,70 @@ def main() -> int:
             "height_px": args.size,
             "metres_per_pixel": round(spacing_m, 4),
             "sampling": (
+                "the field's own composition rule, at this render's spacing. KERNEL: "
+                "Catmull-Rom (cubic convolution, a = -1/2) over the LANDSCAPE AND FILL "
+                "lattices -- the cliff province taken out, because interpolating the "
+                "composed field reconstructs its own 1 m fold and a rim reconstructed from "
+                "a fold is a 1 m staircase at any output resolution -- falling back to "
+                "bilinear where the 4x4 stencil straddles no data and to nothing where no "
+                "texel under it has a value. DIRECT: the cliff geometry rasterised into "
+                f"this grid at {spacing_m:.4f} m and composited on top of that lattice by "
+                "its own coverage of the pixel, raising the ground and never lowering it, "
+                "through a smoothed positive part so the line where a rock meets the ground "
+                "is not a derivative discontinuity the hillshade would draw. density.u8.z "
+                "does not gate any of this: it says which of the drawn texels are "
+                "measurements and which are the plane of a triangle wider than a texel, and "
+                "_meta.render.two_regime.regimes counts both"
+            )
+            if direct is not None
+            else (
                 "Catmull-Rom (cubic convolution, a = -1/2) over the 1 m field per output "
                 "pixel wherever the 4x4 stencil is whole, bilinear where it straddles the "
                 "edge of the data, and nothing at all where no texel under it has a value. "
-                "C1, which is what lets the hillshade be computed at output resolution "
-                "without ruling the relief into 1 m squares"
+                "--kernel-only: no geometry was opened and no direct regime was drawn"
             ),
+            "two_regime": {
+                "enabled": direct is not None,
+                "subsamples_per_axis": args.direct_subsamples if direct is not None else None,
+                "silhouette_antialiasing": (
+                    "a 3x3 1-2-1 tent over the direct raster's binary coverage, with the "
+                    "heights carried through the same kernel weighted by that coverage, so a "
+                    "quarter-covered texel is a quarter of the rock's own edge height rather "
+                    "than a quarter of zero"
+                )
+                if args.direct_subsamples == 1
+                else (
+                    f"{args.direct_subsamples}x{args.direct_subsamples} sub-samples per output "
+                    "texel, box-folded"
+                ),
+                "composition": (
+                    "the field's own rule at this render's spacing: the landscape and fill "
+                    "lattices interpolated with the C1 kernel, and the cliff geometry "
+                    "rasterised at 0.229 m composited over them by its own coverage, raising "
+                    "the ground and never lowering it. What this replaced was interpolating "
+                    "the 1 m FOLD of that composition, which reconstructs a rim as the 1 m "
+                    "staircase the fold put it on however fine the output grid is"
+                ),
+                "ground_lattice": ground_meta,
+                "measurement_rule": weight_meta,
+                "lift_knee_m": DIRECT_LIFT_KNEE_M,
+                "fill_deterrace": deterrace_meta,
+                **measured,
+            },
+            "z7": (
+                "interpolated-smooth. 32768 px is NOT a claim that the field has more to "
+                "say -- that was measured twice on this pipeline and refused twice, and the "
+                "high-frequency energy per pixel falls at every doubling. What z7 is, is the "
+                "same surface evaluated by the same C1 kernel at half the spacing, which a "
+                "client cannot produce for itself: a browser shown z6 at twice its scale "
+                "upsamples it BILINEARLY, and bilinear is C0, so the relief it draws is "
+                "ruled into 0.458 m squares. The exception is the direct regime, where the "
+                "pixels are triangles rather than an interpolation and z7 genuinely resolves "
+                "geometry the 1 m field folds away -- see two_regime.regimes for how much of "
+                "the sheet that is."
+            )
+            if args.size >= RENDER_PX
+            else None,
             "hillshade": (
                 f"sun at azimuth {SUN_AZIMUTH_DEG} deg, altitude {SUN_ALTITUDE_DEG} deg, "
                 f"shade in [{SHADE_FLOOR}, {SHADE_FLOOR + SHADE_RANGE}], computed at the "
@@ -1886,11 +3140,16 @@ def main() -> int:
         }
         sidecar = build_sidecar(
             layer=layer,
+            recipe=recipe,
             field_meta=field_meta,
             tiles=stats,
             tiles_2x=dense,
             render=render,
-            extra={**borrow_source, **(biome_source if layer == "satellite" else {})},
+            extra={
+                **borrow_source,
+                **direct_source,
+                **(biome_source if layer == "satellite" else {}),
+            },
         )
         path = layer_dir(out_dir, layer) / RENDER_SIDECAR_NAME
         path.write_text(json.dumps(sidecar, indent=1), encoding="utf-8")
@@ -1900,6 +3159,12 @@ def main() -> int:
             f"@2x over z0..z{dense['max_z']} ({dense['bytes'] / 1e6:.1f} MB)  "
             f"(drew {drew:.0f}s, cut {cut:.0f}s)"
         )
+    if direct is not None:
+        # The memory maps have to be let go before the files under them can be removed, and
+        # on Windows that is not a nicety -- an open mapping refuses the unlink outright.
+        direct = maps = None
+        if not args.keep_direct:
+            shutil.rmtree(direct_cache_dir(out_dir), ignore_errors=True)
     print(f"done in {time.time() - total_started:.0f}s")
     print("none of it is committed: data/local/ is gitignored and stays that way.")
     return 0

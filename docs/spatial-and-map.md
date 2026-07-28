@@ -396,6 +396,13 @@ antialiasing on cliff facets. z6 is the last level with a measurement behind it.
 The artwork pyramid can still invent z6 and z7 with an upscaler, because a drawn map has
 strokes a model understands. These layers have no such licence.
 
+**Superseded on the size, not on the measurement — see §20.** The renders are 32768², z0..z7
+now. Everything above still holds and is still what `_meta` says: doubling the sampling of a
+1 m field finds no new world, and the re-run on the v3 field measured the same direction. What
+changed is that z7 stopped being sold as information. It is sold as *smoothness a browser
+cannot produce*, because the client's own upscale of a z6 tile is bilinear and therefore C0 —
+and, over the direct regime, the pixels stopped being a reconstruction of the field at all.
+
 ### Borrowing the artwork's shading where the field's province is coarse (2026-07-31)
 
 The 1 m grid is one resolution and **not one accuracy**, and rendering as though it were is
@@ -676,3 +683,140 @@ volumes have stopped describing the same world, which is what a misregistration 
 from here. The run refuses to write if any of them fails. On build 495413 they measure
 0.48%, 99.85%, 0.000 m and 0.0001%.
 
+## 20. The two-regime sampler, and a smoothed z7 (2026-07-31)
+
+### The ragged rim was never the geometry, and it was not the density either
+
+Heightfield v3 put the Nanite leaf under the cliff layer — 11.6× the triangles, world-space
+median edge 2.48 m → 0.48 m — and the rims on every rock did not move by a pixel. They could
+not: the field is a **1 m max-Z fold**, and a rim drawn from it is a 1 m staircase however
+fine the triangles that were folded onto it were.
+
+So `gen_map_renders.py` reads the **triangles** now, by *importing the generator that writes
+the field*: `sweep_levels`, `read_mesh_geometry`, `rotation_matrix`, `winding_sign`,
+`MaxZRaster` and all four placement culls are called, not copied. The only thing this file
+changes is the grid they are pointed at — its own 32768², 0.229 m to the texel — which is
+what makes a difference between the render and the field a difference of spacing rather than
+of rasteriser. 216 M triangles over 20,233 placements, banded at 256 rows, 806 s, written to
+a memory-mapped scratch file so both layers draw from one rasterisation.
+
+**Two things then had to be got right that the parked design got wrong**, and both were
+found by looking at the picture rather than at the statistic.
+
+### One: the kernel has to interpolate the lattice, not the fold it produced
+
+The first draft did what the design said — Catmull-Rom over the field, direct rasterisation
+where the density plane says so, a cross-fade between them — and the rims **did not move**.
+Interpolating the composed field over a rim reconstructs the *fold*: a texel just outside a
+rock is still a cliff-top height, because a cliff-top texel is one of the four the stencil
+reads. The drop stays exactly where the 1 m lattice put it, at any output resolution. z7 then
+draws that staircase *more sharply* than a bilinear upscale of z6 did, which is worse than
+the thing it was supposed to beat.
+
+What the kernel has to be given is the surface **underneath**: the landscape and fill
+lattices, which are continuous geometry the game evaluates itself, with the cliff province
+taken out (`ground_lattice`). The rocks are then composited onto that at 0.229 m — which is
+`gen_world_heightmap.py`'s own composition rule, performed at the render's spacing instead of
+read back from its own output.
+
+### Two: the density plane is provenance, not a gate
+
+At 0.229 m the design's rule — one source vertex under an output texel, i.e. `density ≥ 19.09`
+— is met by **10.77% of the cliff province**, and on a texel that qualifies a 6 m feather
+gave the geometry only 0.387 of its own answer. Narrowing the feather was measured (a sweep
+of seven widths against the seam trace picked 1 m, which raised that to 0.696), and it was
+not enough, because of what the plane says where the worst rims are:
+
+`prov == 4` means *the rasteriser reached this texel by interpolating a triangle wider than
+itself*, which is `density == 0` **by construction**. On the 234 m window with the highest
+cliff fraction on the map, **0.00%** of texels qualify at z7 — the density is not merely low
+there, it is zero, and no weight built from it can reach those rims however it is shaped.
+
+So the plane stopped gating. What decides that the rocks are drawn is **their own coverage of
+the pixel**, which is the same rule the field uses one metre coarser; the rocks raise the
+ground and never lower it, through a smoothed positive part (`DIRECT_LIFT_KNEE_M`, a quarter
+of a metre) so the line where a rock meets the ground is not a derivative discontinuity the
+hillshade would draw around every formation. What the density plane decides now is what to
+**call** what was drawn — a measurement, or the plane of a triangle wider than a texel — and
+`_meta.render.two_regime.regimes` counts both, per province, every run.
+
+That is a real deviation from the parked design and it is the reason the rims smooth.
+
+### The seam, measured along a line — and its premise made explicit
+
+The design was explicit that the seam had to be validated by a **trace** and not by probes.
+The statistic is `|d²z/dx²|` along every row of every band, over the whole 32768 square,
+sorted into pools by the weights under **all three** texels of each stencil.
+
+Two versions of it were wrong before this one, and both are worth recording because both
+*passed*:
+
+1. Pooling around `w = 0.5` measures the one place a hard join has nothing to show — a
+   feather's second derivative is zero at its own midpoint by symmetry, and it lives at the
+   shoulders. Every join passed, including a switch.
+2. Comparing the join against the two pure regimes measures the **terrain** once the
+   composition is by coverage, because then the join *is* the rock's silhouette: a real cliff
+   edge, where enormous curvature is the correct answer.
+
+What ships is two bounds and both have to hold. **Against the counterfactual**: the same two
+surfaces over the same texels joined by the hard `max` the field itself uses — a fade that is
+not smoother than the switch it replaces has bought nothing, so the bound is 1.0. **Against
+the terrain where the surfaces agree** to within half a metre (`SEAM_SAME_SURFACE_M`) — the
+design's own comparison, with the premise it never had to state, and the design's own bound
+of 1.5. The harness test drives both with a fade and with a one-texel join and requires the
+second to fail.
+
+### What the fill province gets instead
+
+Neither regime helps the third province. `fill` is the interface raster — 3.66 m cells
+quantised to 3.9 m in Z — so it draws the ocean shelf and the map's edge as terraces: flat
+plateaus with blocky outlines that no kernel can un-terrace, because those steps are real in
+the data and are not in the world. They are low-passed at the raster's own cell size,
+normalised over the province so no landscape measurement is dragged into a 3.9 m answer,
+faded by its own weight so the province boundary is not itself drawn, and **clamped to one
+quantisation step** — an artifact is at most one step tall, so a larger correction is not
+de-terracing, it is a blur erasing the 300 m scarp at the map's edge by half of itself. It
+fires on 13.96% of the field and clamps on 2.3% of the province.
+
+The design called for marching squares over each terrace and a spline along the polyline.
+Smoothing every level's indicator with one kernel and summing them is, by the linearity of a
+convolution, **the same array** as smoothing the level field itself — so the two are one
+operation, and the one that is here is the one that does not need polylines extracted from
+56 million texels.
+
+### z7: what it is, and what it is not
+
+The measurement that stopped these renders at 16384 was re-run on the v3 field and came out
+the same: high-frequency energy per pixel **falls** at every doubling, 3.05 → 1.50 levels on
+the worst cliff window. Doubling the sampling of a 1 m field finds no new world, and z7 is
+**not** sold as more information. `_meta.render.z7` says so in those words.
+
+What z7 is, is smoothness the client cannot produce. A browser shown z6 at twice its scale
+upsamples it **bilinearly**, and bilinear is C0 — its derivative jumps at every source texel,
+so the relief comes out ruled into 0.458 m squares. That is the identical failure that moved
+this file off a bilinear sampler in the first place, relocated from the render into the
+viewer. A z7 tile is the same surface evaluated by the same C1 kernel at half the spacing.
+
+And over the cliff province it *is* new information at z7, because there the pixels are
+triangles rather than a reconstruction of a fold of them.
+
+### The @2x tree stayed at z5
+
+Cutting it from the 32768 sheet would give it a z6 of 512 px tiles weighing about as much as
+the entire 1x pyramid — for pixels a hi-DPI client already gets. Leaflet's own retina path
+asks for `z + 1` at 1x and draws it at half size, and the 1x tree is now a level deeper than
+it was, so the dense tree is cut from `RENDER_2X_PX` (16384) and stays exactly where it has
+always been. It is the one place the two trees stopped being the same arithmetic, and the test
+that used to assert "one level shallower" asserts the two sizes separately now.
+
+### Refusals
+
+Four pins, all refused on rather than overwritten. The field build under the tiles; a field
+that is not there at all; a field with **no density plane**, which is a field from before the
+cliff layer became the Nanite leaf and cannot state what any of its cliff texels are — that
+run stops and names the generator version that writes one, rather than drawing under a
+sidecar claiming recipe 3; and the direct cache, which carries the size, the sub-sampling and
+the build it was rasterised for, so a cache from another render is rebuilt. `--kernel-only`
+is the honest way to draw without the geometry: it draws **recipe 2 whole** — no rocks, no
+lattice split, no de-terracing — and records that recipe number, so a before/after against it
+is a comparison of two recipes rather than of one recipe against half of itself.
