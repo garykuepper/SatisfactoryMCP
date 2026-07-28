@@ -10,7 +10,7 @@
  * grid, so a client changes one path segment and nothing else.
  *
  * Each pyramid still describes ITSELF, though, and that is the one per-mode difference that
- * matters: the renders stop at z5 and the artwork can run deeper, so `maxNativeZoom` comes
+ * matters: each pyramid declares its own depth (renders and artwork both reach z7 today, @2x trees stop earlier), so `maxNativeZoom` comes
  * from that layer's own probe headers and Leaflet upscales past it rather than asking for a
  * level that is not there.
  *
@@ -235,7 +235,7 @@ function pyramidMaker(spec: PyramidSpec, response: Response): (() => L.Layer) | 
   if (moved) return null;
 
   var tilePx = +response.headers.get("X-Map-Tile-Px")! || 256;
-  // Each layer's OWN depth: the renders stop at z6 and the artwork can be cut deeper, so
+  // Each layer's OWN depth: every pyramid states its own max-z in its sidecar (all three reach z7 today), so
   // this is the one number a mode switch actually has to carry across. Past it Leaflet
   // upscales the deepest level it has instead of asking for one that is not there.
   var maxZ = +response.headers.get("X-Map-Tile-Max-Z")!;
