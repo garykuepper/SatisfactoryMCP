@@ -10,21 +10,20 @@
  *
  * READ WHAT THIS DOES AND DOES NOT SAY. Every JSON endpoint under
  * `interfaces/web/routers/` is self-typed -- it declares a `response_model`, so its whole
- * body is described below and this file is authoritative for it -- EXCEPT `/api/worlds`,
- * whose `200` is `unknown` because it is deferred rather than missed. It forwards the
- * loader's own save headers, so a faithful model is `dict[str, Any]` and a useful one
- * deletes eight keys from every row: converting it means changing what it SENDS, which is
- * a commit about the body and not a typing item. The comment above `worlds()` in
- * routers/world.py is the long version. `/api/mapimage`, `/api/maptiles/…`,
- * `/api/icons/…` and `/api/events` send pictures and a stream and have no JSON body to
- * describe at all.
+ * body is described below and this file is authoritative for it, with no exception left.
+ * `/api/worlds` was the last: DEFERRED for as long as it forwarded the loader's own save
+ * headers, because the useful model deleted eight keys from every row -- a change to what
+ * the endpoint SENDS -- and converted the day that body change was approved and made. The
+ * comment above `worlds()` in routers/world.py names the deleted keys. `/api/mapimage`,
+ * `/api/maptiles/…`, `/api/icons/…` and `/api/events` send pictures and a stream and have
+ * no JSON body to describe at all.
  *
  * `api-types.ts` IS GONE, and that is what the paragraph above is worth saying. It held the
  * frontend's own observations of the endpoints that published no schema, read off real
  * payloads from a real save; those endpoints publish one now, and `api-shapes.ts` re-exports
  * the components below under the names the page uses. What was in that file and was never a
- * payload lives with the code that uses it instead: the drawing tuples in `geometry.ts`,
- * `ApiError` in `api.ts`, and `/api/worlds`' deferred rows in `state.ts` and `worlds.ts`.
+ * payload lives with the code that uses it instead: the drawing tuples in `geometry.ts` and
+ * `ApiError` in `api.ts`.
  *
  * What this file has always been authoritative for is the other half and still is: which
  * paths exist, which query parameters each takes, and what a validation error looks like.
@@ -2064,6 +2063,37 @@ export interface components {
             };
         };
         /**
+         * SaveRow
+         * @description One save file, cut to the five keys the picker reads -- of the header's thirteen.
+         *
+         *     The eight deleted, by the filter that this model is: ``save_identifier`` (already
+         *     spent server-side -- it is how ``list_worlds`` grouped the rows, and ``world_id``
+         *     carries it), ``save_header_version``, ``save_version``, ``build_version``,
+         *     ``save_datetime_ticks``, ``is_modded``, ``is_creative`` and ``size``. Nothing on the
+         *     page ever read any of them; a client that wants a save's full header asks
+         *     ``/api/summary``, which forwards it whole.
+         *
+         *     ``path`` is the pin (``?save=`` takes it back verbatim), ``filename`` is what the pin
+         *     is spelled as in the URL fragment, ``mtime_ns`` orders the dropdown, and
+         *     ``play_duration_s`` is an ``int`` because ``pioneersav``'s ``SaveInfo`` declares it
+         *     one -- ``float`` here would rewrite the bytes on the wire.
+         *
+         *     Declaration order is wire order (see routers/floors.py), and it is the header's own
+         *     order with the deleted keys closed up.
+         */
+        SaveRow: {
+            /** Path */
+            path: string;
+            /** Filename */
+            filename: string;
+            /** Session Name */
+            session_name: string;
+            /** Play Duration S */
+            play_duration_s: number;
+            /** Mtime Ns */
+            mtime_ns: number;
+        };
+        /**
          * StorageFluid
          * @description A fluid buffer: what is in it, how much it holds, and the fraction those two make.
          *
@@ -2286,6 +2316,20 @@ export interface components {
             progression: components["schemas"]["ProgressionSummary"];
             player: components["schemas"]["PlayerPosition"];
         };
+        /**
+         * UnsupportedFile
+         * @description A file the scan could not read: which one, and the parser's own reason.
+         *
+         *     The sidecar says five things about such a file; the page prints these two in its
+         *     "no readable saves" diagnosis and nothing reads the rest, so ``path``, ``mtime_ns``
+         *     and ``size`` are filtered off the wire on the same terms as the save rows' eight.
+         */
+        UnsupportedFile: {
+            /** Filename */
+            filename: string;
+            /** Reason */
+            reason: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -2320,6 +2364,43 @@ export interface components {
             /** Span M */
             span_m: number;
         };
+        /**
+         * WorldRow
+         * @description One world: ``asdict(World)``, plus the newest save's headline figures hoisted on.
+         *
+         *     The three hoisted fields are built by the handler, not forwarded: ``mtime`` is the
+         *     newest save's ``mtime_ns`` in SECONDS (a float, and the one place this surface speaks
+         *     epoch seconds -- the picker's "newest first" is the server's sort, this is what it
+         *     sorted by), and ``play_duration_s`` is the maximum across the world's saves, an
+         *     ``int`` for the same reason the row's is.
+         */
+        WorldRow: {
+            /** World Id */
+            world_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Saves */
+            saves: components["schemas"]["SaveRow"][];
+            /** Mtime */
+            mtime: number;
+            /** Newest Filename */
+            newest_filename: string;
+            /** Play Duration S */
+            play_duration_s: number;
+        };
+        /**
+         * WorldsResponse
+         * @description What ``/api/worlds`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         *
+         *     Both keys are always present together: the only reply without them is the error
+         *     branch, which returns a ``JSONResponse`` and skips this model entirely.
+         */
+        WorldsResponse: {
+            /** Worlds */
+            worlds: components["schemas"]["WorldRow"][];
+            /** Unsupported */
+            unsupported: components["schemas"]["UnsupportedFile"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -2344,7 +2425,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorldsResponse"];
                 };
             };
         };

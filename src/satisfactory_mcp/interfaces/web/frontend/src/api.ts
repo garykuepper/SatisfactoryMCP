@@ -29,10 +29,10 @@
  * `get` is generic over the response, and the caller supplies the type because only the
  * caller knows which endpoint it asked. That type now comes from ONE place -- api-shapes.ts,
  * which re-exports the server's own generated schema under the names the page uses -- for
- * every endpoint but `/api/worlds`, which is deferred and whose rows worlds.ts still claims
- * by hand. What has always been taken from the generated schema is the path: `ApiPath` below
- * is the union of the paths the server actually serves, so a typo in a URL is a compile error
- * rather than a toast at runtime.
+ * every endpoint, `/api/worlds` included since its deferred conversion was finally made (a
+ * body change, and routers/world.py says what it deleted). What has always been taken from
+ * the generated schema is the path: `ApiPath` below is the union of the paths the server
+ * actually serves, so a typo in a URL is a compile error rather than a toast at runtime.
  */
 
 import type { paths } from "./api-schema";

@@ -25,21 +25,20 @@ const HEADER = `/**
  *
  * READ WHAT THIS DOES AND DOES NOT SAY. Every JSON endpoint under
  * \`interfaces/web/routers/\` is self-typed -- it declares a \`response_model\`, so its whole
- * body is described below and this file is authoritative for it -- EXCEPT \`/api/worlds\`,
- * whose \`200\` is \`unknown\` because it is deferred rather than missed. It forwards the
- * loader's own save headers, so a faithful model is \`dict[str, Any]\` and a useful one
- * deletes eight keys from every row: converting it means changing what it SENDS, which is
- * a commit about the body and not a typing item. The comment above \`worlds()\` in
- * routers/world.py is the long version. \`/api/mapimage\`, \`/api/maptiles/…\`,
- * \`/api/icons/…\` and \`/api/events\` send pictures and a stream and have no JSON body to
- * describe at all.
+ * body is described below and this file is authoritative for it, with no exception left.
+ * \`/api/worlds\` was the last: DEFERRED for as long as it forwarded the loader's own save
+ * headers, because the useful model deleted eight keys from every row -- a change to what
+ * the endpoint SENDS -- and converted the day that body change was approved and made. The
+ * comment above \`worlds()\` in routers/world.py names the deleted keys. \`/api/mapimage\`,
+ * \`/api/maptiles/…\`, \`/api/icons/…\` and \`/api/events\` send pictures and a stream and have
+ * no JSON body to describe at all.
  *
  * \`api-types.ts\` IS GONE, and that is what the paragraph above is worth saying. It held the
  * frontend's own observations of the endpoints that published no schema, read off real
  * payloads from a real save; those endpoints publish one now, and \`api-shapes.ts\` re-exports
  * the components below under the names the page uses. What was in that file and was never a
- * payload lives with the code that uses it instead: the drawing tuples in \`geometry.ts\`,
- * \`ApiError\` in \`api.ts\`, and \`/api/worlds\`' deferred rows in \`state.ts\` and \`worlds.ts\`.
+ * payload lives with the code that uses it instead: the drawing tuples in \`geometry.ts\` and
+ * \`ApiError\` in \`api.ts\`.
  *
  * What this file has always been authoritative for is the other half and still is: which
  * paths exist, which query parameters each takes, and what a validation error looks like.

@@ -13,25 +13,15 @@ import { writeHash } from "./map";
 import { BOOT, currentWorld, pinnedPath, state } from "./state";
 import { fail, friendly } from "./toast";
 
-import type { ApiError } from "./api";
-import type { WorldRow } from "./state";
+import type { WorldRow, WorldsResponse } from "./api-shapes";
 
-/* What `/api/worlds` sends, as the frontend's claim -- the last one on the page.
- *
- * The rows themselves are declared in state.ts, which stores them; this is the wrapper, and
- * it lives with the fetch. Why the server does not declare either is written out there:
- * `/api/worlds` forwards opaque save headers, and a response model for those is either
- * useless or lossy.
- *
- * Both fields are REQUIRED, exactly like every generated body next door: `worlds()` ends
- * `return {"worlds": rows, "unsupported": list(unsupported)}` and the only path that omits
- * them is the one that sends `error` instead -- which is what the `ApiError` intersection is
- * for. Optional markers here bought nothing and cost two `|| []` guards in this file that
- * read as evidence of a null. */
-export interface WorldsResponse extends ApiError {
-  worlds: WorldRow[];
-  unsupported: { filename: string; reason: string }[];
-}
+/* `WorldsResponse` was the frontend's last hand-written claim about a payload, declared
+ * right here with the fetch. It is the server's claim now -- `/api/worlds` declares a
+ * `response_model` like everything else, which was a body change and made as one (the
+ * model filters; see routers/world.py) -- so both names come from api-shapes.ts, and the
+ * generated body keeps what the claim had: `worlds` and `unsupported` REQUIRED, with the
+ * error branch supplied by the `ApiError` intersection `Body<>` applies. No `|| []`
+ * guards, same reason as ever: the endpoint sends both fields or sends `error` instead. */
 
 function worldOption(w: WorldRow, dupes: Record<string, number>): HTMLOptionElement {
   var option = document.createElement("option");

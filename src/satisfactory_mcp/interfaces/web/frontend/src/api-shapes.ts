@@ -21,12 +21,14 @@
  * it: the intersection below is what makes these usable as response types rather than
  * decoration.
  *
- * EVERYTHING IS HERE NOW, which is a change of tense and the end of the conversion.
- * `api-types.ts` is gone: every endpoint that had a hand-written payload in it declares a
- * `response_model` and appears below instead. The one exception is `/api/worlds`, which is
- * DEFERRED rather than converted -- it forwards opaque save headers, so a response model is
- * either useless or lossy -- and its rows are the page's own claim, declared in state.ts
- * where they are stored and wrapped in worlds.ts where they are fetched.
+ * EVERYTHING IS HERE NOW, with no exception left. `api-types.ts` is gone: every endpoint
+ * that had a hand-written payload in it declares a `response_model` and appears below
+ * instead. `/api/worlds` was the last and was DEFERRED rather than missed, because its
+ * conversion was a body change: it forwarded opaque thirteen-key save headers, so the
+ * useful model -- the five fields the picker reads -- DELETED the other eight from every
+ * row on the wire. That deletion has now been made, on the server and on purpose, and the
+ * rows the page used to claim by hand in state.ts are re-exports below like everything
+ * else. See `SaveRow` in routers/world.py for which keys died and why that was safe.
  *
  * WHAT IS NOT HERE, and is not missing. The route SHAPES -- `PointM`, `Point3M`, `BboxM`,
  * `SpanCurveM`, `RouteCurveM`, `RouteShape` -- are in geometry.ts, which imports nothing:
@@ -60,6 +62,18 @@ export type InspectResponse = Body<"InspectResponse">;
 /* --------------------------------------------------------------- /api/regions */
 
 export type RegionsResponse = Body<"RegionsResponse">;
+
+/* ---------------------------------------------------------------- /api/worlds */
+
+/** The five keys the picker reads -- which is all the server sends since it declared
+ *  this row and the declaration filtered the other eight header keys off the wire. */
+export type SaveRow = Schema["SaveRow"];
+
+/** One world: its saves, and the newest one's headline figures hoisted onto it.
+ *  state.ts stores these (`state.worlds`) and re-exports nothing; import from here. */
+export type WorldRow = Schema["WorldRow"];
+
+export type WorldsResponse = Body<"WorldsResponse">;
 
 /* --------------------------------------------------------------- /api/summary */
 

@@ -13,44 +13,18 @@
 
 import type * as L from "leaflet";
 
-/* The one payload on this page the server does not describe, declared where it is stored.
+/* `WorldRow` and `SaveRow` used to be DECLARED here -- the one payload the server did not
+ * describe, written down by the module that stores it, off observed bytes. The server
+ * describes them now: `/api/worlds` grew a `response_model`, made as the body change
+ * routers/world.py had always said it would be (a response model FILTERS, so declaring
+ * the five fields the picker reads deleted the other eight header keys from every row on
+ * the wire), and the rows are re-exports from the generated schema in api-shapes.ts like
+ * every other payload on the page.
  *
- * `/api/worlds` is DEFERRED, not missed: it forwards the loader's own `World` dataclasses,
- * whose `saves` are the sidecar's thirteen-key save HEADERS, so a faithful response model is
- * `dict[str, Any]` and a useful one DELETES eight keys from every row -- a change to what the
- * endpoint sends, which is a commit about the body rather than a typing one. The comment
- * above `worlds()` in routers/world.py is the long version, and it has an argument the rest
- * of the surface does not: pydantic serialises a TypedDict in declaration order and drops
- * what is absent, so a partial header comes back RE-KEYED rather than passed through.
- *
- * So these two are the frontend's own claim, read off real payloads, and the caveat every
- * such claim carries applies: a field that is always populated in the saves it was read from
- * can be absent in somebody else's. They are here rather than in worlds.ts because this is
- * the module that STORES them -- `state.worlds` is the list, and `currentWorld` and
- * `pinnedPath` below are typed by the row -- and worlds.ts, which fetches them, already
- * imports this file. The response wrapper stays there, with the fetch.
- *
- * Both `import type`s in this module are erased, so the sentence above about importing
- * nothing at runtime still holds; a declaration costs nothing at all. */
+ * All `import type`s in this module are erased, so the sentence above about importing
+ * nothing at runtime still holds -- api-shapes.ts is itself types all the way down. */
 
-/** One save file, as the picker's second dropdown reads it. */
-export interface SaveRow {
-  path: string;
-  filename: string;
-  session_name: string;
-  play_duration_s: number;
-  mtime_ns: number;
-}
-
-/** One world: its saves, and the newest one's headline figures hoisted onto it. */
-export interface WorldRow {
-  world_id: string;
-  session_name: string;
-  saves: SaveRow[];
-  mtime: number;
-  newest_filename: string;
-  play_duration_s: number;
-}
+import type { WorldRow } from "./api-shapes";
 
 /* The panel's fold state, which layercontrol.ts owns and sets. It is declared here rather
  * than there because it belongs to the same object as everything else that has to survive a

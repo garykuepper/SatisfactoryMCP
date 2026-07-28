@@ -52,16 +52,16 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `index.html` | the page. Vite's entry; the built copy lands in `../static/` | 55 |
 | `src/main.ts` | the entry: which map events are listened for, in what order, which modules fetch, and what happens on load | 157 |
 | `src/leaflet.ts` | the one `import`, and where the private-field declarations attach | 19 |
-| `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 153 |
+| `src/state.ts` | the current selection, the base-map mode, the epoch, the layer registry. Imports nothing | 164 |
 | `src/registry.ts` | what the page fetches, declared by the module that draws it. Imports nothing at runtime | 131 |
 | `src/dom.ts` | `el`, and the escaping `popup()` every popup builder goes through | 67 |
 | `src/toast.ts` | the message strip: failures, and the one non-failure note | 68 |
 | `src/format.ts` | resource short name, region line, phase name | 37 |
 | `src/palette.ts` | every colour chosen against the others, in one table | 121 |
 | `src/api.ts` | `get()`, the two query parameters every endpoint takes, and the error branch no schema describes | 116 |
-| `src/api-shapes.ts` | the response shapes, one line each, re-exported from the generated schema | 142 |
+| `src/api-shapes.ts` | the response shapes, one line each, re-exported from the generated schema | 162 |
 | `src/geometry.ts` | the page's own words for what it draws with: points, boxes, route curves. Imports nothing | 53 |
-| `src/api-schema.d.ts` | generated from `/openapi.json`; paths, query parameters and every response body | 3049 |
+| `src/api-schema.d.ts` | generated from `/openapi.json`; paths, query parameters and every response body | 3133 |
 | `src/leaflet-private.d.ts` | the fields this page hangs off Leaflet objects | 124 |
 | `src/map.ts` | the map, the CRS, the panes, the fragment, and the `[-y, x]` rule | 219 |
 | `src/fragment.ts` | the address bar as an input: re-reading `#…` when it changes under an open tab | 125 |
@@ -78,7 +78,7 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `src/header.ts` | the identity line and the you-are-here dot: `/api/summary`'s two consumers | 81 |
 | `src/inspector.ts` | the right-click answer: the one thing here that is not a layer | 155 |
 | `src/load.ts` | when the page fetches, and what a reply is allowed to do; the epoch guard | 142 |
-| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 197 |
+| `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 205 |
 | `src/sse.ts` | one EventSource, and what a save write means | 61 |
 | `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 604 |
 | `public/vendor/LEAFLET-LICENSE` | copied verbatim into the build; BSD-2-Clause requires it | |
@@ -161,12 +161,12 @@ One file carries the API, and it is generated. There used to be two.
 - **`src/api-types.ts` is gone.** It held the frontend's claim about the API — response shapes
   read off real payloads — and it died when the last endpoint started describing itself. What
   was in it that was never a payload lives with the code that uses it: the drawing tuples in
-  `geometry.ts`, `ApiError` in `api.ts`, and the rows of the one deferred endpoint below.
-- **`/api/worlds` is the exception, and it is deferred rather than missed.** It forwards the
-  loader's own save headers, so a faithful response model is `dict[str, Any]` and a useful one
-  deletes eight keys from every row: converting it changes what it SENDS. Its `200` is
-  `unknown` in the schema, and the page's own claim about its rows is in `state.ts`, which
-  stores them, and `worlds.ts`, which fetches them. See `worlds()` in `routers/world.py`.
+  `geometry.ts` and `ApiError` in `api.ts`.
+- **`/api/worlds` was the last exception, and its conversion was a body change — made as
+  one.** It forwarded the loader's own save headers, so the useful response model deleted the
+  eight keys per row nobody read; the server now declares `WorldsResponse` like everything
+  else, `state.ts` and `worlds.ts` import the rows from `api-shapes.ts`, and the page has no
+  hand-written payload claims left. `worlds()` in `routers/world.py` names the deleted keys.
 
 What is still `any`, in full:
 
