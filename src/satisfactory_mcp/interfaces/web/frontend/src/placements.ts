@@ -301,8 +301,8 @@ function storageContents(s: StorageRow): Row[] {
   }
   // ...and a solid container is an inventory, so it is drawn as one -- the same grid a crate
   // gets, out of the same helper, because "what is in it" is one question wherever it is
-  // asked. The truncation is the server's: `/api/storage` sends the biggest six kinds and
-  // counts the rest, and `more` is what the grid's last tile stands for.
+  // asked. `/api/storage` sends the whole box (its old six-kind cap is gone; `more` arrives
+  // as 0), and `more` still feeds the grid's "+N" tile against any server that truncates.
   return contentsRows(s.items || [], s.more || 0);
 }
 

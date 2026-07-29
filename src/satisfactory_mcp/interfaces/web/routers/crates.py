@@ -32,17 +32,6 @@ router = APIRouter(prefix="/api")
 # --------------------------------------------------------------------- crates
 
 
-#: How many kinds of thing a crate row spells out before it starts counting instead.
-#:
-#: Higher than ``STORAGE_ITEMS_SHOWN``, and the difference is measured rather than a taste.
-#: A container holds one or two kinds because a player fills it deliberately; a death crate
-#: holds whatever was in a pioneer's pockets, which on the fullest one in this machine's
-#: saves is **38 kinds in 55 slots** -- rods, screws, a chainsaw, a hard drive, four kinds of
-#: alien remains and a boom box. Six of thirty-eight is not a list, it is a hint. Twelve is
-#: what a popup can show without scrolling, and the row still says how many it left out,
-#: because a list that simply stops is a bug the reader has to notice.
-CRATE_ITEMS_SHOWN = 12
-
 #: What each ``kind`` means, in the words a reader wants rather than the enum's.
 #:
 #: Sent WITH the row rather than left to the client, because the third value is the one that
@@ -64,9 +53,9 @@ class CrateItem(TypedDict):
     same type. Sharing it would mean moving it to ``serial.py`` -- a router may not import
     another router, and rightly -- which would put a row shape into the module that holds
     the unit conversions, on the strength of a coincidence: these two are alike because both
-    are a stack, and they are filled by two expressions with two different truncation limits.
-    ``Region`` is in ``serial.py`` because ONE function builds it for two routers, which is
-    the case this is not.
+    are a stack, and they are filled by two different expressions in two files. ``Region``
+    is in ``serial.py`` because ONE function builds it for two routers, which is the case
+    this is not.
 
     ``count`` is an ``int``: a stack amount is a number of items, and declaring it ``float``
     would validate 15 into 15.0 and rewrite every row.
@@ -95,8 +84,12 @@ class CrateRow(TypedDict):
 
     ``slots`` is ``int | None`` on ``StorageSolid``'s terms: it is the inventory component's
     own slot count forwarded whole, and a projection that wrote none sends null rather than
-    0. ``more``, ``item_kinds`` and ``total`` are counts and are ints -- ``more`` is 0 rather
-    than null when the truncation left nothing off.
+    0. ``more``, ``item_kinds`` and ``total`` are counts and are ints. ``more`` is ALWAYS 0
+    from this server: the twelve-kind cap it once counted the remainder of is gone -- the
+    popup renders an inventory grid measured to hold the fullest crate ever seen on this
+    machine, 38 kinds, without overflow -- and the field stays because it is the row's own
+    statement that nothing was left off, and because the client's "+N more" tile keys on it
+    and must keep working against any server that still truncates.
     """
 
     instance_leaf: str
@@ -138,9 +131,14 @@ def _crate_row(st: WorldState, row: dict) -> CrateRow:
     old ones that cannot say.
 
     ``items`` is resolved against the docs dump like every other class on this surface, so a
-    popup never shows a reader a ``Desc_…_C``, and it is TRUNCATED with a count of the
-    remainder on ``/api/storage``'s terms exactly: ``item_kinds`` and ``total`` are of the
-    whole crate either way, so a client that wants to say "and 26 more" has the numbers.
+    popup never shows a reader a ``Desc_…_C``, and it is the WHOLE crate. There used to be a
+    twelve-kind cap here, written when contents were a vertical list a popup had to scroll;
+    the popup is an inventory grid now, measured to hold all 38 kinds of the fullest crate on
+    this machine at 381x568 px without overflow, so the cap's own justification was false and
+    it is removed rather than raised -- a crate's kinds are bounded by its slot count (55 on
+    that fullest one, a whole pioneer's pockets), so there is no unbounded case for a limit to
+    guard. ``more`` is kept at its honest value, 0, and ``item_kinds`` and ``total`` are of
+    the whole crate as they always were.
 
     **No footprint, and that is not an omission.** A crate is not a buildable and has no
     ``Build_`` class, so the docs dump carries no clearance for it and none is invented here
@@ -149,8 +147,7 @@ def _crate_row(st: WorldState, row: dict) -> CrateRow:
     """
     raw = [e for e in row.get("items") or () if isinstance(e, (list, tuple)) and len(e) >= 2]
     items = [
-        {"cls": str(e[0]), "name": st.game.item_name(str(e[0])), "count": e[1]}
-        for e in raw[:CRATE_ITEMS_SHOWN]
+        {"cls": str(e[0]), "name": st.game.item_name(str(e[0])), "count": e[1]} for e in raw
     ]
     kind = str(row.get("kind") or "none")
     return {
@@ -164,8 +161,9 @@ def _crate_row(st: WorldState, row: dict) -> CrateRow:
         **_xyz(row.get("pos")),
         "yaw": _yaw(row.get("yaw")),
         "items": items,
-        # What was left off the list above, so a client can say "and 26 more" rather than
-        # showing twelve of thirty-eight and implying thirty-eight is twelve.
+        # Always 0 now that the list above is the whole crate; the arithmetic is kept as
+        # arithmetic rather than replaced with a literal so that any future bound put back
+        # on ``items`` makes this the count of what it left off again, automatically.
         "more": max(0, len(raw) - len(items)),
         "item_kinds": len(raw),
         "total": sum(e[1] for e in raw if isinstance(e[1], (int, float))),
@@ -199,9 +197,10 @@ def crates(request: Request, save: str | None = None, world: str | None = None) 
     whose, and a field that guessed would arrive indistinguishable from a reading.
 
     **Contents are the crate's own**, joined from the inventory component it owns, resolved
-    to display names and truncated with a count -- the join and the truncation
-    ``/api/storage`` makes, at a higher limit, because a death crate holds a whole pioneer's
-    pockets rather than one deliberate kind of thing.
+    to display names and sent WHOLE -- the join ``/api/storage`` makes, and like it no longer
+    truncated: the popup is an inventory grid measured to hold the fullest crate this machine
+    has ever cut, 38 kinds in 55 slots, so a cap justified as "what a popup can show" had
+    nothing left to justify it. ``more`` is 0 on every row and says so.
 
     Tiny: 2 rows on the reference world against ``/api/storage``'s 151, sorted by kind so a
     client's first row is the interesting one. Sent in one payload, ungrouped, the posture

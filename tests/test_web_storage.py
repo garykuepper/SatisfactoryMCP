@@ -44,29 +44,32 @@ def test_storage_is_every_container_and_buffer_with_what_is_in_it(client, state)
         assert row["name"] and not row["name"].startswith("Build_")
 
 
-def test_a_solid_container_names_its_contents_and_says_what_it_left_out(client):
-    """Items resolved to display names, biggest first, truncated with a count.
+def test_a_solid_container_names_its_whole_contents_and_leaves_nothing_out(client):
+    """Items resolved to display names, biggest first, and the WHOLE box.
 
-    The truncation is the part worth pinning: a popup that showed six of twelve kinds and
-    stopped would read as a container holding six things. ``more`` and ``item_kinds`` are what
-    let a client say so, and they have to agree with the list actually sent.
+    There used to be a six-kind truncation here, and the busiest container -- a catch-all
+    box holding 12 kinds -- is why the removal is worth pinning against the real world: a
+    regression that reintroduced a cap would show on exactly that box, as a ``more`` above 0
+    and a list shorter than ``item_kinds``. The popup's inventory grid was measured holding
+    38 kinds without overflow, so nothing a 48-slot container can hold needs counting instead
+    of showing.
     """
     rows = [r for r in client.get("/api/storage").json()["storage"] if r["kind"] == "solid"]
     assert len(rows) == 146
-    truncated = 0
     for r in rows:
         assert set(r) >= {"items", "more", "item_kinds", "total", "slots"}
         assert "stored_m3" not in r and "fluid" not in r, "a box has no fluid level"
-        assert len(r["items"]) == min(r["item_kinds"], 6)
-        assert r["more"] == r["item_kinds"] - len(r["items"])
-        truncated += r["more"] > 0
+        assert len(r["items"]) == r["item_kinds"], "the whole box, not the biggest six"
+        assert r["more"] == 0, "nothing is ever left off, and every row says so"
         counts = [i["count"] for i in r["items"]]
         assert counts == sorted(counts, reverse=True), "biggest first"
         for item in r["items"]:
             assert item["cls"].startswith("Desc_")
             assert item["name"] and not item["name"].startswith("Desc_")
-        assert r["total"] >= sum(counts)
-    assert truncated, "no container here holds more kinds than the popup shows"
+        assert r["total"] == sum(counts), "items is the whole box, so the sum IS the total"
+    assert max(r["item_kinds"] for r in rows) == 12, (
+        "the catch-all box the old cap existed for -- the row the removal is measured on"
+    )
 
 
 def test_a_fluid_buffer_reports_a_level_against_the_capacity_that_makes_it_a_reading(client):

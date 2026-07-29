@@ -118,10 +118,11 @@ export interface Stack {
  * Leaflet's default is 300, and it is right for every other popup on this page: those are
  * short keys against short values, and a card wider than it needs to be is a card covering
  * more of the map than it has to. A grid is a different shape, and this number is arithmetic
- * rather than taste -- at 380 the value cell fits SEVEN 38 px tiles to a row, which makes the
- * twelve kinds `/api/crates` sends two rows and the six `/api/storage` sends one. Six to a row
- * would leave the twelve as a ragged 6+6; eight would need 424 px and start covering the thing
- * that was clicked. Measured with the widest card either layer can produce, not derived.
+ * rather than taste -- at 380 the value cell fits SEVEN 38 px tiles to a row. The servers
+ * send whole inventories now (the caps died the moment this grid was measured holding all 38
+ * kinds of the fullest crate ever seen, at 381x568 px, without overflow), so the widest real
+ * card is that crate's six rows of tiles; eight to a row would need 424 px and start covering
+ * the thing that was clicked. Measured with the widest card either layer can produce.
  */
 export var CONTENTS_POPUP_PX = 380;
 
@@ -168,14 +169,14 @@ function tile(item: Stack): string {
 /* What is in one container, as the two popup rows that say it: the grid, and the names under
  * it.
  *
- * `more` is the SERVER's truncation and not this file's. `/api/crates` sends the biggest
- * twelve kinds and `/api/storage` the biggest six, each with a count of what it left off, and
- * a grid cannot show what it was never sent. It is drawn as a tile of its own rather than
- * dropped, because a grid that simply stops is a container that looks emptier than it is --
- * the same reason the list this replaced ended in "and 26 more". What HAS changed is who the
- * limit is for: twelve was chosen server-side as "what a popup can show without scrolling",
- * and a grid makes that sentence false, so the cap is now arithmetic belonging to the router
- * rather than to the page, and raising it is a decision to make over there.
+ * `more` is the SERVER's truncation and not this file's, and today's servers never truncate:
+ * the caps ("the biggest twelve" on a crate, "the biggest six" on a box) were justified as
+ * what a popup could show without scrolling, this grid made that false by measurement, and
+ * both routers now send whole inventories with `more` at 0. The "+N more" tile below is KEPT
+ * ANYWAY, as the safety net: a grid cannot show what it was never sent, so if any server --
+ * an older one, or one that grows a bound again -- reports a remainder, it is drawn as a tile
+ * of its own rather than dropped, because a grid that simply stops is a container that looks
+ * emptier than it is.
  */
 export function contentsRows(items: Stack[], more: number): Row[] {
   var stacks = items || [];
