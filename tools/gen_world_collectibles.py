@@ -1304,42 +1304,127 @@ def _by_count(counter: collections.Counter) -> dict[str, int]:
     return dict(sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
-def build(
-    world: MapWorld,
-    hazards: HazardWorld,
-    facts: list[SaveFacts],
-    store: IoStore,
-    scripts: ScriptObjects,
-    game_build: str | None,
-    pyooz_version: str,
-    on_disk: list[SaveFacts],
-    files_found: int,
-    other_levels: list[dict],
-) -> tuple[list[dict], dict]:
-    """Turn map placements plus save facts into rows and ``_meta``.
+@dataclass
+class BuildContext:
+    """What ``build()``'s nine measurements share: the inputs, then their accumulators.
 
-    Rows and ``_meta`` are built together because every number in ``_meta`` is a by-product
-    of this function: a total computed separately is a total that can drift from the rows
-    it claims to describe.
+    The inputs come first and are set once, in ``build()``. Everything below them is
+    measured, each field by exactly one ``_measure_*`` function, in the order the
+    functions run. The measured fields are ``init=False`` with no default, so a section
+    reading a number before the section that measures it has run is an AttributeError
+    rather than a silently empty value.
     """
-    facts = sorted(facts, key=lambda f: (f.ticks, f.play_seconds))
-    newest = facts[-1]
 
-    rows_in = [p for p in world.placements if p.cls in CATEGORIES]
-    by_key = {(p.cell, p.instance): p for p in rows_in}
-    duplicate_keys = len(rows_in) - len(by_key)
-    by_name: dict[str, list[Placement]] = collections.defaultdict(list)
-    for placement in rows_in:
-        by_name[placement.instance].append(placement)
-    duplicate_names = sum(len(v) - 1 for v in by_name.values())
+    world: MapWorld
+    hazards: HazardWorld
+    facts: list[SaveFacts]
+    newest: SaveFacts
+    store: IoStore
+    scripts: ScriptObjects
+    game_build: str | None
+    pyooz_version: str
+    on_disk: list[SaveFacts]
+    files_found: int
+    other_levels: list[dict]
+    rows_in: list[Placement]
+    by_key: dict[tuple[str, str], Placement]
+    duplicate_keys: int
+    duplicate_names: int
 
-    # --- status. The newest save decides; the others are the evidence that it may.
+    # _measure_status
+    present: dict[tuple[str, str], bool | None] = field(init=False)
+    displaced: list[tuple[tuple[str, str], float]] = field(init=False)
+    orphan_live: collections.Counter = field(init=False)
+    agreeing: list[float] = field(init=False)
+    collected: set[tuple[str, str]] = field(init=False)
+    destroyed_others: collections.Counter = field(init=False)
+    recoverable: int = field(init=False)
+    rows: list[dict] = field(init=False)
+
+    # _measure_pedestals
+    pedestals: dict[str, dict] = field(init=False)
+
+    # _measure_coincident_positions
+    coincident_pairs: set[tuple[tuple[str, str], tuple[str, str]]] = field(init=False)
+    coincident_by_category: collections.Counter = field(init=False)
+    coincident_states_differ: int = field(init=False)
+    coincident_both_have_a_placement_id: int = field(init=False)
+    coincident: int = field(init=False)
+
+    # _measure_older_save_staleness
+    older_only: set[tuple[str, str]] = field(init=False)
+    displaced_by_version: dict[int, set] = field(init=False)
+    joined_by_save: dict[str, int] = field(init=False)
+    orphan_all: collections.Counter = field(init=False)
+    orphan_versions: dict[tuple[str, str], set[int]] = field(init=False)
+    pre_partition_keys: set[tuple[str, str]] = field(init=False)
+    pre_partition_cells: collections.Counter = field(init=False)
+
+    # _measure_orphans
+    orphan_old_layout: int = field(init=False)
+    orphan_renamed: int = field(init=False)
+    orphan_unexplained: int = field(init=False)
+
+    # _measure_exploration
+    collectible_cells: set[str] = field(init=False)
+    cells_no_record: set[str] = field(init=False)
+    unknown_rows: list[dict] = field(init=False)
+    unknown_no_record: int = field(init=False)
+    observed_map_actors: int = field(init=False)
+    map_actors_in_recorded_cells: int = field(init=False)
+    map_cells: set[str] = field(init=False)
+
+    # _measure_naming
+    wrong: int = field(init=False)
+    silent: int = field(init=False)
+    borrowed: collections.Counter = field(init=False)
+    glued: list[Placement] = field(init=False)
+    glued_by_category: collections.Counter = field(init=False)
+    glued_destroyed: list[Placement] = field(init=False)
+    glued_destroyed_unresolved: int = field(init=False)
+    mentioned: set[tuple[str, str]] = field(init=False)
+    coincident_both_recorded: int = field(init=False)
+
+    # _measure_respawn
+    pairs_compared: int = field(init=False)
+    pairs_skipped: int = field(init=False)
+    destroyed_observations: collections.Counter = field(init=False)
+    left_the_list: collections.Counter = field(init=False)
+    revived: collections.Counter = field(init=False)
+    revived_displaced: collections.Counter = field(init=False)
+    coexisting: collections.Counter = field(init=False)
+    coexisting_by_version: collections.Counter = field(init=False)
+    newest_coexisting: int = field(init=False)
+    flora: dict[str, dict] = field(init=False)
+    flora_unreadable: int = field(init=False)
+
+    # _measure_per_category
+    per_category: dict[str, dict] = field(init=False)
+    excluded: dict[str, dict] = field(init=False)
+    unclassified: dict[str, int] = field(init=False)
+    census: dict[str, dict] = field(init=False)
+    hostile_rows: int = field(init=False)
+    spawns_here_rows: int = field(init=False)
+    gas_rows: int = field(init=False)
+    cloud_rows: int = field(init=False)
+    uranium_rows: int = field(init=False)
+    hog_rows: int = field(init=False)
+    sessions: collections.Counter = field(init=False)
+    pre_partition: list[SaveFacts] = field(init=False)
+
+
+def _measure_status(ctx: BuildContext) -> None:
+    """Status -- the newest save decides; the others are the evidence that it may.
+
+    The rows themselves come out of the same pass: a row's state IS the merge, so the row
+    list and the status evidence are one derivation rather than two that could disagree.
+    """
     present: dict[tuple[str, str], bool | None] = {}
     displaced: list[tuple[tuple[str, str], float]] = []
     orphan_live: collections.Counter = collections.Counter()
     agreeing: list[float] = []
-    for key, (cls, position, looted) in newest.live.items():
-        placement = by_key.get(key)
+    for key, (cls, position, looted) in ctx.newest.live.items():
+        placement = ctx.by_key.get(key)
         if placement is None:
             orphan_live[cls] += 1
             continue
@@ -1350,24 +1435,24 @@ def build(
         else:
             displaced.append((key, gap))
 
-    collected = {key for key in newest.destroyed if key in by_key}
+    collected = {key for key in ctx.newest.destroyed if key in ctx.by_key}
     # What the rest of the destroyed list is, by the map's own class for that key. Derived,
     # because "the remainder is scenery" is exactly the sort of sentence that quietly stops
     # being true; a key the map does not place at all gets its own bucket.
     destroyed_others: collections.Counter = collections.Counter()
-    for key in newest.destroyed:
-        if key not in by_key:
-            destroyed_others[world.class_by_key.get(key, "not a map-placed actor at all")] += 1
+    for key in ctx.newest.destroyed:
+        if key not in ctx.by_key:
+            destroyed_others[ctx.world.class_by_key.get(key, "not a map-placed actor at all")] += 1
 
     # Could a displaced record be re-attached by position alone? Reported, not applied:
     # state has one derivation, and a heuristic that quietly overrides it is worse than a
     # row honestly labelled unknown.
     by_class: dict[str, list[Placement]] = collections.defaultdict(list)
-    for placement in rows_in:
+    for placement in ctx.rows_in:
         by_class[placement.cls].append(placement)
     recoverable = 0
     for key, _gap in displaced:
-        cls, position, _looted = newest.live[key]
+        cls, position, _looted = ctx.newest.live[key]
         ranked = sorted(math.dist(position, p.position) for p in by_class[cls])
         if (
             ranked
@@ -1377,7 +1462,7 @@ def build(
             recoverable += 1
 
     rows: list[dict] = []
-    for placement in rows_in:
+    for placement in ctx.rows_in:
         key = (placement.cell, placement.instance)
         if key in collected:
             state = "collected"
@@ -1400,20 +1485,33 @@ def build(
         if placement.cls == "BP_DropPod_C":
             row["looted"] = present.get(key) if state == "present" else None
         row.update(placement.detail)
-        context = hazard_context(placement.position, hazards)
+        context = hazard_context(placement.position, ctx.hazards)
         if context:
             row["hazard"] = context
         rows.append(row)
     rows.sort(key=lambda r: (r["category"], r["cell"], r["instance"]))
 
-    # --- pedestals. A shrine is the base of the sphere or somersloop above it, and the map
-    # says so itself through AttachParent. Checked rather than asserted: if the pairing were
-    # not 1:1, "298 shrines" would be a second collectible rather than a second row about
-    # one find, and a consumer adding the categories up would double-count every artifact.
+    ctx.present = present
+    ctx.displaced = displaced
+    ctx.orphan_live = orphan_live
+    ctx.agreeing = agreeing
+    ctx.collected = collected
+    ctx.destroyed_others = destroyed_others
+    ctx.recoverable = recoverable
+    ctx.rows = rows
+
+
+def _measure_pedestals(ctx: BuildContext) -> None:
+    """A shrine is the base of the sphere or somersloop above it -- AttachParent says so.
+
+    Checked rather than asserted: if the pairing were not 1:1, "298 shrines" would be a
+    second collectible rather than a second row about one find, and a consumer adding the
+    categories up would double-count every artifact.
+    """
     pedestals: dict[str, dict] = {}
-    row_category = {row["instance"]: row["category"] for row in rows}
+    row_category = {row["instance"]: row["category"] for row in ctx.rows}
     for category in ("mercer_shrine", "somersloop_shrine"):
-        mine = [r for r in rows if r["category"] == category]
+        mine = [r for r in ctx.rows if r["category"] == category]
         parents = [r.get("attached_to") for r in mine]
         parent_categories = collections.Counter(
             row_category.get(p, "not a row here") for p in parents
@@ -1426,18 +1524,23 @@ def build(
             "one_to_one": len({p for p in parents if p}) == len(mine),
         }
 
-    # --- coincident positions: two rows in one category within a metre of each other would
-    # mean one physical collectible counted twice. Checked over the emitted rows, per
-    # category, on a grid so it is linear.
+    ctx.pedestals = pedestals
+
+
+def _measure_coincident_positions(ctx: BuildContext) -> None:
+    """Two rows of one category within a metre would be one collectible counted twice.
+
+    Checked over the emitted rows, per category, on a grid so it is linear.
+    """
     coincident_pairs: set[tuple[tuple[str, str], tuple[str, str]]] = set()
     coincident_by_category: collections.Counter = collections.Counter()
     coincident_states_differ = 0
     coincident_both_have_a_placement_id = 0
     buckets: dict[tuple[str, int, int, int], list[dict]] = collections.defaultdict(list)
-    for row in rows:
+    for row in ctx.rows:
         cell = (row["category"], int(row["x"] // 100), int(row["y"] // 100), int(row["z"] // 100))
         buckets[cell].append(row)
-    for row in rows:
+    for row in ctx.rows:
         cx, cy, cz = int(row["x"] // 100), int(row["y"] // 100), int(row["z"] // 100)
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -1463,8 +1566,19 @@ def build(
                             coincident_both_have_a_placement_id += 1
     coincident = len(coincident_pairs)
 
-    # --- what the older saves add, and how stale their keys are. This is the evidence for
-    # "the newest save is the authority": if the union resolved rows it cannot, it is not.
+    ctx.coincident_pairs = coincident_pairs
+    ctx.coincident_by_category = coincident_by_category
+    ctx.coincident_states_differ = coincident_states_differ
+    ctx.coincident_both_have_a_placement_id = coincident_both_have_a_placement_id
+    ctx.coincident = coincident
+
+
+def _measure_older_save_staleness(ctx: BuildContext) -> None:
+    """What the older saves add, and how stale their keys are.
+
+    This is the evidence for "the newest save is the authority": if the union resolved
+    rows it cannot, it is not.
+    """
     older_only = set()
     displaced_by_version: dict[int, set] = collections.defaultdict(set)
     joined_by_save: dict[str, int] = {}
@@ -1472,11 +1586,11 @@ def build(
     orphan_versions: dict[tuple[str, str], set[int]] = collections.defaultdict(set)
     pre_partition_keys: set[tuple[str, str]] = set()
     pre_partition_cells: collections.Counter = collections.Counter()
-    for save in facts:
+    for save in ctx.facts:
         old = save.save_version < FIRST_MODERN_BODY
         joined = 0
         for key, (cls, position, _looted) in save.live.items():
-            placement = by_key.get(key)
+            placement = ctx.by_key.get(key)
             if placement is None:
                 orphan_all[cls] += 1
                 orphan_versions[key].add(save.save_version)
@@ -1487,27 +1601,39 @@ def build(
                 pre_partition_cells[key[0]] += 1
             if math.dist(position, placement.position) > POSITION_TOLERANCE_CM:
                 displaced_by_version[save.save_version].add(key)
-            elif key not in present and key not in collected:
+            elif key not in ctx.present and key not in ctx.collected:
                 older_only.add(key)
         for key in save.destroyed:
-            if key in by_key:
+            if key in ctx.by_key:
                 joined += 1
                 if old:
                     pre_partition_keys.add(key)
                     pre_partition_cells[key[0]] += 1
-                if key not in collected and key not in present:
+                if key not in ctx.collected and key not in ctx.present:
                     older_only.add(key)
         joined_by_save[save.name] = joined
 
-    # --- what the orphans are, which is the closest thing to a proof that no row is
-    # missing. An orphan is a save's live record of an emitted class that this table has no
-    # row for, and there are only three things it can be: a record from the pre-partition
-    # world layout, a pre-patch record whose name the map now places in a DIFFERENT cell, or
-    # a collectible the map read failed to find. The third is the one that would be a bug,
-    # so it is counted rather than argued about.
-    row_names = {p.instance for p in rows_in}
+    ctx.older_only = older_only
+    ctx.displaced_by_version = displaced_by_version
+    ctx.joined_by_save = joined_by_save
+    ctx.orphan_all = orphan_all
+    ctx.orphan_versions = orphan_versions
+    ctx.pre_partition_keys = pre_partition_keys
+    ctx.pre_partition_cells = pre_partition_cells
+
+
+def _measure_orphans(ctx: BuildContext) -> None:
+    """What the orphans are, which is the closest thing to a proof that no row is missing.
+
+    An orphan is a save's live record of an emitted class that this table has no row for,
+    and there are only three things it can be: a record from the pre-partition world
+    layout, a pre-patch record whose name the map now places in a DIFFERENT cell, or a
+    collectible the map read failed to find. The third is the one that would be a bug, so
+    it is counted rather than argued about.
+    """
+    row_names = {p.instance for p in ctx.rows_in}
     orphan_old_layout = orphan_renamed = orphan_unexplained = 0
-    for key, versions in orphan_versions.items():
+    for key, versions in ctx.orphan_versions.items():
         if max(versions) < FIRST_MODERN_BODY:
             orphan_old_layout += 1
         elif key[1] in row_names:
@@ -1515,27 +1641,46 @@ def build(
         else:
             orphan_unexplained += 1
 
-    # --- exploration. A cell is not a unit of coverage: the newest save has a level record
-    # for cells it has only partly streamed, so the honest figure is per collectible.
-    collectible_cells = {p.cell for p in rows_in}
+    ctx.orphan_old_layout = orphan_old_layout
+    ctx.orphan_renamed = orphan_renamed
+    ctx.orphan_unexplained = orphan_unexplained
+
+
+def _measure_exploration(ctx: BuildContext) -> None:
+    """Exploration: how much of the world the saves have observed, per collectible.
+
+    A cell is not a unit of coverage: the newest save has a level record for cells it has
+    only partly streamed, so the honest figure is per collectible.
+    """
+    collectible_cells = {p.cell for p in ctx.rows_in}
     recorded_union: set[str] = set()
-    for save in facts:
+    for save in ctx.facts:
         recorded_union |= save.recorded_cells
     cells_no_record = collectible_cells - recorded_union
-    unknown_rows = [r for r in rows if r["state"] == "unknown"]
+    unknown_rows = [r for r in ctx.rows if r["state"] == "unknown"]
     unknown_no_record = sum(1 for r in unknown_rows if r["cell"] in cells_no_record)
 
-    in_recorded_cells = [k for k in world.class_by_key if k[0] in newest.recorded_cells]
+    in_recorded_cells = [k for k in ctx.world.class_by_key if k[0] in ctx.newest.recorded_cells]
     observed_map_actors = sum(
-        1 for k in in_recorded_cells if k in newest.live_any_class or k in newest.destroyed
+        1 for k in in_recorded_cells if k in ctx.newest.live_any_class or k in ctx.newest.destroyed
     )
     map_actors_in_recorded_cells = len(in_recorded_cells)
-    map_cells = {cell for cell, _instance in world.class_by_key}
+    map_cells = {cell for cell, _instance in ctx.world.class_by_key}
 
-    # --- naming, scored over the map's own rows, where the truth is known.
+    ctx.collectible_cells = collectible_cells
+    ctx.cells_no_record = cells_no_record
+    ctx.unknown_rows = unknown_rows
+    ctx.unknown_no_record = unknown_no_record
+    ctx.observed_map_actors = observed_map_actors
+    ctx.map_actors_in_recorded_cells = map_actors_in_recorded_cells
+    ctx.map_cells = map_cells
+
+
+def _measure_naming(ctx: BuildContext) -> None:
+    """Naming, scored over the map's own rows, where the truth is known."""
     stems = {cls.removesuffix("_C"): cls for cls in CATEGORIES}
     wrong = silent = 0
-    for placement in rows_in:
+    for placement in ctx.rows_in:
         guess = _name_stem_class(placement.instance, stems)
         if guess is None:
             silent += 1
@@ -1544,19 +1689,21 @@ def build(
     # The same question against EVERY map-placed class rather than only the emitted ones,
     # which is where it gets sharp: a row whose name is another class's stem is a row a
     # name-based rule would file under a class this file may not even emit.
-    all_stems = {cls.removesuffix("_C"): cls for cls in world.class_counts}
+    all_stems = {cls.removesuffix("_C"): cls for cls in ctx.world.class_counts}
     borrowed: collections.Counter = collections.Counter()
-    for placement in rows_in:
+    for placement in ctx.rows_in:
         guess = _name_stem_class(placement.instance, all_stems)
         if guess is not None and guess != placement.cls:
             borrowed[f"{guess} -> {placement.cls}"] += 1
-    glued = [p for p in rows_in if _GLUED_WAT.match(p.instance)]
+    glued = [p for p in ctx.rows_in if _GLUED_WAT.match(p.instance)]
     glued_by_category = collections.Counter(CATEGORIES[p.cls] for p in glued)
     glued_destroyed = [
-        by_key[key] for key in newest.destroyed if _GLUED_WAT.match(key[1]) and key in by_key
+        ctx.by_key[key]
+        for key in ctx.newest.destroyed
+        if _GLUED_WAT.match(key[1]) and key in ctx.by_key
     ]
     glued_destroyed_unresolved = sum(
-        1 for key in newest.destroyed if _GLUED_WAT.match(key[1]) and key not in by_key
+        1 for key in ctx.newest.destroyed if _GLUED_WAT.match(key[1]) and key not in ctx.by_key
     )
 
     # Whether the game serialises a class at all: a row whose key ANY save mentions, live or
@@ -1564,44 +1711,60 @@ def build(
     # located -- BP_SomerSloopShrine_C is such a class, and this is the number that says so
     # rather than a comment that could quietly stop being true.
     mentioned: set[tuple[str, str]] = set()
-    for save in facts:
-        mentioned |= save.live.keys() & by_key.keys()
-        mentioned |= save.destroyed & by_key.keys()
+    for save in ctx.facts:
+        mentioned |= save.live.keys() & ctx.by_key.keys()
+        mentioned |= save.destroyed & ctx.by_key.keys()
 
     # Does the GAME hold two records where two rows sit within a metre of each other? If it
     # does, they are two actors and not one row emitted twice.
     coincident_both_recorded = sum(
-        1 for first, second in coincident_pairs if first in mentioned and second in mentioned
+        1 for first, second in ctx.coincident_pairs if first in mentioned and second in mentioned
     )
 
-    # --- respawn. The whole file rests on one premise: that taking a collectible removes it
-    # for good, so "collected" is durable and the three states mean something. That premise
-    # is tested here rather than asserted, in the two ways it can fail.
-    #
-    # (1) A key leaves a save's destroyed list. Only consecutive saves of the SAME build are
-    #     compared: across a build that re-issued instance names, a key vanishing means the
-    #     name changed and not that the actor came back, so those pairs are counted and
-    #     skipped instead of being reported as reversals.
-    # (2) A save names a key destroyed and a LATER save has a live record at that same key.
-    #     Here the position gate is not optional: an auto-numbered instance name is not
-    #     identity, so a player-dropped crate that happens to share a bare name with a map
-    #     cache looks exactly like a resurrection until its position is checked. Both the
-    #     accepted and the position-rejected counts are printed, because the rejected ones
-    #     are the measurement of how wrong the name-only test would have been.
+    ctx.wrong = wrong
+    ctx.silent = silent
+    ctx.borrowed = borrowed
+    ctx.glued = glued
+    ctx.glued_by_category = glued_by_category
+    ctx.glued_destroyed = glued_destroyed
+    ctx.glued_destroyed_unresolved = glued_destroyed_unresolved
+    ctx.mentioned = mentioned
+    ctx.coincident_both_recorded = coincident_both_recorded
+
+
+def _measure_respawn(ctx: BuildContext) -> None:
+    """The premise every state here rests on -- a taken collectible stays gone -- tested.
+
+    The whole file rests on that one premise: taking a collectible removes it for good,
+    so "collected" is durable and the three states mean something. It is tested here
+    rather than asserted, in the two ways it can fail.
+
+    (1) A key leaves a save's destroyed list. Only consecutive saves of the SAME build
+        are compared: across a build that re-issued instance names, a key vanishing means
+        the name changed and not that the actor came back, so those pairs are counted and
+        skipped instead of being reported as reversals.
+    (2) A save names a key destroyed and a LATER save has a live record at that same key.
+        Here the position gate is not optional: an auto-numbered instance name is not
+        identity, so a player-dropped crate that happens to share a bare name with a map
+        cache looks exactly like a resurrection until its position is checked. Both the
+        accepted and the position-rejected counts are printed, because the rejected ones
+        are the measurement of how wrong the name-only test would have been.
+    """
+
     def _class_of(key: tuple[str, str]) -> str:
-        return world.class_by_key.get(key, "not a map-placed actor at all")
+        return ctx.world.class_by_key.get(key, "not a map-placed actor at all")
 
     destroyed_observations: collections.Counter = collections.Counter()
     left_the_list: collections.Counter = collections.Counter()
     pairs_compared = pairs_skipped = 0
-    for older, newer in itertools.pairwise(facts):
+    for older, newer in itertools.pairwise(ctx.facts):
         if older.build_version != newer.build_version:
             pairs_skipped += 1
             continue
         pairs_compared += 1
         for key in older.destroyed - newer.destroyed:
             left_the_list[_class_of(key)] += 1
-    for save in facts:
+    for save in ctx.facts:
         for key in save.destroyed:
             destroyed_observations[_class_of(key)] += 1
 
@@ -1616,9 +1779,9 @@ def build(
     revived_displaced: collections.Counter = collections.Counter()
     coexisting: collections.Counter = collections.Counter()
     coexisting_by_version: collections.Counter = collections.Counter()
-    for index, save in enumerate(facts):
+    for index, save in enumerate(ctx.facts):
         for key in save.destroyed & save.live.keys():
-            placement = by_key.get(key)
+            placement = ctx.by_key.get(key)
             _cls, position, _looted = save.live[key]
             if placement is not None and (
                 math.dist(position, placement.position) <= POSITION_TOLERANCE_CM
@@ -1629,7 +1792,7 @@ def build(
             first = first_destroyed.get(key)
             if first is None or first >= index or key in save.destroyed:
                 continue
-            placement = by_key.get(key)
+            placement = ctx.by_key.get(key)
             if placement is not None and (
                 math.dist(position, placement.position) <= POSITION_TOLERANCE_CM
             ):
@@ -1640,9 +1803,9 @@ def build(
             first_destroyed.setdefault(key, index)
     newest_coexisting = sum(
         1
-        for key in newest.destroyed & newest.live.keys()
-        if (placement := by_key.get(key)) is not None
-        and math.dist(newest.live[key][1], placement.position) <= POSITION_TOLERANCE_CM
+        for key in ctx.newest.destroyed & ctx.newest.live.keys()
+        if (placement := ctx.by_key.get(key)) is not None
+        and math.dist(ctx.newest.live[key][1], placement.position) <= POSITION_TOLERANCE_CM
     )
 
     # The flora probe: the property side of the same question. A class that carries no
@@ -1652,7 +1815,7 @@ def build(
     flora_props: collections.Counter = collections.Counter()
     flora_values: collections.Counter = collections.Counter()
     flora_unreadable = 0
-    for save in facts:
+    for save in ctx.facts:
         flora_records.update(save.flora_records)
         flora_props.update(save.flora_property_records)
         flora_values.update(save.flora_values)
@@ -1662,7 +1825,7 @@ def build(
     counter_fell: collections.Counter = collections.Counter()
     counter_incomparable: collections.Counter = collections.Counter()
     seen_counter: dict[tuple[str, str], tuple[int, int]] = {}
-    for save in facts:
+    for save in ctx.facts:
         for key, (cls, value) in save.flora_counter.items():
             previous = seen_counter.get(key)
             if previous is None:
@@ -1683,7 +1846,7 @@ def build(
             values[name] = {str(v): mine[v] for v in sorted(mine)}
         respawns = [int(v) for v in values["mNumRespawns"]]
         flora[cls] = {
-            "placed_by_the_map": world.class_counts.get(cls, 0),
+            "placed_by_the_map": ctx.world.class_counts.get(cls, 0),
             "live_records_over_the_saves_used": flora_records.get(cls, 0),
             "records_carrying": {
                 name: flora_props.get((cls, name), 0) for name in RESPAWN_PROPERTIES
@@ -1700,10 +1863,29 @@ def build(
             "emitted_as": CATEGORIES.get(cls),
         }
 
-    # --- per category. placed is exact; the other three are what the saves have observed.
+    ctx.pairs_compared = pairs_compared
+    ctx.pairs_skipped = pairs_skipped
+    ctx.destroyed_observations = destroyed_observations
+    ctx.left_the_list = left_the_list
+    ctx.revived = revived
+    ctx.revived_displaced = revived_displaced
+    ctx.coexisting = coexisting
+    ctx.coexisting_by_version = coexisting_by_version
+    ctx.newest_coexisting = newest_coexisting
+    ctx.flora = flora
+    ctx.flora_unreadable = flora_unreadable
+
+
+def _measure_per_category(ctx: BuildContext) -> None:
+    """Per category: placed is exact; the other three are what the saves have observed.
+
+    The whole-map bookkeeping the category split is checked against rides along, as it
+    always sat in this section: the excluded and not_classified buckets, the pickup
+    class_census, the hazard-touch counts and the session tally.
+    """
     per_category: dict[str, dict] = {}
     for category in sorted(set(CATEGORIES.values())):
-        mine = [r for r in rows if r["category"] == category]
+        mine = [r for r in ctx.rows if r["category"] == category]
         entry = {
             "placed": len(mine),
             "collected": sum(1 for r in mine if r["state"] == "collected"),
@@ -1711,11 +1893,11 @@ def build(
             "unknown": sum(1 for r in mine if r["state"] == "unknown"),
             "rows_any_save_mentions": sum(
                 1
-                for p in rows_in
-                if CATEGORIES[p.cls] == category and (p.cell, p.instance) in mentioned
+                for p in ctx.rows_in
+                if CATEGORIES[p.cls] == category and (p.cell, p.instance) in ctx.mentioned
             ),
             "with_the_map_s_own_placement_id": sum(
-                1 for p in rows_in if CATEGORIES[p.cls] == category and _UAID in p.instance
+                1 for p in ctx.rows_in if CATEGORIES[p.cls] == category and _UAID in p.instance
             ),
         }
         if category == "crashed_drop_pod":
@@ -1744,22 +1926,24 @@ def build(
             entry["items_by_type"] = _by_count(items)
         if category == "mushroom":
             entry["contents_read"] = sum(1 for r in mine if r.get("contents"))
-            entry["respawns"] = flora["BP_Shroom_01_C"]["respawns"]
+            entry["respawns"] = ctx.flora["BP_Shroom_01_C"]["respawns"]
             entry["respawn_evidence"] = "_meta.respawn.flora.BP_Shroom_01_C"
         if category in CATEGORY_NOTES:
             entry["note"] = CATEGORY_NOTES[category]
         entry["class"] = next(c for c, cat in CATEGORIES.items() if cat == category)
-        entry["class_path"] = next(p.class_path for p in rows_in if CATEGORIES[p.cls] == category)
+        entry["class_path"] = next(
+            p.class_path for p in ctx.rows_in if CATEGORIES[p.cls] == category
+        )
         per_category[category] = entry
 
     excluded = {
-        cls: {"placed_by_the_map": world.class_counts.get(cls, 0), "why": why}
+        cls: {"placed_by_the_map": ctx.world.class_counts.get(cls, 0), "why": why}
         for cls, why in EXCLUDED.items()
     }
     # The gas pillars are excluded for one shared reason and there are five numbered
     # blueprints of them, so they are matched rather than listed -- which also means a sixth
     # would be excluded with its count instead of quietly appearing in not_classified.
-    for cls, count in world.class_counts.items():
+    for cls, count in ctx.world.class_counts.items():
         if GAS_PILLAR.match(cls):
             excluded[cls] = {
                 "placed_by_the_map": count,
@@ -1775,7 +1959,7 @@ def build(
         collections.Counter(
             {
                 cls: count
-                for cls, count in world.class_counts.items()
+                for cls, count in ctx.world.class_counts.items()
                 if cls not in CATEGORIES and cls not in excluded
             }
         )
@@ -1786,15 +1970,15 @@ def build(
     census = {
         cls: {
             "placed_by_the_map": count,
-            "native_class": cls not in world.game_class_counts,
+            "native_class": cls not in ctx.world.game_class_counts,
             "emitted_as": CATEGORIES.get(cls),
         }
-        for cls, count in sorted(world.class_counts.items())
+        for cls, count in sorted(ctx.world.class_counts.items())
         if "Pickup" in cls or "pickup" in cls
     }
 
     def _with(key: str) -> int:
-        return sum(1 for r in rows if r.get("hazard", {}).get(key) is not None)
+        return sum(1 for r in ctx.rows if r.get("hazard", {}).get(key) is not None)
 
     hostile_rows = _with("hostiles_nearby")
     spawns_here_rows = _with("spawns_here")
@@ -1803,9 +1987,32 @@ def build(
     uranium_rows = _with("nearest_uranium_cm")
     hog_rows = _with("nearest_nuclear_hog_spawner_cm")
 
-    sessions = collections.Counter(f.session for f in on_disk)
-    pre_partition = [f for f in facts if f.save_version < FIRST_MODERN_BODY]
+    sessions = collections.Counter(f.session for f in ctx.on_disk)
+    pre_partition = [f for f in ctx.facts if f.save_version < FIRST_MODERN_BODY]
 
+    ctx.per_category = per_category
+    ctx.excluded = excluded
+    ctx.unclassified = unclassified
+    ctx.census = census
+    ctx.hostile_rows = hostile_rows
+    ctx.spawns_here_rows = spawns_here_rows
+    ctx.gas_rows = gas_rows
+    ctx.cloud_rows = cloud_rows
+    ctx.uranium_rows = uranium_rows
+    ctx.hog_rows = hog_rows
+    ctx.sessions = sessions
+    ctx.pre_partition = pre_partition
+
+
+def _assemble_meta(ctx: BuildContext) -> dict:
+    """``_meta``, assembled from what the nine measurements left on ``ctx``.
+
+    Nothing new is measured here -- only sums and reshaping of numbers a ``_measure_*``
+    already derived, which is what keeps every total a by-product of the rows it claims
+    to describe.
+    """
+    largest = ", ".join(f"{cls} ({count})" for cls, count in list(ctx.unclassified.items())[:5])
+    persistent = sum(1 for r in ctx.rows if r["cell"] == "Persistent_Level")
     meta = {
         "description": (
             "Every one-shot collectible the classes in totals.by_category place in the "
@@ -1828,23 +2035,25 @@ def build(
         "source": {
             "placements": {
                 "kind": "the game's own cooked map assets, read from the installed game",
-                "container": f"{store.cas_path.parent.name}/{store.cas_path.stem}.utoc + .ucas",
-                "container_utoc_version": store.version,
-                "container_flags": hex(store.flags),
+                "container": (
+                    f"{ctx.store.cas_path.parent.name}/{ctx.store.cas_path.stem}.utoc + .ucas"
+                ),
+                "container_utoc_version": ctx.store.version,
+                "container_flags": hex(ctx.store.flags),
                 "container_flags_note": (
                     "0x0d is Compressed|Signed|Indexed. The Encrypted bit is unset and the "
                     "encryption key GUID is null: signed is not encrypted, and no DRM is "
                     "circumvented by reading it."
                 ),
-                "container_bytes": [store.toc_bytes, store.cas_bytes],
-                "container_modified_utc": store.toc_mtime.isoformat(timespec="seconds"),
-                "game_build": game_build,
-                "packages_read": world.packages_read,
-                "packages_with_no_level_export": world.packages_without_a_level,
-                "map_actors_placed": world.actor_count,
-                "actor_classes_placed": len(world.class_counts),
+                "container_bytes": [ctx.store.toc_bytes, ctx.store.cas_bytes],
+                "container_modified_utc": ctx.store.toc_mtime.isoformat(timespec="seconds"),
+                "game_build": ctx.game_build,
+                "packages_read": ctx.world.packages_read,
+                "packages_with_no_level_export": ctx.world.packages_without_a_level,
+                "map_actors_placed": ctx.world.actor_count,
+                "actor_classes_placed": len(ctx.world.class_counts),
                 "level_read": MAP_PREFIX,
-                "other_levels_in_the_container": other_levels,
+                "other_levels_in_the_container": ctx.other_levels,
                 "other_levels_note": (
                     "that the level above is the whole world was once a sentence in the "
                     "source; it is this list instead. Every other .umap the container holds "
@@ -1858,7 +2067,7 @@ def build(
                     "test map -- the test map does place resource nodes, which is why the "
                     "check is run against emitted classes rather than eyeballed."
                 ),
-                "actors_read_but_given_no_transform": _by_count(world.unresolved_roots),
+                "actors_read_but_given_no_transform": _by_count(ctx.world.unresolved_roots),
                 "actors_read_but_given_no_transform_note": (
                     "an actor of a class this file reads whose root component or attach chain "
                     "could not be resolved, so it has no position and is NOT a row. Empty "
@@ -1873,20 +2082,20 @@ def build(
                 ),
                 "script_objects": {
                     "source": "global.utoc chunk type 5 (ScriptObjects)",
-                    "chunk_bytes": scripts.chunk_bytes,
-                    "objects": scripts.object_count,
-                    "script_packages": scripts.package_count,
-                    "unresolved_class_hashes_in_the_map": world.unresolved_script_classes,
+                    "chunk_bytes": ctx.scripts.chunk_bytes,
+                    "objects": ctx.scripts.object_count,
+                    "script_packages": ctx.scripts.package_count,
+                    "unresolved_class_hashes_in_the_map": ctx.world.unresolved_script_classes,
                     "role": (
                         "turns a script-import hash back into /Script/FactoryGame.<Class>. "
                         "With 0 unresolved hashes above, every actor class in the map has a "
                         "name."
                     ),
                 },
-                "seconds": round(world.seconds, 1),
+                "seconds": round(ctx.world.seconds, 1),
                 "decompressor": {
                     "name": "pyooz",
-                    "version": pyooz_version,
+                    "version": ctx.pyooz_version,
                     "import_name": "ooz",
                     "licence": "GPL-3.0",
                     "role": (
@@ -1909,31 +2118,33 @@ def build(
             "status": {
                 "kind": "the player's own save files",
                 "role": "state only -- collected / present / unknown. Never a position.",
-                "session": newest.session,
-                "save_files_found": files_found,
-                "saves_read": len(on_disk),
-                "files_that_are_not_a_save": files_found - len(on_disk),
+                "session": ctx.newest.session,
+                "save_files_found": ctx.files_found,
+                "saves_read": len(ctx.on_disk),
+                "files_that_are_not_a_save": ctx.files_found - len(ctx.on_disk),
                 "files_that_are_not_a_save_note": (
                     "the game drops a 105-byte ServerManager_V2.sav beside the real saves. "
                     "It is not a save game; any other count here would be a save this "
                     "project's parser cannot read, which is a bug worth chasing."
                 ),
-                "sessions_on_disk": _by_count(sessions),
-                "saves_used": len(facts),
-                "saves_in_another_session": len(on_disk) - len(facts),
+                "sessions_on_disk": _by_count(ctx.sessions),
+                "saves_used": len(ctx.facts),
+                "saves_in_another_session": len(ctx.on_disk) - len(ctx.facts),
                 "sessions_note": (
                     "the union of two sessions is not a world: an instance name means "
                     "whatever the save that wrote it meant. Only the largest session's "
                     "saves are used, and the rest are counted here and dropped."
                 ),
-                "save_versions": sorted({f.save_version for f in facts}),
-                "build_versions": sorted({f.build_version for f in facts}),
-                "saves_predating_world_partition": len(pre_partition),
-                "saves_that_join_no_row_here": sum(1 for v in joined_by_save.values() if v == 0),
-                "rows_the_pre_partition_saves_can_key": len(pre_partition_keys),
-                "cells_the_pre_partition_saves_key_through": _by_count(pre_partition_cells),
+                "save_versions": sorted({f.save_version for f in ctx.facts}),
+                "build_versions": sorted({f.build_version for f in ctx.facts}),
+                "saves_predating_world_partition": len(ctx.pre_partition),
+                "saves_that_join_no_row_here": sum(
+                    1 for v in ctx.joined_by_save.values() if v == 0
+                ),
+                "rows_the_pre_partition_saves_can_key": len(ctx.pre_partition_keys),
+                "cells_the_pre_partition_saves_key_through": _by_count(ctx.pre_partition_cells),
                 "pre_partition_note": (
-                    f"{len(pre_partition)} of the saves used are below saveVersion "
+                    f"{len(ctx.pre_partition)} of the saves used are below saveVersion "
                     f"{FIRST_MODERN_BODY}, from before the world was partitioned. They parse -- "
                     "the body layout is version-gated on the header's own save_version -- and "
                     "they are read because they are evidence for the rename below. What they "
@@ -1943,12 +2154,15 @@ def build(
                     "cells_the_pre_partition_saves_key_through for what those turn out to be. "
                     "They set no state either way: the newest save does that."
                 ),
-                "saved_between": [facts[0].when.date().isoformat(), newest.when.date().isoformat()],
-                "play_duration_hours": [
-                    round(facts[0].play_seconds / 3600, 1),
-                    round(newest.play_seconds / 3600, 1),
+                "saved_between": [
+                    ctx.facts[0].when.date().isoformat(),
+                    ctx.newest.when.date().isoformat(),
                 ],
-                "newest_save": newest.name,
+                "play_duration_hours": [
+                    round(ctx.facts[0].play_seconds / 3600, 1),
+                    round(ctx.newest.play_seconds / 3600, 1),
+                ],
+                "newest_save": ctx.newest.name,
                 "state_authority": (
                     "the newest save by the clock it was written at, not by file mtime -- an "
                     "autosave rewritten in place has a fresh mtime and an old clock. Its live "
@@ -2032,27 +2246,28 @@ def build(
                     "skipped. The second is gated on position, because an auto-numbered "
                     "instance name is not identity."
                 ),
-                "consecutive_same_build_pairs_compared": pairs_compared,
-                "pairs_skipped_because_the_build_changed": pairs_skipped,
-                "destroyed_observations_by_class": _by_count(destroyed_observations),
-                "keys_that_left_the_destroyed_list_by_class": _by_count(left_the_list),
+                "consecutive_same_build_pairs_compared": ctx.pairs_compared,
+                "pairs_skipped_because_the_build_changed": ctx.pairs_skipped,
+                "destroyed_observations_by_class": _by_count(ctx.destroyed_observations),
+                "keys_that_left_the_destroyed_list_by_class": _by_count(ctx.left_the_list),
                 "keys_that_left_the_destroyed_list_note": (
                     "by the class the MAP gives that key, so 'not a map-placed actor at all' "
                     "means one of the player's own actors -- a destroyed record for something "
                     "the player built, which the game is free to forget. No emitted class "
                     "appearing here is the result that matters."
                 ),
-                "rows_destroyed_then_live_again_by_class": _by_count(revived),
+                "rows_destroyed_then_live_again_by_class": _by_count(ctx.revived),
                 "rows_destroyed_then_live_again_rejected_by_position_by_class": _by_count(
-                    revived_displaced
+                    ctx.revived_displaced
                 ),
                 "rows_a_single_save_lists_as_both_destroyed_and_live_by_class": _by_count(
-                    coexisting
+                    ctx.coexisting
                 ),
                 "rows_a_single_save_lists_as_both_by_save_version": {
-                    str(version): count for version, count in sorted(coexisting_by_version.items())
+                    str(version): count
+                    for version, count in sorted(ctx.coexisting_by_version.items())
                 },
-                "in_the_newest_save": newest_coexisting,
+                "in_the_newest_save": ctx.newest_coexisting,
                 "both_note": (
                     "a save CAN name one (cell, instance) in its destroyed list and hold a "
                     "live actor at that same key whose position agrees with the map. Those "
@@ -2077,7 +2292,7 @@ def build(
                     "rows_destroyed_then_live_again are what survives it."
                 ),
             },
-            "flora": flora,
+            "flora": ctx.flora,
             "flora_note": (
                 "the three harvestable plants, probed on every live record in every save of the "
                 "session used. "
@@ -2088,28 +2303,28 @@ def build(
                 "this file did about it -- null means the class is in _meta.excluded. "
                 "counter_fell is the number that would contradict the model."
             ),
-            "flora_records_whose_properties_would_not_decode": flora_unreadable,
+            "flora_records_whose_properties_would_not_decode": ctx.flora_unreadable,
         },
         "identity": {
             "key": "(cell, instance)",
-            "key_is_unique": duplicate_keys == 0,
-            "duplicate_keys": duplicate_keys,
-            "duplicate_instance_names_among_rows": duplicate_names,
-            "map_actors_in_gamelevel01": world.actor_count,
-            "map_actors_with_a_blueprint_class": sum(world.game_class_counts.values()),
-            "blueprint_actor_classes": len(world.game_class_counts),
+            "key_is_unique": ctx.duplicate_keys == 0,
+            "duplicate_keys": ctx.duplicate_keys,
+            "duplicate_instance_names_among_rows": ctx.duplicate_names,
+            "map_actors_in_gamelevel01": ctx.world.actor_count,
+            "map_actors_with_a_blueprint_class": sum(ctx.world.game_class_counts.values()),
+            "blueprint_actor_classes": len(ctx.world.game_class_counts),
             "widening_note": (
                 "map_actors_with_a_blueprint_class is what a /Game/ prefix walk sees, and it "
                 "is reported beside the full count so the widening to native classes can be "
                 "checked as additive rather than taken on trust: the blueprint figure must "
                 "not move."
             ),
-            "distinct_keys": world.distinct_keys,
-            "distinct_instance_names": world.distinct_names,
-            "instance_names_carrying_two_classes": world.names_with_two_classes,
-            "names_with_the_map_s_placement_id": world.uaid_names,
-            "names_with_the_map_s_placement_id_distinct": world.uaid_names_distinct,
-            "actors_reusing_an_instance_name_by_class": _by_count(world.name_repeats_by_class),
+            "distinct_keys": ctx.world.distinct_keys,
+            "distinct_instance_names": ctx.world.distinct_names,
+            "instance_names_carrying_two_classes": ctx.world.names_with_two_classes,
+            "names_with_the_map_s_placement_id": ctx.world.uaid_names,
+            "names_with_the_map_s_placement_id_distinct": ctx.world.uaid_names_distinct,
+            "actors_reusing_an_instance_name_by_class": _by_count(ctx.world.name_repeats_by_class),
             "note": (
                 "(cell, instance) is unique over every map-placed actor -- duplicate_keys is "
                 "0. The bare instance name is NOT, and rather than say which classes are to "
@@ -2126,13 +2341,13 @@ def build(
                 "hand-placed ones. with_the_map_s_own_placement_id is reported per category "
                 "so a consumer filtering on the suffix can see what that filter would cost."
             ),
-            "rows_within_1m_of_another_row_in_the_same_category": coincident,
-            "rows_within_1m_of_another_row_by_category": _by_count(coincident_by_category),
-            "coincident_pairs_the_saves_hold_a_record_for_both_of": coincident_both_recorded,
+            "rows_within_1m_of_another_row_in_the_same_category": ctx.coincident,
+            "rows_within_1m_of_another_row_by_category": _by_count(ctx.coincident_by_category),
+            "coincident_pairs_the_saves_hold_a_record_for_both_of": ctx.coincident_both_recorded,
             "coincident_pairs_where_both_carry_a_placement_id": (
-                coincident_both_have_a_placement_id
+                ctx.coincident_both_have_a_placement_id
             ),
-            "coincident_pairs_the_saves_give_different_states": coincident_states_differ,
+            "coincident_pairs_the_saves_give_different_states": ctx.coincident_states_differ,
             "coincident_note": (
                 "pairs, not rows, and a question rather than an error: two rows of one "
                 "category within a metre of each other COULD be one physical collectible "
@@ -2172,7 +2387,7 @@ def build(
                 "map's own actor count; other_levels_in_the_container is the guard for "
                 "collectibles placed outside the level this file reads."
             ),
-            "classes": census,
+            "classes": ctx.census,
         },
         "hazard_context": {
             "what": (
@@ -2236,10 +2451,10 @@ def build(
                 "-- the designers put nuclear hogs on uranium -- and not a modelled fact."
             ),
             "sources": {
-                "hostile_placements": hazards.hostile_placements,
-                "passive_placements_excluded": hazards.passive_placements,
-                "creature_classes_whose_passivity_is_unknown": hazards.unknown_passivity,
-                "hostile_species": _by_count(hazards.species),
+                "hostile_placements": ctx.hazards.hostile_placements,
+                "passive_placements_excluded": ctx.hazards.passive_placements,
+                "creature_classes_whose_passivity_is_unknown": ctx.hazards.unknown_passivity,
+                "hostile_species": _by_count(ctx.hazards.species),
                 "hostile_species_note": (
                     "placements, not creatures, and two kinds of key: a Desc_* is the "
                     "creature descriptor a BP_CreatureSpawner_C names, while a Char_* is a "
@@ -2247,9 +2462,9 @@ def build(
                     "hostiles_nearby sources; only the first has an mSpawnData to say how "
                     "many creatures one placement holds."
                 ),
-                "creature_spawners_declaring_their_own_radius": hazards.spawn_radius_declared,
-                "creature_spawners_with_no_radius": hazards.spawn_radius_missing,
-                "creature_spawner_radius_cm": hazards.spawner_radius_cm,
+                "creature_spawners_declaring_their_own_radius": ctx.hazards.spawn_radius_declared,
+                "creature_spawners_with_no_radius": ctx.hazards.spawn_radius_missing,
+                "creature_spawner_radius_cm": ctx.hazards.spawner_radius_cm,
                 "creature_spawner_radius_note": (
                     "the two counts above are BP_CreatureSpawner_C only -- the directly "
                     "placed Char_* hatchers are in class_declared_radius_cm below and are "
@@ -2258,8 +2473,8 @@ def build(
                     "about how far those radii reach, and it is the radius that decides "
                     "spawns_here."
                 ),
-                "spore_flowers": hazards.gas_clouds,
-                "class_declared_radius_cm": hazards.class_declared_radius_cm,
+                "spore_flowers": ctx.hazards.gas_clouds,
+                "class_declared_radius_cm": ctx.hazards.class_declared_radius_cm,
                 "class_declared_radius_note": (
                     "per class, every distinct radius its placements declare and how many "
                     "placements there are. Per class because a single number was wrong in "
@@ -2274,16 +2489,16 @@ def build(
                     "be right, since it tests every source against its own, while any single "
                     "number quoted for the class would be wrong."
                 ),
-                "gas_field_actors": hazards.gas_fields,
-                "gas_field_own_span_cm": hazards.gas_field_span_cm,
+                "gas_field_actors": ctx.hazards.gas_fields,
+                "gas_field_own_span_cm": ctx.hazards.gas_field_span_cm,
                 "gas_field_own_span_note": (
                     "how far the furthest pillar a BP_VolumeGas_01_C names in its own "
                     "mProximityPillarWorldLocations sits from the volume, over the volumes "
                     f"that populate it. The {HAZARD_RADIUS_CM:.0f} cm reporting horizon is "
                     "sized against this median rather than fitted to anything."
                 ),
-                "widest_declared_radius_cm": hazards.widest_declared_radius_cm,
-                "damage_over_time_volume_classes": _by_count(hazards.damage_volume_classes),
+                "widest_declared_radius_cm": ctx.hazards.widest_declared_radius_cm,
+                "damage_over_time_volume_classes": _by_count(ctx.hazards.damage_volume_classes),
                 "damage_over_time_volume_note": (
                     "FGDamageOverTimeVolume is a native map actor carrying an mDotClass, so "
                     "it is the obvious candidate for the gas channel. It is not one: these "
@@ -2295,10 +2510,10 @@ def build(
                     "sized to. It exceeds the reporting radius, so spawns_here can and does "
                     "fire further out than hostiles_nearby."
                 ),
-                "radioactive_sources_in_the_ground": hazards.uranium_sources,
-                "resource_classes_checked_for_radioactivity": hazards.resource_classes_checked,
-                "radioactive_resource_classes": hazards.radioactive_classes,
-                "deposits_with_no_resource_class": hazards.deposits_without_a_resource,
+                "radioactive_sources_in_the_ground": ctx.hazards.uranium_sources,
+                "resource_classes_checked_for_radioactivity": ctx.hazards.resource_classes_checked,
+                "radioactive_resource_classes": ctx.hazards.radioactive_classes,
+                "deposits_with_no_resource_class": ctx.hazards.deposits_without_a_resource,
                 "deposits_note": (
                     "a deposit that does not serialise mOverrideResourceClass holds its "
                     "class default, which is null, so its resource is unknown rather than "
@@ -2307,14 +2522,14 @@ def build(
             },
             "reporting_radius_cm": HAZARD_RADIUS_CM,
             "rows_touched": {
-                "rows": len(rows),
-                "with_a_hostile_in_reporting_radius": hostile_rows,
-                "with_a_hostile_whose_own_radius_contains_them": spawns_here_rows,
-                "inside_a_spore_flower_damage_sphere": cloud_rows,
-                "with_gas_in_reporting_radius": gas_rows,
-                "with_uranium_in_reporting_radius": uranium_rows,
-                "with_a_nuclear_hog_spawner_in_reporting_radius": hog_rows,
-                "with_no_hazard_context_at_all": sum(1 for r in rows if not r.get("hazard")),
+                "rows": len(ctx.rows),
+                "with_a_hostile_in_reporting_radius": ctx.hostile_rows,
+                "with_a_hostile_whose_own_radius_contains_them": ctx.spawns_here_rows,
+                "inside_a_spore_flower_damage_sphere": ctx.cloud_rows,
+                "with_gas_in_reporting_radius": ctx.gas_rows,
+                "with_uranium_in_reporting_radius": ctx.uranium_rows,
+                "with_a_nuclear_hog_spawner_in_reporting_radius": ctx.hog_rows,
+                "with_no_hazard_context_at_all": sum(1 for r in ctx.rows if not r.get("hazard")),
             },
         },
         "not_derived": {
@@ -2343,8 +2558,8 @@ def build(
             ),
         },
         "status_evidence": {
-            "live_records_accepted": len(present),
-            "live_records_displaced": len(displaced),
+            "live_records_accepted": len(ctx.present),
+            "live_records_displaced": len(ctx.displaced),
             "live_records_displaced_note": (
                 "a live header whose (cell, instance) hits a map row but whose position does "
                 "not. The saveVersion 52 -> 60 patch re-issued names and cells, and the game "
@@ -2353,8 +2568,11 @@ def build(
                 "the wrong map row. These set no state; the rows they touch stay unknown."
             ),
             "displaced_gap_cm": (
-                [round(min(g for _k, g in displaced), 1), round(max(g for _k, g in displaced), 1)]
-                if displaced
+                [
+                    round(min(g for _k, g in ctx.displaced), 1),
+                    round(max(g for _k, g in ctx.displaced), 1),
+                ]
+                if ctx.displaced
                 else None
             ),
             "displaced_gap_note": (
@@ -2365,21 +2583,21 @@ def build(
                 "margin is not enormous, and if a future game version narrowed it this is "
                 "where that would be visible."
             ),
-            "displaced_records_a_position_match_could_re_attach": recoverable,
+            "displaced_records_a_position_match_could_re_attach": ctx.recoverable,
             "displaced_records_re_attached": 0,
             "displaced_note": (
                 "so at most this many rows called unknown here are in fact standing. Measured "
                 "and reported rather than applied: state has one derivation, and a distance "
                 "heuristic that silently overrides it is worse than an honest unknown."
             ),
-            "live_records_with_no_map_row": sum(orphan_live.values()),
-            "live_records_with_no_map_row_by_class": _by_count(orphan_live),
-            "live_records_with_no_map_row_in_any_save_used": sum(orphan_all.values()),
-            "live_records_with_no_map_row_in_any_save_used_by_class": _by_count(orphan_all),
-            "orphan_keys_distinct": len(orphan_versions),
-            "orphan_keys_only_a_pre_partition_save_names": orphan_old_layout,
-            "orphan_keys_whose_name_the_map_places_in_another_cell": orphan_renamed,
-            "orphan_keys_unexplained": orphan_unexplained,
+            "live_records_with_no_map_row": sum(ctx.orphan_live.values()),
+            "live_records_with_no_map_row_by_class": _by_count(ctx.orphan_live),
+            "live_records_with_no_map_row_in_any_save_used": sum(ctx.orphan_all.values()),
+            "live_records_with_no_map_row_in_any_save_used_by_class": _by_count(ctx.orphan_all),
+            "orphan_keys_distinct": len(ctx.orphan_versions),
+            "orphan_keys_only_a_pre_partition_save_names": ctx.orphan_old_layout,
+            "orphan_keys_whose_name_the_map_places_in_another_cell": ctx.orphan_renamed,
+            "orphan_keys_unexplained": ctx.orphan_unexplained,
             "orphan_keys_unexplained_note": (
                 "THIS is the number that would say a collectible is missing from the table. "
                 "An orphan is a save's live record of an emitted class with no row here, and "
@@ -2403,21 +2621,22 @@ def build(
                 "save used is large while the newest save's is what it is. The map's own "
                 "caches are told apart by having a row at all, never by their name."
             ),
-            "destroyed_entries_in_newest_save": len(newest.destroyed),
-            "destroyed_entries_that_are_rows_here": len(collected),
-            "destroyed_entries_that_are_not_rows_here_by_class": _by_count(destroyed_others),
+            "destroyed_entries_in_newest_save": len(ctx.newest.destroyed),
+            "destroyed_entries_that_are_rows_here": len(ctx.collected),
+            "destroyed_entries_that_are_not_rows_here_by_class": _by_count(ctx.destroyed_others),
             "destroyed_entries_note": (
                 "what the remainder is, by the class the MAP gives that (cell, instance) -- "
                 "not a guess about it. A key the map does not place at all -- one of the "
                 "player's own actors, or a pre-patch key the game has not migrated -- would "
                 "appear under its own label rather than be folded into a class."
             ),
-            "rows_only_older_saves_could_state": len(older_only),
+            "rows_only_older_saves_could_state": len(ctx.older_only),
             "rows_only_older_saves_could_state_note": (
                 "0 means the newest save is sufficient and the other saves are corroboration."
             ),
             "distinct_displaced_rows_by_save_version": {
-                str(version): len(keys) for version, keys in sorted(displaced_by_version.items())
+                str(version): len(keys)
+                for version, keys in sorted(ctx.displaced_by_version.items())
             },
             "displaced_by_version_note": (
                 "distinct rows some save of that version displaces. The pre-patch 52 saves "
@@ -2432,7 +2651,7 @@ def build(
                 "headers, which is the game's word on where its actors are. The displaced "
                 "records are excluded and counted under status_evidence instead."
             ),
-            **_spread(agreeing),
+            **_spread(ctx.agreeing),
             "over_1cm_note": (
                 "a level-design edit between game versions nudged some actors by whole "
                 "centimetres and the game rewrites the saved transform when the cell is next "
@@ -2460,12 +2679,12 @@ def build(
                 "save-serialised: the game keeps no record of it, so it can be located and "
                 "never state-tracked."
             ),
-            "by_category": per_category,
-            "rows": len(rows),
-            "collected": sum(1 for r in rows if r["state"] == "collected"),
-            "present": sum(1 for r in rows if r["state"] == "present"),
-            "unknown": sum(1 for r in rows if r["state"] == "unknown"),
-            "pedestals": pedestals,
+            "by_category": ctx.per_category,
+            "rows": len(ctx.rows),
+            "collected": sum(1 for r in ctx.rows if r["state"] == "collected"),
+            "present": sum(1 for r in ctx.rows if r["state"] == "present"),
+            "unknown": sum(1 for r in ctx.rows if r["state"] == "unknown"),
+            "pedestals": ctx.pedestals,
             "pedestals_note": (
                 "a shrine is the base the artifact above it stands on, named exactly by the "
                 "map's own AttachParent -- see attached_to on each shrine row. The pairing is "
@@ -2478,23 +2697,23 @@ def build(
                 "how much of the map the SAVES have observed. This is about the player: the "
                 "row set does not depend on it, because the rows come from the map."
             ),
-            "collectibles_observed": len(rows) - len(unknown_rows),
+            "collectibles_observed": len(ctx.rows) - len(ctx.unknown_rows),
             "collectibles_observed_pct": round(
-                100 * (len(rows) - len(unknown_rows)) / len(rows), 1
+                100 * (len(ctx.rows) - len(ctx.unknown_rows)) / len(ctx.rows), 1
             ),
-            "collectibles_unknown": len(unknown_rows),
-            "unknown_in_a_cell_with_no_level_record_in_any_save": unknown_no_record,
-            "unknown_in_a_cell_the_saves_have_partly_streamed": len(unknown_rows)
-            - unknown_no_record,
-            "cells_holding_a_collectible": len(collectible_cells),
-            "cells_holding_a_collectible_with_no_level_record": len(cells_no_record),
-            "cells_the_newest_save_has_a_level_record_for": len(newest.recorded_cells),
-            "cells_the_newest_save_s_grid_table_declares": len(newest.declared_cells),
+            "collectibles_unknown": len(ctx.unknown_rows),
+            "unknown_in_a_cell_with_no_level_record_in_any_save": ctx.unknown_no_record,
+            "unknown_in_a_cell_the_saves_have_partly_streamed": len(ctx.unknown_rows)
+            - ctx.unknown_no_record,
+            "cells_holding_a_collectible": len(ctx.collectible_cells),
+            "cells_holding_a_collectible_with_no_level_record": len(ctx.cells_no_record),
+            "cells_the_newest_save_has_a_level_record_for": len(ctx.newest.recorded_cells),
+            "cells_the_newest_save_s_grid_table_declares": len(ctx.newest.declared_cells),
             "cells_holding_a_collectible_the_grid_table_does_not_declare": len(
-                collectible_cells - newest.declared_cells
+                ctx.collectible_cells - ctx.newest.declared_cells
             ),
             "there_is_deliberately_no_cells_the_map_places_an_actor_in_figure": (
-                f"it would be {len(map_cells)}, which is exactly source.placements."
+                f"it would be {len(ctx.map_cells)}, which is exactly source.placements."
                 "packages_read, because every cooked cell holds the per-cell housekeeping "
                 "singletons (FGWorldSettings, Model) whatever else is in it. It used to be "
                 "printed above and its only use was to be divided into the two save-side cell "
@@ -2510,14 +2729,15 @@ def build(
                 "cells_holding_a_collectible_the_grid_table_does_not_declare counts. Read "
                 "them side by side, not as a fraction."
             ),
-            "map_actors_in_cells_the_newest_save_records": map_actors_in_recorded_cells,
-            "of_those_the_newest_save_has_a_record_of": observed_map_actors,
+            "map_actors_in_cells_the_newest_save_records": ctx.map_actors_in_recorded_cells,
+            "of_those_the_newest_save_has_a_record_of": ctx.observed_map_actors,
             "cell_is_not_a_unit_of_coverage": (
                 "a partition cell streams in pieces. Over all "
-                f"{len(world.class_counts)} map-placed classes, the newest save has a level "
-                f"record for cells holding {map_actors_in_recorded_cells} map actors and a "
-                f"record of only {observed_map_actors} of them "
-                f"({100 * observed_map_actors / max(map_actors_in_recorded_cells, 1):.0f}%), so "
+                f"{len(ctx.world.class_counts)} map-placed classes, the newest save has a level "
+                f"record for cells holding {ctx.map_actors_in_recorded_cells} map actors and a "
+                f"record of only {ctx.observed_map_actors} of them "
+                f"({100 * ctx.observed_map_actors / max(ctx.map_actors_in_recorded_cells, 1):.0f}"
+                "%), so "
                 "'the cell has been visited' does not mean 'its contents are known'. That is "
                 "why unknown is a per-collectible state here and not a per-cell one, and why "
                 "the cell counts above are context rather than the coverage figure."
@@ -2538,9 +2758,9 @@ def build(
                 "the (cell, instance) of the placements below. A save's destroyed-actor entry "
                 "is a bare path with no class; look it up here and the class is exact."
             ),
-            "prefix_rule_wrong": wrong,
-            "prefix_rule_silent": silent,
-            "prefix_rule_checked": len(rows_in),
+            "prefix_rule_wrong": ctx.wrong,
+            "prefix_rule_silent": ctx.silent,
+            "prefix_rule_checked": len(ctx.rows_in),
             "prefix_rule_note": (
                 "a longest-prefix rule over class stems, scored against the map's own "
                 "answer for the very rows in this file. 'silent' is a name no stem matched -- "
@@ -2548,7 +2768,7 @@ def build(
                 "BP_Shroom_<counter>, with the digits glued to a stem that is BP_Shroom_01, "
                 "so no split recovers the class. The same failure as BP_WAT1 vs BP_WAT2."
             ),
-            "rows_whose_name_stem_is_a_different_map_class": _by_count(borrowed),
+            "rows_whose_name_stem_is_a_different_map_class": _by_count(ctx.borrowed),
             "borrowed_name_note": (
                 "read as 'a name-based rule would say the first and the map says the second'. "
                 "Scored against every class the map places, not only the emitted ones, which "
@@ -2558,18 +2778,18 @@ def build(
                 "be the wrong category, it would be a row that should not exist keyed to a "
                 "plant that does. Empty would mean no row's name belongs to another class."
             ),
-            "glued_index_names": len(glued),
+            "glued_index_names": len(ctx.glued),
             "glued_index_note": (
                 "names matching ^BP_WAT[0-9], where the placement counter is glued to the "
                 "stem so no split can tell BP_WAT1 (somersloop) from BP_WAT2 (Mercer "
                 "sphere). The map resolves all of them."
             ),
-            "glued_index_by_category": _by_count(glued_by_category),
-            "glued_index_destroyed_in_newest_save": len(glued_destroyed),
+            "glued_index_by_category": _by_count(ctx.glued_by_category),
+            "glued_index_destroyed_in_newest_save": len(ctx.glued_destroyed),
             "glued_index_destroyed_resolved": _by_count(
-                collections.Counter(CATEGORIES[p.cls] for p in glued_destroyed)
+                collections.Counter(CATEGORIES[p.cls] for p in ctx.glued_destroyed)
             ),
-            "glued_index_destroyed_unresolved": glued_destroyed_unresolved,
+            "glued_index_destroyed_unresolved": ctx.glued_destroyed_unresolved,
         },
         "accounting": {
             "what": (
@@ -2578,16 +2798,16 @@ def build(
                 "missing the way the loot caches did -- silently, with nothing in the file to "
                 "show for it."
             ),
-            "map_actors_in_gamelevel01": world.actor_count,
-            "emitted_as_rows": len(rows),
-            "excluded_on_purpose": sum(e["placed_by_the_map"] for e in excluded.values()),
-            "not_classified": sum(unclassified.values()),
-            "adds_up": len(rows)
-            + sum(e["placed_by_the_map"] for e in excluded.values())
-            + sum(unclassified.values())
-            == world.actor_count,
+            "map_actors_in_gamelevel01": ctx.world.actor_count,
+            "emitted_as_rows": len(ctx.rows),
+            "excluded_on_purpose": sum(e["placed_by_the_map"] for e in ctx.excluded.values()),
+            "not_classified": sum(ctx.unclassified.values()),
+            "adds_up": len(ctx.rows)
+            + sum(e["placed_by_the_map"] for e in ctx.excluded.values())
+            + sum(ctx.unclassified.values())
+            == ctx.world.actor_count,
         },
-        "excluded": excluded,
+        "excluded": ctx.excluded,
         "excluded_note": (
             "map-placed classes deliberately not emitted as rows, with the map's own count "
             "of each so 'not a collectible' can never be read as 'we missed it'. This list "
@@ -2595,7 +2815,7 @@ def build(
             "this list and the rows is in not_classified with its count, and class_census is "
             "the check that specifically covers pickups."
         ),
-        "not_classified": unclassified,
+        "not_classified": ctx.unclassified,
         "not_classified_note": (
             "every remaining actor class the packages under source.placements.level_read "
             "place, native and blueprint alike, with counts. What that buys is bounded and "
@@ -2606,8 +2826,7 @@ def build(
             "source.placements.actors_read_but_given_no_transform and "
             "packages_with_no_level_export are for, nor that this level is the only one -- "
             "see other_levels_in_the_container. "
-            f"The largest are "
-            f"{', '.join(f'{cls} ({count})' for cls, count in list(unclassified.items())[:5])}. "
+            f"The largest are {largest}. "
             "One entry may read 'export:N': that is an actor whose class is an export of its "
             "own package rather than an import, reported as it is found rather than binned."
         ),
@@ -2615,13 +2834,71 @@ def build(
         "cell_note": (
             "'cell' is the cooked package the map places the actor in, and it is byte-"
             "identical to the save's own level record name -- which is what makes the join "
-            f"exact. It is a world-partition cell for all but {sum(1 for r in rows if r['cell'] == 'Persistent_Level')} "
+            f"exact. It is a world-partition cell for all but {persistent} "
             "rows, which the map puts in Persistent_Level itself. It is not a spatial box: "
             "one cell's actors can be far apart."
         ),
         "units": "centimetres; north is -Y, east is +X, up is +Z",
     }
-    return rows, meta
+    return meta
+
+
+def build(
+    world: MapWorld,
+    hazards: HazardWorld,
+    facts: list[SaveFacts],
+    store: IoStore,
+    scripts: ScriptObjects,
+    game_build: str | None,
+    pyooz_version: str,
+    on_disk: list[SaveFacts],
+    files_found: int,
+    other_levels: list[dict],
+) -> tuple[list[dict], dict]:
+    """Turn map placements plus save facts into rows and ``_meta``.
+
+    Rows and ``_meta`` are built together because every number in ``_meta`` is a
+    by-product of one merge: a total computed separately is a total that can drift from
+    the rows it claims to describe. The merge is nine measurements over one shared
+    ``BuildContext``, in a fixed order because each may read what the earlier ones
+    measured; ``_assemble_meta`` at the end only reshapes what they left behind.
+    """
+    facts = sorted(facts, key=lambda f: (f.ticks, f.play_seconds))
+    rows_in = [p for p in world.placements if p.cls in CATEGORIES]
+    by_key = {(p.cell, p.instance): p for p in rows_in}
+    by_name: dict[str, list[Placement]] = collections.defaultdict(list)
+    for placement in rows_in:
+        by_name[placement.instance].append(placement)
+    ctx = BuildContext(
+        world=world,
+        hazards=hazards,
+        facts=facts,
+        newest=facts[-1],
+        store=store,
+        scripts=scripts,
+        game_build=game_build,
+        pyooz_version=pyooz_version,
+        on_disk=on_disk,
+        files_found=files_found,
+        other_levels=other_levels,
+        rows_in=rows_in,
+        by_key=by_key,
+        duplicate_keys=len(rows_in) - len(by_key),
+        duplicate_names=sum(len(v) - 1 for v in by_name.values()),
+    )
+    for measure in (
+        _measure_status,
+        _measure_pedestals,
+        _measure_coincident_positions,
+        _measure_older_save_staleness,
+        _measure_orphans,
+        _measure_exploration,
+        _measure_naming,
+        _measure_respawn,
+        _measure_per_category,
+    ):
+        measure(ctx)
+    return ctx.rows, _assemble_meta(ctx)
 
 
 # --------------------------------------------------------------------------------------
