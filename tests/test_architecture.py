@@ -432,19 +432,17 @@ RESPONSE_CLASSES = frozenset(
 #: reason. Held to the same discipline as ``WHITELIST``: an entry that stops being needed
 #: fails ``test_no_stale_response_model_exemption``, so this list can only shrink by accident.
 #:
-#: Four of the five send BYTES. ``mapimage``, ``maptiles``, ``maptiles_layer`` and ``icon``
-#: answer with a picture, a 204 or a 404 that names the generator, and they are ``-> Any``
-#: rather than ``-> FileResponse`` because each one really can return either -- annotating
-#: them into the clause above would be narrowing a signature to satisfy a test.
+#: All four send BYTES. ``mapimage``, ``maptiles``, ``maptiles_layer`` and ``icon`` answer
+#: with a picture, a 204 or a 404 that names the generator, and they are ``-> Any`` rather
+#: than ``-> FileResponse`` because each one really can return either -- annotating them
+#: into the clause above would be narrowing a signature to satisfy a test.
 #:
-#: The fifth is the whole reason this rule is stated with exemptions instead of as "every
-#: handler". ``/api/worlds`` is DEFERRED and not missed: it forwards the loader's own
-#: ``World`` dataclasses, whose ``saves`` are the sidecar's thirteen-key save headers, so a
-#: faithful model is ``dict[str, Any]`` -- which says nothing -- and a useful one DELETES
-#: eight keys from every row, because a response_model filters. Either way the endpoint stops
-#: sending what it sends today, which is a commit about the body and not a typing one. The
-#: comment above ``worlds()`` in ``routers/world.py`` is the long version and is where this
-#: entry points a reader who wants to remove it.
+#: There used to be a fifth, and it was the reason this rule is stated with exemptions
+#: instead of as "every handler": ``/api/worlds`` was DEFERRED while a ``response_model``
+#: for it meant deleting eight keys from every save row it forwarded -- a body change, not
+#: a typing one. That body change has been made, on purpose and in its own commit, so the
+#: entry is gone and every JSON endpoint on the surface now says what it sends. The comment
+#: above ``worlds()`` in ``routers/world.py`` records which keys died and why it was safe.
 #:
 #: ``events`` is deliberately NOT here: it is annotated ``-> StreamingResponse`` and the
 #: clause above carries it, which is the arrangement worth having -- an exemption should be
@@ -454,11 +452,6 @@ RESPONSE_MODEL_EXEMPT: dict[str, str] = {
     "maptiles": "serves a tile, a 204 or a 404 -- there is no JSON body to describe",
     "maptiles_layer": "serves a tile, a 204 or a 404 -- there is no JSON body to describe",
     "icon": "serves a PNG, a 204 or a 404 -- there is no JSON body to describe",
-    "worlds": (
-        "deferred, not missed: it forwards the loader's opaque save headers, so a faithful "
-        "model says nothing and a useful one deletes eight keys from every row -- see the "
-        "comment above worlds() in routers/world.py"
-    ),
 }
 
 # --------------------------------------------------------------------- the generators
