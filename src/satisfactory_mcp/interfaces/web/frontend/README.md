@@ -175,8 +175,13 @@ What is still `any`, in full:
   assertion is the only place the tile layer's shape is stated.
 - `L.Control.Layers.sortFunction` and a few Leaflet option bags are typed by `@types/leaflet`
   as loosely as Leaflet itself defines them; nothing here widens them further.
-- `/api/summary` is typed for the four branches this page reads and no further. Typing the
-  other twenty would be inventing a contract for data nothing looks at.
+- `/api/summary`'s `header` is an open map — `{[key: string]: unknown}` by the server's own
+  declaration, because it forwards the sidecar's save header rather than restating its thirteen
+  keys (see `SummaryResponse` in `routers/world.py`); the page reads the one key it uses,
+  `session_name`, out of that map. The rest of the endpoint is generated in full. The sentence
+  that used to stand here — "typed for the four branches this page reads and no further" — was
+  written when every endpoint answered `-> dict` and typing more meant inventing a contract;
+  that stopped being true when the routers declared their response models.
 
 `src/leaflet-private.d.ts` declares the fields this page hangs off Leaflet objects. It keeps
 two kinds apart on purpose: the page's own marks (`_rank`, `_chevron`, `_labelWeight`), and
