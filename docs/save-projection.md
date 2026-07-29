@@ -728,6 +728,77 @@ span of `graph["power"][i]` — **one pass writes both**, which is the only thin
 positional join true. **+78,671 bytes on the reference projection, +5.27%** (poles 24.3 KB over 701
 rows, wires 54.4 KB over 1,297).
 
+### 6.13 Crates — the inventory that is an event, not a place
+
+Schema 18. A death crate and a dismantle crate were the one thing in this world the projection
+could not see at all: not a buildable, so absent from `building_counts`; not a machine; not a
+lightweight piece; and not in schema 15's `storage`, which joins a written-down list of container
+classes that `BP_Crate_C` is not on. All the projection has ever said about their contents is
+that they are somewhere inside `inventories["machine"]` — the schema-11 bucket rule sees a
+component named `Inventory` on a non-player, non-storage owner and files it with the smelter
+buffers.
+
+They get their **own key, not more `storage` rows**, because the two answer different questions.
+A container is infrastructure: the player built it, it stays put, and it answers *"where did I
+leave the steel"*. A crate is a **situation** — it did not exist until somebody died or
+dismantled something with a full inventory, it self-destructs the moment it is emptied, and it
+answers *"what did I lose and where"*. Two rows that are events among 151 that are places would
+make any client filter by class to get its own question back.
+
+```json
+"crates": [
+  {"cls": "BP_Crate_C", "instance": "...", "pos": [x, y, z], "yaw": 90.0,
+   "kind": "dismantle",                        // "death" | "dismantle" | "none"
+   "items": [["Desc_IronPlate_C", 15], ...],   // biggest first, ties by class
+   "slots": 4}                                 // off the component: sized to what went in
+]
+```
+
+**One class, and the game says so.** `AFGCrate` (`FGCrate.h`) is the whole family — "containers
+of items that are spawned on demand when the contents do not fill into the player's inventory,
+or when the player dies" — and the two kinds are one actor with a different `mCrateType`, which
+is why `CRATE_CLASSES` is a list of one and the kind is read off a property rather than off a
+name. All **170 crates across the 67 saves** on the reference machine are `BP_Crate_C`. Not the
+item pickups lying beside them: `FGItemPickup_Spawnable` is map-placed loot, and that is the
+collectibles layer's business.
+
+**`kind: "none"` is an answer, not a parse failure.** `mCrateType` is a `SaveGame` property, so
+UE omits it while it sits at the class default of `CT_None` — and `FGCrate.h` says what that
+default means, naming the sibling the enum replaced: `mMapText` is "name of the crate on the map
+(before distinction between dismantle and death crates was added)". Measured rather than
+assumed: the property does not appear at all below build 433351, and two of the reference
+world's own crates were made under builds 201717 and 186638 and still read `none` under 495413.
+**125 of the 170 crates** on this machine carry no type and never will, so "unknown kind" is a
+permanent, ordinary state of an old crate, and reporting it as a death crate would be inventing
+the one fact the save withheld.
+
+**What the save does NOT say, recorded because the obvious question is "is it mine".**
+`mCrateType` is `AFGCrate`'s only `SaveGame` property — no owning player, no timestamp, no cause
+of death — checked against the install's own `Headers.zip` and against every crate in all 67
+saves. Single-player, every death crate is the player's by construction; co-op, this projection
+cannot say. An owner field invented here would look exactly like an answer.
+
+**The inventory join is case-folded, and that is not tidiness.** The same component is spelled
+`.inventory` on some save versions and `.Inventory` on others — **89 and 81 times** on this
+machine — so a case-sensitive test would report every crate present and every one of them empty.
+The join itself is by owner instance name, the one `_storage` uses, with the same guard: a
+player pawn and 93 crashed drop pods also own a component named `Inventory`, and they go
+unclaimed because they are not crate actors.
+
+**An addition, not a correction, and the parity bank says so in one line.** `crates` joins
+`POST_11_ADDITIONS["keys"]` and owes no `_unfix`: `inventories` is left exactly where schema 11
+put it, so that banked key goes on being compared unfiltered and a crate this parser started
+miscounting would still move it on all 31 saves — the difference between 18 costing one line
+where 16 cost a function. The rows also join the null-yaw census on the terms schema 17's poles
+did: all 170 crates read their rotation, which is why a banked key could take them without
+moving. Dict rows rather than a `rows.py` iterator, on the storage precedent's size argument —
+**2 of them against 3,085 belt pieces**.
+
+Cost: the fixture diff is one added key and the version number, **480 bytes of 1,571,349**. The
+reference world holds 2 — a dismantle crate of 15 Iron Plate, 4 Encased Industrial Beams, 3 SAM
+and 2 Rotors in 4 slots, and one of unknown kind holding 17 Coal and 7 Concrete — and the pair
+is the whole argument for `kind` existing: one says what it is and one cannot.
+
 ---
 
 ## 13a. Replacing the vendored parser
