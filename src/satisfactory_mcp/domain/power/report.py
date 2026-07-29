@@ -25,11 +25,11 @@ class PowerLedger:
         """Generation capacity, and draw both nameplate and measured.
 
         This used to report nameplate only, saying uptime "is not modelled here". The
-        uptime was in the projection all along -- the 300 s productivity monitor, on 520 of
-        566 records -- and the difference is not a rounding detail. On the reference save
-        nameplate draw is **6,839 MW** while utilisation-weighted draw over the last
-        complete window is **1,516 MW**, because most of the factory is idle. Headroom
-        therefore reads 711 MW nameplate against roughly **6,034 MW** actual: an 8.5x
+        uptime was in the projection all along -- the 300 s productivity monitor, on 524 of
+        570 records -- and the difference is not a rounding detail. On the reference save
+        nameplate draw is **6,901 MW** while utilisation-weighted draw over the last
+        complete window is **2,389 MW**, because most of the factory is idle. Headroom
+        therefore reads 649 MW nameplate against roughly **5,161 MW** actual: an 8x
         error in the number `commission_plan` sizes a startup against.
 
         Both are reported because both are true and they answer different questions:

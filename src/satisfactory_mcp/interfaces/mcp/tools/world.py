@@ -155,7 +155,7 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
         for v in sorted(pw["by_generator"].values(), key=lambda v: -v["mw"])
     ]
     # This note used to read "nameplate only: fuel supply and uptime are not modelled".
-    # The uptime was in the projection the whole time, on 520 of 566 records.
+    # The uptime was in the projection the whole time, on 524 of 570 records.
     notes = [
         (
             "nameplate headroom assumes every built machine runs at once -- the SAFE "
