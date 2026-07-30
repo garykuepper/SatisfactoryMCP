@@ -55,7 +55,7 @@ ICONS_TOOL = (
 #:
 #: A descriptor class is ``Desc_IronPlate_C``, ``BP_EquipmentDescriptorNobeliskDetonator_C``,
 #: ``Build_StorageContainerMk1_C`` -- letters, digits and underscores, and every one of the
-#: 744 classes the generator writes matches this. So the segment is VALIDATED and then used,
+#: 747 classes the generator writes matches this. So the segment is VALIDATED and then used,
 #: rather than joined and then cleaned: a name that is not this shape never becomes a path at
 #: all, which makes traversal impossible by construction instead of by a list of things to
 #: strip. There is no ``..`` to reject, no separator to normalise and no encoding to unwrap,
@@ -133,9 +133,9 @@ def icon(request: Request, desc: str) -> Any:
 
     **Two different absences, told apart, because they need different sentences.** A
     directory that was never generated is answered with the command that would fill it. A
-    directory that exists without this particular class is a different fact: 6 of the game's
-    750 item classes genuinely have no picture in the container -- three name no icon at all
-    and three keep their mips inline where this reader cannot follow -- so "no icon for
+    directory that exists without this particular class is a different fact: 3 of the game's
+    750 item classes genuinely have no picture anywhere -- their docs entries name no icon
+    at all, and the manifest marks each one ``no-icon-in-docs`` -- so "no icon for
     ``Desc_PillarTop_C``" is a complete answer rather than a missing file, and it says so.
 
     **Cached hard, and stamped with the build**, on the tile route's terms exactly: the icon

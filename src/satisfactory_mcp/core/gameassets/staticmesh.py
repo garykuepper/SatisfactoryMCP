@@ -64,7 +64,14 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .iostore import IoStore
-from .packages import AssetIndex, PackageView, ScriptObjects, class_name_of, property_tags
+from .packages import (
+    AssetIndex,
+    PackageView,
+    ScriptObjects,
+    bulk_data_entries,
+    class_name_of,
+    property_tags,
+)
 
 __all__ = [
     "BOUNDS_INSIDE_MIN",
@@ -89,9 +96,6 @@ __all__ = [
     "render_tail",
     "static_mesh_export",
 ]
-
-#: One ``FByteBulkData`` entry in the Zen header's ``BulkDataMap``.
-BULK_ENTRY = 32
 
 #: A ``FHierarchyNodeSlice`` is 52 bytes and the fanout is 4.
 HIER_NODE = 208
@@ -166,31 +170,15 @@ class Cursor:
 def bulk_data_map(blob: bytes, names_end: int, first_section: int) -> list[dict]:
     """The Zen header's ``BulkDataMap``, which is what an ``FByteBulkData`` indexes into.
 
-    Between the name batch and the first section offset the summary names, with a UE 5.4+
-    alignment pad in front of it. Bounded by ``first_section`` so a misread length is an
-    error rather than a walk over the import map.
+    The parsing lives in :func:`packages.bulk_data_entries` since the day the item icons
+    needed the same table for a texture with no ``.ubulk``; this wrapper keeps the mesh
+    module's contract, which is that a header that does not hold together is a
+    :class:`ParseError` and never a silently different answer.
     """
-    cur = Cursor(blob, names_end)
-    pad = struct.unpack("<Q", cur.take(8))[0]
-    cur.skip(pad)
-    size = struct.unpack("<q", cur.take(8))[0]
-    if size < 0 or cur.pos + size > first_section:
-        raise ParseError(f"bulk data map of {size} bytes does not fit before {first_section}")
-    out = []
-    for i in range(size // BULK_ENTRY):
-        at = cur.pos + i * BULK_ENTRY
-        offset, duplicate, length, flags = struct.unpack_from("<3QI", blob, at)
-        out.append(
-            {
-                "index": i,
-                "offset": offset,
-                "duplicate_offset": duplicate,
-                "size": length,
-                "flags": flags,
-                "cooked_index": blob[at + 28],
-            }
-        )
-    return out
+    try:
+        return bulk_data_entries(blob, names_end, first_section)
+    except ValueError as exc:
+        raise ParseError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------------------

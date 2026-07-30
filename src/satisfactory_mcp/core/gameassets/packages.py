@@ -24,6 +24,7 @@ from .iostore import ContainerError, Decompressor, IoStore
 #: ignore is not a boundary; this list is one, and anything not on it is genuinely internal
 #: (``_name_batch``, ``_owner_class``, the two rotation constants).
 __all__ = [
+    "BULK_ENTRY_BYTES",
     "LEVEL_CLASS",
     "MOUNT_ROOTS",
     "AssetIndex",
@@ -32,6 +33,7 @@ __all__ = [
     "PackageView",
     "ScriptObjects",
     "apply_fname_number",
+    "bulk_data_entries",
     "class_name_of",
     "compose",
     "local_transform",
@@ -99,6 +101,53 @@ def _fname_numbers(blob: bytes, pos: int, count: int, limit: int) -> list[int]:
     if count <= 0 or pos + 4 * count > limit:
         return [0] * max(count, 0)
     return list(struct.unpack_from(f"<{count}I", blob, pos))
+
+
+#: One ``FByteBulkData`` entry in the Zen header's ``BulkDataMap``: three uint64 (offset,
+#: duplicate offset, size), a uint32 of flags, three pad bytes, then the cooked-index byte.
+BULK_ENTRY_BYTES = 32
+
+
+def bulk_data_entries(blob: bytes, names_end: int, first_section: int) -> list[dict]:
+    """The Zen header's ``BulkDataMap``, which is what an ``FByteBulkData`` indexes into.
+
+    Between the name batch and the first section offset the summary names, with a UE 5.4+
+    alignment pad in front of it. Bounded by ``first_section`` so a misread length is a
+    ``ValueError`` rather than a walk over the import map.
+
+    Lives here rather than in ``staticmesh`` (which keeps its ``bulk_data_map`` wrapper for
+    its own ``ParseError`` contract) since the day the item icons needed the same table for
+    a texture: the map is a fact about the package HEADER, and two parsers of one 32-byte
+    layout is one more chance for them to disagree. An INLINE entry's ``offset`` -- see
+    ``textures.INLINE_BULK_FLAG`` for which those are -- is relative to the start of the
+    export-data segment, i.e. its payload is at ``header_size + offset`` in the same blob;
+    a streamed entry's is an offset into the sibling ``.ubulk``. Both measured on build
+    495413, where the two kinds sit side by side in every ordinary icon's map.
+    """
+    try:
+        (pad,) = struct.unpack_from("<Q", blob, names_end)
+        pos = names_end + 8 + pad
+        (size,) = struct.unpack_from("<q", blob, pos)
+        pos += 8
+        if size < 0 or pos + size > first_section:
+            raise ValueError(f"bulk data map of {size} bytes does not fit before {first_section}")
+        out = []
+        for i in range(size // BULK_ENTRY_BYTES):
+            at = pos + i * BULK_ENTRY_BYTES
+            offset, duplicate, length, flags = struct.unpack_from("<3QI", blob, at)
+            out.append(
+                {
+                    "index": i,
+                    "offset": offset,
+                    "duplicate_offset": duplicate,
+                    "size": length,
+                    "flags": flags,
+                    "cooked_index": blob[at + 28],
+                }
+            )
+        return out
+    except struct.error as exc:
+        raise ValueError(f"bulk data map runs off the package header: {exc}") from exc
 
 
 def apply_fname_number(base: str, number: int) -> str:
@@ -191,7 +240,11 @@ class Package:
         self.header_size = words[1]
         import_offset, export_offset = words[7], words[8]
         self.export_offset = export_offset
-        self.names, _ = _name_batch(blob, 60)
+        self.names, self.names_end = _name_batch(blob, 60)
+        # Where the header's sections begin, i.e. where the BulkDataMap must END. The same
+        # expression ``staticmesh._bulk_map`` has always used, kept here so the map and the
+        # sections it is bounded by come out of one read of the summary.
+        self.first_section = min([w for w in words[6:13] if w] or [self.header_size])
         # ``ImportedPublicExportHashes``: the array a PackageImport's low 32 bits INDEX.
         # Without it a cross-package reference resolves only as far as the package NAME,
         # which is not an identity -- this build ships thirty-five map-area assets sharing
@@ -265,6 +318,15 @@ class Package:
     def body(self, export: dict) -> bytes:
         start = self.header_size + export["offset"]
         return self.blob[start : start + export["size"]]
+
+    def bulk_entries(self) -> list[dict]:
+        """This package's ``BulkDataMap``: one entry per ``FByteBulkData``, or ``ValueError``.
+
+        The convenience over :func:`bulk_data_entries` for a caller that already holds a
+        ``Package`` -- the item-icon generator's route to a mip chain with no ``.ubulk``,
+        where an inline entry's payload is ``blob[header_size + offset :][: size]``.
+        """
+        return bulk_data_entries(self.blob, self.names_end, self.first_section)
 
 
 def property_tags(

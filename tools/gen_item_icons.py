@@ -22,9 +22,9 @@ container spells differently -- ``Mam`` for ``MAM``, ``Medkit`` for ``MedKit``,
 ``Cyberwagon`` for ``CyberWagon``, ``Golfcart`` twice -- so an exact lookup silently loses
 the MAM, the Cyberwagon, the Medkit and both Golf Carts and calls it 742 of 747.
 
-**Two pixel formats, both measured rather than assumed.** 633 of the 744 are ``PF_DXT5``
+**Two pixel formats, both measured rather than assumed.** 634 of the 747 are ``PF_DXT5``
 (BC3, 16 bytes per 4x4 block: an icon is a cut-out and needs interpolated alpha, which BC1
-has not got) and 111 are ``PF_B8G8R8A8``, four bytes a texel and no decompression at all.
+has not got) and 113 are ``PF_B8G8R8A8``, four bytes a texel and no decompression at all.
 The format is read off the package's own name table, where the ``PF_`` constant appears
 verbatim, and is recorded per icon in the manifest. **No BC7 anywhere**, which is worth
 writing down because it is the format one expects of UI art and would have been the reason
@@ -49,14 +49,15 @@ another mip tail, i.e. *the game changed*, and that icon is skipped and counted 
 decoded on a guess.
 
 **Written at 256 px square by default, and the choice is stated because there was one to
-make.** The source art is 256 or 512 depending on the item -- 194 classes at 256, 550 at
-512 -- so "native" would mean a directory of two sizes and a client that has to ask which.
-256 is the smaller of the two, which makes it the only choice that never invents a pixel:
-every 256 px source is written at its own resolution with no resampling at all, and every
-512 px one is halved, which is an exact 2:1 reduction. Nothing is ever upscaled.
+make.** The source art is 256 or 512 depending on the item -- 195 classes at 256, 551 at
+512, and one 8 px swatch -- so "native" would mean a directory of mixed sizes and a client
+that has to ask which. 256 is the smaller of the two real sizes, which makes it the only
+choice that never invents a pixel: every source at or under 256 px is written at its own
+resolution with no resampling at all, and every 512 px one is halved, which is an exact
+2:1 reduction. Nothing is ever upscaled.
 
 **And the size costs real bytes, so the alternatives are measured rather than argued.** On
-this build, over a 40-icon sample scaled to the whole set: **256 px is 41.0 MB**, 128 px is
+this build, over a 40-icon sample scaled to the whole set: **256 px is 41.1 MB**, 128 px is
 13.8 MB, 96 px is 8.5 MB and 64 px is 4.3 MB. The default stays at 256 because these are
 served one file per item, cached immutable behind a build tag, and a popup fetches only the
 dozen it is showing -- and because it is the one setting under which a third of the art is
@@ -64,13 +65,23 @@ byte-for-byte what the game authored. ``--px`` takes any of the others for a rea
 would rather have the directory small; the manifest records which was used, so a client
 never has to guess.
 
-**What it costs, measured on build 495413**: of 750 classes carrying ``mForm``, 747 name an
-icon, 744 of those have a bulk chunk, and all 744 decode -- **41.0 MB of PNG in 11 s**, 194
-from 256 px sources and 550 from 512 px ones. The six that got no picture are named in the
-manifest under ``unresolved`` with the reason: three name no icon at all, and three
-(Liquid Biofuel's pipe glyph, the Explorer's path marker, and a shared white swatch) have
-their mips cooked inline in the package rather than into a ``.ubulk``, which needs the
-``FTexturePlatformData`` walk this file deliberately does not do.
+**A texture with no ``.ubulk`` is not a texture with no picture.** Three of the 747
+(Liquid Biofuel's pipe glyph, the Explorer's path marker, and an 8 px shared white swatch)
+cook their WHOLE mip chain inline in the ``.uasset``, and an earlier cut of this file
+skipped them behind "needs the ``FTexturePlatformData`` walk this file deliberately does
+not do". The walk turned out to be unnecessary: the Zen header's ``BulkDataMap`` names
+every inline level's offset and length outright -- ``packages.bulk_data_entries``, the
+same table the Nanite reader streams its pages through -- so mip 0 is a slice of the
+package blob at an offset the header states, under the same length check transposed
+(see :func:`decode_inline_icon`).
+
+**What it costs, measured on build 495413**: of 750 classes carrying ``mForm``, 747 name
+an icon and all 747 decode -- **41.1 MB of PNG in 12 s** -- 195 from 256 px sources, 551
+from 512 px ones, and the 8 px swatch as itself; the three inline ones are one of each. The
+three that got no picture are named in the manifest under ``unresolved``, each with a
+machine-readable ``kind`` -- all three are ``no-icon-in-docs``, the class whose docs entry
+names no texture at all, for which the frontend's text tile is the correct rendering
+rather than a fallback.
 
 **Staleness is announced, never overwritten.** The manifest records the build it was cut
 from, and a run against a different install refuses rather than mixing two builds' art in
@@ -110,9 +121,12 @@ from satisfactory_mcp.core.gameassets.provenance import (
     read_str_path,
 )
 from satisfactory_mcp.core.gameassets.textures import (
+    BC3_BLOCK_BYTES,
+    INLINE_BULK_FLAG,
     bc3_mip_sizes,
     decode_bc3_rgba,
     decode_bgra8_rgba,
+    inline_chain_side,
     raw_mip_sizes,
 )
 from satisfactory_mcp.core.gamedata.loader import load_docs
@@ -166,9 +180,19 @@ MIP_TAIL_PX = 128
 CANDIDATE_PX = (2048, 1024, 512, 256, 128)
 
 #: What every icon is written at unless ``--px`` says otherwise. See the module docstring
-#: for the measured trade: 256 writes the 194 smaller sources untouched and halves the 550
-#: larger ones, and is 41.0 MB; 128 is 13.8 MB and resamples everything.
+#: for the measured trade: 256 writes the 196 sources at or under it untouched and halves
+#: the 551 larger ones, and is 41.1 MB; 128 is 13.8 MB and resamples everything but the
+#: swatch.
 ICON_PX = 256
+
+#: The three ways a class ends up under ``unresolved``, as machine-readable kinds. Named
+#: because the first cut of this manifest carried six undifferentiated sentences, and "the
+#: game genuinely ships no picture for this class" (:data:`KIND_NO_ICON` -- the frontend's
+#: text tile is the CORRECT rendering, forever) kept being read in the same breath as the
+#: two kinds that mean a picture exists and this reader missed it.
+KIND_NO_ICON = "no-icon-in-docs"
+KIND_NOT_IN_CONTAINER = "asset-not-in-container"
+KIND_UNDECODED = "undecoded"
 
 #: Where they go, and what the sidecar beside them is called. Gitignored, like every other
 #: thing cut out of somebody's install.
@@ -265,7 +289,7 @@ def decode_icon(package_mod, decoder, image_mod, blob: bytes, bulk: bytes, layou
     no format this reader knows, the bulk chain is a length no (format, side) pair produces,
     or the chain is shorter than the level it claims to start with. All three are counted
     and named in the manifest rather than raising, because one re-cooked icon must not cost
-    the other 743 -- the posture every guard in the projection extractor takes.
+    the other 746 -- the posture every guard in the projection extractor takes.
     """
     fmt = pixel_format(package_mod.Package(blob).names)
     if fmt is None:
@@ -286,16 +310,64 @@ def decode_icon(package_mod, decoder, image_mod, blob: bytes, bulk: bytes, layou
     return (image, px, fmt), None
 
 
+def decode_inline_icon(package_mod, decoder, image_mod, blob: bytes):
+    """The same contract as :func:`decode_icon`, for a texture with no ``.ubulk`` at all.
+
+    Three of the 747 icons cook their WHOLE mip chain inline in the ``.uasset`` -- Liquid
+    Biofuel's pipe glyph, the Explorer's path marker, and an 8 px shared white swatch --
+    and the first cut of this file skipped them behind "needs the ``FTexturePlatformData``
+    walk this file deliberately does not do". The walk turned out to be unnecessary: the
+    Zen header's ``BulkDataMap`` names every level's offset and length outright, one entry
+    per mip, with the offset relative to the export-data segment. So mip 0 is
+    ``blob[header_size + offset :][: size]`` of the FIRST entry, and no property tail is
+    ever parsed.
+
+    The integrity check transposes rather than disappears: with no file length to test,
+    the whole entry list must be exactly the chain :func:`~textures.inline_chain_side`
+    re-derives from its largest level -- and every entry must actually SAY it is inline,
+    because an entry pointing into a ``.ubulk`` that is not in the container is a cook
+    this reader does not know, not a texture with its mips at hand.
+    """
+    pkg = package_mod.Package(blob)
+    fmt = pixel_format(pkg.names)
+    if fmt is None:
+        return None, "no known PF_ constant in the package name table"
+    try:
+        entries = pkg.bulk_entries()
+    except ValueError as exc:
+        return None, f"no .ubulk, and the bulk data map is unreadable ({exc})"
+    if not entries:
+        return None, "no .ubulk and an empty bulk data map: nowhere the mips could be"
+    if not all(entry["flags"] & INLINE_BULK_FLAG for entry in entries):
+        return None, "no .ubulk in the container, yet not every bulk entry is inline"
+    block = fmt == "PF_DXT5"
+    sizes = [entry["size"] for entry in entries]
+    px = inline_chain_side(sizes, BC3_BLOCK_BYTES if block else None)
+    if px is None:
+        return None, f"{fmt} inline entries of {sizes} B are no mip chain this reader knows"
+    first = entries[0]
+    raw = blob[pkg.header_size + first["offset"] :][: first["size"]]
+    if len(raw) != first["size"]:
+        return None, "inline mip 0 runs off the end of the package"
+    image = (
+        decode_bc3_rgba(decoder, image_mod, raw, px)
+        if block
+        else decode_bgra8_rgba(image_mod, raw, px)
+    )
+    return (image, px, fmt), None
+
+
 def to_png(image_mod, image, px: int, want: int) -> bytes:
     """One decoded level as PNG bytes at ``want`` px, resampled only when it has to be.
 
     ``LANCZOS`` for a reduction of drawn artwork with hard edges and a cut-out alpha; a level
     that is already the wanted size is returned untouched rather than round-tripped through a
     resize that would be the identity with a filter's rounding on top -- which at the default
-    is 194 of the 744 icons written exactly as the game authored them.
+    is 196 of the 747 icons written exactly as the game authored them.
 
-    Never enlarges. A 128 px source asked for at 256 stays 128, because an upscale is a
-    picture this file invented and it would sit in the directory looking like the rest.
+    Never enlarges. An 8 px source asked for at 256 stays 8 -- which the shared white
+    swatch actually is -- because an upscale is a picture this file invented and it would
+    sit in the directory looking like the rest.
     """
     import io
 
@@ -323,8 +395,10 @@ def build_manifest(*, pin: str, branch: str | None, docs, entries: dict, unresol
     that key this manifest come from that file and the pixels come from the container beside
     it, and a manifest whose two halves came from two installs is the failure mode worth
     making impossible to reach silently. ``icons`` is the map a client actually uses.
-    ``unresolved`` is what did not make it and why, per class, because a coverage number
-    with no list behind it is a claim rather than a measurement.
+    ``unresolved`` is what did not make it, per class, as ``{"kind", "detail"}`` -- the
+    kind machine-readable so "the game ships no picture" and "a picture exists and this
+    reader missed it" can never again be conflated, the detail a sentence, because a
+    coverage number with no list behind it is a claim rather than a measurement.
     """
     return {
         "_meta": {
@@ -343,7 +417,14 @@ def build_manifest(*, pin: str, branch: str | None, docs, entries: dict, unresol
                     "never upscaled. The .ubulk holds the chain from the texture's own side "
                     f"down to {MIP_TAIL_PX} px, so its length is a free check that the layout "
                     "is still the one this reader knows; a length off that table is skipped "
-                    "and listed under unresolved."
+                    "and listed under unresolved. A texture with NO .ubulk keeps its whole "
+                    "chain inline in the .uasset instead, one bulk-map entry per level, and "
+                    "is read from there under the same check transposed: the entry sizes "
+                    "must be exactly the chain re-derived from the largest one. unresolved "
+                    "entries carry a machine-readable kind: no-icon-in-docs means the game "
+                    "ships no picture and the text tile is correct forever; "
+                    "asset-not-in-container and undecoded mean a picture exists and this "
+                    "reader missed it."
                 ),
             },
             "counts": stats,
@@ -378,7 +459,7 @@ def main() -> int:
         default=ICON_PX,
         help=(
             f"square side to write, in pixels (default {ICON_PX}). Measured on build 495413: "
-            "256 is 41.0 MB, 128 is 13.8 MB, 96 is 8.5 MB, 64 is 4.3 MB. Nothing is ever "
+            "256 is 41.1 MB, 128 is 13.8 MB, 96 is 8.5 MB, 64 is 4.3 MB. Nothing is ever "
             "upscaled, so a source smaller than this stays its own size."
         ),
     )
@@ -438,31 +519,42 @@ def main() -> int:
 
     payload: dict[str, bytes] = {}
     entries: dict[str, dict] = {}
-    unresolved: dict[str, str] = {}
+    unresolved: dict[str, dict] = {}
     sides: dict[int, int] = {}
     for name, icon in classes:
         stem = container_stem(icon)
         if stem is None:
-            unresolved[name] = f"the dump names no icon ({icon or 'empty'})"
+            unresolved[name] = {
+                "kind": KIND_NO_ICON,
+                "detail": f"the dump names no icon ({icon or 'empty'}); "
+                "the frontend's text tile is this class's correct rendering",
+            }
             continue
         asset = by_lower.get((stem + ".uasset").lower())
         bulk_path = by_lower.get((stem + ".ubulk").lower())
         if asset is None:
-            unresolved[name] = f"{stem}.uasset is not in the container"
+            unresolved[name] = {
+                "kind": KIND_NOT_IN_CONTAINER,
+                "detail": f"{stem}.uasset is not in the container",
+            }
             continue
-        if bulk_path is None:
-            unresolved[name] = f"{stem}.ubulk is not in the container (mips cooked inline)"
-            continue
-        decoded, why = decode_icon(
-            package_mod,
-            decoder,
-            image_mod,
-            store.read_path(asset),
-            store.read_path(bulk_path),
-            layouts,
-        )
+        if bulk_path is not None:
+            decoded, why = decode_icon(
+                package_mod,
+                decoder,
+                image_mod,
+                store.read_path(asset),
+                store.read_path(bulk_path),
+                layouts,
+            )
+        else:
+            # No .ubulk is not a missing picture: the whole mip chain is cooked inline in
+            # the .uasset, which is how three of the 747 are cut. See decode_inline_icon.
+            decoded, why = decode_inline_icon(
+                package_mod, decoder, image_mod, store.read_path(asset)
+            )
         if decoded is None:
-            unresolved[name] = f"{stem}: {why}"
+            unresolved[name] = {"kind": KIND_UNDECODED, "detail": f"{stem}: {why}"}
             continue
         image, px, fmt = decoded
         blob = to_png(image_mod, image, px, args.px)
@@ -501,8 +593,8 @@ def main() -> int:
     )
     if unresolved:
         print(f"  {len(unresolved)} class(es) got no picture; manifest.json names each one:")
-        for name, why in sorted(unresolved.items())[:8]:
-            print(f"    {name}: {why}")
+        for name, entry in sorted(unresolved.items())[:8]:
+            print(f"    {name}: [{entry['kind']}] {entry['detail']}")
     print("none of it is committed: data/local/ is gitignored and stays that way.")
     return 0
 
