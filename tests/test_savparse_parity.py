@@ -44,7 +44,9 @@ that no longer exists fails too.
 
 **Schema 16 is the first entry that is not an addition**, and it needed a decision rather than
 a line: it CORRECTED ``inventories``, which is one of the banked keys. The choice made, and
-the choice rejected, are argued in ``_unfix_16``.
+the choice rejected, are argued in ``_unfix_16``. **Schema 19 is the second**, and it corrects
+the same key: a crate's contents moved out of ``inventories["machine"]`` into their own
+``crate`` bucket, and ``_unfix_19`` folds them back for the comparison.
 """
 
 from __future__ import annotations
@@ -104,14 +106,12 @@ POST_11_ADDITIONS = {
     #: still being checked against it.
     #:
     #: **Schema 18's ``crates`` is a new top-level name and is listed, and what it did NOT
-    #: touch is the point.** A crate's contents have been inside ``inventories["machine"]``
-    #: since schema 11 -- the bucket rule files a component called ``Inventory`` on a
-    #: non-storage, non-player owner with the smelter buffers -- and schema 18 leaves that
-    #: exactly where it is. So there is no second ``_unfix`` here: the new key reports the
-    #: same stacks per crate, and the banked total goes on being compared unfiltered, which
-    #: means a crate this parser started miscounting still moves ``inventories`` on all 31
-    #: saves. That is the difference between an addition and a correction, and it is why 18
-    #: costs one line where 16 cost a function.
+    #: touch was the point at the time.** A crate's contents had been inside
+    #: ``inventories["machine"]`` since schema 11 -- the bucket rule filed a component
+    #: called ``Inventory`` on a non-storage, non-player owner with the smelter buffers --
+    #: and schema 18 deliberately left them there, so 18 cost one line where 16 cost a
+    #: function. Schema 19 then made the move 18 declined: see ``crate_bucket_fix`` below
+    #: and ``_unfix_19``, which is the function 19 owed all along.
     "keys": ("belts", "pipes", "attachments", "storage", "power", "crates"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
@@ -132,6 +132,9 @@ POST_11_ADDITIONS = {
         "Build_StorageIntegrated_C",
         "Build_StorageBlueprint_C",
     ),
+    #: Schema 19, the second correction: the bucket the crates' contents moved INTO, out of
+    #: ``machine`` where the schema-11 rule had filed them. ``_unfix_19`` folds it back.
+    "crate_bucket_fix": "crate",
 }
 
 
@@ -187,8 +190,35 @@ def _unfix_16(projection: dict, inventories: dict) -> dict:
     return out
 
 
+def _unfix_19(inventories: dict) -> dict:
+    """``inventories`` with schema 19's crate-bucket fix put back, for comparison only.
+
+    The second correction of a banked key, and a cheaper reconstruction than ``_unfix_16``'s
+    because the fix was cheaper: 16 changed which bucket a rule ROUTED eight containers to,
+    so the undo has to recompute the routing from the ``storage`` rows; 19 moved the crates'
+    stacks out of ``machine`` into a NEW bucket of their own, so the undo is a fold -- add
+    ``crate`` back into ``machine``, item for item in integers, and drop the key the oracle
+    never had. The old rule never wrote a ``machine`` entry it had counted nothing into, and
+    a crate stack is by construction non-zero, so the fold cannot leave a spurious ``0``.
+
+    What this deliberately does NOT do is cancel a drift. The folded total is exactly what
+    the schema-11 rule produced only while this parser reads each crate's component the way
+    it always has -- a crate the parser started miscounting moves the folded ``machine``
+    digest on every save that holds one, which keeps the banked key falsifiable for the
+    stacks that moved as well as the ones that stayed. (The blindness ``_unfix_16`` states
+    -- a misread that moves two reconstructed values together and cancels -- has no analogue
+    here, because nothing is subtracted.)
+    """
+    out = {bucket: dict(stacks) for bucket, stacks in inventories.items() if bucket != "crate"}
+    crate = inventories.get(POST_11_ADDITIONS["crate_bucket_fix"])
+    for item, amount in (crate if isinstance(crate, dict) else {}).items():
+        machine = out.setdefault("machine", {})
+        machine[item] = machine.get(item, 0) + amount
+    return out
+
+
 def as_schema_11(projection: dict) -> dict:
-    """The projection with every post-11 addition removed, and one correction put back.
+    """The projection with every post-11 addition removed, and two corrections put back.
 
     Not a general downgrade: it undoes exactly ``POST_11_ADDITIONS`` and leaves every other
     difference -- which is the point, because every other difference is drift.
@@ -197,7 +227,9 @@ def as_schema_11(projection: dict) -> dict:
     if "schema_version" in out:
         out["schema_version"] = POST_11_ADDITIONS["schema_version"]
     if isinstance(out.get("inventories"), dict):
-        out["inventories"] = _unfix_16(projection, out["inventories"])
+        # 19 first and 16 second, though the two commute: each touches its own source
+        # bucket and both only ever ADD to ``machine``.
+        out["inventories"] = _unfix_16(projection, _unfix_19(out["inventories"]))
     for key, field in POST_11_ADDITIONS["record_fields"].items():
         if isinstance(out.get(key), list):
             out[key] = [
@@ -307,8 +339,8 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    eighteen = {
-        "schema_version": 18,
+    nineteen = {
+        "schema_version": 19,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -359,11 +391,11 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
                 "slots": 10,
             },
         ],
-        # Schema 18, populated for the reason ``power`` above is. The Rubber in it is
-        # DELIBERATELY the same 5 units the machine bucket holds: a crate's contents have
-        # been inside ``inventories["machine"]`` since schema 11 and stay there, so dropping
-        # this key must leave that bucket untouched -- an ``_unfix_16``-style subtraction
-        # here would be the bug, not the fix.
+        # Schema 18's key, populated for the reason ``power`` above is -- and the Rubber in
+        # it is DELIBERATELY the same 5 units the CRATE bucket below holds: schema 19 moved
+        # a crate's contents out of ``machine`` into that bucket, so the filter has to fold
+        # them back to land on the schema-11 shape, where they were a "machine buffer". A
+        # filter that only dropped the ``crate`` key would leave the eleven bucket 5 short.
         "crates": [
             {
                 "cls": "BP_Crate_C",
@@ -378,37 +410,52 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         "inventories": {
             "player": {"Desc_Wire_C": 7},
             "storage": {"Desc_IronPlate_C": 100},
-            "machine": {"Desc_Rubber_C": 5},
+            "machine": {},
+            "crate": {"Desc_Rubber_C": 5},
         },
         "warnings": [],
     }
-    filtered = as_schema_11(eighteen)
+    filtered = as_schema_11(nineteen)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(eighteen)
-    moved["machines"] = [{**eighteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(nineteen)
+    moved["machines"] = [{**nineteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
     )
 
-    # And the same demand of the schema-16 undo specifically, because it is the one step here
-    # that RESTORES a value rather than dropping one: a reconstruction that simply copied the
+    # And the same demand of the schema-16 undo specifically, because it is a step that
+    # RESTORES a value rather than dropping one: a reconstruction that simply copied the
     # bank's shape would pass the equality above and hide every stack in the key for ever. A
     # container the two parsers would have read differently still has to move the digest.
-    misread = dict(eighteen)
+    misread = dict(nineteen)
     misread["storage"] = [
-        {**eighteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
-        eighteen["storage"][1],
+        {**nineteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
+        nineteen["storage"][1],
     ]
     misread["inventories"] = {
-        **eighteen["inventories"],
+        **nineteen["inventories"],
         "storage": {"Desc_IronPlate_C": 101},
     }
     assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
         "a miscounted container reads as agreement, which makes the whole key vacuous"
+    )
+
+    # And of the schema-19 undo, which restores a value the same way: a crate this parser
+    # started miscounting has to move the folded ``machine`` digest, or the stacks that
+    # moved buckets would have left the banked comparison rather than been reconstructed
+    # into it.
+    miscrated = dict(nineteen)
+    miscrated["crates"] = [{**nineteen["crates"][0], "items": [["Desc_Rubber_C", 6]]}]
+    miscrated["inventories"] = {
+        **nineteen["inventories"],
+        "crate": {"Desc_Rubber_C": 6},
+    }
+    assert _digest(as_schema_11(miscrated)["inventories"]) != _digest(eleven["inventories"]), (
+        "a miscounted crate reads as agreement, which retires the moved stacks from the bank"
     )
 
 
@@ -485,7 +532,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             pool, present, lambda item: _projection(item[2]), width=width
         ):
             assert "error" not in proj, (name, proj.get("detail"))
-            assert proj["schema_version"] == 18, (name, "unexpected schema for the filter")
+            assert proj["schema_version"] == 19, (name, "unexpected schema for the filter")
             proj = as_schema_11(proj)
             for key, want in entry.items():
                 if key == "n_objects_value":

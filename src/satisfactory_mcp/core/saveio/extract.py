@@ -16,7 +16,7 @@ Why a subprocess rather than an import:
 
 Why this module lives in the application package and not in ``pioneersav``: the parser
 answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-18 projection is this project's shape, versioned with this project's cache,
+the schema-19 projection is this project's shape, versioned with this project's cache,
 and it is the only place in the tree allowed to import the parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
@@ -63,7 +63,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 #: The classes the game drops on the ground when items have nowhere else to go. Schema 18;
 #: see `_crates`.
@@ -515,7 +515,13 @@ def extract(path: str) -> dict:
         "depot": {},
         # Split by owner: lumping machine buffers in with carried stock overstates
         # everything. Fluids are raw litres here; the server scales them.
-        "inventories": {"player": {}, "storage": {}, "machine": {}},
+        #
+        # ``crate`` is schema 19's bucket and the split's second correction (16 moved eight
+        # containers out of ``machine``; this moves the crates out). A death crate's contents
+        # are a pioneer's pockets lying on the ground -- recoverable stock, not a machine
+        # buffer -- and summing them with the smelter buffers made them material that exists
+        # and cannot be spent. See `inventory_bucket`.
+        "inventories": {"player": {}, "storage": {}, "machine": {}, "crate": {}},
         "node_state": {},
         # Char_Player_C carries the pawn's transform. BP_PlayerState_C sits at the
         # origin and is NOT a position -- reading it would put every player at (0,0).
@@ -1995,12 +2001,14 @@ def _crates(actors: list, held: dict) -> list:
     **The record nothing else in the projection could carry.** A crate is not a buildable, so
     it is not in ``building_counts``, not a machine, not a lightweight piece and not a
     container -- schema 15's ``storage`` deliberately lists the classes it joins, and this is
-    not one of them. What the projection HAS said about a crate's contents since schema 11 is
-    that they are somewhere in ``inventories["machine"]``: the bucket rule sees a component
-    called ``Inventory`` on an owner that is neither a player nor a storage class and files it
-    with the smelter buffers. That is left exactly as it is -- it is a schema-11 key, it is
-    part of the banked agreement with the deleted parser, and moving it is a separate decision
-    from being able to see a crate at all.
+    not one of them. What the projection said about a crate's contents from schema 11 to 18
+    was that they were somewhere in ``inventories["machine"]``: the bucket rule saw a
+    component called ``Inventory`` on an owner that was neither a player nor a storage class
+    and filed a dead pioneer's pockets with the smelter buffers. Schema 18 deliberately left
+    that alone -- it is a banked schema-11 key, and moving it was a separate decision from
+    being able to see a crate at all. Schema 19 made that decision:
+    ``inventories["crate"]`` now holds the same stacks these rows itemise, and the parity
+    bank compares the old shape through the reconstruction ``test_savparse_parity`` documents.
 
     **The kind comes off ``mCrateType`` and is ``none`` for a crate that predates it**, which
     is a third of the crates on this machine and the reason `CRATE_KINDS` argues the point at
@@ -2092,6 +2100,19 @@ def inventory_bucket(instance: str) -> str:
     named ``StorageInventory`` -- 848 of them here -- but so does nothing else on these
     classes, and requiring the role is what keeps a container's other components out of a
     total that means "stock".
+
+    **The crate test is schema 19, and it is the split's second correction.** A crate's
+    contents live in a component named ``Inventory`` -- ``.inventory`` on some saves,
+    ``.Inventory`` on others, both real on this machine, hence the case fold `_crates`
+    already argues for -- on an owner that is neither a player nor a storage class, so the
+    schema-11 rule filed a dead pioneer's pockets with the smelter buffers: material that
+    exists and cannot be spent, summed anonymously into ``machine``. They are recoverable
+    stock lying on the ground, which is neither of those buckets, so they get their own.
+    The owner test is membership of CRATE_CLASSES read off the instance name, exactly the
+    class test the ``crates`` key's own join makes -- and the player pawn and the crashed
+    drop pods, which also own a component by this name, are untouched: the pawn is caught
+    by the player test above and a drop pod is no crate class, so both land where they
+    always did.
     """
     owner = instance.rsplit(".", 2)[-2] if instance.count(".") >= 2 else instance
     role = instance.rsplit(".", 1)[-1]
@@ -2101,6 +2122,8 @@ def inventory_bucket(instance: str) -> str:
         owner_class(owner) in STORAGE_CLASSES or any(tag in owner for tag in _STORAGE_OWNER_HINTS)
     ):
         return "storage"
+    if role.lower() == "inventory" and owner_class(owner) in CRATE_CLASSES:
+        return "crate"
     return "machine"
 
 

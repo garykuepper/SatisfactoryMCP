@@ -817,9 +817,10 @@ export interface paths {
          *     show. A crate is not a buildable, so it was never in ``building_counts``; it runs no
          *     recipe and draws no power, so it is not a machine; it is an ordinary actor, so it is not
          *     a lightweight piece; and ``/api/storage`` joins a written-down list of container classes
-         *     that ``BP_Crate_C`` is not on, deliberately. The only trace of one has been its contents
-         *     summed anonymously into ``inventories["machine"]`` alongside the smelter buffers, where
-         *     they read as material that exists and cannot be spent.
+         *     that ``BP_Crate_C`` is not on, deliberately. Until schema 19 the only trace of one was
+         *     its contents summed anonymously into ``inventories["machine"]`` alongside the smelter
+         *     buffers, where they read as material that exists and cannot be spent; they are
+         *     recoverable stock, and they sum into their own ``inventories["crate"]`` bucket now.
          *
          *     **Three kinds, and the third is an answer.** ``death`` is where a pioneer died,
          *     ``dismantle`` is what would not fit in a full inventory, and ``none`` is a crate that
