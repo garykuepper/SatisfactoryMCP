@@ -92,7 +92,7 @@ export function popup(pairs: Row[]): string {
  * untagged one `no-cache` with an ETag, so this page could have been the client that carries
  * the tag -- and to do it, it would have to learn the tag from a probe, which means naming a
  * descriptor class up front and hoping the reader's own generated directory happens to hold
- * it. There is no such class: the directory is optional, and six of the game's 750 item
+ * it. There is no such class: the directory is optional, and three of the game's 750 item
  * classes ship no picture at all, so a probe is a guess whose failure mode is silently
  * unversioned URLs. The endpoint's own note says the rest -- caching untagged answers hard is
  * how a regenerated directory stayed invisible behind a stale probe -- so untagged plus an

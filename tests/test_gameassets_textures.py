@@ -14,11 +14,13 @@ under test is the argument pair, not anybody's block decoder.
 from __future__ import annotations
 
 from satisfactory_mcp.core.gameassets.textures import (
+    BC3_BLOCK_BYTES,
     bc1_mip_sizes,
     bc3_mip_sizes,
     decode_bc1_rgba,
     decode_bc3_rgba,
     decode_bgra8_rgba,
+    inline_chain_side,
     raw_mip_sizes,
 )
 
@@ -120,6 +122,47 @@ def test_the_item_icons_two_chains_are_the_lengths_the_generator_refuses_to_read
     # no offset to guess, exactly as the map slices are read.
     assert bc3_mip_sizes(256, 1)[0][1] == 65_536
     assert bc3_mip_sizes(512, 1)[0][1] == 262_144
+
+
+def test_the_three_inline_icons_chains_re_derive_and_nothing_else_does():
+    """``inline_chain_side``: the ``.ubulk`` length check for a texture that has none.
+
+    The three shapes are the three the container actually holds on build 495413 -- Liquid
+    Biofuel's nine-entry BC3 chain to 1 px (block floor and all), the Explorer path's
+    ten-entry BGRA chain, and the single-entry 8 px white swatch -- because the check is
+    only worth having if the derivation lands on the real per-level sizes, which is the
+    same reason the chain totals above are asserted against real file lengths.
+    """
+    biofuel = [65_536, 16_384, 4_096, 1_024, 256, 64, 16, 16, 16]
+    assert inline_chain_side(biofuel, BC3_BLOCK_BYTES) == 256
+
+    explorer = [1_048_576, 262_144, 65_536, 16_384, 4_096, 1_024, 256, 64, 16, 4]
+    assert inline_chain_side(explorer, None) == 512
+
+    assert inline_chain_side([256], None) == 8, "the white swatch: one 8 px BGRA level"
+
+    # A partial chain still re-derives -- the depth comes from the entries, not a rule --
+    # which is what keeps this the same posture as chain_length taking a count.
+    assert inline_chain_side([65_536, 16_384], BC3_BLOCK_BYTES) == 256
+
+
+def test_an_inline_chain_off_the_derivation_is_none_never_a_guess():
+    """Every way a chain can fail to be the one entry 0 predicts, and each is a refusal.
+
+    The failure mode being guarded is the ``.ubulk`` one transposed: a re-cooked texture
+    whose levels are real bytes at wrong sizes would decode into a plausible picture of
+    the wrong shape, so anything the arithmetic cannot re-derive is None and the caller
+    counts it rather than decoding it.
+    """
+    assert inline_chain_side([], BC3_BLOCK_BYTES) is None, "no entries is no chain"
+    assert inline_chain_side([65_537], BC3_BLOCK_BYTES) is None, "not whole blocks"
+    assert inline_chain_side([48], BC3_BLOCK_BYTES) is None, "3 blocks is no square"
+    assert inline_chain_side([100], None) is None, "5 px is square but no power of two"
+    assert inline_chain_side([0], None) is None
+    # One level off the halving breaks the WHOLE chain, not just that level.
+    assert inline_chain_side([65_536, 16_384, 4_095], BC3_BLOCK_BYTES) is None
+    # More entries than a chain from this side can have run past 1 px and off the table.
+    assert inline_chain_side([16, 4, 4, 4], None) is None
 
 
 def test_bc3_is_bc1s_grid_at_twice_the_bytes_and_the_same_block_floor():

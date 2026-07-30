@@ -166,6 +166,110 @@ def test_an_icon_this_reader_cannot_name_is_skipped_and_says_why(names, bulk_byt
     assert expected in why
 
 
+class _InlinePackages:
+    """The generator's view of a package whose mips are cooked inline: names, the
+    header size, and a ``bulk_entries()`` that answers what the Zen header would."""
+
+    def __init__(self, names, entries, header_size=100) -> None:
+        self._names = names
+        self._entries = entries
+        self.header_size = header_size
+
+    def Package(self, blob):  # a class name on the real module, not a method name
+        return self
+
+    @property
+    def names(self):
+        return self._names
+
+    def bulk_entries(self):
+        if isinstance(self._entries, Exception):
+            raise self._entries
+        return self._entries
+
+
+def _entry(offset, size, flags=0x48):
+    """One BulkDataMap entry as ``packages.bulk_data_entries`` shapes it. 0x48 is what
+    every inline level actually carries on build 495413; the ``.ubulk`` halves carry
+    0x00010501, and the single bit 0x40 is what the generator tests."""
+    return {
+        "index": 0,
+        "offset": offset,
+        "duplicate_offset": 2**64 - 1,
+        "size": size,
+        "flags": flags,
+        "cooked_index": 0,
+    }
+
+
+def _decode_inline(names, entries, blob=None):
+    if blob is None:
+        # header_size 100 + offset 0, so mip 0 is blob[100:100+size] by construction.
+        size = entries[0]["size"] if entries and not isinstance(entries, Exception) else 0
+        blob = bytes(100) + bytes(size)
+    return gen.decode_inline_icon(_InlinePackages(names, entries), _Decoder(), _Imaging(), blob)
+
+
+def test_an_icon_with_no_ubulk_decodes_its_inline_mip_zero_from_the_export_segment():
+    """The recovery that turned 744 of 750 into 747: no ``.ubulk`` is not no picture.
+
+    The three shapes asserted are the container's own -- a 256 px BC3 chain of nine, a
+    512 px BGRA chain of ten, and the single-entry 8 px swatch -- and the payload is read
+    at ``header_size + offset``, which is the one offset convention the whole path rests
+    on: it was measured (960 + 297 landed exactly on the bytes the tag walk predicts), and
+    a future cook that moves it fails the length slice rather than decoding garbage.
+    """
+    sizes = [65_536, 16_384, 4_096, 1_024, 256, 64, 16, 16, 16]
+    offsets, at = [], 0
+    for size in sizes:
+        offsets.append(at)
+        at += size + 16  # 12 bytes of mip dimensions + the next entry's index int32
+    entries = [_entry(offset, size) for offset, size in zip(offsets, sizes, strict=True)]
+    blob = bytes(100) + bytes(at)
+
+    decoded, why = _decode_inline(["PF_DXT5"], entries, blob)
+    assert why is None
+    image, px, fmt = decoded
+    assert (image, px, fmt) == ("an image", 256, "PF_DXT5")
+
+    decoded, why = _decode_inline(["PF_B8G8R8A8"], [_entry(0, 256)])
+    assert why is None
+    assert decoded[1:] == (8, "PF_B8G8R8A8"), "the white swatch is 8 px and stays 8 px"
+
+
+@pytest.mark.parametrize(
+    ("names", "entries", "expected"),
+    [
+        (["ImportedSize"], [_entry(0, 256)], "no known PF_ constant"),
+        (["PF_DXT5"], ValueError("short header"), "bulk data map is unreadable"),
+        (["PF_DXT5"], [], "nowhere the mips could be"),
+        (["PF_DXT5"], [_entry(0, 65_536, flags=0x00010501)], "not every bulk entry is inline"),
+        (["PF_DXT5"], [_entry(0, 65_537)], "no mip chain this reader knows"),
+        (["PF_B8G8R8A8"], [_entry(0, 100)], "no mip chain this reader knows"),
+    ],
+)
+def test_an_inline_icon_this_reader_cannot_re_derive_is_skipped_and_says_why(
+    names, entries, expected
+):
+    """The ``.ubulk`` refusals, transposed: every exit is a sentence for the manifest.
+
+    The non-inline flag case is the one worth a second look: an entry pointing into a
+    ``.ubulk`` that is not in the container is a cook this reader does not know, and
+    treating its offset as an export-segment offset would slice plausible bytes out of
+    the wrong file region -- a picture, not an error.
+    """
+    decoded, why = _decode_inline(names, entries)
+    assert decoded is None
+    assert expected in why
+
+
+def test_an_inline_mip_that_runs_off_the_package_is_a_refusal_not_a_short_decode():
+    """A truncated blob must not become a half-picture: the slice is length-checked."""
+    decoded, why = _decode_inline(["PF_B8G8R8A8"], [_entry(0, 256)], blob=bytes(100) + bytes(255))
+    assert decoded is None
+    assert "runs off the end of the package" in why
+
+
 def test_the_written_size_never_upscales_and_never_resamples_what_it_need_not():
     """Two properties of ``to_png``, and both are about not inventing pixels.
 

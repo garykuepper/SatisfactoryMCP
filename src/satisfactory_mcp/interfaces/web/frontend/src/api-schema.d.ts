@@ -869,9 +869,9 @@ export interface paths {
          *
          *     **Two different absences, told apart, because they need different sentences.** A
          *     directory that was never generated is answered with the command that would fill it. A
-         *     directory that exists without this particular class is a different fact: 6 of the game's
-         *     750 item classes genuinely have no picture in the container -- three name no icon at all
-         *     and three keep their mips inline where this reader cannot follow -- so "no icon for
+         *     directory that exists without this particular class is a different fact: 3 of the game's
+         *     750 item classes genuinely have no picture anywhere -- their docs entries name no icon
+         *     at all, and the manifest marks each one ``no-icon-in-docs`` -- so "no icon for
          *     ``Desc_PillarTop_C``" is a complete answer rather than a missing file, and it says so.
          *
          *     **Cached hard, and stamped with the build**, on the tile route's terms exactly: the icon
@@ -903,9 +903,9 @@ export interface paths {
          *
          *     **Two different absences, told apart, because they need different sentences.** A
          *     directory that was never generated is answered with the command that would fill it. A
-         *     directory that exists without this particular class is a different fact: 6 of the game's
-         *     750 item classes genuinely have no picture in the container -- three name no icon at all
-         *     and three keep their mips inline where this reader cannot follow -- so "no icon for
+         *     directory that exists without this particular class is a different fact: 3 of the game's
+         *     750 item classes genuinely have no picture anywhere -- their docs entries name no icon
+         *     at all, and the manifest marks each one ``no-icon-in-docs`` -- so "no icon for
          *     ``Desc_PillarTop_C``" is a complete answer rather than a missing file, and it says so.
          *
          *     **Cached hard, and stamped with the build**, on the tile route's terms exactly: the icon
