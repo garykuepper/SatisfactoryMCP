@@ -48,8 +48,8 @@ import type { CrateRow, CratesResponse } from "./api-shapes";
  * magenta's "a box in a factory against a dot on open terrain" -- a crate glyph, a node dot
  * and a pickup dot are all small marks lying on the ground, so this is the same square metre
  * and the distance has to carry the whole load. 24 is well past the dE 15 the audit fails
- * under and past the dE 22 the pipe rust was accepted at, and the two marks differ in SHAPE
- * as well: those are discs and this is a box. Nothing else on the page is within dE 34.
+ * under, and the two marks differ in SHAPE as well: those are discs and this is a box.
+ * Nothing else on the page is within dE 34.
  *
  * The nearest ground is Bamboo Fields at dE 50.2, which is the comparison that decides whether
  * a 13 px glyph can be found on open terrain at world zoom -- and that is the zoom this layer

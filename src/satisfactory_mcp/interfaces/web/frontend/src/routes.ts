@@ -263,19 +263,27 @@ function retessellate(piece: L.Polyline, ppm: number): boolean {
  * value that has contrast both ways without being bright. */
 /* The three tier tones are one step of value either side of the middle one, which stays the
  * network's colour and the swatch in the layer control. The step is dE 15.6 between slowest
- * and fastest and it is the page's house step -- the pipes' 15.7 below, the storage pair's
- * 16.7 and the poles' 16.2 all match it. Every one of those is a ramp INSIDE one module, which
+ * and fastest and it is the page's house step -- the pipes' 15.1 below, the storage pair's
+ * 16.7 and the poles' 16.0 all match it. Every one of those is a ramp INSIDE one module, which
  * is why palette.ts compares across modules and never within one: the check would otherwise
  * flag the four deliberate steps this page is built out of.
  *
  * The belt steel is the page's oldest network colour and was never measured against anything.
- * The audit says what that cost: at dE 2.1 from the crashed-drop-pod pickup it is the closest
- * cross-module pair on the map. */
+ * The audit said what that cost -- the crashed-drop-pod pickup sat at dE 2.1, the closest
+ * cross-module pair the map ever had -- and the PICKUP moved, not the steel: three tones and
+ * every ramp comparison on this page hang off the belts, and a drop pod is one dot with one
+ * call site. The steel's nearest cross-owner neighbour is now the limestone dot, at dE 19.3
+ * from this middle tone and 13.2 from the fast one; that last pair is a filled disc against
+ * a stroked line and is DISCHARGED in palette.ts at its measured distance. */
 var BELTS = declareColours("routes", {
   belts: "#93a5b4",
   "belt slow": "#7f8f9d",
   "belt fast": "#a7b9c7",
-  "lift fill": "#252a30", // the hole the ring is drawn around.
+  // The hole the ring is drawn around -- and near-black now, because a hole can always get
+  // darker: the old dark slate sat dE 10.4 from the concrete and 11.0 from Abyss Cliffs,
+  // two of the audit's standing findings. From here it is 21.7 from Abyss, 34.8 from the
+  // (also moved) concrete, and nothing else is within 24.
+  "lift fill": "#0e1116",
 });
 var BELT_COLOUR = BELTS.belts;
 var LIFT_FILL = BELTS["lift fill"];
@@ -597,36 +605,34 @@ export function styleRoutes() {
  * than as honesty. So: chevrons on the resolved ones, nothing at all on the rest, and a popup
  * that names which of the two a reader is looking at.
  */
-/* Rust, and picked by measuring rather than by taste. This layer has to separate from three
- * things at once: the belts it runs beside, the terrain it crosses, and the amber the
- * extractors are already drawn in -- and the last is the trap, because a water extractor is
- * where pipes and extractors physically meet. Measured in CIE Lab against the base map under
- * all 503 routes and against every colour already on the page: #a8613c is dE 34 from the
- * terrain and 22 from its nearest neighbour on the page (the copper-ore dot), where the
- * saturated amber a pipe suggests first, #d99a3e, is dE 4.5 from the extractors and would
- * have been indistinguishable from them. Warm where the belts are cool, and dark enough not
- * to shout over a photographic map. */
-/* MEASURED AGAINST A SET THAT DID NOT INCLUDE THE BAUXITE DOT, which is what making the
- * discipline executable found. The paragraph above says the nearest neighbour on the page is
- * the copper dot at dE 22; `Desc_OreBauxite_C` has been in the palette since this map's first
- * commit and is dE 4.9 away, and both pipe tier tones land nearer to it than to the copper too.
- * Recorded in STANDING in palette.ts rather than quietly corrected here -- moving a colour that
- * three published measurements are written about is a decision to make against the map, not a
- * line to change while refactoring. */
-var PIPE_COLOUR = declareColours("routes", { pipes: "#a8613c" }).pipes;
+/* Oxide, and picked by measuring rather than by taste -- twice, because the first measurement
+ * was made against an incomplete set. The original rust was chosen against the belts, the
+ * terrain and the extractor amber (the saturated amber a pipe suggests first, #d99a3e, was
+ * rejected at dE 4.5 from the extractors), and its warrant claimed the copper-ore dot as its
+ * nearest neighbour on the page at dE 22. It was not: the bauxite dot had been in the palette
+ * since this map's first commit and sat at 4.9, which is what making the discipline
+ * executable found. That was a real collision -- pipes run exactly where bauxite is refined
+ * -- and the pipes are what moved, because an ore tint cannot: the mid-rust band is bauxite's
+ * own neighbourhood, so the network went darker instead of brighter. Iron oxide rather than
+ * fresh rust; still warm where the belts are cool, still quiet over a photographic map.
+ * Measured against the CURRENT full table: dE 27.4 from the bauxite dot, 28.7 from the
+ * generator red, 30.1 from the nearest ground (Red Bamboo Fields), 49.0 from the nearest of
+ * the artwork tones binned in power.ts, and 58.5 from the extractor amber that ruled out a
+ * brighter pipe the first time round. */
+var PIPE_COLOUR = declareColours("routes", { pipes: "#7d221a" }).pipes;
 
 /* The two tier tones, one step of value either side of PIPE_COLOUR -- which stays the middle
  * one, so the swatch in the layer control is still the network's own colour. The step is the
- * belts' step, twenty points of each channel, and it lands where the belts' does: dE 15.7
+ * belts' step, twenty points of each channel, and it lands where the belts' does: dE 15.1
  * between Mk1 and Mk2 against the belts' 15.6 between their slowest and fastest.
  *
- * Re-measured rather than assumed safe, because PIPE_COLOUR was itself chosen by measurement
- * and a ramp can walk a colour into a neighbour. In CIE Lab both tones stay clear of every
- * other colour on the page -- nearest is the generator red at dE 28.9 and 28.3, where the
- * base sits at 27.6, so the ramp moves away from it rather than toward -- and the extractor
- * amber that ruled out a brighter pipe stays 40.9 and 32.4 away, against the dE 4.5 that
- * disqualified #d99a3e. */
-var PIPE_TIER = declareColours("routes", { "pipe mk1": "#944d28", "pipe mk2": "#bc7550" });
+ * Re-measured rather than assumed safe, because a ramp can walk a colour into a neighbour --
+ * walking toward bauxite is exactly how the old Mk2 ended up dE 4.8 from the dot its base
+ * colour was never checked against. This ramp does not repeat that: Mk2, the lighter end and
+ * the closest the family comes to the bauxite dot, stays dE 21.4 from it and 23.4 from the
+ * generator red, its two nearest cross-owner neighbours anywhere; Mk1's nearest is Red
+ * Bamboo Fields at 32.6 with the bauxite dot at 33.5. */
+var PIPE_TIER = declareColours("routes", { "pipe mk1": "#690e06", "pipe mk2": "#91362e" });
 var PIPE_MK1 = PIPE_TIER["pipe mk1"];
 var PIPE_MK2 = PIPE_TIER["pipe mk2"];
 
@@ -738,12 +744,14 @@ var CHEVRON_MIN_RUN_M = 4;
 var CHEVRON_MIN_PX = 5;
 var CHEVRON_WEIGHT_PX = 1.5;
 
-/* A value step far above both pipe tones, so it reads against the line it is drawn on, and
- * measured like every other colour here. At its 0.7 opacity the composite over the three
- * pipe tones is dE 26.1 to 36.7 from the pipe underneath -- unmistakably a separate mark --
- * while the nearest colour anywhere else on the page is the iron-ore dot at dE 11.9 to 13.0,
- * which is a filled disc on terrain rather than a thin V on a line. The extractor amber that
- * ruled out a brighter pipe in the first place stays dE 45.5 away from the swatch. */
+/* A value step far above all three pipe tones, so it reads against the line it is drawn on,
+ * and measured like every other colour here -- re-measured when the pipes went to oxide, and
+ * the mark only got clearer: at its 0.7 opacity the composite over the three tones is dE 41.3
+ * to 50.6 from the pipe underneath. The nearest colour anywhere else on the page is the
+ * iron-ore dot, at dE 14.3 to 17.0 from those composites, which is a filled disc on terrain
+ * rather than a thin V on a line -- the discharge in palette.ts carries that measurement.
+ * The extractor amber that ruled out a brighter pipe in the first place stays dE 45.5 away
+ * from the swatch. */
 var CHEVRON_COLOUR = declareColours("routes", { chevrons: "#e8cbb4" }).chevrons;
 var CHEVRON_OPACITY = 0.7;
 

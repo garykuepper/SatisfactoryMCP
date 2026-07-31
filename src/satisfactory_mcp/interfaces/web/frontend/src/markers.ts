@@ -47,8 +47,10 @@ export function raiseNodeDots() {
 // Ore colours follow the in-game item tints closely enough to be recognisable without
 // shipping a single game asset: they are hex strings, not textures. Which is also why they are
 // the one family here that cannot simply be moved when the audit objects -- an ore's colour is
-// the ore's, and the page borrowed it rather than chose it. Four of them are in STANDING in
-// palette.ts, coal against eight grounds among them.
+// the ore's, and the page borrowed it rather than chose it. Where that collided, the OTHER
+// side moved (the pipe rust went to oxide to get off the bauxite dot), and where neither side
+// could move the pair is DISCHARGED in palette.ts with a measured warrant: coal against eight
+// dark grounds, water against the machine blue, limestone against the fast belt.
 var RESOURCE_COLOUR: Record<string, string> = declareColours("markers", {
   Desc_OreIron_C: "#c8b6a6",
   Desc_OreCopper_C: "#e08a4b",
@@ -214,14 +216,20 @@ export function drawPlayer(p: SummaryResponse["player"]): void {
 // indistinguishable teal dot. Unlisted categories share the old teal as the fallback below.
 //
 // Handed out one per kind rather than measured against the page, and the audit in palette.ts
-// says what that cost: the crashed drop pod is dE 2.1 from the belt steel, which is the closest
-// pair anywhere on this map.
+// said what that cost: the crashed drop pod sat at dE 2.1 from the belt steel -- the closest
+// pair anywhere on this map -- with the somersloop 4.7 from the generator red and the hard
+// drive 8.7 from the machine blue. Those three are now the measured ones. The drop pod went
+// to the drab olive no network or ground spends: nearest cross-owner neighbour Dune Desert at
+// dE 28.1, the three belt tones 50.8 to 53.5 away. The somersloop took the rose the page's
+// reds leave free, dE 28.3 from the generator red and 28.7 from the storage magenta. The hard
+// drive moved one hue step from its old blue into indigo, dE 42.1 from the machine blue and
+// 36.6 from the wire violet -- still blue enough to be the drive it always was.
 var PICKUP_COLOUR: Record<string, string> = declareColours("markers", {
-  somersloop: "#e05c5c",
+  somersloop: "#d84378",
   mercer_sphere: "#b06ae0",
-  hard_drive: "#6ea8d8",
+  hard_drive: "#5468d4",
   loot_cache: "#d8b46e",
-  crashed_drop_pod: "#9aa8b8",
+  crashed_drop_pod: "#838d3f",
   power_slug_blue: "#5cc8e8",
   power_slug_yellow: "#e8d55c",
   power_slug_purple: "#c85ce8",
