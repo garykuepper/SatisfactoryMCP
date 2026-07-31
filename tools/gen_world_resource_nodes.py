@@ -128,7 +128,7 @@ RETIRED_MIT_TABLE = {
         "this first-party extraction instead, so no third-party data and no attribution "
         "obligation remains."
     ),
-    "parity_measured": "2026-08-01, this extraction against the MIT rows, on the build below",
+    "parity_measured": "2026-07-30, this extraction against the MIT rows, on the build below",
     "rows": {"mit": 626, "this_extraction_plus_the_deposit": 626, "shared_ids": 625},
     "composition": (
         "identical on both sides: 459 BP_ResourceNode_C, 118 BP_FrackingSatellite_C, "

@@ -61,7 +61,7 @@ pinned snapshot with a shelf life, and the shelf life is a game update: *"in upd
 tend to move if the map gets changed"* (Lukas, 2026-07-30). That is not an anomaly to document once,
 it is the normal lifecycle, and it is already visible in the tree.
 
-**The node table half is BUILT (2026-08-01).** `data/world_resource_nodes.json` is now generated
+**The node table half is BUILT (2026-07-30).** `data/world_resource_nodes.json` is now generated
 from the installed game by `tools/gen_world_resource_nodes.py`, and `data/resource_nodes.json` is a
 projection of it — the MIT table this paragraph used to measure against is deleted, with the parity
 recorded in `_meta.retired_mit_table`: it was pinned to an older build and had **25

@@ -12,7 +12,7 @@
    }
   },
   "game_version_pinned": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
-  "generated": "2026-08-01",
+  "generated": "2026-07-30",
   "count": 625,
   "by_class": {
    "BP_FrackingCore_C": 17,
@@ -79,7 +79,7 @@
   "units": "centimetres; north is -Y, east is +X, up is +Z",
   "retired_mit_table": {
    "what": "data/world_resource_nodes.mit.json: 626 resource-node rows vendored from rockfactory/satisfactory-logistics (MIT, Copyright (c) 2024 Leonardo Ascione), itself an FModel dump of this same Persistent_Level.umap, cut from a 2024 build. Deleted in the same commit as this file's first generation; every consumer reads this first-party extraction instead, so no third-party data and no attribution obligation remains.",
-   "parity_measured": "2026-08-01, this extraction against the MIT rows, on the build below",
+   "parity_measured": "2026-07-30, this extraction against the MIT rows, on the build below",
    "rows": {
     "mit": 626,
     "this_extraction_plus_the_deposit": 626,

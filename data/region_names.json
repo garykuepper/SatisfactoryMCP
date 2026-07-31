@@ -1,7 +1,7 @@
 {
  "_meta": {
   "purpose": "ADVISORY region names only. Layer 1 (grid cells, cones, radii, clustering) is exact and is what every calculation uses. A name from this file must never feed a computation.",
-  "generated": "2026-08-01",
+  "generated": "2026-07-30",
   "generator": "tools/gen_region_names.py",
   "game_version_pinned": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
   "game_build": "++FactoryGame+rel-main-1.2.0-CL-495413",
