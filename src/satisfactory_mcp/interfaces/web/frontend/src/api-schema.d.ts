@@ -634,6 +634,15 @@ export interface paths {
          *     graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
          *     it only about half the time, so the projection measures which end is which.
          *
+         *     **``a_pole`` and ``b_pole`` join each end to its pole, where its pole is in ``poles``.**
+         *     The endpoints above are connector positions -- 7 m over a Mk1's base, 24 m over a tower's
+         *     -- so a client that files a wire on a storey by endpoint height puts it a storey high
+         *     wherever the storeys are shorter than the connector offset, which the reference world's
+         *     1-2 m mezzanine half-bands are. The join needs no new projection field: it is
+         *     ``graph["power"]``'s own endpoint actors, carried since schema 11, met with the pole
+         *     table's ``actor_index`` column, and it is nullable because most machine-fed ends and all
+         *     40 unnamed ones terminate at no pole at all.
+         *
          *     **A pole carries its connection count**, off the edge list rather than out of a second copy
          *     of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
          *     Tower platforms -- and 2 of them are strung to nothing at all, which is a real answer and
@@ -2328,6 +2337,10 @@ export interface components {
             from: string | null;
             /** To */
             to: string | null;
+            /** A Pole */
+            a_pole: number | null;
+            /** B Pole */
+            b_pole: number | null;
             /** Span M */
             span_m: number;
         };

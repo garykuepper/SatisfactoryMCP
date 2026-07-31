@@ -79,6 +79,18 @@ class PoleRow(TypedDict):
 #: ``from`` and ``to`` are null where the projection carries no record naming that actor: 40
 #: of the reference world's 2,594 endpoints land on a hypertube entrance, a drop pod or the
 #: AWESOME Sink, and a name guessed for those would arrive looking like a reading.
+#:
+#: ``a_pole`` and ``b_pole`` are the wire-to-pole JOIN: the index into this same response's
+#: ``poles`` list of the pole or tower that endpoint terminates at, or null for an endpoint
+#: that lands on anything else -- a machine, or one of the 40 unnamed actors above. It exists
+#: for one measured reason: ``a_m``/``b_m`` are CONNECTOR positions, ~7 m above a Mk1 pole's
+#: base and ~24 m above a tower's, so a client placing a wire on a storey by its endpoint
+#: heights misfiles cables around 1-2 m mezzanine half-bands. The pole's own base height is
+#: the storey the wire actually serves, and this is the projection's existing knowledge --
+#: ``graph["power"][i]`` has named both endpoint actors since schema 11 and ``wires[i]`` is
+#: its positional twin -- put back together here, which is this module's whole job. An INDEX
+#: rather than a name, because a ``PoleRow`` deliberately carries no instance id and inventing
+#: one for the join would widen that row for nothing a reader looks at.
 WireRow = TypedDict(
     "WireRow",
     {
@@ -86,6 +98,8 @@ WireRow = TypedDict(
         "b_m": tuple[float, float, float],
         "from": str | None,
         "to": str | None,
+        "a_pole": int | None,
+        "b_pole": int | None,
         "span_m": float,
     },
 )
@@ -174,6 +188,15 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
     graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
     it only about half the time, so the projection measures which end is which.
 
+    **``a_pole`` and ``b_pole`` join each end to its pole, where its pole is in ``poles``.**
+    The endpoints above are connector positions -- 7 m over a Mk1's base, 24 m over a tower's
+    -- so a client that files a wire on a storey by endpoint height puts it a storey high
+    wherever the storeys are shorter than the connector offset, which the reference world's
+    1-2 m mezzanine half-bands are. The join needs no new projection field: it is
+    ``graph["power"]``'s own endpoint actors, carried since schema 11, met with the pole
+    table's ``actor_index`` column, and it is nullable because most machine-fed ends and all
+    40 unnamed ones terminate at no pole at all.
+
     **A pole carries its connection count**, off the edge list rather than out of a second copy
     of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
     Tower platforms -- and 2 of them are strung to nothing at all, which is a real answer and
@@ -202,6 +225,10 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
                 if isinstance(end, int):
                     degree[end] = degree.get(end, 0) + 1
 
+    # One decode of the pole table for both jobs below: the rows the payload sends, and the
+    # actor-index lookup the wire join reads. Two iterator passes would be two chances for
+    # the emitted list and the joined indices to be counted off different rows.
+    pole_rows = list(saverows.iter_power_poles(projection))
     poles = [
         {
             "cls": pole.cls,
@@ -214,17 +241,19 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
             # on this world are tower platforms somebody built and never strung.
             "connections": degree.get(pole.actor_index, 0) if pole.actor_index >= 0 else 0,
         }
-        for pole in saverows.iter_power_poles(projection)
+        for pole in pole_rows
     ]
+    # Actor index -> position in ``poles`` above. -1 is "no wire names this pole" and must
+    # not become a key: it would join every unindexed pole to whichever one enumerated last.
+    pole_at = {pole.actor_index: i for i, pole in enumerate(pole_rows) if pole.actor_index >= 0}
 
     wires = []
     for wire in saverows.iter_wires(projection):
         edge = edges[wire.index] if wire.index < len(edges) else None
+        pair = edge[:2] if isinstance(edge, (list, tuple)) and len(edge) >= 2 else (None, None)
         ends = [
             named.get(str(actors[end])) if isinstance(end, int) and 0 <= end < len(actors) else None
-            for end in (
-                edge[:2] if isinstance(edge, (list, tuple)) and len(edge) >= 2 else (None, None)
-            )
+            for end in pair
         ]
         a = [_m(v) for v in wire.a]
         b = [_m(v) for v in wire.b]
@@ -234,6 +263,12 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
                 "b_m": b,
                 "from": ends[0],
                 "to": ends[1],
+                # The join the WireRow declaration argues for: this end's pole, as an index
+                # into ``poles``, or null for an end that terminates on anything else. Read
+                # off the same edge as ``from``/``to``, so the four fields cannot disagree
+                # about which actor an end belongs to.
+                "a_pole": pole_at.get(pair[0]) if isinstance(pair[0], int) else None,
+                "b_pole": pole_at.get(pair[1]) if isinstance(pair[1], int) else None,
                 # Three-dimensional, through ``geo`` like every other distance that leaves
                 # this module: a wire's climb is real cable, exactly as a pipe's is real pipe,
                 # and it is 24 m of it on a tower span. ``distance_m`` would drop it.

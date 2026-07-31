@@ -24,12 +24,16 @@
  *     instance name at all, so `deck_rows` is the only name a deck can be listed by.
  *   * storage -- BY WHERE IT STANDS, because the decomposition does not decompose it. That is
  *     the one geometric rule here, and it is written down as one rather than buried in a filter.
- *   * the power grid -- BY WHERE ITS ENDS ARE, for the same reason twice over. `/api/floors`
+ *   * the power grid -- BY WHERE ITS ENDS STAND, for the same reason twice over. `/api/floors`
  *     groups belt chains and pipe rows and has never grouped a wire: power arrives as a
  *     wiring graph rather than as runs laid on decks, and the endpoint would have to decide
  *     what a circuit is before it could decide what floor one is on. So this file places the
  *     wires itself, with `standsOn` -- the same rule storage gets, applied twice because a
- *     wire has two ends. See `onThisFloor` and the power branch of `applyFilter` below.
+ *     wire has two ends. Each end is judged at its ANCHOR -- the base of the pole it
+ *     terminates at where `/api/power` names one, the drawn endpoint where it does not --
+ *     because an endpoint is a connector 7 m over a Mk1 pole and 24 m over a tower, and
+ *     judging heights by it misfiled cables around 1-2 m mezzanine half-bands. See
+ *     `onThisFloor`, `anchors` in power.ts, and the power branch of `applyFilter` below.
  *
  * THE GROUND is a pseudo-floor and not a band, and that follows from the data: the API's own
  * `exempt`, `terrain` and `off-deck` groups plus the runs that never reach a deck. A miner
@@ -459,11 +463,23 @@ function onThisFloor(
  * cable that goes up through the ceiling is neither of those, it is just a cable that goes
  * somewhere else, and the honest row says which floor and how far.
  *
- * `away` may be on no band at all, which is the wire running down to something on the ground.
- * That is a real answer and not a missing one, so it is spelled out rather than left blank. */
-function wireGlyph(platform: FloorPlatform, here: Point3M, away: Point3M): L.Marker {
-  var up = away[2] > here[2];
-  var lands = bandAtHeight(platform, away[2]);
+ * The floor CLAIMS -- which band the far end lands on, and whether the cable goes up or down
+ * -- are made at the two ANCHORS, the same points the filter judged the wire by, so the
+ * arrow can never name a different storey than the filter used. The drawn coordinates and
+ * the rise stay the wire's own ends: the rise is real cable, connector to connector.
+ *
+ * `awayAnchor` may be on no band at all, which is the wire running down to something on the
+ * ground. That is a real answer and not a missing one, so it is spelled out rather than left
+ * blank. */
+function wireGlyph(
+  platform: FloorPlatform,
+  here: Point3M,
+  away: Point3M,
+  hereAnchor: Point3M,
+  awayAnchor: Point3M
+): L.Marker {
+  var up = awayAnchor[2] > hereAnchor[2];
+  var lands = bandAtHeight(platform, awayAnchor[2]);
   var marker = glyphMarker(here, up);
   marker.bindPopup(
     popup([
@@ -567,6 +583,12 @@ function applyFilter(): void {
          */
         if (mark.power) {
           var span = mark.ends;
+          /* Where the two ends COUNT AS STANDING, against where they are drawn. For a wire
+           * whose end terminates at a pole the server named, this is the pole's base -- the
+           * exact point the pole's own mark is filtered by, so a wire and its pole cannot
+           * land on different storeys -- and for every other end it IS the drawn endpoint,
+           * which keeps the pre-join height rule exactly where the join is unknown. */
+          var anchor = mark.anchors || span;
           if (!band) {
             /* THE GROUND, and the one place this layer has to invent a scope.
              *
@@ -586,12 +608,14 @@ function applyFilter(): void {
              * belongs to the ground when it TOUCHES the ground -- neither end on a band, which
              * is `terrain`, or one end on a band and one not, which is `mixed`. */
             if (!reach) return;
-            if (span) {
-              if (!reach.contains([-span[0][1], span[0][0]]) &&
-                  !reach.contains([-span[1][1], span[1][0]])) {
+            if (span && anchor) {
+              if (!reach.contains([-anchor[0][1], anchor[0][0]]) &&
+                  !reach.contains([-anchor[1][1], anchor[1][0]])) {
                 return;
               }
-              if (bandAtHeight(platform, span[0][2]) && bandAtHeight(platform, span[1][2])) return;
+              if (bandAtHeight(platform, anchor[0][2]) && bandAtHeight(platform, anchor[1][2])) {
+                return;
+              }
               keep.push(piece);
               return;
             }
@@ -615,8 +639,9 @@ function applyFilter(): void {
             }
             return;
           }
-          var headHere = onThisFloor(platform, band, cells, cellKey, span[0]);
-          var tailHere = onThisFloor(platform, band, cells, cellKey, span[1]);
+          if (!anchor) return;
+          var headHere = onThisFloor(platform, band, cells, cellKey, anchor[0]);
+          var tailHere = onThisFloor(platform, band, cells, cellKey, anchor[1]);
           if (!headHere && !tailHere) return;
           keep.push(piece);
           /* And the arrow, on a NARROWER test than the one that kept the wire.
@@ -631,11 +656,15 @@ function applyFilter(): void {
            * One arrow per wire, which is what `casing` is marked for -- the piece underneath
            * has the same two ends and would otherwise put a second arrow on the same pixel. */
           if (mark.power !== "wire") return;
+          // The claims from the anchors -- the same points the keep above was decided at --
+          // and the drawn geometry from the wire's own ends, so the arrow sits on the cable.
           var from = headHere ? span[0] : span[1];
           var to = headHere ? span[1] : span[0];
-          var landsOn = bandAtHeight(platform, to[2]);
+          var fromAnchor = headHere ? anchor[0] : anchor[1];
+          var toAnchor = headHere ? anchor[1] : anchor[0];
+          var landsOn = bandAtHeight(platform, toAnchor[2]);
           if (landsOn && landsOn.ordinal === band.ordinal) return;
-          extra.push(wireGlyph(platform, from, to));
+          extra.push(wireGlyph(platform, from, to, fromAnchor, toAnchor));
           return;
         }
         if (mark.id !== undefined) {
