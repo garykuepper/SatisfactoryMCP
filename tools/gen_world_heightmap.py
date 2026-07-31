@@ -6,7 +6,7 @@
 heightmap", and for as long as the project's only terrain evidence was scattered resource
 nodes and the player's own foundations that was true. It is not true any more. The cooked
 game ships two independent, exact descriptions of its own ground, and this file decodes
-both, fuses them, measures the result against the 626 static resource nodes, and writes it
+both, fuses them, measures the result against the static resource-node table, and writes it
 to ``data/local/heightmap/`` -- which is gitignored, because every byte of it is derived
 from Coffee Stain's cooked assets and read out of the reader's own install. The generator
 is committed; its output never is. Same posture, and the same precedent line for line, as
@@ -125,8 +125,9 @@ What replaced it uses each source for the thing that source actually knows:
 * **The artwork says WHERE.** The four ``SlicedMap`` BC1 slices -- the same ones
   ``tools/gen_map_image.py`` decodes, imported from it rather than re-listed -- are the
   game's own drawing of its own world, and its water is drawn blue. ``B - R >= 25``
-  separates it: the histogram is bimodal with nothing in the middle, and of the 626 static
-  resource nodes, every one of which stands on dry ground, it calls **3** water (0.48%).
+  separates it: the histogram is bimodal with nothing in the middle, and of the static
+  resource nodes, every one of which stands on dry ground, it called **3** of the table's
+  626 rows water (0.48%) when the threshold was chosen; the same check re-runs per run.
   Registration was measured rather than assumed -- a +/-2 px sweep puts the best agreement
   at exactly (0, 0), which it should, since the sheet's box and this grid's are the same
   7500 m square.
@@ -186,7 +187,7 @@ exactly, not to a cell around it. The codec itself lives in
 copied, because a byte format with two implementations is a byte format with two opinions.
 
 **The run validates itself and refuses to write if it fails.** The built field is sampled
-at all 626 static resource nodes and the trimmed RMS about the median offset has to come in
+at every static resource node and the trimmed RMS about the median offset has to come in
 under ``VALIDATION_TRIM_RMS_MAX_M``. The workflow that proved this pipeline measured
 0.368 m; the gate is 0.5 m, which is comfortably clear of that and nowhere near the
 baseline's 1.08 m. A decode regression -- a moved marker, a changed component size, an index
@@ -435,8 +436,8 @@ WATER_BOX_COMPONENTS = frozenset(
 WATER_PLANE_MESH = "/Game/FactoryGame/World/Environment/Water/Mesh/WaterPlane"
 
 #: The artwork classifier. Blue minus red on the game's own map sheet, one threshold,
-#: measured: the histogram is bimodal with nothing between the modes, and it calls 3 of the
-#: 626 static resource nodes -- all of which stand on dry ground -- water.
+#: measured: the histogram is bimodal with nothing between the modes, and it called 3 of
+#: the node table's then-626 rows -- all of which stand on dry ground -- water.
 WATER_ARTWORK_BLUE_OVER_RED = 25
 
 #: The four gates the water stage refuses to write past. See the module docstring for what
@@ -455,7 +456,7 @@ REGION_TABLE = ROOT / "data" / "region_names.json"
 #: The node table the run validates against, and the gate it has to clear. The workflow
 #: that proved this pipeline measured 0.368 m trimmed RMS; 0.5 m is clear of that and well
 #: under the interface raster's own 1.08 m, so a decode regression cannot pass as a refresh.
-NODE_TABLE = ROOT / "data" / "world_resource_nodes.mit.json"
+NODE_TABLE = ROOT / "data" / "world_resource_nodes.json"
 VALIDATION_TRIM = 0.90
 VALIDATION_TRIM_RMS_MAX_M = 0.5
 

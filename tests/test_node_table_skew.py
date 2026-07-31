@@ -278,23 +278,26 @@ def test_the_shipped_table_reports_exactly_what_its_meta_records(table_and_heade
 
     Asserting a literal here would be the same mistake as hardcoding one in ``src``: the
     next refresh moves the numbers and the assertion becomes a description of a build
-    nobody runs. So the artifact is asked, and the gate is asked, and they must agree.
+    nobody runs. Which is exactly what happened to this test's previous body -- it began
+    ``assert skew is not None, "the reference save is newer than the pin and must warn"``,
+    true while the table was cut from an older build than the save. The table is now
+    generated from the installed build's own map package, its one positions block records
+    zero drift and no missing row, and what the artifact states, the gate must say -- and
+    a refreshed artifact states there is nothing to say. Silence, on the reference save
+    and on any imaginably newer one, until a re-measure against some future build records
+    real drift and this test must flip again. The firing half of the gate stays tested by
+    the synthetic cases above, which this repo's data can no longer drive.
     """
     table, header = table_and_header
-    positions = table.meta["cross_validation"]["positions"]
-    recorded = positions["against_the_installed_build"]
-    skew = nodes_mod.skew_for_save(header, table)
-    assert skew is not None, "the reference save is newer than the pin and must warn"
+    recorded = table.meta["cross_validation"]["positions"]["against_the_installed_build"]
+    assert recorded["max_position_delta_cm"] <= recorded["rounding_floor_cm"]
+    assert recorded["rows_past_the_rounding_floor"] == []
+    assert recorded["rows_only_in_this_table"] == []
+    assert recorded["rows_only_in_the_installed_build"] == []
 
-    rows = recorded["rows_past_the_rounding_floor"]
-    assert set(skew.moved_cm) == {r["instance"] for r in rows}
-    assert skew.max_moved_cm == recorded["max_position_delta_cm"]
-    assert skew.unjoinable == tuple(recorded["rows_only_in_this_table"])
-    assert skew.renamed_moved_cm == recorded.get("renamed_row_moved_cm")
-
-    note = nodes_mod.position_notes(skew, list(skew.moved_cm))[0]
-    assert f"{len(rows)} node(s)" in note
-    assert f"{recorded['max_position_delta_cm']:.0f}cm stale" in note
+    assert nodes_mod.skew_for_save(header, table) is None
+    assert nodes_mod.skew_for_save({"save_version": 10_000}, table) is None
+    assert nodes_mod.skew_notes(None, ["anything"]) == []
 
 
 def test_src_does_not_restate_the_current_figures():
@@ -310,10 +313,20 @@ def test_src_does_not_restate_the_current_figures():
         )
     )["_meta"]["cross_validation"]["positions"]["against_the_installed_build"]
 
+    # A refreshed artifact records no drifted row, no rename and no orphan name, so most
+    # of these sets are empty and the scan is a no-op that RE-ARMS the day real drift is
+    # recorded again. The worst-delta figure is only forbidden while there is drift: a
+    # sub-rounding value like 0.008 is not a skew figure, it is arithmetic noise that
+    # legitimately appears in source as constants.
+    rows = recorded["rows_past_the_rounding_floor"]
     forbidden = {
-        str(recorded["max_position_delta_cm"]),
-        str(recorded["renamed_row_moved_cm"]),
-        str(len(recorded["rows_past_the_rounding_floor"])) + " node",
+        *((str(recorded["max_position_delta_cm"]),) if rows else ()),
+        *((str(len(rows)) + " node",) if rows else ()),
+        *(
+            (str(recorded["renamed_row_moved_cm"]),)
+            if recorded.get("renamed_row_moved_cm") is not None
+            else ()
+        ),
         *(i.rsplit(".", 1)[-1] for i in recorded["rows_only_in_this_table"]),
         *(i.rsplit(".", 1)[-1] for i in recorded["rows_only_in_the_installed_build"]),
     }

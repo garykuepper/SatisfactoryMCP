@@ -1,7 +1,7 @@
 {
  "_meta": {
   "purpose": "ADVISORY region names only. Layer 1 (grid cells, cones, radii, clustering) is exact and is what every calculation uses. A name from this file must never feed a computation.",
-  "generated": "2026-07-30",
+  "generated": "2026-08-01",
   "generator": "tools/gen_region_names.py",
   "game_version_pinned": "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build",
   "game_build": "++FactoryGame+rel-main-1.2.0-CL-495413",
@@ -688,10 +688,10 @@
   "land_mask": {
    "role": "positions only, and one decision only: whether a cell the GAME leaves unnamed is coast or open water. It supplies no name, and no calculation reads it.",
    "sources": {
-    "data/world_resource_nodes.mit.json": "MIT (Copyright (c) 2024 Leonardo Ascione), extracted from FactoryGame/Map/GameLevel01/Persistent_Level.umap",
+    "data/world_resource_nodes.json": "first-party: the game's own Persistent_Level.umap node actors, read from the installed game by tools/gen_world_resource_nodes.py",
     "data/world_collectibles.json": "the game's own cooked map packages, read from the installed game"
    },
-   "reference_points": 2688,
+   "reference_points": 2687,
    "categories": {
     "crashed_drop_pod": 118,
     "mercer_shrine": 298,
@@ -699,7 +699,7 @@
     "power_slug_blue": 596,
     "power_slug_purple": 257,
     "power_slug_yellow": 389,
-    "resource_nodes": 626,
+    "resource_nodes": 625,
     "somersloop": 106
    }
   },

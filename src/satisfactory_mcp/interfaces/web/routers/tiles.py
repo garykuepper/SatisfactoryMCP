@@ -120,7 +120,7 @@ MAP_TILE_PX = PYRAMID_TILE_PX
 MAP_TILE_MAX_Z = 5
 
 #: The corners of the in-game map square, metres, game axes. The playable content is
-#: strictly inside it: ``geo.CONTENT_BBOX`` -- the min/max over 2,688 static world objects
+#: strictly inside it: ``geo.CONTENT_BBOX`` -- the min/max over 2,687 static world objects
 #: -- is x [-2988.4, 4065.6], y [-3141.0, 3042.0], so an image pinned here cannot clip
 #: anything the map draws. Also the frame the map-area raster is pinned on, re-measured on
 #: every ``tools/gen_region_names.py`` run.

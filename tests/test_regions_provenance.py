@@ -200,12 +200,17 @@ def test_the_grid_resolution_decision_carries_its_numbers():
 
 
 def test_the_land_mask_names_its_two_sources_and_claims_no_names():
+    """Both mask sources are first-party now: the MIT node table is retired and deleted,
+    replaced by ``data/world_resource_nodes.json`` (the game's own map package, read from
+    the installed game -- its retirement record is that file's ``_meta.retired_mit_table``,
+    pinned by ``test_nodes_provenance``)."""
     mask = META["land_mask"]
     assert set(mask["sources"]) == {
-        "data/world_resource_nodes.mit.json",
+        "data/world_resource_nodes.json",
         "data/world_collectibles.json",
     }
-    assert "MIT" in mask["sources"]["data/world_resource_nodes.mit.json"]
+    assert "first-party" in mask["sources"]["data/world_resource_nodes.json"]
+    assert "installed game" in mask["sources"]["data/world_resource_nodes.json"]
     assert mask["reference_points"] == sum(mask["categories"].values())
     assert "supplies no name" in mask["role"]
 

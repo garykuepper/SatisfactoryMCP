@@ -61,17 +61,22 @@ pinned snapshot with a shelf life, and the shelf life is a game update: *"in upd
 tend to move if the map gets changed"* (Lukas, 2026-07-30). That is not an anomaly to document once,
 it is the normal lifecycle, and it is already visible in the tree.
 
-Measured against the installed build, `data/world_resource_nodes.mit.json` — pinned to an older
-one — has **25 `BP_ResourceNode` rows moved 9.5–80.4 cm vertically**, and one renamed:
-`BP_ResourceNode11` on all 25 saveVersion-52 saves became
-`BP_ResourceNode20_UAID_04D9F5D42711A7C902_1245462149` on all 6 saveVersion-60 saves, 150 cm away.
-`data/resource_nodes.json`'s `_meta.cross_validation.positions` itemises every one.
+**The node table half is BUILT (2026-08-01).** `data/world_resource_nodes.json` is now generated
+from the installed game by `tools/gen_world_resource_nodes.py`, and `data/resource_nodes.json` is a
+projection of it — the MIT table this paragraph used to measure against is deleted, with the parity
+recorded in `_meta.retired_mit_table`: it was pinned to an older build and had **25
+`BP_ResourceNode` rows moved 9.5–80.4 cm vertically**, plus one renamed — `BP_ResourceNode11` on
+all 25 saveVersion-52 saves became `BP_ResourceNode20_UAID_04D9F5D42711A7C902_1245462149` on all 6
+saveVersion-60 saves, 150 cm away. What stays parked is the *on game update* automation: the refresh
+is still an explicit `tools/` run, and the artifacts are still committed snapshots rather than
+caches keyed on `build_version`.
 
-**Two silent failure modes, which is why this is worth doing rather than merely noting.** A join by
-instance name simply *misses* after a rename — and a per-kind count check cannot see it, because
-459 == 459 across a rename. And a position can be a metre out while the answer stays confident.
-The **node-table skew gate** — `domain/spatial/nodes.py`, pinned by `tests/test_node_table_skew.py` —
-makes the skew visible; deriving on update would remove it.
+**Two silent failure modes, which is why the gate machinery stays.** A join by instance name simply
+*misses* after a rename — and a per-kind count check cannot see it, because 459 == 459 across a
+rename. And a position can be a metre out while the answer stays confident. The **node-table skew
+gate** — `domain/spatial/nodes.py`, pinned by `tests/test_node_table_skew.py` — reads whatever
+drift the artifact records; today's table matches the installed build so it records none and the
+gate is silent, and the synthetic tests keep the firing half honest for the next update.
 
 **Why it is now cheap.** The collectibles work built a reader for the game's own IoStore container:
 4,521 `GameLevel01` `.umap` packages decompress in ~3 s with zero failures, positions agree with

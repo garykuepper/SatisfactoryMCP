@@ -138,38 +138,47 @@ and `mPurity`; `CommunityResources/FactoryGame.usmap` ships specifically so exte
 deserialize them. An earlier draft of this spec called this data unverifiable from the game files.
 That was wrong — it was unextracted, not unverifiable.
 
-`data/resource_nodes.json` is therefore **merged from two independent sources**, because neither alone
-is sufficient:
+`data/resource_nodes.json` is therefore a **projection of one first-party source**:
+`data/world_resource_nodes.json`, the node actors of the installed build's `Persistent_Level.umap`
+read out of the IoStore container by `tools/gen_world_resource_nodes.py` (via `core.gameassets`,
+the same reader the collectibles and heightmap use). It carries the node set, resource
+(`mResourceClass`), purity (`mPurity`), position (composed root-component transform) **and** the
+satellite → fracking-core link — the `mCore` ObjectProperty every `BP_FrackingSatellite` export
+ships, 118 of 118, a reference in the game's own data rather than an inference.
 
-| source | licence | role |
-|---|---|---|
-| `data/world_resource_nodes.mit.json` — rockfactory/satisfactory-logistics | **MIT** | authoritative node set, resource, purity, position. Derived from an FModel dump of `Persistent_Level.umap`, i.e. from game assets. |
-| vendored `sav_data/resourcePurity.py` | none stated; SCIM-derived, pinned to v1.2.0.0 | satellite → fracking-core link only, which the MIT set lacks and the well-rate maths needs. |
+Two third-party sources preceded it, and both retirements are on the record rather than tidied away:
 
-Cross-validation at generation time: **607 shared nodes, 0 purity mismatches, 0 resource mismatches,
-max position delta 0.69 cm.** Independent agreement that close is strong corroboration of both.
+* a **GPL** SCIM-derived table supplied the well grouping until the `mCore` read replaced it;
+* an **MIT** set vendored from rockfactory/satisfactory-logistics (`world_resource_nodes.mit.json`,
+  itself an FModel dump of the same `Persistent_Level.umap`, cut from a 2024 build) supplied the node
+  set until this repo read the package itself. Parity at retirement:
+  **same 626-actor composition, purity equal on all 625 shared ids, resource equal on all 594
+  comparable, 600 positions inside the old file's whole-centimetre rounding** — and every
+  disagreement accounted for as the game moving the map after 2024: 25 nodes moved 9.5–80.4 cm
+  vertically, one pure Limestone node renamed and moved 150 cm, both confirmed independently against
+  saveVersion 52 vs 60 save actors. The full record is `_meta.retired_mit_table` in
+  `data/world_resource_nodes.json`, pinned by `tests/test_nodes_provenance.py`.
 
-> **The bug this found, and the mistake that hid it.** SCIM was missing `BP_ResourceNode11`, a pure
-> Limestone node worth 480/min. The save proves it exists — 459 `BP_ResourceNode_C` actors against
-> SCIM's 458. It went unnoticed because the original validation checked the join in **one direction
-> only**: every table entry appeared in the save (607/607), which says nothing about save nodes missing
-> from the table. `test_node_table_matches_the_save_in_both_directions` now counts save actors against
-> table rows per kind. Konsl's world-generator notes a missing limestone node as a known 1.2-build
-> discrepancy, consistent with SCIM's v1.2.0.0 pin — exactly the version-drift risk this section
-> flagged.
+> **The bug the two-source era found, and the mistake that hid it.** SCIM was missing
+> `BP_ResourceNode11`, a pure Limestone node worth 480/min. The save proves it exists — 459
+> `BP_ResourceNode_C` actors against SCIM's 458. It went unnoticed because the original validation
+> checked the join in **one direction only**: every table entry appeared in the save (607/607), which
+> says nothing about save nodes missing from the table.
+> `test_node_table_matches_the_save_in_both_directions` still counts save actors against table rows
+> per kind — the requirement outlived both sources it was written against. (That same node is the one
+> the game later renamed; see above.)
 
-Excluded on purpose: `BP_ResourceDeposit_C` (hand-mineable only, no extractor can be placed) and
+Excluded on purpose: `BP_ResourceDeposit_C` (hand-mineable only, no extractor can be placed — the
+world table emits no deposit rows and counts all 2,662 of them in `_meta.deposits`) and
 `BP_FrackingCore_C` (produces nothing itself; referenced as `well_core` on satellites).
 
-Geysers are labelled `Desc_Geyser_C`. Neither that nor the MIT set's `Desc_GeothermalEnergy_C` exists in
-`Docs.json` — a geyser is not an item, it is a placement target for the Geothermal Generator — so the
-difference between the two sources there is cosmetic.
+Geysers are labelled `Desc_Geyser_C`. The name exists nowhere in `Docs.json` — a geyser is not an
+item, it is a placement target for the Geothermal Generator — and the asset carries no
+`mResourceClass` for them, so the label is synthetic and both files say so.
 
-**Regenerating from the paks directly** remains possible and is the fully first-party option: CUE4Parse
-driven by the usmap, following the recipe in Konsl's MIT-licensed `scripts/extract.cs`. It needs
-CUE4Parse ≥ 1.2.2.21 (nuget's 1.2.2 mis-parses UE 5.6, which this build is) and an Oodle *data*
-decompressor, which the game does not ship — only OodleNetwork, a different library. Not worth the
-second toolchain while two independent sources agree to 0.69 cm.
+**Coverage is measured, not assumed**: every `gen_world_resource_nodes.py` run sweeps all 4,521
+`GameLevel01` packages and refuses to write if any emitted class is placed outside the persistent
+level, so a map update that streams nodes into cells cannot silently shrink the table.
 
 ---
 
@@ -181,8 +190,8 @@ SatisfactoryMcp/
   data/
     region_names.json             # GENERATED layer 2: label rasters + confidence, from
                                   # the game's own map areas (256 m served, 64 m for lookups)
-    resource_nodes.json           # GENERATED: 607 nodes, type/purity/position, with provenance
-    world_resource_nodes.mit.json # SOURCE: the MIT node set §3.4 merges from
+    resource_nodes.json           # GENERATED: 608 nodes, type/purity/position, with provenance
+    world_resource_nodes.json     # GENERATED SOURCE: the game's own node actors, §3.4
     world_collectibles.json       # GENERATED: map placements + per-instance collected state
     local/                        # the reader's own map renders and tiles; gitignored,
                                   # never shipped, and the page works without it

@@ -59,8 +59,8 @@ the ocean orange and looks enough like a stylised map that it survives a glance.
 **The corners are measured, not trusted.** The sidecar pins the image at the in-game map
 square the server already defaults to -- x [-3247, 4253] m, y [-3750, 3750] m -- and
 states it explicitly rather than relying on that default. That the sheet really spans it
-is re-measured every run in ``_meta.calibration``: the 626 static resource nodes of
-``data/world_resource_nodes.mit.json`` are projected onto the sheet and counted against
+is re-measured every run in ``_meta.calibration``: the 625 static resource nodes of
+``data/world_resource_nodes.json`` are projected onto the sheet and counted against
 the flat open-ocean colour, and the whole box is then swept +-300 m in 50 m steps. Nodes
 stand on land, so a pin that is right cannot be improved on by sliding the box. A few
 nodes read as sea at every pin -- this map's shoreline is drawn rather than sampled, and a
@@ -538,7 +538,7 @@ def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
     the flat open-ocean colour, and a pin that is wrong can be beaten by shifting the box.
     The sweep is the measurement; the wiki square is only the starting point.
     """
-    table = ROOT / "data" / "world_resource_nodes.mit.json"
+    table = ROOT / "data" / "world_resource_nodes.json"
     if not table.is_file():
         return {"skipped": f"{table.relative_to(ROOT)} is not present, so the pin is unchecked"}
     nodes = json.loads(table.read_text(encoding="utf-8"))["nodes"]
@@ -573,7 +573,7 @@ def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
     off_by_m = max(abs(best[1]), abs(best[2]))
     return {
         "method": (
-            f"{len(nodes)} static resource nodes from data/world_resource_nodes.mit.json "
+            f"{len(nodes)} static resource nodes from data/world_resource_nodes.json "
             f"projected onto a {CALIBRATION_PX}px copy of the sheet and counted against the "
             "flat open-ocean colour. Nodes stand on land, so fewer is better."
         ),

@@ -208,13 +208,17 @@ on the belief that the game shipped no biome geometry. It does:
 share-alike obligation reaches this repository. Same posture as every other derived table here: facts,
 coordinates and identifiers read out of the reader's own install, and no artwork shipped.
 
-`data/resource_nodes.json` is merged from two sources, both recorded in the file's `_meta`: an
-MIT-licensed set extracted from the game's own map assets
-([rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)) for
-resource, purity and position, plus the satellite→core link it lacks — which is now read from the
-game's own `Persistent_Level.umap`, where every `BP_FrackingSatellite` export carries an `mCore`
-reference to its core, 118 of 118. That replaced a GPL table, and the regenerated file is
-byte-identical to the one that table produced, which is what proves the replacement complete.
+The resource-node layer is first-party the same way. `data/world_resource_nodes.json` is the node
+actors of the game's own `Persistent_Level.umap` — resource, purity, position, and the
+satellite→core link every `BP_FrackingSatellite` export states as an `mCore` reference, 118 of
+118 — read from the installed container by `tools/gen_world_resource_nodes.py`, and
+`data/resource_nodes.json` is a projection of it. Two third-party tables preceded it and both are
+deleted with their retirements recorded rather than tidied away: a GPL SCIM-derived well grouping
+(replaced by the `mCore` read, byte-identical output), then the MIT-licensed node set vendored from
+[rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)
+(replaced by this extraction — same 626-actor composition, purity and resource equal everywhere
+comparable, and every position difference accounted for as the game moving nodes after that set's
+2024 build; the parity record is `_meta.retired_mit_table` in the world table, pinned by tests).
 
 The web map compiles Leaflet (BSD-2-Clause) into its bundle at build time, and the bundle is not
 committed — `static/` is gitignored, so the repository redistributes no compiled dependency at all.

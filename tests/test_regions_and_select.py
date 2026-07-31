@@ -6,6 +6,9 @@ regenerated dataset that reintroduces one fails loudly.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from satisfactory_mcp.domain.spatial import geo
@@ -125,94 +128,90 @@ def test_every_well_satellite_keeps_its_core_link(table):
 
 
 def test_sources_are_recorded_with_licences(table):
-    """Every source names a licence and the game build it was read at.
+    """The source names its provenance and the game build it was read at.
 
-    The literal this once asserted -- ``"1.2.0.0" in ...`` -- described the GPL-3.0 SCIM table
-    that supplied the satellite/core mapping. That table is deleted and the mapping now comes
-    from an ``mCore`` reference in the game's own map package, so the literal describes a source
-    that no longer exists. The requirement is unchanged and is what matters: a consumer must be
-    able to tell whether a table predates the build they are running.
+    Two literals have died here, each for the right reason. ``"1.2.0.0" in ...`` described
+    the GPL-3.0 SCIM table that supplied the satellite/core mapping; ``licence == "MIT"``
+    described the vendored rockfactory node set that supplied everything else. Both are
+    deleted: the node set, resource, purity, position AND the well link now come from
+    ``data/world_resource_nodes.json``, this repository's own extraction from the installed
+    game's map package, so the claims pinned are the new ones -- first-party, no external
+    licence or attribution obligation, and still pinned to the build it was read at so a
+    consumer can tell whether the table predates the build they are running. The
+    requirement that provenance stays RECORDED is the part that has never changed.
     """
     sources = table.meta["sources"]
-    assert sources["primary"]["licence"] == "MIT"
-    for role in ("primary", "secondary"):
-        assert sources[role]["licence"], role
-    assert "495413" in sources["secondary"]["game_version_pinned"]
+    primary = sources["primary"]
+    assert primary["name"] == "data/world_resource_nodes.json"
+    assert "first-party" in primary["licence"]
+    assert "no external licence" in primary["licence"]
+    assert "no attribution" in primary["licence"]
+    assert "495413" in primary["game_version_pinned"]
+    # And the two retired sources stay on the record rather than being tidied away.
+    assert "retired_mit_table" in sources["retired"]
+    assert "GPL" in sources["retired"]
 
 
 def test_purity_and_resource_agree_with_the_installed_game(table):
-    """Purity and resource were checked against the game's own assets, and agreed.
+    """Purity and resource are the installed game's own, via the projection this table is.
 
-    These two assertions used to read the same keys off a flat ``cross_validation`` block,
-    where they meant "agrees with the SCIM table". SCIM is gone; the comparison behind them
-    is now ``mPurity`` and ``mResourceClass`` on each node export in the installed build's
-    ``Persistent_Level.umap``, which is a strictly better comparand -- the game itself rather
-    than a third party -- so the keys moved under the comparison that produced them.
+    These assertions have meant three things in their life. First "agrees with the SCIM
+    table", then -- SCIM deleted -- "agrees with ``mPurity``/``mResourceClass`` in the
+    installed build's ``Persistent_Level.umap``", recorded as mismatch lists because the
+    node set itself was still third-party. Now the third party is gone too and the node set
+    IS that package read (``data/world_resource_nodes.json``), so recorded mismatch lists
+    against it would be the generator agreeing with itself. What is checked instead is the
+    same claim with no generator in the loop: the served table re-joined against the
+    committed world table, row for row, on identity, resource and purity. Geysers are the
+    one mapped value -- the asset carries no ``mResourceClass``, and the synthetic label
+    says so in ``_meta.geyser_note``.
     """
-    vs = table.meta["cross_validation"]["positions"]["against_the_installed_build"]
-    assert vs["purity_mismatches"] == []
-    assert vs["resource_mismatches"] == []
-    # Resource is compared on fewer rows than purity, so the shortfall has to be explained
-    # rather than passed over: geysers carry no mResourceClass on either side.
-    assert vs["resource_rows_compared"] <= vs["rows_compared"]
-    if vs["resource_rows_compared"] < vs["rows_compared"]:
-        assert vs["resource_not_compared"]
+    world = json.loads(
+        (Path(__file__).resolve().parents[1] / "data" / "world_resource_nodes.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    rows = {r["id"]: r for r in world["nodes"] if r["class"] != "BP_FrackingCore_C"}
+    assert {n["instance"].rsplit(".", 1)[-1] for n in table.nodes} == set(rows)
+    for n in table.nodes:
+        src = rows[n["instance"].rsplit(".", 1)[-1]]
+        assert n["purity"] == src["purity"], n["instance"]
+        assert n["resource"] == (src["resource"] or "Desc_Geyser_C"), n["instance"]
+        if n["kind"] == "well_sat":
+            assert n["well_core"].rsplit(".", 1)[-1] == src["core"], n["instance"]
+    assert "geyser" in table.meta["geyser_note"].casefold()
 
 
 def test_position_deltas_are_recorded_against_both_builds(table):
-    """A single position delta cannot be honest, so the table records two, and names rows.
+    """One comparison now, because there is only one build in play -- and it must be exact.
 
-    This replaces one assertion, ``max_position_delta_cm < 1.0``, which was true of a
-    comparison nobody makes any more -- MIT against SCIM, two extracts of the same old build.
-    The table is cut from an older build than the installed one, so "how far off is a
-    position" has two answers: exact against the build it was cut from, and up to 80 cm
-    against the installed build. Asserting only the first would flatter the table; loosening
-    the bound to 81 cm would assert nothing at all.
-
-    What is asserted instead is stronger than the old bound in three ways. The sub-centimetre
-    bound survives, attached to the comparison it is actually true of. Both comparisons must
-    declare their rounding floor -- the MIT rows are whole centimetres, so no comparison can
-    read below half a centimetre per axis -- and any comparison claiming a delta past that
-    floor must name every row responsible, so a summary number can never stand alone. And
-    each named row is pinned to the ``z`` the table actually ships, so the disclosure cannot
-    drift away from the data it describes: moving a node without updating the note fails here.
+    The two-block record this name still remembers ("against the build this table was cut
+    from" AND "against the installed build") existed because the vendored node set was cut
+    from an older build than the one installed, and a single delta could not be honest
+    about that. The table is now cut FROM the installed build, so a second block would be
+    manufacturing a build to lag. What survives is every property that made the record
+    trustworthy: the one block declares its rounding floor, its measured worst delta sits
+    inside that floor, no row is named past it (a summary must never outrun its rows),
+    nothing is missing on either side, and the build, method and date stamps are present.
+    These are exactly the preconditions under which the skew gate in
+    ``domain/spatial/nodes.py`` finds a pin and no drift, and stays silent -- which
+    ``test_node_table_skew`` asserts against the reference save.
     """
     positions = table.meta["cross_validation"]["positions"]
-    by_instance = {n["instance"]: n for n in table.nodes}
+    assert set(positions) == {"against_the_installed_build"}
+    block = positions["against_the_installed_build"]
 
-    # The bound the old assertion carried, on the comparison that supports it.
-    cut_from = positions["against_the_build_this_table_was_cut_from"]
-    assert cut_from["max_position_delta_cm"] < 1.0
-    assert cut_from["rows_past_the_rounding_floor"] == []
-
-    for name, block in positions.items():
-        floor = block["rounding_floor_cm"]
-        worst = block["max_position_delta_cm"]
-        assert isinstance(worst, (int, float)), f"{name} states no measured delta"
-        assert 0 < floor < 1.0, name
-        assert block["measured"] and block["build"] and block["method"], name
-
-        named = block["rows_past_the_rounding_floor"]
-        if worst > floor:
-            assert named, f"{name} claims {worst} cm but names no row"
-            assert max(r["delta_cm"] for r in named) == worst, name
-        else:
-            assert named == [], name
-
-        for row in named:
-            node = by_instance.get(row["instance"])
-            assert node is not None, f"{name} names {row['instance']}, which is not a row"
-            assert node["z"] == row["shipped_z"], f"{name}: {row['instance']} z has moved"
-            assert row["delta_cm"] > floor, name
-            assert abs(row["dz_cm"]) <= row["delta_cm"], name
-
-    # "Only in" has to mean what it says, in both directions.
-    vs = positions["against_the_installed_build"]
-    for instance in vs["rows_only_in_this_table"]:
-        assert instance in by_instance, instance
-    for instance in vs["rows_only_in_the_installed_build"]:
-        assert instance not in by_instance, instance
-    assert vs["rows_compared"] == len(table.nodes) - len(vs["rows_only_in_this_table"])
+    floor = block["rounding_floor_cm"]
+    worst = block["max_position_delta_cm"]
+    assert isinstance(worst, (int, float)), "no measured delta stated"
+    assert 0 < floor < 1.0
+    assert 0 <= worst <= floor
+    assert block["rows_past_the_rounding_floor"] == []
+    assert block["rows_only_in_this_table"] == []
+    assert block["rows_only_in_the_installed_build"] == []
+    assert block["rows_compared"] == len(table.nodes)
+    assert block["measured"] and block["build"] and block["method"]
+    assert "495413" in block["build"]
 
 
 # ------------------------------------------------------- defect 1: void class

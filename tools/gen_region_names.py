@@ -292,7 +292,7 @@ def reference_points() -> tuple[np.ndarray, dict[str, int]]:
     """
     pts: list[tuple[float, float]] = []
     counts: dict[str, int] = {}
-    nodes = load("world_resource_nodes.mit.json", "nodes")
+    nodes = load("world_resource_nodes.json", "nodes")
     pts.extend((node["x"], node["y"]) for node in nodes)
     counts["resource_nodes"] = len(nodes)
     for row in load("world_collectibles.json", "collectibles"):
@@ -796,9 +796,9 @@ def _meta(**kw) -> dict:
                 "reads it."
             ),
             "sources": {
-                "data/world_resource_nodes.mit.json": (
-                    "MIT (Copyright (c) 2024 Leonardo Ascione), extracted from "
-                    "FactoryGame/Map/GameLevel01/Persistent_Level.umap"
+                "data/world_resource_nodes.json": (
+                    "first-party: the game's own Persistent_Level.umap node actors, read "
+                    "from the installed game by tools/gen_world_resource_nodes.py"
                 ),
                 "data/world_collectibles.json": (
                     "the game's own cooked map packages, read from the installed game"

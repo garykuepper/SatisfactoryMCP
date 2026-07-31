@@ -97,7 +97,15 @@ def pytest_collection_modifyitems(items):
 #: is why the hand-verified numbers reproduce unchanged over it rather than being re-baselined
 #: against whatever the software now says, which would have thrown away the human measurement
 #: the whole regression rests on.
-REFERENCE_FIELD = ("bbox:-649.63,-3140.09,2465.02,-1080.3",)
+#:
+#: Each edge is 1 cm outside that bounding box rather than ON it. The box was first drawn
+#: to the node table's coordinates at a time when the table stored whole centimetres, and
+#: all four extreme nodes therefore sat exactly on an edge -- so when the table went
+#: first-party and gained sub-centimetre positions, two of the four drifted 0.2-0.4 cm
+#: across the line and the reference field silently shrank by two nodes. The centimetre of
+#: margin makes the box mean the field, not one table's rounding; the nearest node outside
+#: the field is metres away, so nothing new can fall in.
+REFERENCE_FIELD = ("bbox:-649.64,-3140.10,2465.03,-1080.29",)
 
 
 def _docs_available() -> bool:
