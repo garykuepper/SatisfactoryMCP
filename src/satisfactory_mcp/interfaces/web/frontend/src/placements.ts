@@ -46,12 +46,19 @@ import type {
  * leaves hairline seams between neighbouring tiles at low zoom, and a stroke in any other
  * colour draws an 8 m grid. Same colour, weight 1, and a slab reads as one platform.
  */
-/* Concrete, meant to be cool enough to read as built against the biomes -- and that sentence
- * is the one claim in this codebase the executable version of the discipline contradicts
- * outright: it is dE 6.6 from Abyss Cliffs and under 15 from three more grounds. Listed in
- * STANDING in palette.ts rather than quietly fixed, because which of the two colours should
- * move is a decision to make against the map. */
-var STRUCTURE_COLOUR = declareColours("placements", { foundations: "#3a4148" }).foundations;
+/* Concrete, and the page's first false warrant made good. The old grey claimed to be 'cool
+ * enough to read as built against the biomes' while sitting dE 6.6 from Abyss Cliffs and
+ * under 15 from three more grounds -- a hope, contradicted the day the discipline became
+ * executable. The concrete is what moved, because the grounds cannot: a slab is poured ON
+ * the biome fill, both are large areas at full strength wherever there is no imagery, and no
+ * warrant talks that pair apart. Slate violet is the one cool direction the grounds leave
+ * open -- a neutral grey dies on the coal dot at one end and No Man's Land at the other, and
+ * the teal side is Blue Crater and Spire Coast -- and this one is measured, not hoped: dE
+ * 18.1 from the nearest ground (Blue Crater; Abyss Cliffs, the old failure, is 21.4), 17.9
+ * from its nearest cross-owner neighbour anywhere (that same coal dot), 24.7 from the nearest
+ * belt tone, and 15.3 from the nearest of the six artwork tones binned in power.ts -- the one
+ * comparison REGION_BLEND does not soften, since the render is what shows through the fade. */
+var STRUCTURE_COLOUR = declareColours("placements", { foundations: "#545470" }).foundations;
 
 export function drawStructures(data: StructuresResponse): void {
   // First of the built band, because the concrete is what everything else in it stands on
@@ -108,8 +115,10 @@ var MACHINE_FALLBACK_M = 6;
 /* Blue, amber, red -- the page's oldest three colours, and the ones every measured warrant
  * since has had to get out of the way of: the pipe rust was chosen against this amber, the
  * storage magenta against this red, and the wire violet against all three. Not themselves
- * measured against anything, which is what the audit has to say about the water node dot: a
- * water extractor stands exactly on one, and the blue is dE 8.6 away. */
+ * measured against anything, and the audit's one finding against them -- the water node dot
+ * at dE 8.6 from this blue -- is DISCHARGED in palette.ts on the map's own facts: the only
+ * machine that ever stands in the dot's square metre is a water extractor, drawn in this
+ * table's amber at dE 101.3 from the dot, and raiseNodeDots() keeps the dot on top of it. */
 var KIND_COLOUR: Record<string, string> = declareColours("placements", {
   machines: "#4aa3df",
   extractors: "#e0a33f",
@@ -235,13 +244,14 @@ registerFetch<MachinesResponse>({
  * page already spends blue on machines, amber on extractors, red on generators, steel on belts
  * and rust on pipes, and the whole warm half is taken.
  *
- * In CIE Lab, this is dE 51.8 from its nearest filled box (the generator red) and 48.5 from
- * the nearest biome ground, which are the two comparisons that decide whether a box reads. Its
+ * In CIE Lab, this is dE 42.4 from its nearest filled box (the concrete, since the concrete
+ * moved; the generator red is 51.8 away as it always was) and 48.5 from the nearest biome
+ * ground, which are the two comparisons that decide whether a box reads. Its
  * nearest neighbour ANYWHERE on the page is the raw-quartz node dot at dE 27.4 -- a small disc
  * on open terrain rather than a rectangle inside a factory, so the two are never asked to be
- * told apart in the same square metre. That last sentence is the axis palette.ts's STANDING
- * list is organised along, and this is the one place on the page where it is backed by a
- * measurement rather than assumed. The alternatives measured beside it were all worse on one
+ * told apart in the same square metre. That last sentence is the axis the DISCHARGED warrants
+ * in palette.ts turn on, and this is where it was first backed by a measurement rather than
+ * assumed. The alternatives measured beside it were all worse on one
  * of the two: a lighter magenta (#c76bb0) lands dE 17.7 from that same quartz dot, a violet
  * (#8c72c4) dE 19.1 from the crude-oil dot and only 37.3 from the machine blue, and a sea
  * green dE 10.5 from the pickup teal.
@@ -252,11 +262,12 @@ registerFetch<MachinesResponse>({
  * "same layer, different thing" without spending a second hue on it.
  *
  * The step is the house step: dE 16.7, against the belts' 15.6 between their slowest and
- * fastest and the pipes' 15.7 between Mk1 and Mk2. Re-measured rather than assumed safe,
+ * fastest and the pipes' 15.1 between Mk1 and Mk2. Re-measured rather than assumed safe,
  * because a ramp can walk a colour into a neighbour -- this one moves AWAY from everything,
- * ending dE 34.0 from its nearest colour on the page (the crude-oil dot) and 37.6 from the
- * nearest ground, both further off than the box tone above. Both steps are inside one owner,
- * which is exactly why palette.ts compares across owners and never within one.
+ * ending dE 33.7 from its nearest colour on the page (the wire casing, with the crude-oil dot
+ * and the moved concrete both at 34.0) and 37.6 from the nearest ground, all further off than
+ * the box tone above. Both steps are inside one owner, which is exactly why palette.ts
+ * compares across owners and never within one.
  */
 var STORAGE = declareColours("placements", {
   storage: "#ad4f96",

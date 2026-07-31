@@ -155,7 +155,7 @@ var REGION_COLOUR: Record<string, string> = declareColours("regions", {
    * Measured like the pipe rust and the storage magenta. In CIE Lab it is dE 17.1 from its
    * nearest neighbour (Rocky Desert, which it borders for most of the west coast), 18.4 from
    * Dune Desert and 20.6 from Western Dune Forest -- above the ~15.6 step the belts use and
-   * comfortably above the pipes' 15.7. All three are same-owner comparisons and palette.ts
+   * comfortably above the pipes' 15.1. All three are same-owner comparisons and palette.ts
    * makes none of them: this is the ground's own ramp, and the audit draws its line at owners
    * so that a deliberate step like this one never has to be excused. The alternatives measured
    * beside it were all worse against that same Rocky Desert border: the render's own

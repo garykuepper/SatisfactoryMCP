@@ -44,8 +44,8 @@ var audited = false;
  *
  * `owner` is the drawing MODULE, not the layer, because that is the line the check needs.
  * Colours are compared across owners and never within one: a step inside a single family is
- * deliberate and small -- the belts' 15.6 between slowest and fastest, the pipes' 15.7 between
- * Mk1 and Mk2, the storage pair's 16.7, the poles' 16.2, the grounds' 17.1 where No Man's Land
+ * deliberate and small -- the belts' 15.6 between slowest and fastest, the pipes' 15.1 between
+ * Mk1 and Mk2, the storage pair's 16.7, the poles' 16.0, the grounds' 17.1 where No Man's Land
  * borders the Rocky Desert -- and a rule that flagged those is a rule everybody switches off.
  * Sharing an owner is what says "these two are meant to look related". Not sharing one is what
  * says "these two must never be confused".
@@ -89,10 +89,10 @@ export function declareColours<T extends Record<string, string>>(owner: string, 
  *
  * CIE76 rather than the later and better CIEDE2000, and that is a compatibility fact rather
  * than a preference. Every dE already written down on this page was computed this way: the
- * twenty-six numbers quoted in the feature files reproduce to the decimal under this function
- * and under no other. CIEDE2000 would put the storage magenta 25.3 from the generator red
- * where its own warrant says 51.8, and the chevron cream 18.7 from the extractor amber where
- * the warrant says 45.5 -- so adopting it would mean re-deriving thirty published numbers and
+ * numbers quoted in the feature files reproduce to the decimal under this function and under
+ * no other. CIEDE2000 would put the storage magenta 25.3 from the generator red where its
+ * own warrant says 51.8, and the chevron cream 18.7 from the extractor amber where the
+ * warrant says 45.5 -- so adopting it would mean re-deriving every published number and
  * throwing away the only record of what anybody actually measured. The threshold below is
  * calibrated against those numbers, so the formula and the threshold travel together.
  */
@@ -131,8 +131,8 @@ function deltaE(a: string, b: string): number {
 
 /* dE 15, and it is the house step read off the page rather than a number from a standard.
  *
- * The four ramps this page draws inside one family -- the belts' 15.6, the pipes' 15.7, the
- * storage pair's 16.7, the poles' 16.2 -- are the smallest steps anyone here has looked at and
+ * The four ramps this page draws inside one family -- the belts' 15.6, the pipes' 15.1, the
+ * storage pair's 16.7, the poles' 16.0 -- are the smallest steps anyone here has looked at and
  * accepted, and the smallest ground step accepted is 17.1. All five are same-owner and none of
  * them reaches this test. Fifteen sits just under the lot, so that two colours from different
  * modules landing as close as a deliberate ramp is exactly the thing that gets called out.
@@ -163,15 +163,17 @@ interface Exception {
   why: string;
 }
 
-/* The pairs an existing measurement already answers. There is exactly one, and that number is
- * itself the finding: of the 1,349 cross-owner pairs this page now compares, 28 sit under the
- * threshold and one of them was ever measured on purpose. The other 27 are below.
- *
- * 1,349 and not the 1,290 this file was written with, because the power layer went from two
- * declared colours to three when its wires were given a casing -- and the 28 did not move.
- * That is the check doing the job it was built for: three colours were chosen against the
- * whole table before any of them was drawn, the nearest cross-owner neighbour any of them has
- * is dE 22.8, and nothing below needed a line adding to it. See CASING_COLOUR in power.ts.
+/* The pairs a measurement answers. Two eras are in here. The chevron pair was discharged the
+ * day the cream was chosen, which for a long time made it the only entry -- the finding this
+ * file's first version reported was that of all the pairs under the threshold, one had ever
+ * been measured on purpose. The other ten came out of the recolour that paid the STANDING
+ * debt down (see below): they are the pairs where NEITHER colour can move -- the game's own
+ * ore tints on one side, the biome grounds and the two oldest network families on the other
+ * -- so each carries the map fact that keeps it from being a confusion, at the distance the
+ * audit re-derives every dev boot. Of the 1,411 cross-owner pairs this page compares (the
+ * old intro said 1,349, which was a miscount of the same table), these eleven sit under the
+ * threshold on purpose; the other 1,400 clear it, none by less than 15.2 (which is the coal
+ * dot again, against Northern Forest -- the coal warrant's point exactly).
  */
 var DISCHARGED: Exception[] = [
   {
@@ -180,27 +182,116 @@ var DISCHARGED: Exception[] = [
     de: 10.1,
     why:
       "measured when the chevron cream was chosen, and discharged there: the mark is a thin V " +
-      "drawn on a pipe at 0.7 opacity, which composites to 11.9-13.0 from the iron dot, and " +
-      "the dot is a filled disc on open terrain. See CHEVRON_COLOUR in routes.ts.",
+      "drawn on a pipe at 0.7 opacity -- which composites to 14.3-17.0 from the iron dot now " +
+      "that the pipes are oxide -- and the dot is a filled disc on open terrain. See " +
+      "CHEVRON_COLOUR in routes.ts.",
+  },
+  /* Coal on the grounds it lies on: the game's own coal tint, near black because coal is,
+   * over biome tints that are dark on purpose. This IS the same square metre -- the dot sits
+   * ON the cell -- and it is the one collision hue cannot fix: the nineteen grounds cover the
+   * whole dark-neutral range between them, so every near-black that clears one lands on
+   * another, and a coal that is not near-black is not coal. What separates the marks is that
+   * they are different KINDS of mark -- a 3-6 px disc, stroked at full opacity, against a
+   * 256 m flat fill that REGION_BLEND fades to 0.45 wherever there is imagery -- which is the
+   * point-against-area axis the storage magenta's warrant established, applied to the one
+   * family where nothing else was available. Eight entries rather than one line so that a
+   * ground edit that closes any single gap still trips the drift check. */
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/A",
+    de: 6.3,
+    why: "the coal warrant above -- a stroked disc on a flat faded fill, hue immovable on both sides (Abyss Cliffs).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/N",
+    de: 10.0,
+    why: "the coal warrant above (Rocky Desert).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/M",
+    de: 11.9,
+    why: "the coal warrant above (Red Jungle).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/Q",
+    de: 12.9,
+    why: "the coal warrant above (Swamp).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/I",
+    de: 14.1,
+    why: "the coal warrant above (Maze Canyons).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/H",
+    de: 14.3,
+    why: "the coal warrant above (Lake Forest).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/P",
+    de: 14.8,
+    why: "the coal warrant above (Spire Coast).",
+  },
+  {
+    a: "markers/Desc_Coal_C",
+    b: "regions/B",
+    de: 14.9,
+    why: "the coal warrant above (Blue Crater).",
+  },
+  {
+    a: "markers/Desc_Water_C",
+    b: "placements/machines",
+    de: 8.6,
+    why:
+      "a disc on open water against a rectangle in a factory, and at the one place the two " +
+      "could share a square metre -- a water extractor standing on a water node -- the " +
+      "machine actually drawn there belongs to the extractors layer and is amber, dE 101.3 " +
+      "from the dot, with raiseNodeDots() keeping the dot on top of it. The water tint is the " +
+      "game's and the machine blue is the page's oldest colour, with three warrants measured " +
+      "against it. See KIND_COLOUR in placements.ts.",
+  },
+  {
+    a: "markers/Desc_Stone_C",
+    b: "routes/belt fast",
+    de: 13.2,
+    why:
+      "a filled disc against a stroked line -- the shape split the chevron discharge above " +
+      "rests on, at a distance those composites never reach. The two meet where a Mk4+ belt " +
+      "leaves a limestone miner, and there the dot is raised, stroked at full opacity and " +
+      "standing beside an amber extractor; the belts' other tones are 19.3 and 26.4 from the " +
+      "dot. The limestone tint is the game's, and the fast tone is one end of the belts' " +
+      "published ramp -- moving it re-derives the house step every family here is measured " +
+      "against.",
   },
 ];
 
-/* And the debt: pairs that are under the threshold today, that no warrant defends, and that
- * are written down here so that making the discipline executable does not quietly turn into
+/* And the debt: pairs that are under the threshold, that no warrant defends, and that are
+ * written down here so that making the discipline executable does not quietly turn into
  * making it optional.
  *
- * None of these is a regression -- every one of them predates this file being able to check
- * anything, and the swatches and the pixels are unchanged by the move that made it possible.
- * What changed is that they are now countable, and the audit says how many at every dev boot.
- * They are here rather than in DISCHARGED because an exception with an invented reason is
- * worse than no rule at all, and moving any of these colours is a decision to make against the
- * map rather than a line to change while refactoring.
+ * Paid down to NOTHING in the 2026-07 recolour, and kept as a mechanism rather than deleted:
+ * the next colour that lands under the threshold while "which one moves" is being decided
+ * against the map needs somewhere honest to stand, and the boot warning below prints
+ * whatever is in here. Today it prints nothing.
  *
- * Grouped by what the two marks ARE, because that is the axis the one real warrant on this
- * page turns on: the storage magenta was accepted at dE 27.4 from the raw-quartz dot on the
- * grounds that a rectangle inside a factory and a disc on open terrain "are never asked to be
- * told apart in the same square metre". That reasoning is worth something. It is not worth
- * assuming, which is why each group says how far the argument actually reaches.
+ * What was here, for the record, and where it went. Twenty-seven pairs stood when this file
+ * first became executable. Seventeen were cleared by moving eight colours -- the ones with a
+ * free side: the concrete (dE 6.6 from Abyss Cliffs, against its own written warrant) went
+ * to a measured slate violet; the pipe family (4.9 from the bauxite dot, against a warrant
+ * that claimed copper at 22) went dark oxide, taking the geyser and tape pairs with it; the
+ * crashed drop pod left the belt steel (2.1, the closest pair the map ever had) for olive,
+ * the somersloop left the generator red (4.7) for rose, the hard drive left the machine blue
+ * (8.7) for indigo, and the lift fill dropped to near-black, clearing the concrete (10.4)
+ * and Abyss Cliffs (11.0). Every new value sits beside a fresh measurement in its own file.
+ * The ten that remained -- coal's eight grounds, the water dot against the machine blue, the
+ * limestone dot against the fast belt -- are pairs where BOTH sides are anchored, and they
+ * moved to DISCHARGED above with the map facts that answer them.
  */
 interface Standing {
   /** What these pairs have in common, and how far the argument for tolerating them goes. */
@@ -209,81 +300,7 @@ interface Standing {
   pairs: [string, string, number][];
 }
 
-var STANDING: Standing[] = [
-  {
-    note:
-      "A node dot on the ground it lies on. Every one of these is the game's own coal tint, " +
-      "which is near black because coal is, against biome tints that are dark on purpose -- " +
-      "and a coal dot is drawn ON the cell rather than beside it, so this IS the same square " +
-      "metre and the storage argument does not reach it. What saves it in practice is the " +
-      "stroke and the fill opacity rather than the hue, which is a weaker thing than a " +
-      "measurement and is why the pairs are listed rather than waved through.",
-    pairs: [
-      ["markers/Desc_Coal_C", "regions/A", 6.3],
-      ["markers/Desc_Coal_C", "regions/N", 10.0],
-      ["markers/Desc_Coal_C", "regions/M", 11.9],
-      ["markers/Desc_Coal_C", "regions/Q", 12.9],
-      ["markers/Desc_Coal_C", "regions/I", 14.1],
-      ["markers/Desc_Coal_C", "regions/H", 14.3],
-      ["markers/Desc_Coal_C", "regions/P", 14.8],
-      ["markers/Desc_Coal_C", "regions/B", 14.9],
-    ],
-  },
-  {
-    note:
-      "The concrete against the ground it is poured on, and the hole in it. STRUCTURE_COLOUR " +
-      "in placements.ts says the concrete is 'cool enough to read as built against the " +
-      "biomes'; at 6.6 from Abyss Cliffs that sentence is a hope rather than a measurement, " +
-      "and it is the only claim in this codebase the executable version contradicts outright. " +
-      "Mitigated, not answered, by REGION_BLEND: the biome cells are faded to 0.45 over the " +
-      "map render wherever there is imagery, so the pair is at full strength only on plain.",
-    pairs: [
-      ["placements/foundations", "regions/A", 6.6],
-      ["placements/foundations", "routes/lift fill", 10.4],
-      ["regions/A", "routes/lift fill", 11.0],
-      ["placements/foundations", "regions/B", 11.1],
-      ["placements/foundations", "regions/P", 12.8],
-      ["placements/foundations", "regions/M", 14.3],
-    ],
-  },
-  {
-    note:
-      "A dot and a filled box. This is where the storage argument is strongest -- a disc on " +
-      "terrain against a rectangle inside a factory -- and where it has one genuine hole: a " +
-      "water extractor stands exactly on a water node, which is the case raiseNodeDots() " +
-      "exists for, so the water dot and the machine blue really are asked to be told apart in " +
-      "one square metre. What has kept that from being noticed is that the extractor drawn " +
-      "there is amber rather than blue.",
-    pairs: [
-      ["markers/somersloop", "placements/generators", 4.7],
-      ["markers/Desc_Coal_C", "placements/foundations", 7.4],
-      ["markers/Desc_Water_C", "placements/machines", 8.6],
-      ["markers/hard_drive", "placements/machines", 8.7],
-    ],
-  },
-  {
-    note:
-      "A dot beside the line that runs past it, and the group with two things in it worth " +
-      "saying out loud. PIPE_COLOUR's warrant in routes.ts states that its nearest neighbour " +
-      "on the page is the copper-ore dot at dE 22; the bauxite dot has been in the palette " +
-      "since this map's first commit and is 4.9 away, so the pipe rust was measured against a " +
-      "set that did not include it. And the closest pair anywhere on the page is the " +
-      "crashed-drop-pod marker against the belt steel at 2.1, which is two grey-blues nobody " +
-      "ever compared: the belts predate the pickup categories, and the categories were handed " +
-      "out one per kind rather than measured against anything.",
-    pairs: [
-      ["markers/crashed_drop_pod", "routes/belts", 2.1],
-      ["markers/Desc_OreBauxite_C", "routes/pipe mk2", 4.8],
-      ["markers/Desc_OreBauxite_C", "routes/pipes", 4.9],
-      ["markers/crashed_drop_pod", "routes/belt fast", 6.2],
-      ["markers/crashed_drop_pod", "routes/belt slow", 9.8],
-      ["markers/Desc_OreBauxite_C", "routes/pipe mk1", 12.2],
-      ["markers/Desc_Geyser_C", "routes/pipe mk2", 12.5],
-      ["markers/Desc_Stone_C", "routes/belt fast", 13.2],
-      ["markers/tape_pickup", "routes/pipe mk2", 13.8],
-    ],
-  },
-];
+var STANDING: Standing[] = [];
 
 /** Every listed pair, keyed the way the audit's loop will name it, and which list it came
  *  from -- because "answered" and "owed" are counted differently at the end. */

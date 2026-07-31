@@ -80,9 +80,10 @@ import type { Point3M } from "./geometry";
 /* The casing: a deep indigo, and the furthest any colour on this page sits from all the
  * others. Nearest cross-owner neighbour is the fluid-storage magenta at dE 33.7 and the
  * nearest after that the oil node at 34.6; the dark neighbourhood it might have collided with
- * -- the lift fill at dE 38.8, the concrete at 41.3, the coal dot at 45.4 -- is not close.
- * That is the reward for keeping it violet instead of black: a near-black casing would have
- * landed among four greys that are already the tightest cluster on the map.
+ * has since been repainted around it -- the concrete, now slate violet, sits at dE 35.4, the
+ * lift fill at 39.7, the coal dot at 46.7 -- and is still not close. That is the reward for
+ * keeping it violet instead of black: a near-black casing would have landed in the middle of
+ * what was, before the recolour, the tightest grey cluster on the map.
  *
  * Against the artwork it is dE 48.4 from the nearest ground tone on the desert and the coast
  * and 54.3 on the forest, and 61.6 to 71.2 on the mean weighted by how much of the map each
@@ -95,8 +96,9 @@ var CASING_COLOUR = declareColours("power", { casing: "#1c1550" }).casing;
  * amber the extractors, red the generators, magenta the storage, steel the belts, rust the
  * pipes -- so this is the old decision at a new value, not a new decision.
  *
- * Nearest cross-owner neighbour is the raw-quartz dot at dE 22.8, then the hard-drive pickup at
- * 25.6, the water dot at 28.2 and the machine blue at 28.3. The belts, which are the comparison
+ * Nearest cross-owner neighbour is the raw-quartz dot at dE 22.8, then the water dot at 28.2
+ * and the machine blue at 28.3 (the hard-drive pickup, once third at 25.6, moved out to 36.6
+ * when it went indigo). The belts, which are the comparison
  * that has to hold because a wire and a belt genuinely do run side by side inside a factory, are
  * dE 33.2, 33.5 and 36.5 away across their three tones -- further than the old hairline managed
  * at 24.2. Against the artwork it is dE 39.1 to 40.2 from the nearest ground tone. */
@@ -107,7 +109,7 @@ var WIRE_COLOUR = declareColours("power", { wires: "#b8b0f8" }).wires;
  * tier but a KIND: the line and the thing the line ends at.
  *
  * The step is still the house step, dE 16.0, against the belts' 15.6 between their slowest and
- * fastest, the pipes' 15.7 between Mk1 and Mk2 and the storage pair's 16.7 -- the pair moved
+ * fastest, the pipes' 15.1 between Mk1 and Mk2 and the storage pair's 16.7 -- the pair moved
  * and the distance between them did not. Lighter rather than darker on purpose, and the
  * original reason has been overtaken by a better one: a pole used to have to out-value the
  * four wires that meet at it, and now it has the casing as a RIM instead (see the disc below),
@@ -115,9 +117,10 @@ var WIRE_COLOUR = declareColours("power", { wires: "#b8b0f8" }).wires;
  * where a pole is the mark that says a base is here.
  *
  * Re-measured rather than assumed safe, because a ramp can walk a colour into a neighbour.
- * Nearest cross-owner neighbour is the fast belt at dE 23.6, then the crashed drop pod at 25.0
+ * Nearest cross-owner neighbour is the fast belt at dE 23.6, then the raw-quartz dot at 25.2
  * and the limestone dot at 26.1 -- all further away than the old pole colour's 19.9 -- and the
- * nearest ground tone is dE 28.4 on the forest and 31.7 on the desert and the coast. */
+ * nearest ground tone is dE 28.4 on the forest and 31.7 on the desert and the coast. (The
+ * crashed drop pod, once second at 25.0, went olive in the recolour and is 73.4 away.) */
 var POLE_COLOUR = declareColours("power", { poles: "#d8c8f8" }).poles;
 
 /* How big a pole's disc is, in PIXELS, by what the pole is.
