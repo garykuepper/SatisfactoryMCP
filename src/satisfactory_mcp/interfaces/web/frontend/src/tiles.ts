@@ -163,6 +163,16 @@ function modeFailed(spec: ModeSpec, why: string, message: string): void {
   fail(message);
 }
 
+/* The two extras every pyramid layer below is built with: how deep its @2x tree goes, in
+ * the pyramid's own z, and the query fragment that asks for it -- separator included, ""
+ * when this display or this layer has no use for one. Options rather than a second URL
+ * template because Leaflet already rebuilds the URL per tile, and the choice is per TILE:
+ * one layer spans levels the dense tree has and levels only the 1x tree reaches. */
+interface PyramidOptions extends L.TileLayerOptions {
+  denseMaxZ?: number;
+  denseQuery?: string;
+}
+
 /* A TileLayer that knows how many tiles its pyramid actually has.
  *
  * `bounds` alone does not, and the difference is a 404 on every page load. Leaflet culls
@@ -172,7 +182,12 @@ function modeFailed(spec: ModeSpec, why: string, message: string): void {
  * "overlaps" the map by a rounding error, gets fetched, and 404s. The grid, on the other
  * hand, is 2^z tiles a side exactly, in integers, with nothing to round: a tile outside it
  * is asked for from the one transparent pixel Leaflet keeps for the purpose, so a pan and
- * zoom session's network log has no red in it at all. */
+ * zoom session's network log has no red in it at all.
+ *
+ * ...and, since the @2x trees, which DENSITY each level actually has: `?px=` rides on the
+ * levels the dense tree reaches and is dropped past its top, so a hi-DPI display keeps
+ * zooming into the deep 1x levels instead of stopping where the dense tree does. See
+ * pyramidMaker for why that is the right picture and not a compromise. */
 var PyramidLayer = L.TileLayer.extend({
   getTileUrl: function (this: L.TileLayer, coords: L.Coords) {
     // Asserted rather than defaulted: this layer is only ever constructed below, with a
@@ -181,9 +196,17 @@ var PyramidLayer = L.TileLayer.extend({
     if (coords.x < 0 || coords.y < 0 || coords.x >= span || coords.y >= span) {
       return L.Util.emptyImageUrl;
     }
-    return L.TileLayer.prototype.getTileUrl.call(this, coords);
+    var url = L.TileLayer.prototype.getTileUrl.call(this, coords);
+    var options = this.options as PyramidOptions;
+    // The same arithmetic as `span`: coords.z + zoomOffset is the pyramid's own z, already
+    // clamped to maxNativeZoom by Leaflet, so past the dense tree's top this asks for the
+    // 1x tile of the SAME level -- the identical square of the world, standard density.
+    if (options.denseQuery && coords.z + options.zoomOffset! <= options.denseMaxZ!) {
+      url += options.denseQuery;
+    }
+    return url;
   },
-}) as new (url: string, options: L.TileLayerOptions) => L.TileLayer;
+}) as new (url: string, options: PyramidOptions) => L.TileLayer;
 
 /* Whether this display can show more pixels than a 256 px tile carries.
  *
@@ -210,10 +233,15 @@ function wantsDenseTiles(): boolean {
  * stays the CSS size it always was, the zoom offset stays 5, the same `{z}/{x}/{y}` names
  * the same square of the world. The tile simply arrives with twice the pixels in it and
  * Leaflet draws it into the same box, which on a hi-DPI display is the difference between a
- * resampled map and a sharp one. The @2x tree is one level shallower by arithmetic -- 512 *
- * 2^z runs out of sheet before 256 * 2^z does -- so `maxNativeZoom` comes from whichever
- * tree is actually being fetched, and past it Leaflet upscales the deepest level it has,
- * which carries exactly the same information the 1x tree's next level would have.
+ * resampled map and a sharp one. The @2x tree is SHALLOWER than the 1x tree, though -- one
+ * level by arithmetic, since 512 * 2^z runs out of sheet before 256 * 2^z does, and more
+ * than one where the deep 1x levels were enhanced past the sheet (the artwork's z5..z7
+ * exist only as 1x) -- so the density is chosen per LEVEL rather than per layer:
+ * `maxNativeZoom` stays the 1x tree's depth, `?px=` rides on the levels the @2x tree
+ * reaches, and past its top the request falls back to the 1x tile of the same z. That
+ * fallback is the identical square of the world at standard density -- strictly more to
+ * see than stopping at the @2x top and letting Leaflet upscale, which is what a hi-DPI
+ * display used to get while a 1x display walked the deep levels it was denied.
  *
  * Returns null -- this mode cannot be drawn as a pyramid -- when the server describes one
  * this grid cannot draw: corners that are not the square the CRS is anchored on, or a tile
@@ -244,12 +272,14 @@ function pyramidMaker(spec: PyramidSpec, response: Response): (() => L.Layer) | 
   if (!isFinite(top) || top !== Math.round(top)) return null;
 
   // ...and, when this layer has a denser tree and this display can use it, that tree's
-  // size and depth instead. `tileSize` deliberately stays `tilePx`: it is the CSS size of
+  // size and depth as well. `tileSize` deliberately stays `tilePx`: it is the CSS size of
   // a tile and the grid must not move. What changes is how many pixels arrive inside it.
+  // `maxZ` deliberately stays the 1x tree's depth: the dense tree ends sooner, and where
+  // it has ended the 1x tile of the same level is still a level nobody has seen yet.
   var densePx = +response.headers.get("X-Map-Tile-2x-Px")!;
   var denseMaxZ = +response.headers.get("X-Map-Tile-2x-Max-Z")!;
   var dense = wantsDenseTiles() && isFinite(densePx) && densePx > 0 && isFinite(denseMaxZ);
-  if (dense) maxZ = denseMaxZ;
+  if (dense) maxZ = Math.max(maxZ, denseMaxZ);
 
   // The build tag makes every URL change when the pyramid is recut, which is what lets
   // the server mark a tile immutable: a pan that comes back over old ground refetches
@@ -257,12 +287,17 @@ function pyramidMaker(spec: PyramidSpec, response: Response): (() => L.Layer) | 
   // day later. It is per layer, so recutting the satellite cannot invalidate the terrain
   // a browser is holding -- and the @2x tree's own numbers are inside the same tag, so
   // recutting either one changes both.
+  //
+  // `px=` is NOT in this query: it is per tile rather than per layer, because one layer
+  // spans levels the dense tree has and levels only the 1x tree reaches. PyramidLayer
+  // appends `denseQuery` -- separator and all, which is why it is cut here where the rest
+  // of the query is known -- to exactly the levels the dense tree covers.
   var tag = response.headers.get("X-Map-Build");
   var query = [];
   if (tag) query.push("v=" + encodeURIComponent(tag));
-  if (dense) query.push("px=" + densePx);
   var url =
     tilePath(spec.layer, "{z}", "{x}", "{y}") + (query.length ? "?" + query.join("&") : "");
+  var denseQuery = dense ? (query.length ? "&" : "?") + "px=" + densePx : "";
   var bounds = mapImageLatLngBounds(b);
 
   return function () {
@@ -282,6 +317,8 @@ function pyramidMaker(spec: PyramidSpec, response: Response): (() => L.Layer) | 
       maxNativeZoom: maxZ - top,
       zoomOffset: top,
       updateWhenZooming: false,
+      denseMaxZ: denseMaxZ,
+      denseQuery: denseQuery,
     });
     var broke = false;
     tiles.on("tileerror", function () {
