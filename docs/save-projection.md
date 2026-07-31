@@ -830,7 +830,6 @@ since nothing is subtracted) so the banked digests still compare on all 31 saves
 written under 18 disagrees about `machine` and lacks `crate`, so the cache key had to move
 with the number, as every correcting bump's must.
 
-
 ---
 
 ## 13a. Replacing the vendored parser
