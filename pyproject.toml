@@ -45,9 +45,11 @@ build-backend = "hatchling.build"
 # application rather than inside it.
 packages = ["src/satisfactory_mcp", "src/pioneersav"]
 # The map page's npm project is build-time only. What the server serves is what the build
-# WROTE -- interfaces/web/static, committed -- so shipping the TypeScript beside it would
-# put a second copy of the page in the wheel, one of which nothing ever reads. `node_modules`
-# is already out by way of .gitignore; this excludes the sources it builds.
+# WROTE -- interfaces/web/static, untracked build output -- so shipping the TypeScript
+# beside it would put a second copy of the page in the wheel, one of which nothing ever
+# reads. A wheel built on a machine that has run `npm run build` carries the page; one
+# built from a bare clone simply does not, and the server says how to build it at `/`.
+# `node_modules` is already out by way of .gitignore; this excludes the sources it builds.
 exclude = ["src/satisfactory_mcp/interfaces/web/frontend"]
 
 [tool.pytest.ini_options]

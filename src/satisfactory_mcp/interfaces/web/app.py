@@ -19,6 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from ... import config
@@ -32,6 +33,19 @@ from .watch import SaveWatcher
 __all__ = ["STATIC_DIR", "app", "create_app"]
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+#: What ``/`` says when the frontend has not been built. ``static/`` is generated output
+#: and deliberately not committed (see ``.gitignore``), so this is the normal state of a
+#: fresh clone, and it deserves an instruction rather than a bare 404. The path is spelled
+#: out for the human reading it; the server itself never touches ``frontend/`` -- see
+#: ``test_the_frontend_sources_are_not_reachable_from_python`` for the rule and its one
+#: allowance for this string.
+_NOT_BUILT = (
+    "frontend not built: run `npm ci && npm run build` in "
+    "src/satisfactory_mcp/interfaces/web/frontend/ and reload.\n"
+    "\n"
+    "The JSON API is up regardless -- see /docs.\n"
+)
 
 
 @lru_cache(maxsize=1)
@@ -78,9 +92,21 @@ def create_app(
         instance.include_router(extracted)
 
     # Mounted at the root and therefore LAST: a mount at "/" swallows every path that
-    # did not already match, so the API router has to be registered above it.
-    if STATIC_DIR.is_dir():
+    # did not already match, so the API router has to be registered above it. The gate is
+    # on index.html, not just the directory: `static/` is untracked build output, so a
+    # fresh clone has neither, and a directory that exists but holds no page (a build
+    # interrupted, a stray file) is the same situation as far as a browser is concerned.
+    # In that state `/` answers with the build instruction instead -- 503, because the
+    # page is a capability this process does not currently have, not a path that does not
+    # exist -- and the JSON API above is entirely unaffected.
+    if (STATIC_DIR / "index.html").is_file():
         instance.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    else:
+
+        @instance.get("/", include_in_schema=False)
+        def frontend_not_built() -> PlainTextResponse:
+            return PlainTextResponse(_NOT_BUILT, status_code=503)
+
     return instance
 
 

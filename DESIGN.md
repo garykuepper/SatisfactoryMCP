@@ -235,7 +235,8 @@ SatisfactoryMcp/
                        # __main__.py (the console script)  watch.py (save-file SSE)
         frontend/      # BUILD-TIME ONLY: the page's TypeScript, built by Vite into
                        # static/ and excluded from the wheel
-        static/        # the committed bundle that build writes — no game assets
+        static/        # UNTRACKED: the bundle the build writes; gitignored — no game
+                       # assets, no dependency's compiled code in the tree
   src/pioneersav/      # our parser: reads all 66 saves, six saveVersions. A standalone
                        # library — it imports nothing from satisfactory_mcp, and only
                        # core/saveio/extract.py imports it, inside the child process
@@ -282,11 +283,15 @@ metres on the way out. `create_app(state_loader, game_loader)` takes both loader
 HTTP surface is testable against the committed fixture projection with no game install and no `.sav`.
 FastAPI and uvicorn live in the optional `web` extra and may be imported only from this package, which is
 the same AST-checked rule that confines the MCP SDK to `interfaces/mcp/`. The page itself is TypeScript
-under `web/frontend/`, built by Vite into the **committed** bundle at `web/static/` — which is what makes
-a fresh clone serve the map with no Node installed, and why `tests/test_architecture.py` insists every
-file in `static/` carries the build banner. The map ships no game textures and no map tiles: Leaflet is
-bundled into that page with its BSD-2-Clause licence beside it in `static/vendor/` so the page works
-offline, and everything drawn on it is data the save and the docs dump already contain.
+under `web/frontend/`, built by Vite into the **untracked** bundle at `web/static/` — gitignored, because
+minified Leaflet is a dependency's compiled code and the repository does not carry it. A fresh clone runs
+`npm ci && npm run build` there once (until then the server answers `/` with that instruction and the
+JSON API is unaffected), and `tests/test_architecture.py` insists both that nothing under `static/` is
+ever tracked and that every built file carries the build banner. The map ships no game textures and no
+map tiles: Leaflet is bundled into that page with its BSD-2-Clause licence beside it in `static/vendor/`
+— copied at build time from `node_modules/leaflet/LICENSE`, so every build stays self-compliant for
+anyone who ever distributes one — and everything drawn on it is data the save and the docs dump already
+contain.
 
 ### 4.1 The save seam
 

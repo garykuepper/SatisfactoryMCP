@@ -2,26 +2,29 @@
 
 TypeScript, built by Vite into `../static/`, which is the directory `app.py` mounts at `/`.
 
-**The built bundle is committed.** `uv run satisfactory-mcp-web` works from a fresh clone on
-a machine with no Node at all; Node is needed only to *change* the frontend. That is the
-whole reason `static/` is in git, and the reason `tests/test_architecture.py` insists every
-file in it carries the build banner: a committed artifact is exactly the kind of file
-someone edits in place, and the next build silently throws that edit away.
+**The built bundle is NOT committed.** `static/` is gitignored: `app.js` is a dependency's
+compiled code -- Leaflet, minified -- and the repository does not carry or redistribute it.
+A fresh clone therefore has no page until the build below has run once; until then the
+server answers `/` with exactly that instruction (and the JSON API works regardless).
+`tests/test_architecture.py` enforces both halves: nothing under `static/` may ever be
+tracked, and every file a build puts there carries the build banner -- build output is
+exactly the kind of file someone edits in place, and the next build silently throws that
+edit away.
 
-## Changing anything
+## Building, changing anything
 
 ```
 cd src/satisfactory_mcp/interfaces/web/frontend
 npm ci            # exact versions from package-lock.json
+npm run build     # build the page into ../static/, which app.py serves
 npm run dev       # Vite on :5173, hot reload, /api proxied to :8712
-npm run build     # refresh the committed bundle in ../static/
 npm run check     # tsc --noEmit
 npm run typegen   # regenerate src/api-schema.d.ts from a running server
 ```
 
-`npm run build` is not optional before committing. The source and the artifact are reviewed
-in the same diff, and a change to `src/` without the rebuilt `../static/` beside it is a
-change nobody is running.
+The artifact is never in a diff and never in a merge: what is reviewed is `src/`, and
+`static/` resolves by rebuild, always -- after pulling a frontend change, run
+`npm run build` again and the served page matches the sources by construction.
 
 ## The dev loop
 
@@ -81,8 +84,8 @@ production — in production it is the same origin, in dev the proxy makes it lo
 | `src/worlds.ts` | the two pickers, and keeping a selection through a rescan | 205 |
 | `src/sse.ts` | one EventSource, and what a save write means | 61 |
 | `src/style.css` | the page's own stylesheet, imported after Leaflet's so it wins on order | 604 |
-| `public/vendor/LEAFLET-LICENSE` | copied verbatim into the build; BSD-2-Clause requires it | |
-| `vite.config.ts` | where the build writes, the banner it stamps, the dev proxy | |
+| `vite.config.ts` | where the build writes, the banner it stamps, the licence it copies out of `node_modules/leaflet/`, the dev proxy | |
+| `node-fs.d.ts` | the one Node module the config imports, declared by hand instead of installing `@types/node` | |
 | `scripts/stamp-schema.mjs` | re-applies the generated schema's provenance header | |
 
 Four things about the graph are deliberate and easy to undo by accident.
@@ -130,6 +133,14 @@ stylesheet. Its three icon PNGs are inlined as data URIs, so the built page make
 request to anything but this server: no CDN, no fonts, no map tiles anyone else hosts. That
 is a licence and privacy posture, not a preference, and `npm run build` is expected to keep
 it. If a dependency ever emits an `assets/` directory of its own, check what is in it.
+
+The licence half of that posture has two ends, and the repository is only one of them. The
+repo redistributes no Leaflet at all — the bundle is untracked, which is the point of not
+committing it. But a *build* compiles Leaflet in, and BSD-2-Clause requires the notice to
+travel with that binary form for whoever ever distributes one, so every build carries it:
+`vite.config.ts` copies `node_modules/leaflet/LICENSE` — the npm package is the source of
+truth, there is no vendored copy to drift — into `static/vendor/LEAFLET-LICENSE`, the page
+names it in a comment, and the bundle's own banner states what is compiled in.
 
 ## Types
 

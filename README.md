@@ -215,3 +215,8 @@ resource, purity and position, plus the satellite→core link it lacks — which
 game's own `Persistent_Level.umap`, where every `BP_FrackingSatellite` export carries an `mCore`
 reference to its core, 118 of 118. That replaced a GPL table, and the regenerated file is
 byte-identical to the one that table produced, which is what proves the replacement complete.
+
+The web map compiles Leaflet (BSD-2-Clause) into its bundle at build time, and the bundle is not
+committed — `static/` is gitignored, so the repository redistributes no compiled dependency at all.
+Every build copies Leaflet's licence text from the npm package to `static/vendor/LEAFLET-LICENSE`
+beside the bundle, so a built page carries its own notices for anyone who ever distributes one.
