@@ -5,7 +5,7 @@ progress and unlocks, spatial resource queries, and LP/MILP factory optimization
 
 **Status:** implemented. 42 tools, 4 resources, 3 prompts, 1,409 tests passing. See README.md for usage.
 **Target game version:** 1.2.2.1 (`saveVersion 60`, `buildVersion 495413`).
-**Licence:** none. Private project, all rights reserved by default. See [§13](#13-licence).
+**Licence:** PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE) and [§13](#13-licence).
 
 Every number in this document was measured from the local game files or the live save unless explicitly
 marked `[UNVERIFIED]` or `[WIKI]`. Claims were produced by one agent and independently re-checked by a
@@ -572,16 +572,19 @@ Two traps, both found by measurement:
 
 ## 13. Licence
 
-**None.** Not published, so no `LICENSE` file and all rights reserved by default. GPL copyleft attaches
-only on distribution (GPLv3 permits private use and modification without conveying), so vendoring
-`sav_parse` carries no obligation here.
+**PolyForm Noncommercial 1.0.0**, the full text in [LICENSE](LICENSE) with the Required Notice
+(`Copyright Lukas Szimtenings (https://github.com/lukszi/SatisfactoryMCP)`). Free for any
+noncommercial purpose; commercial use needs a separate licence from the owner. It covers this
+repository's code, tooling and extracted tables and grants nothing over the game's content —
+Coffee Stain Studios retains all rights to Satisfactory and its assets.
 
-If that ever changes: `sav_parse.py` is **GPL-3.0-only** (no "or later") and has no packaging metadata, so
-it can't be pip-installed — it must be vendored, which on distribution would make the combined work
-GPL-3.0-only and incompatible with Apache-2.0 code. The subprocess boundary in
-[§4.1](#41-the-save-seam) already provides the arm's-length separation that would keep the server's own
-code freely licensable. Separately, `resourcePurity.py` data originates from SCIM, a third party — its
-terms, not GreyHak's, would govern.
+The section used to say "none — private project, all rights reserved", and the history that made
+publication clean is kept on the record: the vendored GPL-3.0 parser `sav_parse` was replaced by
+the first-party `pioneersav` and deleted (parity banked in `tests/fixtures/vendor_parity.json`),
+the SCIM-derived purity data and the wiki-traced region geometry were likewise replaced by
+first-party extractions, and README.md's provenance section states the current posture in full.
+No copyleft licence reaches this repository. The web map compiles Leaflet (BSD-2-Clause) into
+its untracked bundle at build time and copies the Leaflet licence beside it.
 
 ---
 
