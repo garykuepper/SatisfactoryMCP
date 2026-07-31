@@ -1,226 +1,216 @@
-# SatisfactoryMcp
+# SatisfactoryMCP
 
-An MCP server for planning Satisfactory factories. It reads the game's own data dump for recipes and
-rates, reads your save for progress and unlocks, and runs a real LP/MILP optimizer over the result.
+An MCP server and a local web map for [Satisfactory](https://www.satisfactorygame.com/). The
+server plans factories against your actual save files — it reads the game's own data dump for
+recipes and rates, reads your saves for progress and unlocks, and runs a real LP/MILP optimizer
+over the result. The map renders your world in the browser: terrain, factories, belts and pipes,
+power wires, floors, crates. Everything runs locally and everything is derived from your own
+game install; nothing is hardcoded and nothing is fetched from the network.
 
-Nothing is hardcoded and nothing is fetched from the network — game data comes from
-`CommunityResources/Docs/en-US.json`, which updates itself when the game patches.
+[DESIGN.md](DESIGN.md) is the spine — scope, decisions, data sources, architecture — and it
+indexes the deeper documents in [`docs/`](docs/).
 
-See [DESIGN.md](DESIGN.md) for the full design and the evidence behind every number. It is the
-spine — scope, decisions, data sources, architecture, the normalization contract — and it indexes
-the rest, which lives in [`docs/`](docs/): the save projection and the parser under it, the spatial
-model and the map, planning, the MCP surface, and what is parked.
+## Highlights
 
-## Setup
+- **Planning that survives byproducts.** Every item balances as an equality, so a plan that
+  strands Heavy Oil Residue is reported infeasible instead of silently overstated. Recipe
+  2-cycles (Recycled Plastic ↔ Recycled Rubber) are handled by the LP, not dodged by a tree walk.
+- **Answers about *your* world.** Which recipes you have unlocked, where your factories are and
+  how healthy they run, what a pending hard-drive choice is actually worth — all read from the
+  save, with every response naming the file it read and how old it is.
+- **A map of your game, in your browser.** Base layers built from the installed game
+  (the game's own map artwork, plus terrain renders drawn from a 1 m heightfield), and on top of
+  them your machines and floors, belt and pipe runs, power wiring, storage crates, resource
+  nodes, region names, and a live you-are-here dot that follows your saves as you play.
+- **A save parser of its own.** `src/pioneersav` is a standalone, first-party package that reads
+  the save format across six `saveVersion`s; the server talks to it through one subprocess
+  boundary, so a torn autosave or a format change cannot take the server down.
+
+### The MCP tools
+
+| Area | Tools |
+| --- | --- |
+| Game data | `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings` |
+| Your world | `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`, `phase_requirements`, `power_shards`, `collected_from_world`, `mam_research`, `somersloops` |
+| Your factories | `list_factories`, `name_factory`, `forget_factory`, `factory_health`, `factory_map`, `factory_query`, `propose_factories`, `select_machines`, `trace_upstream` |
+| Map | `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`, `show_on_map` |
+| Planning | `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `explain_byproducts`, `compare_recipe_options`, `rank_unlocks`, `list_plans`, `forget_plan` |
+| Hard drives | `list_pending_hard_drive_choices`, `advise_hard_drive_pick` |
+
+Plus MCP resources (`satisfactory://docs/summary`, `satisfactory://save/current`,
+`satisfactory://map/regions`) and three prompts that surface as slash commands:
+`design_factory`, `plan_power_plant`, `pick_hard_drive`. The full surface, argument by
+argument, is in [docs/mcp-surface.md](docs/mcp-surface.md).
+
+## Requirements
+
+- **Python ≥ 3.11** and [uv](https://docs.astral.sh/uv/).
+- **A local Satisfactory installation** (Steam or Epic). The server reads recipes and rates from
+  the game's own `CommunityResources/Docs/en-US.json`, so game data stays correct when the game
+  patches. The world tables in `data/` are committed and work out of the box — the game install
+  is *also* the source for the optional data generators, but you never need to run those.
+- **Node.js** — only to build the web map's frontend, and not needed at all if you only want the
+  MCP server.
+- Developed and tested on **Windows**. The save-directory and install auto-detection assume
+  Windows paths; both can be pointed elsewhere via environment variables (below).
+
+## Quick start
+
+```bash
+git clone https://github.com/lukszi/SatisfactoryMCP.git
+cd SatisfactoryMCP
+uv sync                # the MCP server
+```
+
+Extras are opt-in and combine: `uv sync --extra web` for the web map,
+`--extra dev` for the test suite, `--extra gen` for the data generators.
+
+### The web map
+
+The page is TypeScript, built by Vite, and the built bundle is deliberately not committed — a
+fresh clone answers `/` with HTTP 503 and the build instruction until you have built it once
+(the JSON API under `/api` works regardless):
+
+```bash
+cd src/satisfactory_mcp/interfaces/web/frontend
+npm ci
+npm run build
+```
+
+Then, from the repository root:
+
+```bash
+uv sync --extra web
+uv run satisfactory-mcp-web
+```
+
+The map is at <http://127.0.0.1:8712>. It binds to localhost on purpose: the API answers with
+the contents of your save directory and has no authentication, so it is a local tool.
+[The frontend README](src/satisfactory_mcp/interfaces/web/frontend/README.md) covers the dev
+loop, the layer modules, and the type story.
+
+### The MCP server
+
+The console entry point is `satisfactory-mcp` (stdio). With Claude Code, register it at user
+scope so it loads in any directory — you will usually be asking about the game, not about this
+code:
+
+```bash
+claude mcp add --scope user satisfactory -- uv run --directory "/path/to/SatisfactoryMCP" satisfactory-mcp
+```
+
+For any other MCP client, the equivalent JSON configuration:
+
+```json
+{
+  "mcpServers": {
+    "satisfactory": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/SatisfactoryMCP", "satisfactory-mcp"]
+    }
+  }
+}
+```
+
+It runs from source via `uv run`, so edits take effect on the next server start; there is
+nothing to reinstall after a change.
+
+## Where your saves come from
+
+The save directory and the game install are auto-detected:
+
+- **Saves**: `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames` — the game's own location, one folder
+  per account. Override with `SATISFACTORY_SAVES`.
+- **Game data**: `CommunityResources/Docs/en-US.json` under a handful of common Steam and Epic
+  install paths. Override with `SATISFACTORY_DOCS` (pointing at the `en-US.json` file itself).
+
+Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest
+save is used by default, and every response says which file it read and how old it is. The
+server only ever reads your saves — it never writes them.
+
+## Regenerating world data (optional)
+
+You do not need any of this: every world table the server uses is committed under `data/`.
+The generators exist so the tables can be rebuilt from your own installed game after a map
+update, and so the map's imagery — which is the game's artwork and is therefore **never
+committed** — can be produced locally. They need `uv sync --extra gen` and a Satisfactory
+install. Approximate runtimes on one mid-range machine:
+
+| Generator | Produces | Runtime |
+| --- | --- | --- |
+| `tools/gen_world_heightmap.py` | 1 m heightfield → `data/local/heightmap/` | ~54 s |
+| `tools/gen_map_renders.py` | terrain/biome base-map renders → `data/local/` | ~17 min |
+| `tools/gen_map_image.py --enhance` | the game's map artwork as tiles (upscaled on a GPU) → `data/local/` | ~13.7 min |
+| `tools/gen_item_icons.py` | one PNG per item → `data/local/icons/` | ~14 s |
+| `tools/gen_world_resource_nodes.py` | the node table → `data/world_resource_nodes.json` | ~4 s |
+
+Run them as `uv run --extra gen python tools/<name>.py`. Imagery and the heightfield land in
+`data/local/`, which is gitignored and stays that way; the committed tables in `data/` only
+change when the game's map does. `tools/gen_world_collectibles.py`, `gen_region_names.py` and
+`gen_resource_nodes.py` rebuild the remaining committed tables the same way.
+
+## Development
 
 ```bash
 uv sync --extra dev
-uv run python tools/gen_resource_nodes.py   # builds data/resource_nodes.json (607 nodes)
-uv run python tools/gen_region_names.py     # builds data/region_names.json (21 regions)
-uv run pytest -q
+uv run pytest -q                   # the default run: needs nothing but this checkout
+uv run pytest -q -m integration    # the other half: needs the game and at least one save
 ```
 
-`pytest` runs the 694 tests that need nothing but this checkout — they read a committed save
-projection and committed game-data slices, so a clone with no Satisfactory install and no saves
-passes them. The other 805 are marked `integration` and are deselected by default; run them with
-`uv run pytest -q -m integration` on a machine that has the game and at least one save, and
-individual tests will still skip if the world they measure is not the one you are playing.
-
-**Both commands are parallel.** `addopts` carries `-n 8` (`pytest-xdist`), and the three tests
-that walk your entire save folder fan out into subprocesses of their own on top of that. On a
-16-core machine, measured:
-
-| command | tests | before | now |
-|---|---|---|---|
-| `uv run pytest -q` | 694 | 11.3 s | **5.8 s** |
-| `uv run pytest -q -m integration` | 805 | 198.0 s | **25 s** |
-
-`-n 8` is a measured number, not `auto` — `auto` is 32 workers here and is the *worst* setting
-tried, because every worker is a fresh interpreter that collects the whole suite before running
-anything. The arithmetic is in `[tool.pytest.ini_options]`, and the fan-out width the whole-folder
-tests use is in `tests/_pool.py`; both say how to re-measure. To debug one test without any of
-it: `uv run pytest -q -n 0 <nodeid>`.
-
-Register with Claude Code at **user scope**, so it loads in any directory rather than only inside
-this repo — you will usually be asking about the game, not about this code:
-
-```bash
-claude mcp add --scope user satisfactory -- uv run --directory "E:/development/Hobby Projekte/SatisfactoryMcp" satisfactory-mcp
-```
-
-It runs from source via `uv run`, so edits take effect on the next server start; there is nothing to
-reinstall after a change. Check it with `claude mcp list`.
-
-The game install and save directory are auto-detected. Override with `SATISFACTORY_DOCS` and
-`SATISFACTORY_SAVES` if they live somewhere unusual.
-
-## Tools
-
-**Game data** — `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
-**Your world** — `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`, `phase_requirements`, `power_shards`
-**Map** — `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
-**Planning** — `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `explain_byproducts`, `compare_recipe_options`
-**MAM** — `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
-
-Saves are grouped into **worlds** by the header's `saveIdentifier`; within a world the newest save is
-used by default, and every response says which file it read and how old it is.
-
-### Choosing sources
-
-`search_resource_nodes` and `plan_factory` both take `sources`, a list of selectors. Locations union,
-filters intersect:
-
-```
-["north"]                              northern half of the map
-["region:Spire Coast"]                 a named region (a bare name works too)
-["near:120,-2020,1500"]                within 1500 m of (120, -2020) metres
-["grid:X3Y4", "grid:X3Y5"]             specific 1.024 km grid cells
-["node:BP_ResourceNode30_103"]         one exact node, repeatable
-["bbox:-500,-2500,600,-1800"]          a rectangle, metres
-["north", "resource:Crude Oil"]        narrow a location to one resource
-["near:me,600"]                        within 600 m of where you are standing
-```
-
-Call `search_resource_nodes(..., group="node")` to get node ids you can feed straight back in.
-A selector that fails to resolve returns **nothing** and says why — it never silently widens to the
-whole map, because that would answer a different question.
-
-### Banning routes
-
-Every planning tool takes `exclude_recipes`. Patterns match a class id, an exact display name, or any
-substring — and a substring takes **every** match, so `["Recycled"]` drops both Recycled Plastic and
-Recycled Rubber. Banning half a two-recipe loop would leave the loop intact.
-
-A pattern that matches nothing is reported rather than ignored, because a silently dropped ban returns a
-plan using the very recipe you forbade.
-
-## What makes it different
-
-**Byproducts are modelled correctly.** Every item is balanced as an *equality*. A byproduct with no
-consumer does not vanish — it fills a pipe and stalls the line — so a plan that produces one is
-reported as infeasible rather than silently overstated. Concretely, for 300 m³/min of crude into
-plastic:
-
-| formulation | plastic/min | machines |
-|---|---|---|
-| treat residue as exportable (what naive calculators do) | 200 | **10.0** |
-| consume the residue for real | 200 | **11.7** |
-| route it to a solid AWESOME Sink | 200 | **12.5** |
-
-The naive answer understates the build by 17–25% and leaves 100 m³/min of Heavy Oil Residue with
-nowhere to go.
-
-**Fluids cannot be sunk.** `Docs.json` claims Heavy Oil Residue has 30 sink points and
-`mCanBeDiscarded = True`, but the AWESOME Sink has a conveyor-only input. This is one of exactly four
-values not taken from game data; see `docs/constants.py`.
-
-**An LP, not a recipe tree.** Recycled Plastic and Recycled Rubber form a genuine 2-cycle, so
-depth-limited chain expansion has no correct answer. The LP handles it and finds plans no tree walk
-can reach.
-
-**Hard-drive advice by counterfactual.** `advise_hard_drive_pick` reads the *actual* pending offers
-from your save, then solves your objective with and without each option and reports the delta —
-including one measured on the candidate's own output, so a cable recipe isn't judged on plastic.
-
-**Node data is cross-validated, not trusted.** The table is merged from two independent extractions —
-one from the game's packaged `Persistent_Level.umap`, one community-traced — which agree on purity for
-every shared node. That merge recovered a pure Limestone node the single-source table was missing, found
-because the completeness check now counts save actors against table rows in *both* directions.
-
-**Layouts are schematics, honestly.** `plan_layout` turns a plan into blocks, buses and floors with a
-space budget — machine footprints come from `mClearanceData`, so a Refinery is 10×22×15 m and 6
-foundations, derived not hardcoded. Blocks are split by throughput (46 Refineries needing 1,380 m³/min of
-crude are 3 blocks, because a Mk2 pipe carries 600), and floors follow chain depth with a logistics deck
-between. It gives no world coordinates and no belt routing: there is no terrain data here, so those would
-be invented.
-
-**Whole machines at a derived clock.** A 52.8 machine-equivalent result is reported as **53 Blenders at
-99.6%** — exact, always a clean ratio, and provably the power-optimal way to run that throughput, since
-`c^1.32` is convex so a uniform clock beats any mix. Ratio underclocking is therefore automatic and needs
-no parameter. Passing `clocks=[0.5, 1.0]` asks a *different* question — spend buildings to save power —
-which is allowed but priced at `machine_cost_mw` (default 5 MW/machine, just above the 2.58 MW/machine
-that trade was measured to be worth) and announced in the warnings.
-
-**Logistics are reported, not capped.** Every plan lists each flow with the belts or pipes it implies,
-plus the water-extractor count. Capping throughput would be wrong — parallel lines are legal — but a plan
-that silently needs 7 Mk2 water pipes is not a plan.
-
-**Region names are advisory, and say so.** The boundaries are the game's own — `FGMapAreaTexture`, a
-4096² map-area raster at 1.83 m — and so are the names, read out of each `UFGMapArea` asset's
-`mDisplayName`. What ships is a 256 m grid to draw and a 64 m one to look names up in, so every lookup
-carries a confidence that means something measured: `interior` (one region fills the cell), `boundary`
-(an exact boundary runs through it), `unnamed` (the game names nothing here, so the label is its own **No
-Man's Land**), `void` (no name at all — ocean and off-map, decided by a land mask of 2,688 static world
-objects). All computation uses exact geometry — grid cells, cones, radii — never a name.
-
-## Resources and prompts
-
-Both are client-pulled, so they cost nothing until used.
-
-Resources: `satisfactory://docs/summary` (game-data census + content hash),
-`satisfactory://save/current` (which file would be read, and its headline state),
-`satisfactory://map/regions` (region names usable as selectors).
-
-Prompts, which surface as slash commands and carry the multi-step procedure so tool descriptions stay one
-line: `design_factory`, `plan_power_plant`, `pick_hard_drive`.
-
-## Layout
+The default run reads committed fixtures only, so a clone with no game install passes it in
+seconds. Frontend checks are `npm run check` (strict `tsc --noEmit`) and `npm run build` in the
+frontend directory. Architecture is enforced, not reviewed: `tests/test_architecture.py` reads
+the AST of every module to prove imports run one way — `core` knows nothing, `domain` knows
+`core`, `presenters` know `domain`, `interfaces` know everything.
 
 ```
 src/satisfactory_mcp/
-  core/       knows nothing above it: Docs.json loading, the save seam, num/plural
-  domain/     returns dataclasses and dicts, never text: world state, progression,
-              power, factories, spatial, collectibles, the LP planner
-  presenters/ ALL response formatting (context budget is the binding constraint)
-  interfaces/ mcp/ (the FastMCP surface) and web/ (an optional FastAPI + Leaflet map)
+  core/       Docs.json loading, the save seam, num/plural
+  domain/     world state, progression, power, factories, spatial, the LP planner
+  presenters/ all response formatting
+  interfaces/ mcp/ (the FastMCP surface) and web/ (FastAPI + Leaflet map)
   server.py   the console entry point; no logic
   config.py   paths and environment
-src/pioneersav/
-              our save parser, a standalone package: only the extractor subprocess
-              imports it
-tools/        one-off data generators
+src/pioneersav/  the save parser, a standalone package
+tools/           data generators
 ```
 
-Imports run one way — `core` knows nothing, `domain` knows `core`, `presenters` know `domain`,
-`interfaces` know everything — and `tests/test_architecture.py` reads the AST of every module to
-prove it, rather than trusting review.
+## Data provenance
 
-Save parsing lives behind one subprocess boundary. The parser refuses an unrecognised
-`saveHeaderType` rather than guessing, so a game patch breaks exactly one module; a torn autosave or
-parser crash cannot take down the server; and the ~130 kB JSON projection is the committed test
-fixture, so the suite runs with no game install. `src/pioneersav` is ours, derived from the bytes,
-and reads all 66 saves on the author's disk back to 2021 — six `saveVersion`s, 100% of every body.
+Every world table under `data/` is a first-party extraction: facts, coordinates and identifiers
+read out of a locally installed copy of the game by the generators in `tools/`, with no artwork
+shipped in this repository. Two third-party sources were used earlier and both retirements are
+kept on the record rather than tidied away:
+
+- The region layer was once traced from satisfactory.wiki.gg's Biome Map (CC BY-SA 4.0). It is
+  now read from the game's own `FGMapAreaTexture` and `UFGMapArea` assets — boundaries and names
+  alike — so no share-alike obligation reaches this repository.
+- The resource-node table was once vendored from the MIT-licensed
+  [rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)
+  node set. It is now read from the node actors of the game's own `Persistent_Level.umap`; the
+  parity record of that replacement lives in `_meta.retired_mit_table` inside
+  `data/world_resource_nodes.json`, pinned by tests.
+
+The save parser has the same history: a GPL-3.0 library was vendored here until `pioneersav`
+replaced it and it was deleted; the measured agreement between the two is banked in
+`tests/fixtures/vendor_parity.json` and replayed by the test suite. No copyleft licence reaches
+this repository.
+
+The game-derived data describes Coffee Stain Studios' content. Coffee Stain retains all rights
+to Satisfactory and its assets; this project is not affiliated with or endorsed by them.
 
 ## Licence
 
-None — this is a private project, all rights reserved by default. **No copyleft licence reaches this
-repository.** A GPL-3.0 save parser was vendored here until it was replaced by `pioneersav` and
-deleted; the agreement between the two, measured leaf for leaf across every projection key of all 31
-saves it could read, is banked as digests in `tests/fixtures/vendor_parity.json` and replayed by
-`tests/test_savparse_parity.py`, because deleting the library destroyed the ability to re-run the diff.
+**[PolyForm Noncommercial 1.0.0](LICENSE).** Free to use, modify and share for any
+noncommercial purpose, provided the required notice travels with copies:
 
-That was not the only borrowing, and the other one is settled too. The region layer's geometry used to
-be traced from [satisfactory.wiki.gg](https://satisfactory.wiki.gg)'s Biome Map image, **CC BY-SA 4.0**,
-on the belief that the game shipped no biome geometry. It does:
-`Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel` is an `FGMapAreaTexture` whose
-4096² of palette indices resolve to `UFGMapArea` assets, each stating its own display name.
-`data/region_names.json` is derived from that, `data/satisfactory_regions.json` is deleted, and no
-share-alike obligation reaches this repository. Same posture as every other derived table here: facts,
-coordinates and identifiers read out of the reader's own install, and no artwork shipped.
+> Required Notice: Copyright Lukas Szimtenings (https://github.com/lukszi/SatisfactoryMCP)
 
-The resource-node layer is first-party the same way. `data/world_resource_nodes.json` is the node
-actors of the game's own `Persistent_Level.umap` — resource, purity, position, and the
-satellite→core link every `BP_FrackingSatellite` export states as an `mCore` reference, 118 of
-118 — read from the installed container by `tools/gen_world_resource_nodes.py`, and
-`data/resource_nodes.json` is a projection of it. Two third-party tables preceded it and both are
-deleted with their retirements recorded rather than tidied away: a GPL SCIM-derived well grouping
-(replaced by the `mCore` read, byte-identical output), then the MIT-licensed node set vendored from
-[rockfactory/satisfactory-logistics](https://github.com/rockfactory/satisfactory-logistics)
-(replaced by this extraction — same 626-actor composition, purity and resource equal everywhere
-comparable, and every position difference accounted for as the game moving nodes after that set's
-2024 build; the parity record is `_meta.retired_mit_table` in the world table, pinned by tests).
+Commercial use requires a separate licence from the owner — get in touch via GitHub
+([@lukszi](https://github.com/lukszi)). The licence covers this repository's code, tooling and
+extracted tables; it cannot and does not grant anyone rights over the game's content.
 
-The web map compiles Leaflet (BSD-2-Clause) into its bundle at build time, and the bundle is not
-committed — `static/` is gitignored, so the repository redistributes no compiled dependency at all.
-Every build copies Leaflet's licence text from the npm package to `static/vendor/LEAFLET-LICENSE`
-beside the bundle, so a built page carries its own notices for anyone who ever distributes one.
+The web map compiles [Leaflet](https://leafletjs.com/) (BSD-2-Clause) into its bundle at build
+time from the npm package. The bundle is not committed, so the repository redistributes no
+compiled dependency; every build copies Leaflet's licence text to
+`static/vendor/LEAFLET-LICENSE` beside the bundle, so a built page carries its own notices.
