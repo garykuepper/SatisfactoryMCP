@@ -62,6 +62,14 @@ export interface FloorMark {
   /** The two ends of this piece in game metres, so a connector's glyph can be put on the
    *  end that is actually on this floor. `[x, y, z]`, the payload's own order. */
   ends?: [import("./geometry").Point3M, import("./geometry").Point3M];
+  /** Where each end COUNTS AS STANDING for the floor filter, against `ends`, which is where
+   *  it is drawn. A wire's endpoint is a connector -- 7 m over a Mk1 pole's base, 24 m over
+   *  a tower's -- so judging storeys by `ends` misfiles cables around 1-2 m mezzanine
+   *  half-bands. Where the server names the pole an end terminates at, its entry here is
+   *  that pole's own base; where it does not (a machine-fed end, or one of the 40 the
+   *  projection cannot name), it is the endpoint itself, which keeps the old behaviour
+   *  exactly. Only wires carry it; absent means "judge by ends", the pre-join rule. */
+  anchors?: [import("./geometry").Point3M, import("./geometry").Point3M];
   /** A piece's position in `/api/structures`, which is what `deck_rows` indexes. */
   row?: number;
   /** Where it stands, in game metres. For storage, which no band lists, and for the

@@ -180,24 +180,30 @@ def test_the_crate_census_extract_and_the_endpoint_cite(proj):
 
 
 def test_a_crate_is_not_counted_as_a_container_or_as_a_building(proj):
-    """The three keys schema 18 deliberately did NOT touch, pinned so a merge cannot happen.
+    """Two keys schema 18 did not touch, and the bucket schema 19 finally moved.
 
     A crate is not in ``storage`` (schema 15 joins a written-down list of container classes
-    and ``BP_Crate_C`` is not one), not in ``building_counts`` (it is not a ``Build_`` actor
-    and the extractor ``continue``s past it before the tally), and its contents are still in
-    ``inventories["machine"]`` where the schema-11 bucket rule put them -- which is what lets
-    the parity bank go on comparing that key unfiltered. All three are the reasons ``crates``
-    is its own key; a change to any of them is a schema decision, not a refactor.
+    and ``BP_Crate_C`` is not one) and not in ``building_counts`` (it is not a ``Build_``
+    actor and the extractor ``continue``s past it before the tally). Its contents sat in
+    ``inventories["machine"]`` through schema 18 -- this test used to pin them there,
+    precisely so that moving them would be a visible decision -- and schema 19 made the
+    decision: a dead pioneer's pockets are recoverable stock, not a machine buffer, so they
+    sum into ``inventories["crate"]``, and the parity bank compares the old shape through
+    ``_unfix_19``. Pinned as an EXACT match: the bucket is the crates' own contents summed,
+    nothing more, so a splitter or a drop pod leaking into it fails here rather than
+    inflating a number quietly.
     """
     assert not any("Crate" in row["cls"] for row in proj["storage"])
     assert not any("Crate" in cls for cls in proj["building_counts"])
-    machine = proj["inventories"]["machine"]
+    assert set(proj["inventories"]) == {"player", "storage", "machine", "crate"}
+    summed: dict[str, float] = {}
     for crate in proj["crates"]:
         for item, amount in crate["items"]:
-            assert machine.get(item, 0) >= amount, (
-                f"{item} left the machine bucket -- schema 18 is additive, and moving it is "
-                "a correction that owes test_savparse_parity an _unfix"
-            )
+            summed[item] = summed.get(item, 0) + amount
+    assert proj["inventories"]["crate"] == summed, (
+        "inventories['crate'] must be exactly the crates' own stacks -- more means another "
+        "owner leaked into the bucket, less means a crate the bucket rule cannot see"
+    )
 
 
 def test_the_reference_projection_reports_no_losses(proj):
@@ -208,4 +214,4 @@ def test_the_reference_projection_reports_no_losses(proj):
     file rather than just one line of it. See ``core/saveio/extract._drop_notes``.
     """
     assert proj["warnings"] == []
-    assert proj["schema_version"] == 18
+    assert proj["schema_version"] == 19

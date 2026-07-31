@@ -129,7 +129,9 @@ export type PoleRow = Schema["PoleRow"];
 /** Its ends are `[number, number, number]` rather than `number[]`, because the router spells
  *  them as tuples and typegen carries `prefixItems` through -- so `w.a_m[2]` needs no length
  *  guard. `from`/`to` are null for the 40 endpoints of 2,594 that land on an actor no record
- *  list names. */
+ *  list names. `a_pole`/`b_pole` are each end's pole as an index into the same payload's
+ *  `poles`, and null wherever the end terminates at anything else -- the join floor mode
+ *  anchors wires by, because an endpoint is a connector 7 m above its pole's base. */
 export type WireRow = Schema["WireRow"];
 
 export type PowerResponse = Body<"PowerResponse">;

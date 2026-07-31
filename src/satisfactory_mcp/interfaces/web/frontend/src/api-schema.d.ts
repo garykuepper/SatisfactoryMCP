@@ -570,9 +570,10 @@ export interface paths {
          *     are not lost: they are on their own machine's row under ``buffers``, where they mean "this
          *     smelter is starved" rather than "the player owns this".
          *
-         *     **Two record shapes, told apart by ``kind``.** A solid container reports ``items`` (biggest
-         *     first, resolved to display names, truncated with a ``more`` count), ``slots`` and
-         *     ``total``; a fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3`` and ``fill``.
+         *     **Two record shapes, told apart by ``kind``.** A solid container reports ``items``
+         *     (biggest first, resolved to display names, the whole box -- ``more`` is 0 on every row),
+         *     ``slots`` and ``total``; a fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3``
+         *     and ``fill``.
          *
          *     **The fluid's identity comes off the plumbing, not off the buffer.** A buffer stores a bare
          *     ``mFluidBox`` float and never names its contents, so the name is taken from the
@@ -631,6 +632,15 @@ export interface paths {
          *     drop pod, the AWESOME Sink -- and those come out ``null`` rather than as the engine id the
          *     graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
          *     it only about half the time, so the projection measures which end is which.
+         *
+         *     **``a_pole`` and ``b_pole`` join each end to its pole, where its pole is in ``poles``.**
+         *     The endpoints above are connector positions -- 7 m over a Mk1's base, 24 m over a tower's
+         *     -- so a client that files a wire on a storey by endpoint height puts it a storey high
+         *     wherever the storeys are shorter than the connector offset, which the reference world's
+         *     1-2 m mezzanine half-bands are. The join needs no new projection field: it is
+         *     ``graph["power"]``'s own endpoint actors, carried since schema 11, met with the pole
+         *     table's ``actor_index`` column, and it is nullable because most machine-fed ends and all
+         *     40 unnamed ones terminate at no pole at all.
          *
          *     **A pole carries its connection count**, off the edge list rather than out of a second copy
          *     of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
@@ -815,9 +825,10 @@ export interface paths {
          *     show. A crate is not a buildable, so it was never in ``building_counts``; it runs no
          *     recipe and draws no power, so it is not a machine; it is an ordinary actor, so it is not
          *     a lightweight piece; and ``/api/storage`` joins a written-down list of container classes
-         *     that ``BP_Crate_C`` is not on, deliberately. The only trace of one has been its contents
-         *     summed anonymously into ``inventories["machine"]`` alongside the smelter buffers, where
-         *     they read as material that exists and cannot be spent.
+         *     that ``BP_Crate_C`` is not on, deliberately. Until schema 19 the only trace of one was
+         *     its contents summed anonymously into ``inventories["machine"]`` alongside the smelter
+         *     buffers, where they read as material that exists and cannot be spent; they are
+         *     recoverable stock, and they sum into their own ``inventories["crate"]`` bucket now.
          *
          *     **Three kinds, and the third is an answer.** ``death`` is where a pioneer died,
          *     ``dismantle`` is what would not fit in a full inventory, and ``none`` is a crate that
@@ -833,9 +844,10 @@ export interface paths {
          *     whose, and a field that guessed would arrive indistinguishable from a reading.
          *
          *     **Contents are the crate's own**, joined from the inventory component it owns, resolved
-         *     to display names and truncated with a count -- the join and the truncation
-         *     ``/api/storage`` makes, at a higher limit, because a death crate holds a whole pioneer's
-         *     pockets rather than one deliberate kind of thing.
+         *     to display names and sent WHOLE -- the join ``/api/storage`` makes, and like it no longer
+         *     truncated: the popup is an inventory grid measured to hold the fullest crate this machine
+         *     has ever cut, 38 kinds in 55 slots, so a cap justified as "what a popup can show" had
+         *     nothing left to justify it. ``more`` is 0 on every row and says so.
          *
          *     Tiny: 2 rows on the reference world against ``/api/storage``'s 151, sorted by kind so a
          *     client's first row is the interesting one. Sent in one payload, ungrouped, the posture
@@ -1113,9 +1125,9 @@ export interface components {
          *     same type. Sharing it would mean moving it to ``serial.py`` -- a router may not import
          *     another router, and rightly -- which would put a row shape into the module that holds
          *     the unit conversions, on the strength of a coincidence: these two are alike because both
-         *     are a stack, and they are filled by two expressions with two different truncation limits.
-         *     ``Region`` is in ``serial.py`` because ONE function builds it for two routers, which is
-         *     the case this is not.
+         *     are a stack, and they are filled by two different expressions in two files. ``Region``
+         *     is in ``serial.py`` because ONE function builds it for two routers, which is the case
+         *     this is not.
          *
          *     ``count`` is an ``int``: a stack amount is a number of items, and declaring it ``float``
          *     would validate 15 into 15.0 and rewrite every row.
@@ -1147,8 +1159,12 @@ export interface components {
          *
          *     ``slots`` is ``int | None`` on ``StorageSolid``'s terms: it is the inventory component's
          *     own slot count forwarded whole, and a projection that wrote none sends null rather than
-         *     0. ``more``, ``item_kinds`` and ``total`` are counts and are ints -- ``more`` is 0 rather
-         *     than null when the truncation left nothing off.
+         *     0. ``more``, ``item_kinds`` and ``total`` are counts and are ints. ``more`` is ALWAYS 0
+         *     from this server: the twelve-kind cap it once counted the remainder of is gone -- the
+         *     popup renders an inventory grid measured to hold the fullest crate ever seen on this
+         *     machine, 38 kinds, without overflow -- and the field stays because it is the row's own
+         *     statement that nothing was left off, and because the client's "+N more" tile keys on it
+         *     and must keep working against any server that still truncates.
          */
         CrateRow: {
             /** Instance Leaf */
@@ -2187,8 +2203,12 @@ export interface components {
          *
          *     ``slots`` is ``int | None``: it is the inventory component's own slot count forwarded
          *     whole, and a row the projection wrote no ``slots`` for sends null rather than 0.
-         *     ``total`` and ``item_kinds`` are counts of what the row holds and are ints; ``more`` is
-         *     how many kinds the truncation left off and is 0 rather than null when it left off none.
+         *     ``total`` and ``item_kinds`` are counts of what the row holds and are ints. ``more`` is
+         *     ALWAYS 0 from this server -- the six-kind cap it once counted the remainder of is gone,
+         *     because the popup renders an inventory grid measured to hold far fuller crates than any
+         *     box here, and a container's kinds are bounded by its own 24 or 48 slots anyway. The field
+         *     stays because it is the row's statement that nothing was left off, and because the
+         *     client's "+N more" tile keys on it and must keep working against a server that truncates.
          */
         StorageSolid: {
             /** Instance Leaf */
@@ -2361,6 +2381,10 @@ export interface components {
             from: string | null;
             /** To */
             to: string | null;
+            /** A Pole */
+            a_pole: number | null;
+            /** B Pole */
+            b_pole: number | null;
             /** Span M */
             span_m: number;
         };

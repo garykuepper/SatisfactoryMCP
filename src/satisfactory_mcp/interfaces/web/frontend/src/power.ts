@@ -14,9 +14,11 @@
  * the FLOOR those passes size it against: see ROUTE_FLOOR_PX.
  *
  * IT IS ALSO THE ONE NETWORK FLOOR MODE CANNOT LOOK UP. `/api/floors` groups belt chains and
- * pipe rows and has never carried a wire, so `floors.ts` places this layer geometrically off
- * the endpoint heights below. That is why every piece drawn here carries a `_floor` mark and
- * why the fetch says `refilters: true`; both are stated at the bottom of this file.
+ * pipe rows and has never carried a wire, so `floors.ts` places this layer geometrically --
+ * off each end's POLE where the payload names one (`a_pole`/`b_pole`, the wire-to-pole join),
+ * and off the endpoint height where it does not. That is why every piece drawn here carries a
+ * `_floor` mark and why the fetch says `refilters: true`; both are stated at the bottom of
+ * this file, and the anchor rule at `anchors` in drawPower.
  *
  * A WIRE IS DRAWN AS A STRAIGHT CHORD, and in game it is a catenary: it sags. Nothing in the
  * save records the sag -- `mCachedLength` is the same straight chord between the two endpoints,
@@ -303,9 +305,29 @@ export function drawPower(data: PowerResponse): void {
 
   /* Both endpoints, in the payload's own [x, y, z] order, which is the shape the floor
    * filter reads a two-ended piece by. A wire is the only thing in this layer that can be on
-   * two storeys at once, and the z of each end is the whole of the evidence for which. */
+   * two storeys at once. */
   function ends(w: WireRow): [Point3M, Point3M] {
     return [w.a_m, w.b_m];
+  }
+
+  /* Where each end counts as STANDING, for the floor filter -- distinct from where it is
+   * drawn, and the distinction is the mezzanine fix. An endpoint is a connector position, 7 m
+   * over a Mk1 pole's base and 24 m over a tower's, so a filter reading heights off `ends`
+   * files a cable one storey up wherever the storeys are shorter than the connector offset --
+   * measured on the reference world's 1-2 m mezzanine half-bands, not guessed. The server now
+   * says which POLE each end terminates at (`a_pole`/`b_pole`, an index into this same
+   * payload's poles), so an end with a pole is anchored at the pole's own base -- the exact
+   * point the pole mark itself is filtered by, which is what makes a wire and the pole it
+   * plugs into land on the same storey by construction. An end with no pole (a machine-fed
+   * one, or one of the 40 the projection cannot name) keeps its endpoint, which keeps the old
+   * height join exactly there. */
+  function anchor(at: Point3M, pole: number | null, poles: PoleRow[]): Point3M {
+    var p = pole === null ? undefined : poles[pole];
+    return p ? [p.x_m, p.y_m, p.z_m] : at;
+  }
+
+  function anchors(w: WireRow): [Point3M, Point3M] {
+    return [anchor(w.a_m, w.a_pole, data.poles), anchor(w.b_m, w.b_pole, data.poles)];
   }
 
   data.wires.forEach(function (w) {
@@ -314,7 +336,7 @@ export function drawPower(data: PowerResponse): void {
       weight: weight,
       opacity: WIRE_OPACITY,
     });
-    core._floor = { power: "wire", ends: ends(w) };
+    core._floor = { power: "wire", ends: ends(w), anchors: anchors(w) };
     core.bindPopup(wirePopup(w)).addTo(group);
   });
 
@@ -326,10 +348,11 @@ export function drawPower(data: PowerResponse): void {
       interactive: false,
     });
     cased._widen = WIRE_CASING_PX;
-    // The same ends as the core it sits under, so the filter reaches the same verdict about
-    // the two without having to be told they belong together. `casing` rather than `wire`
-    // is what keeps it from earning a second connector glyph on top of its core's.
-    cased._floor = { power: "casing", ends: ends(w) };
+    // The same ends and anchors as the core it sits under, so the filter reaches the same
+    // verdict about the two without having to be told they belong together. `casing` rather
+    // than `wire` is what keeps it from earning a second connector glyph on top of its
+    // core's.
+    cased._floor = { power: "casing", ends: ends(w), anchors: anchors(w) };
     cased.addTo(group);
   });
 
@@ -389,9 +412,9 @@ export function drawPower(data: PowerResponse): void {
  * about a wire -- but it was answering the wrong question. What a reader in floor mode sees is
  * a factory's storey, and the cables running through that storey are part of it; leaving them
  * unfiltered drew every wire of every floor at once over one deck's plan. floors.ts now places
- * this layer geometrically, off the endpoint heights the payload already carries, so a redraw
- * during floor mode owes the filter a pass exactly as the belts and the pipes do. See `power`
- * in FloorMark and the power branch in applyFilter. */
+ * this layer geometrically -- by each end's pole where the payload names one, by the endpoint
+ * height where it does not -- so a redraw during floor mode owes the filter a pass exactly as
+ * the belts and the pipes do. See `power` in FloorMark and the power branch in applyFilter. */
 registerFetch<PowerResponse>({
   wave: "static",
   rank: 50,

@@ -60,6 +60,32 @@ def test_a_wire_says_what_is_at_each_end_and_how_far_apart_they_are(client):
     assert sum(p["connections"] for p in body["poles"]) == 1_991
 
 
+def test_a_wire_joins_each_end_to_the_pole_it_terminates_at(client):
+    """``a_pole``/``b_pole``: the same join ``connections`` is counted off, sent per end.
+
+    The reason the join exists is a floor-mode measurement: an endpoint is a CONNECTOR, 7 m
+    over a Mk1's base and 24 m over a tower's, so a client filing wires on storeys by
+    endpoint height misplaces them around 1-2 m mezzanine half-bands. The pole's own row is
+    the storey the wire serves, and the index has to point at the pole actually under the
+    endpoint -- which is what the planar check pins, since every measured connector offset
+    is vertical (poles exactly, towers within their own 12 m platform).
+    """
+    body = client.get("/api/power").json()
+    poles = body["poles"]
+    ends = [
+        (w[key + "_m"], w[key + "_pole"]) for w in body["wires"] for key in ("a", "b")
+    ]
+    joined = [(at, ix) for at, ix in ends if ix is not None]
+    # The same 1,991 the connection census counts: two numbers derived from one edge list
+    # through two code paths, so a join counted off the wrong end moves exactly one of them.
+    assert len(joined) == 1_991
+    assert len(ends) - len(joined) == 603, "machine-fed ends carry null, not a guess"
+    for at, ix in joined:
+        pole = poles[ix]
+        gap = math.hypot(at[0] - pole["x_m"], at[1] - pole["y_m"])
+        assert gap < 15, (at, ix, "the joined pole does not stand under its endpoint")
+
+
 def test_a_pole_nothing_is_wired_to_reports_zero_rather_than_nothing(client):
     """2 of the reference world's 701 -- tower platforms built and never strung.
 
@@ -123,6 +149,10 @@ def test_a_wire_with_no_geometry_costs_that_span_and_not_the_join(game):
     assert (wire["from"], wire["to"]) == ("Power Pole Mk.1", "Power Pole Mk.1")
     assert wire["span_m"] == 3.0
     assert [p["connections"] for p in body["poles"]] == [2, 1]
+    # And the pole join survives the same hole: the surviving wire is edge [0, 2], whose
+    # actors are the FIRST and SECOND rows of ``poles`` -- a join renumbered by the null
+    # row, or read off the wrong list, lands somewhere else.
+    assert (wire["a_pole"], wire["b_pole"]) == (0, 1)
 
 
 def test_power_takes_the_save_and_world_parameters_and_404s_on_an_unreadable_one(game):

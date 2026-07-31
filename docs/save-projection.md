@@ -799,6 +799,38 @@ reference world holds 2 — a dismantle crate of 15 Iron Plate, 4 Encased Indust
 and 2 Rotors in 4 slots, and one of unknown kind holding 17 Coal and 7 Concrete — and the pair
 is the whole argument for `kind` existing: one says what it is and one cannot.
 
+### 6.14 Schema 19 — a crate's contents are their own inventory bucket
+
+Schema 19, and the second **correcting** bump after 16 — it adds no key, it moves values
+inside one: `inventories` gains a fourth bucket, `crate`, and the death- and dismantle-crate
+contents that had summed into `inventories["machine"]` since schema 11 sum into it instead.
+
+The schema-11 bucket rule files any component named `Inventory` on an owner that is neither a
+player nor a storage class with the machine buffers, and a crate is exactly such an owner — so
+a dead pioneer's pockets counted as material that *exists and cannot be spent*, anonymously,
+beside the smelter buffers. Schema 18 gave crates their own `crates` key and deliberately left
+the bucket alone (moving a banked value was a separate decision from being able to see a crate
+at all); schema 19 is that decision made. The bucket test is membership of `CRATE_CLASSES`
+read off the owner's instance name plus the case-folded role `inventory` — the same class list
+and the same case fold the `crates` key's own join uses, so the two cannot disagree about what
+a crate is. The player pawn and the crashed drop pods, which also own a component by this
+name, land where they always did (`player` and `machine` respectively).
+
+What the bucket **means**: recoverable stock lying on the ground. It is deliberately in
+*neither* aggregate — `stock()` still excludes it (a crate deletes itself when emptied and
+exists because something went wrong; a build plan must not quietly depend on walking back to
+where you died), and `machine_buffers()` no longer includes it, which makes that name honest
+for the first time. On the reference save the move is 48 items over 6 classes — the two
+crates' contents exactly, verified item for item against the `crates` rows.
+
+Because `inventories` is a banked schema-11 key, 19 owes the parity filter a reconstruction:
+`_unfix_19` in `tests/test_savparse_parity.py` folds `crate` back into `machine` (a pure
+integer addition — cheaper than `_unfix_16`'s re-routing, and with no cancellation blindness,
+since nothing is subtracted) so the banked digests still compare on all 31 saves. A pickle
+written under 18 disagrees about `machine` and lacks `crate`, so the cache key had to move
+with the number, as every correcting bump's must.
+
+
 ---
 
 ## 13a. Replacing the vendored parser

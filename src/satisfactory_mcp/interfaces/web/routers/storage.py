@@ -2,9 +2,8 @@
 
 The endpoint that answers "where did I put the steel" rather than "how much steel have I
 got" -- the projection has been able to answer the second since schema 11 and could never
-answer the first. Its own file because the two record shapes behind the one row shape, and
-the truncation rule that keeps a popup readable, are a concern nothing else on this surface
-shares.
+answer the first. Its own file because the two record shapes behind the one row shape are a
+concern nothing else on this surface shares.
 
 WARNING: the function name is the operation_id -- rename it and the committed schema
 churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
@@ -40,17 +39,6 @@ router = APIRouter(prefix="/api")
 
 
 # -------------------------------------------------------------------- storage
-
-
-#: How many kinds of thing a storage row spells out before it starts counting instead.
-#:
-#: A container has 24 or 48 slots and can in principle hold one kind of thing per slot. In
-#: practice the reference world's containers hold one or two kinds each and only a handful hold
-#: more -- the busiest, a catch-all box, holds 12 -- so this truncation fires rarely and exists
-#: for exactly that box, which would otherwise render a popup taller than the window. The row
-#: says how many it left out rather than trailing off: "and 6 more" is information, and a list
-#: that simply stops is a bug the reader has to notice.
-STORAGE_ITEMS_SHOWN = 6
 
 
 class StoredItem(TypedDict):
@@ -89,8 +77,12 @@ class StorageSolid(TypedDict):
 
     ``slots`` is ``int | None``: it is the inventory component's own slot count forwarded
     whole, and a row the projection wrote no ``slots`` for sends null rather than 0.
-    ``total`` and ``item_kinds`` are counts of what the row holds and are ints; ``more`` is
-    how many kinds the truncation left off and is 0 rather than null when it left off none.
+    ``total`` and ``item_kinds`` are counts of what the row holds and are ints. ``more`` is
+    ALWAYS 0 from this server -- the six-kind cap it once counted the remainder of is gone,
+    because the popup renders an inventory grid measured to hold far fuller crates than any
+    box here, and a container's kinds are bounded by its own 24 or 48 slots anyway. The field
+    stays because it is the row's statement that nothing was left off, and because the
+    client's "+N more" tile keys on it and must keep working against a server that truncates.
     """
 
     instance_leaf: str
@@ -169,9 +161,11 @@ def _storage_row(st: WorldState, row: dict) -> StorageSolid | StorageFluid:
     151 rows would be inviting a client to print it.
 
     ``items`` is resolved against the docs dump like every other class here, so a popup never
-    shows a reader a ``Desc_…_C``, and it is TRUNCATED with a count of the remainder: the whole
-    list is in ``item_kinds`` and ``total`` either way, so a client that wants everything has
-    the numbers to say so honestly.
+    shows a reader a ``Desc_…_C``, and it is the WHOLE box. The six-kind truncation that used
+    to fire on the busiest container -- a catch-all box holding 12 kinds -- was justified as
+    "what a popup can show without scrolling", which the inventory grid the popup draws now
+    made false: it was measured holding 38 kinds without overflow. A container cannot exceed
+    its own 48 slots, so the cap is removed rather than raised, and ``more`` is 0 on every row.
 
     ``fill`` is the one figure here that needs the dump rather than the save. A buffer's
     contents are a bare float of cubic metres, and 1,730.6 is not a reading until it is put
@@ -222,14 +216,15 @@ def _storage_row(st: WorldState, row: dict) -> StorageSolid | StorageFluid:
             "name": st.game.item_name(str(e[0])),
             "count": e[1],
         }
-        for e in raw[:STORAGE_ITEMS_SHOWN]
+        for e in raw
     ]
     out.update(
         {
             "kind": "solid",
             "items": items,
-            # What was left off the list above, so a client can say "and 3 more" rather than
-            # showing six of nine and implying nine is six.
+            # Always 0 now that the list above is the whole box; kept as arithmetic rather
+            # than a literal so any future bound put back on ``items`` makes this the count
+            # of what it left off again, automatically.
             "more": max(0, len(raw) - len(items)),
             "item_kinds": len(raw),
             "total": sum(e[1] for e in raw if isinstance(e[1], (int, float))),
@@ -263,9 +258,10 @@ def storage(request: Request, save: str | None = None, world: str | None = None)
     are not lost: they are on their own machine's row under ``buffers``, where they mean "this
     smelter is starved" rather than "the player owns this".
 
-    **Two record shapes, told apart by ``kind``.** A solid container reports ``items`` (biggest
-    first, resolved to display names, truncated with a ``more`` count), ``slots`` and
-    ``total``; a fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3`` and ``fill``.
+    **Two record shapes, told apart by ``kind``.** A solid container reports ``items``
+    (biggest first, resolved to display names, the whole box -- ``more`` is 0 on every row),
+    ``slots`` and ``total``; a fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3``
+    and ``fill``.
 
     **The fluid's identity comes off the plumbing, not off the buffer.** A buffer stores a bare
     ``mFluidBox`` float and never names its contents, so the name is taken from the

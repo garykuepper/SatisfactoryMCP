@@ -74,21 +74,22 @@ def test_a_crate_says_which_kind_it_is_and_the_third_kind_is_an_answer(client):
     ]
 
 
-def test_a_full_death_crate_is_truncated_with_a_count_of_what_it_left_out(game):
-    """Twelve kinds shown, and the row says how many it did not show.
+def test_a_full_death_crate_is_sent_whole_and_says_nothing_was_left_out(game):
+    """All 38 kinds shown, and ``more`` says 0 -- the cap is gone and this pins its absence.
 
-    A container holds one or two kinds; a death crate holds a pioneer's pockets, and the
-    fullest one on this machine holds 38 kinds in 55 slots. The truncation is the part worth
-    pinning, because a popup that showed twelve of thirty-eight and stopped would read as a
-    crate holding twelve things -- ``more``, ``item_kinds`` and ``total`` are what let a
-    client say otherwise, and all three are of the WHOLE crate.
+    There used to be a twelve-kind truncation here, justified as "what a popup can show
+    without scrolling"; the popup renders an inventory grid now, measured to hold exactly
+    this crate -- the fullest one on this machine, 38 kinds in 55 slots -- without overflow,
+    so the whole list goes out. ``more`` stays in the row at its honest value, because the
+    client's "+N more" tile keys on it and a server that starts truncating again owes it a
+    real count rather than a removed field.
     """
     items = [[f"Desc_Thing{i:02d}_C", 100 - i] for i in range(38)]
     body = _crates_body(_app({"crates": [_crate(items=items, slots=55)]}, game))
     row = body["crates"][0]
-    assert len(row["items"]) == 12
+    assert len(row["items"]) == 38, "the whole crate, not the biggest twelve"
     assert row["item_kinds"] == 38
-    assert row["more"] == 26
+    assert row["more"] == 0, "nothing left off, and the row says so rather than dropping the field"
     assert row["total"] == sum(100 - i for i in range(38))
     assert row["slots"] == 55
     counts = [i["count"] for i in row["items"]]

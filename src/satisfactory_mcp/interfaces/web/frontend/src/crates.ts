@@ -138,10 +138,12 @@ function cratePopup(c: CrateRow): Row[] {
    * one question wherever it is asked, and a crate that answered it in a different shape
    * would be the map claiming the two are different sorts of fact.
    *
-   * The truncation is the server's -- `/api/crates` sends the biggest twelve kinds, against
-   * `/api/storage`'s six, because a container holds one or two kinds the player chose and a
-   * death crate holds whatever was in a pioneer's pockets: 38 kinds in 55 slots on the
-   * fullest one this machine has cut. Twelve fills the grid's first two rows exactly. */
+   * The whole crate, every kind: the server's old twelve-kind cap was justified as what a
+   * popup could show without scrolling, and this grid was measured holding all 38 kinds of
+   * the fullest crate this machine has cut -- a whole pioneer's pockets in 55 slots -- at
+   * 381x568 px without overflow, so the cap is gone and `more` arrives as 0. contentsRows
+   * still honours a non-zero `more` with its "+N" tile, as the net under any server that
+   * truncates again. */
   contentsRows(c.items || [], c.more || 0).forEach(function (row) {
     rows.push(row);
   });

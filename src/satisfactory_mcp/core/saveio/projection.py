@@ -41,7 +41,12 @@ from .. import atomic
 #: each one. Additive and its own key rather than more ``storage`` rows: a container is
 #: infrastructure the player built and a crate is a situation the player got into, and a
 #: pickle written under 17 simply has no such key rather than disagreeing about one.
-SCHEMA_VERSION = 18
+#: 19 is the second CORRECTING bump, and it corrects the same key 16 did: a crate's contents
+#: had counted into ``inventories["machine"]`` since schema 11 -- a dead pioneer's pockets
+#: filed with the smelter buffers, material that exists and cannot be spent -- and they are
+#: recoverable stock, so they move to their own ``inventories["crate"]`` bucket. A pickle
+#: written under 18 disagrees about ``machine`` and lacks ``crate``, so it must miss.
+SCHEMA_VERSION = 19
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
 _MEM_MAX = 3
