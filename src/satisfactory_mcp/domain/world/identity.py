@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 
+from ...core.text import ago, stamp
+
 __all__ = ["SaveIdentity"]
 
 
@@ -28,14 +30,30 @@ class SaveIdentity:
     @property
     def age_note(self) -> str:
         """Human-readable provenance. Always shown: autosaves rotate every ~5 min
-        and can catch the factory mid-restructure."""
+        and can catch the factory mid-restructure.
+
+        The mtime rides in every response since a client was twice told "nothing is
+        here" by an autosave hours behind the live session -- the file's age is the
+        one number that would have said so, and it was on disk the whole time. The
+        autosave clause is a WARNING, not decoration: a manual save is a moment the
+        player chose, an autosave is whenever the timer last fired, so only the
+        latter earns "disk may lag the world".
+        """
         h = self.header
-        kind = "autosave" if "autosave" in h.get("filename", "").lower() else "manual save"
+        is_autosave = "autosave" in h.get("filename", "").lower()
+        kind = "autosave" if is_autosave else "manual save"
         hours = (h.get("play_duration_s") or 0) / 3600
-        return (
+        written = stamp(h.get("mtime_ns"))
+        when = f", written {written} ({ago(h.get('mtime_ns'))})" if written else ""
+        note = (
             f"{h.get('filename', '?')} ({kind}, world {h.get('session_name', '?')!r}, "
-            f"{hours:.0f}h played, saveVersion {h.get('save_version')})"
+            f"{hours:.0f}h played, saveVersion {h.get('save_version')}{when})"
         )
+        if is_autosave:
+            note += (
+                " -- the game writes autosaves periodically, so disk may lag the live world"
+            )
+        return note
 
     @cached_property
     def players(self) -> list[dict]:

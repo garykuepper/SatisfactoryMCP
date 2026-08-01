@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from .... import config
 from ....core.saveio import projection as proj
+from ....core.text import ago, stamp
 from ....presenters.text import primitives as render
 from ..app import Limit, _state, mcp
 
@@ -24,19 +25,27 @@ def list_worlds() -> str:
     if not worlds and not unsupported:
         return f"no saves found under {config.saves_root()}"
     rows = []
+    autosave_newest = False
     for w in worlds:
         newest = w.newest
+        autosave_newest = autosave_newest or "autosave" in newest["filename"].lower()
         rows.append(
             (
                 w.session_name,
                 len(w.saves),
                 f"{w.max_play_duration_s / 3600:.0f}h",
                 newest["filename"],
+                f"{stamp(newest.get('mtime_ns'))} ({ago(newest.get('mtime_ns'))})",
                 newest["save_version"],
                 w.world_id,
             )
         )
     notes = []
+    if autosave_newest:
+        notes.append(
+            "a newest file above is an autosave -- the game writes autosaves "
+            "periodically, so disk may lag the live world"
+        )
     if unsupported:
         reasons: dict[str, int] = {}
         for u in unsupported:
@@ -47,7 +56,9 @@ def list_worlds() -> str:
         )
     return render.envelope(
         f"# {len(worlds)} world(s), {sum(len(w.saves) for w in worlds)} readable save(s)",
-        render.table(("world", "saves", "played", "newest", "saveVer", "world_id"), rows),
+        render.table(
+            ("world", "saves", "played", "newest", "written", "saveVer", "world_id"), rows
+        ),
         notes,
     )
 
