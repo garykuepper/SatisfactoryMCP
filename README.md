@@ -10,6 +10,13 @@ game install; nothing is hardcoded and nothing is fetched from the network.
 [DESIGN.md](DESIGN.md) is the spine — scope, decisions, data sources, architecture — and it
 indexes the deeper documents in [`docs/`](docs/).
 
+![The world map: factories, power wiring, resource nodes and region names over the game's own artwork](docs/media/map-overview.webp)
+
+| | |
+| --- | --- |
+| ![A factory platform up close: machines, storage, belt and pipe runs](docs/media/factory-closeup.webp) *One platform up close — machines, storage, belts, pipes, wires* | ![Floor view: one storey of a multi-floor factory, with per-floor machine counts](docs/media/floor-view.webp) *Floor view — pick a storey, see what stands on it* |
+| ![Terrain mode: hillshaded relief from the 1 m heightfield](docs/media/terrain-mode.webp) *Terrain mode — hillshade from a 1 m heightfield read out of the game* | ![A death crate's contents as an icon grid with game-extracted item icons](docs/media/crate-popup.webp) *A crate's contents, with icons extracted from the game's assets* |
+
 ## Highlights
 
 - **Planning that survives byproducts.** Every item balances as an equality, so a plan that
@@ -41,6 +48,22 @@ Plus MCP resources (`satisfactory://docs/summary`, `satisfactory://save/current`
 `satisfactory://map/regions`) and three prompts that surface as slash commands:
 `design_factory`, `plan_power_plant`, `pick_hard_drive`. The full surface, argument by
 argument, is in [docs/mcp-surface.md](docs/mcp-surface.md).
+
+### Try asking
+
+With the server registered, these are the kinds of questions it answers — phrased however you
+like; the model picks the tools:
+
+- *"Plan a factory for 20 Modular Frames per minute using only recipes I've actually unlocked —
+  what do I build, and how much power will it draw?"*
+- *"Which of my pending hard drives should I bank first, and why?"*
+- *"How healthy is my steel factory right now? Anything idle or starved?"*
+- *"Where am I standing, and what's the best spot near me for an aluminium setup?"*
+- *"What's still missing for Phase 3, and which factory is the bottleneck?"*
+- *"Trace my Reinforced Iron Plates upstream and tell me where the chain is thinnest."*
+- *"Compare the alternate recipes for Computers against what I'm running today."*
+- *"Show the coal powerplant on the map."* — answers with a link that opens the web map
+  zoomed to it.
 
 ## Requirements
 
@@ -179,7 +202,9 @@ tools/           data generators
 
 Every world table under `data/` is a first-party extraction: facts, coordinates and identifiers
 read out of a locally installed copy of the game by the generators in `tools/`, with no artwork
-shipped in this repository. Two third-party sources were used earlier and both retirements are
+shipped in this repository as data — the map's imagery is generated locally into a gitignored
+directory. (The README's screenshots above show that imagery through the running tool; they are
+documentation of this project, and the game content visible in them remains Coffee Stain's.) Two third-party sources were used earlier and both retirements are
 kept on the record rather than tidied away:
 
 - The region layer was once traced from satisfactory.wiki.gg's Biome Map (CC BY-SA 4.0). It is
