@@ -143,19 +143,49 @@ select {
   border: 1px solid var(--line);
 }
 
-/* The static half of the legend: the encodings no layer-control swatch can carry. */
+/* The static half of the legend: the encodings no layer-control swatch can carry. Closed it
+   is a two-word chip; open it is a card growing upward from the same bottom anchor, which is
+   what `position: fixed; bottom:` gives for free. Interactive now (a summary is a button),
+   so no pointer-events: none -- the map loses only the pixels under the chip itself. */
 #legend {
   position: fixed;
   left: 0.5rem;
   bottom: 2.2rem;
-  background: rgba(31, 34, 40, 0.85);
+  background: rgba(31, 34, 40, 0.92);
   border: 1px solid var(--line);
   border-radius: 3px;
   color: #9aa0a8;
-  padding: 2px 8px;
   font-size: 11px;
   z-index: 900;
-  pointer-events: none;
+}
+
+#legend summary {
+  cursor: pointer;
+  padding: 2px 8px;
+  user-select: none;
+  letter-spacing: 0.02em;
+}
+
+#legend[open] summary {
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+
+#legend summary:hover {
+  color: var(--ink);
+}
+
+.legend-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 10px;
+  padding: 5px 8px 6px;
+  max-width: 260px;
+}
+
+.legend-term {
+  color: var(--ink);
+  white-space: nowrap;
 }
 
 /* The colour swatch in a layer-control row: the legend half of the control. */

@@ -43,13 +43,24 @@
 
          Static, because these never change -- and kept in step with four files by hand:
          PURITY_RADIUS in palette.ts, the fillOpacity lines in markers.ts and placements.ts,
-         ROUTE_CHEVRONS in routes.ts, and POLE_RADIUS_PX / TOWER_CLASS in power.ts. -->
-    <div id="legend" title="how the markers encode what they know">
-      dot size = purity (impure &lt; normal &lt; pure) &middot; hollow dot = extractor on that
-      node &middot; hollow box = empty container &middot; dashed box = paused machine
-      &middot; belt ring = conveyor lift &middot; chevrons = which way the fluid goes
-      &middot; pole dot size = how many wires it carries &middot; pole ring = power tower
-    </div>
+         ROUTE_CHEVRONS in routes.ts, and POLE_RADIUS_PX / TOWER_CLASS in power.ts.
+
+         A details element and not a strip, so the map's bottom edge belongs to the map: the
+         closed state is a chip the size of its two words, and the open card grows upward off
+         the same bottom anchor. Native disclosure, no script -- this file stays static. -->
+    <details id="legend" title="how the markers encode what they know">
+      <summary>marker key</summary>
+      <div class="legend-rows">
+        <span class="legend-term">dot size</span><span>purity &mdash; impure &lt; normal &lt; pure</span>
+        <span class="legend-term">hollow dot</span><span>extractor on that node</span>
+        <span class="legend-term">hollow box</span><span>empty container</span>
+        <span class="legend-term">dashed box</span><span>paused machine</span>
+        <span class="legend-term">belt ring</span><span>conveyor lift</span>
+        <span class="legend-term">chevrons</span><span>which way the fluid goes</span>
+        <span class="legend-term">pole dot size</span><span>how many wires it carries</span>
+        <span class="legend-term">pole ring</span><span>power tower</span>
+      </div>
+    </details>
     <div id="err"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
