@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ... import config
 from .. import atomic
+from ..text import ago, stamp
 
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
 #: every pickle written by an older schema misses rather than being served without its new
@@ -231,17 +232,62 @@ def list_worlds(root: str | Path | None = None) -> tuple[list[World], list[dict]
     return ordered, list(scan.get("unsupported", ()))
 
 
+def _resolve_filename(p: Path) -> dict:
+    """A save named the way this server itself names saves: by FILENAME, not by path.
+
+    Every presenter prints ``header["filename"]`` -- the basename -- and the server's
+    working directory is nowhere near the save tree, so a client handing one of those
+    names straight back arrived here with ``is_file()`` false and was told "save not
+    found" about a file the same server had read seconds earlier. A name the server
+    prints must resolve.
+
+    The scan is taken FRESH on every miss rather than from any snapshot, because the
+    name most worth resolving is the manual save the player wrote moments ago. The
+    same filename under two account folders resolves to the newest copy, which is the
+    resolver's rule everywhere else; ``casefold`` because the filesystems these saves
+    live on do not distinguish case and the resolver must not be stricter than the disk.
+    """
+    scan = scan_saves()
+    needle = p.name.casefold()
+    matches = [
+        s for s in scan.get("saves", ()) if str(s.get("filename", "")).casefold() == needle
+    ]
+    if matches:
+        return max(matches, key=lambda s: s["mtime_ns"])
+    raise SaveError(
+        f"save not found: {p} -- not a path on disk, and no file named {p.name!r} among "
+        f"the {len(scan.get('saves') or [])} readable save(s) under {scan.get('root')}"
+    )
+
+
+def _ambiguous_world(name: str, matches: list[World]) -> str:
+    """The refusal for a display name two worlds share. Listing beats guessing:
+    picking the newest silently reads the WRONG factory with full confidence."""
+    lines = [
+        f"world name {name!r} matches {len(matches)} worlds -- refusing to pick one. "
+        "Pass the world_id instead (world= accepts it):"
+    ]
+    for w in matches:
+        newest = w.newest
+        lines.append(
+            f"  world={w.world_id!r}: {len(w.saves)} save(s), newest "
+            f"{newest.get('filename')} written {stamp(newest.get('mtime_ns'))} "
+            f"({ago(newest.get('mtime_ns'))}), saveVersion {newest.get('save_version')}"
+        )
+    return "\n".join(lines)
+
+
 def resolve_save(
     path: str | Path | None = None,
     world: str | None = None,
     prefer_manual: bool = False,
 ) -> dict:
-    """Pick a save header: explicit path, else newest in the named/only world."""
+    """Pick a save header: explicit path or filename, else newest in the named/only world."""
     if path:
         p = Path(path)
-        if not p.is_file():
-            raise SaveError(f"save not found: {p}")
-        return _run_sidecar([str(p), "--header-only"])["header"]
+        if p.is_file():
+            return _run_sidecar([str(p), "--header-only"])["header"]
+        return _resolve_filename(p)
 
     worlds, _ = list_worlds()
     if not worlds:
@@ -252,10 +298,15 @@ def resolve_save(
     chosen = None
     if world:
         needle = world.casefold()
-        for w in worlds:
-            if needle in (w.world_id.casefold(), w.session_name.casefold()):
-                chosen = w
-                break
+        # The id first, because it is unique by construction (worlds are grouped by
+        # it), so it is the handle the ambiguity refusal below can honestly offer.
+        chosen = next((w for w in worlds if w.world_id.casefold() == needle), None)
+        if chosen is None:
+            named = [w for w in worlds if w.session_name.casefold() == needle]
+            if len(named) > 1:
+                raise SaveError(_ambiguous_world(world, named))
+            if named:
+                chosen = named[0]
         if chosen is None:
             names = ", ".join(f"{w.session_name!r}" for w in worlds)
             raise SaveError(f"no world matching {world!r}; known worlds: {names}")
