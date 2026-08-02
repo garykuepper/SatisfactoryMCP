@@ -119,8 +119,20 @@ class SitePlan:
         return not (self.unassigned or self.contested or self.unsupplied or self.empty)
 
 
+#: The spellings ``exports`` already accepts for grid power, so a site can be keyed on
+#: the thing it exists to produce. A generator hall's product is MW -- the ``__MW__``
+#: sentinel, which is no process label -- and a caller who wrote ``{"hall": ["MW"]}``
+#: got an EMPTY site: 460 generators fell into `unassigned` and the 9,200 m3/min fuel
+#: interface, the one flow the whole multi-building design turns on, vanished from the
+#: table. Warning about the empty site was honest; refusing the obvious spelling was
+#: still the gap.
+_POWER_TOKENS = frozenset({"mw", "power", "__mw__"})
+
+
 def _matches(proc: dict, pattern: str) -> bool:
-    """Same widening match as ``exclude_recipes``: label, building name, building id.
+    """Same widening match as ``exclude_recipes``: label, building name, building id --
+    plus MW/power, which matches every generator, because power is a product a site can
+    be defined by.
 
     Deliberately the grammar a caller already knows. "Fuel-Powered Generator" names a
     synthesised process that has no recipe at all, which is why matching on the recipe
@@ -129,6 +141,11 @@ def _matches(proc: dict, pattern: str) -> bool:
     needle = pattern.strip().casefold()
     if not needle:
         return False
+    if needle in _POWER_TOKENS:
+        # Exact token, not substring: "power" as a substring would also claim every
+        # "Coal-Powered Generator" LABEL -- true but redundant -- and, worse, any future
+        # process whose label merely contains the word.
+        return proc.get("kind") == "generator"
     return any(
         needle in str(proc.get(field_) or "").casefold()
         for field_ in ("label", "building", "building_id", "recipe")
@@ -217,9 +234,10 @@ def partition(
 
     # A site that matched nothing, and a pattern that matched nothing. Both were silent,
     # and the silence cost a caller the entire fuel interface: they keyed a generator site
-    # on the item it produces (MW), which matches no process LABEL, so the site came back
-    # empty, its 460 generators landed in `unassigned`, and the one flow the whole
-    # multi-building design turns on was missing from the table.
+    # on the item it produces (MW), the site came back empty, its 460 generators landed in
+    # `unassigned`, and the one flow the whole multi-building design turns on was missing
+    # from the table. MW now matches generators (see `_POWER_TOKENS`), so this loudness is
+    # for the patterns that still hit nothing -- a typo, or a recipe this plan does not run.
     for site in out.sites:
         if site.machines == 0:
             out.empty.append(site.name)
@@ -232,8 +250,8 @@ def partition(
         out.notes.append(
             f"site {name!r} matched NO process, so nothing it should contain is in the "
             "interface table. Patterns match a process LABEL, its building or its recipe "
-            "-- not the item it produces, so a generator site is 'Fuel-Powered Generator' "
-            "or 'Build_GeneratorFuel_C', never 'MW'"
+            "-- plus 'MW' or 'power', which claims every generator -- never any other "
+            "item a process produces"
         )
     for name, pattern in out.dead_patterns[:4]:
         out.notes.append(f"{name}: pattern {pattern!r} matches nothing in this plan")

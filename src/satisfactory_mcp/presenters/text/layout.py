@@ -134,12 +134,13 @@ def render_layout(
                 [
                     (
                         'sites maps a name to patterns, e.g. {"rig": ["Heavy Oil '
-                        'Residue", "Diluted Fuel", "Water Extractor"], "hall": '
-                        '["Fuel-Powered Generator"]}'
+                        'Residue", "Diluted Fuel", "Water Extractor"], "hall": ["MW"]}'
                     ),
                     (
                         "patterns match the same way exclude_recipes does: process "
-                        "label, building name, or recipe"
+                        "label, building name, or recipe -- plus 'MW'/'power', which "
+                        "claims every generator, so a generator hall is a site like "
+                        "any other"
                     ),
                 ],
             )

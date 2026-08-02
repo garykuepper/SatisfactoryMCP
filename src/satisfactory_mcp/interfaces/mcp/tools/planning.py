@@ -326,7 +326,12 @@ def plan_layout(
     ] = 0,
     sites: Annotated[
         dict[str, list[str]] | None,
-        Field(description='detail="sites": {"rig": ["Heavy Oil Residue", ...], ...}'),
+        Field(
+            description=(
+                'detail="sites": {"rig": ["Heavy Oil Residue", ...], "hall": ["MW"]} '
+                "-- MW/power claims every generator"
+            )
+        ),
     ] = None,
     max_floor_foundations: Annotated[
         int,
