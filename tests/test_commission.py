@@ -337,6 +337,29 @@ def test_generator_rows_survive_truncation(game):
     assert "more: call again with offset" in out
 
 
+def test_the_offset_the_truncation_notice_names_is_a_real_parameter(game):
+    """The envelope said "call again with offset=25" while the tool's schema had no
+    offset at all -- an instruction the caller could not follow. Paging must continue
+    the ONE sequence: same rows, later window, no repeats.
+
+    headroom_mw is passed explicitly so the sequence exists whatever the live grid is
+    doing right now -- the default reads headroom from the save, and a loaded grid
+    answers "0 wave(s)", which would turn this into a test of the owner's evening."""
+    header = "wave\tchain\ton\tcum\tprocess\tMW\tfree after"
+
+    def data_rows(out: str) -> list[str]:
+        lines = out.splitlines()
+        body = lines[lines.index(header) + 1 :]
+        return [line for line in body if "\t" in line]
+
+    first = srv.commission_plan(limit=5, headroom_mw=5000.0, **SPIRE)
+    assert "more: call again with offset=5" in first
+    paged = srv.commission_plan(limit=5, offset=5, headroom_mw=5000.0, **SPIRE)
+    assert "from offset 5" in paged
+    overlap = set(data_rows(first)) & set(data_rows(paged))
+    assert not overlap, overlap
+
+
 # ------------------------------------------------- which stage am I in: the grouping
 
 

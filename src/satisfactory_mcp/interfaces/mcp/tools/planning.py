@@ -703,6 +703,7 @@ def commission_plan(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 60,
+    offset: int = 0,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
 ) -> str:
     """In what order to switch a built plant on, without blowing the fuse.
@@ -757,6 +758,7 @@ def commission_plan(
         report,
         objective=objective,
         limit=limit,
+        offset=offset,
         plan_name=plan_name,
         plan_notes=plan_notes,
     )
