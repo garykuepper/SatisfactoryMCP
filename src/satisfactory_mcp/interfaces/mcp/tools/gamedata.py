@@ -217,16 +217,31 @@ def search_recipes(
     )
 
 
+#: The build-piece families, named by the native class each lives under. "Wall" also
+#: catches the corner-wall natives, which is the grouping the game itself uses; doors
+#: are walls you can walk through and are listed with them.
+_ARCH_TOKENS = ("Foundation", "Ramp", "Wall", "Pillar", "Beam", "Stair", "Walkway", "Door")
+
+
 @mcp.tool(structured_output=False)
 def list_buildings(
-    kind: str = "production", save: str | None = None, world: str | None = None
+    kind: str = "production",
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
-    """Buildings by kind: production, extractor, generator, logistics.
+    """Buildings by kind: production, extractor, generator, logistics, foundation,
+    ramp, wall, pillar, beam, architecture (all five families together), or all.
 
     Rows are marked HAVE or LOCKED against the save when one can be read. That matters
     most for ``logistics``: a planner assuming a belt or pipe tier it has not unlocked
     gets every line count wrong by a factor and nothing says so, which is the worst
     failure mode a planner has.
+
+    Paged: ``all`` is 539 buildings and unpaged it ran to ~60k characters, which is not
+    an answer, it is a context eviction. The envelope says how many more there are and
+    which offset fetches them.
     """
     g = game()
     try:
@@ -249,6 +264,15 @@ def list_buildings(
         "extractor": lambda b: b.is_extractor,
         "generator": lambda b: b.is_generator,
         "logistics": lambda b: bool(b.items_per_min or b.flow_m3_min or b.head_lift_m),
+        # The build-piece families, grouped by native class. "foundation" was refused
+        # while "all" was accepted, which made the only route to a foundation's size a
+        # 60k-character page-through.
+        "foundation": lambda b: "Foundation" in b.native,
+        "ramp": lambda b: "Ramp" in b.native,
+        "wall": lambda b: "Wall" in b.native or "Door" in b.native,
+        "pillar": lambda b: "Pillar" in b.native,
+        "beam": lambda b: "Beam" in b.native,
+        "architecture": lambda b: any(t in b.native for t in _ARCH_TOKENS),
         "all": lambda b: True,
     }
     want = kinds.get((kind or "").strip().casefold())
@@ -256,8 +280,10 @@ def list_buildings(
         return f"! unknown kind {kind!r}. Choose from: {', '.join(sorted(kinds))}"
     picks = [b for b in g.buildings.values() if want(b)]
     picks.sort(key=lambda b: b.name)
+    offset = max(0, offset)
+    page = picks[offset : offset + render.clamp(limit, default=25)]
     rows = []
-    for b in picks:
+    for b in page:
         detail = ""
         if b.is_extractor and b.base_extract_rate:
             detail = f"{render.num(b.extract_rate('normal'))}/min @normal"
@@ -308,7 +334,9 @@ def list_buildings(
         )
     elif unlocked is None:
         notes.append(_no_save_note(save_error))
-    unknown = [b.name for b in picks if not b.footprint]
+    # Page-scoped, like the footer: naming buildings the caller cannot see in this
+    # page's rows would read as rows gone missing.
+    unknown = [b.name for b in page if not b.footprint]
     if unknown:
         notes.append(
             f"no clearance data, so no size: {', '.join(sorted(unknown))}. "
@@ -316,7 +344,7 @@ def list_buildings(
         )
 
     return render.envelope(
-        f"# {len(rows)} {kind} building(s)",
+        f"# {len(picks)} {kind} building(s)",
         render.table(
             (
                 "have",
@@ -330,8 +358,11 @@ def list_buildings(
                 "detail",
             ),
             rows,
+            total=len(picks),
+            offset=offset,
+            limit=limit,
         )
         + "\n"
-        + render.ids_footer((b.name, b.cls) for b in picks),
+        + render.ids_footer((b.name, b.cls) for b in page),
         notes,
     )

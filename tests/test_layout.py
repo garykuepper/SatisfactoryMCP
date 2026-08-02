@@ -71,6 +71,36 @@ def test_no_clearance_data_returns_none():
     assert extract_footprint("") is None
 
 
+@pytest.mark.parametrize(
+    "cls,w,d,h",
+    [
+        ("Build_Foundation_8x1_01_C", 8, 8, 1),
+        ("Build_Foundation_8x4_01_C", 8, 8, 4),
+        ("Build_Wall_8x4_01_C", 0.5, 8, 4),
+        ("Build_PillarBase_C", 8, 8, 4),  # the Big Pillar Support the player measured
+        ("Build_Ramp_8x4_01_C", 8, 8, 4),
+        ("Build_Beam_C", 4, 0.8, 1),  # the rotated soft box: 4 m LONG, not 4 m tall
+    ],
+)
+def test_architecture_pieces_have_sizes(game, cls, w, d, h):
+    """Architecture carries only CT_Soft clearance boxes -- soft is how the game lets
+    pieces clip together -- so the old skip-all-soft rule reported every foundation,
+    wall, pillar, ramp and beam as sizeless and a player measured one in-game. With no
+    hard box, the soft union IS the piece. Heights asserted too: a 1 m and a 4 m
+    foundation differ in nothing else."""
+    fp = game.buildings[cls].footprint
+    assert fp is not None
+    assert (fp.width_m, fp.depth_m, fp.height_m) == pytest.approx((w, d, h), abs=0.5)
+
+
+def test_soft_boxes_still_do_not_inflate_machines(game):
+    """The fallback must never mix soft into hard: on a machine the soft boxes are
+    overlap allowances AROUND the hard volume, and counting them would regress the
+    Fuel Generator's 3x3-foundation answer that test_rotated_clearance_boxes pins."""
+    fp = game.buildings["Build_GeneratorFuel_C"].footprint
+    assert fp.foundations == 9
+
+
 # ----------------------------------------------------------------- layout
 
 

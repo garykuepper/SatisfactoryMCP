@@ -66,7 +66,8 @@ class PlacementRow(TypedDict):
     the same terms ``pretty_class`` is: no recipe in, no words out.
 
     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
-    -- for the 470 of 539 buildings the docs dump carries no ``mClearanceData`` for. All
+    -- for the 54 of 539 buildings whose ``mClearanceData`` yields no box (belts, pipes,
+    rails, poles and the like), and for any class the dump does not carry. All
     three are floats where they are anything: ``Footprint`` is metres already and this
     layer only rounds.
     """
@@ -146,10 +147,12 @@ def _record_row(st: WorldState, row: dict) -> PlacementRow:
 
     ``w_m``/``l_m`` are the building's own footprint -- the X and Y extent of the union
     of its clearance boxes, which is what makes a Manufacturer draw bigger than a
-    Constructor instead of both being the same nominal square. Only 69 of 539 buildings
-    carry clearance data, so these are **null** for the rest (the two biomass burners on
-    the reference save among them) rather than a guessed number: the client picks the
-    fallback, because a fallback drawn here would be indistinguishable from a measurement.
+    Constructor instead of both being the same nominal square. 485 of 539 buildings
+    yield one (hard boxes preferred, a soft-only buildable's soft box counted since the
+    footprint union learned to read it); the rest -- and any class the dump does not
+    carry, the reference save's two biomass burner classes among them -- are **null** rather
+    than a guessed number: the client picks the fallback, because a fallback drawn here
+    would be indistinguishable from a measurement.
 
     ``yaw`` is which way the building faces, and it is what turns ``w_m``/``l_m`` from an
     axis-aligned box into the rectangle the player actually placed -- the two are one

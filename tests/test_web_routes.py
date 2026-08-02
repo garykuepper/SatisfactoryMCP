@@ -166,9 +166,11 @@ def test_the_splitters_and_mergers_ride_with_the_belts_and_with_nothing_else(cli
     for r in body["attachments"]:
         assert abs(r["x_m"]) < 5000 and abs(r["y_m"]) < 5000
         assert r["name"] and not r["name"].startswith("Build_")
-        # No clearance data for any of these classes, so the map draws its own square and
-        # the server says so with a null rather than inventing one.
-        assert (r["w_m"], r["l_m"]) == (None, None)
+        # The dump's own soft clearance box, now that soft-only buildables read it:
+        # every splitter and merger is the same 4x4 m piece, and a measured square
+        # beats the client's guessed one. Asserted as the value rather than a range
+        # because all four classes genuinely share one box.
+        assert (r["w_m"], r["l_m"]) == (4.0, 4.0)
         assert r["yaw"] is None or -180 <= r["yaw"] <= 180
 
     kinds = {r["name"] for r in body["attachments"]}

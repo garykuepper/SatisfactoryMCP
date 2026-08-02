@@ -128,8 +128,10 @@ class AttachmentRow(TypedDict):
 
     ``x_m``/``y_m``/``z_m`` ARE nullable -- an actor whose transform did not decode has no
     ``pos`` and ``_xyz`` answers with a triple of nulls. ``yaw`` is null where the
-    projection predates schema 12. ``w_m``/``l_m`` are null on all four of these classes
-    today, because the dump carries no clearance for any of them.
+    projection predates schema 12. ``w_m``/``l_m`` are the dump's own soft clearance box
+    (4 x 4 m on all four of these classes), read since the footprint union learned that a
+    soft-only buildable's soft box IS its size; still nullable for a class the dump has
+    no entry for.
     """
 
     instance_leaf: str
@@ -214,10 +216,10 @@ def _attachment_row(st: WorldState, row: dict) -> AttachmentRow:
 
     Shorter than ``_record_row`` on purpose. A splitter has no recipe, no clock and nothing
     to pause, so the machine row's shape would be six null columns saying that six times;
-    what a belt attachment IS, is a placement. ``w_m``/``l_m`` are asked for anyway, and are
-    ``null`` for all four of these classes today, because the dump carries no clearance for
-    them -- the same null the machines endpoint sends for a biomass burner, and for the same
-    reason: a size invented here would be indistinguishable from a measured one.
+    what a belt attachment IS, is a placement. ``w_m``/``l_m`` are the dump's own soft
+    clearance box -- 4 x 4 m for all four of these classes -- and null only for a class the
+    dump has no entry for, on the same terms as the machines endpoint: a measured square or
+    a null, never a size invented here.
     """
     cls = row.get("cls") or ""
     building = st.game.buildings.get(cls)
