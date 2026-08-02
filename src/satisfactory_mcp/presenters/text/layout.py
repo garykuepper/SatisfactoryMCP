@@ -54,6 +54,16 @@ def render_layout(
         "assumed rather than checked changes every line count in this schematic"
     )
 
+    # Under a site partition the floors are per-site stacks, so one summed height would
+    # describe a tower nobody is building -- each building is named with its own.
+    stack = (
+        (
+            "stacks",
+            " + ".join(f"{name} {sub.height_m:g}m" for name, sub in report.site_layouts),
+        )
+        if report.site_layouts
+        else ("stack_height", f"{lay.height_m:g}m")
+    )
     summary = "\n".join(
         [
             f"# layout for {objective} over {sel.description}",
@@ -64,7 +74,7 @@ def render_layout(
                     ("machines", lay.machines),
                     ("blocks", len(lay.blocks)),
                     ("floors", f"{len(production)} production + {len(logistics)} logistics"),
-                    ("stack_height", f"{lay.height_m:g}m"),
+                    stack,
                 ]
             ),
             render.kv(
@@ -84,6 +94,12 @@ def render_layout(
     )
 
     notes = [*lay.warnings, tier_note]
+    if report.site_layouts:
+        notes.append(
+            "sites are SEPARATE buildings: floors are stacked and ordered within each "
+            "site independently, so heights and riser pump counts are per site -- "
+            "nothing here prices the ground between them"
+        )
     notes.append(
         "schematic only: no world coordinates or belt routing -- there is no terrain "
         "data available, so those would be invented"
@@ -319,6 +335,9 @@ def render_layout(
             limit=limit,
         )
     else:
+        # A site column only when a partition exists: it is what separates "three
+        # buildings, read each stack from its own F0" from one fused tower.
+        with_site = any(f.site for f in lay.floors)
         rows = []
         for f in lay.floors:
             if f.kind == "production":
@@ -326,31 +345,29 @@ def render_layout(
                     f"{b.machines}x {b.label[:22]}"
                     for b in sorted(f.blocks, key=lambda b: -b.machines)[:2]
                 )
-                rows.append(
-                    (
-                        f"F{f.index}",
-                        f"stage {f.stage}",
-                        len(f.blocks),
-                        f.machines,
-                        f"{f.height_m:g}m",
-                        f.foundations,
-                        contents,
-                    )
+                row = (
+                    f"F{f.index}",
+                    f"stage {f.stage}",
+                    len(f.blocks),
+                    f.machines,
+                    f"{f.height_m:g}m",
+                    f.foundations,
+                    contents,
                 )
             else:
-                rows.append(
-                    (
-                        f"L{f.index}",
-                        "logistics",
-                        len(f.buses),
-                        "",
-                        f"{f.height_m:g}m",
-                        "",
-                        ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:4]),
-                    )
+                row = (
+                    f"L{f.index}",
+                    "logistics",
+                    len(f.buses),
+                    "",
+                    f"{f.height_m:g}m",
+                    "",
+                    ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:4]),
                 )
+            rows.append((f.site[:14], *row) if with_site else row)
+        headers = ("floor", "kind", "n", "machines", "height", "found", "contents")
         body = render.table(
-            ("floor", "kind", "n", "machines", "height", "found", "contents"),
+            ("site", *headers) if with_site else headers,
             rows,
             total=len(lay.floors),
             limit=limit,
@@ -380,12 +397,15 @@ def render_layout(
         body = "\n".join(head) + "\n\n" + body
         plan_notes = [*plan_notes, *fit.notes]
 
+    def _riser_label(d: dict) -> str:
+        return f"{d['site']}: {d['item']}" if d.get("site") else d["item"]
+
     pumps_total = sum(row["pumps"] for row in report.climbing)
     if pumps_total:
         notes.append(
             f"risers need at least {pumps_total} {report.pump_name}(s): "
             + ", ".join(
-                f"{d['item']} {d['lines']}x pipe up {d['metres']:.0f}m = {d['pumps']}"
+                f"{_riser_label(d)} {d['lines']}x pipe up {d['metres']:.0f}m = {d['pumps']}"
                 for d in report.climbing
                 if d["pumps"]
             )
@@ -396,7 +416,8 @@ def render_layout(
         notes.append(
             "floors follow chain depth, not fluid head: "
             + ", ".join(
-                f"{d['item']} climbs {d['floors']} floor(s) at {render.num(d['rate'])}{d['unit']}"
+                f"{_riser_label(d)} climbs {d['floors']} floor(s) at "
+                f"{render.num(d['rate'])}{d['unit']}"
                 for d in report.climbing[:4]
             )
             + ". Water can only be drawn at sea level, so putting its extractors at the "

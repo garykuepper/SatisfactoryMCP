@@ -12,6 +12,7 @@ they answer here and the presenter decides which of them is worth a table.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from dataclasses import replace as replace_solution
 
 from ...core.gamedata.model import GameData
 from ..factories.resolve import resolve_factory
@@ -19,8 +20,9 @@ from ..world.state import WorldState
 from .carrier import TierChoice
 from .layout import Layout, build_layout, fluid_head
 from .materials import build_materials
+from .optimize import Solution
 from .prepare import PreparedPlan, prepare
-from .sites import partition
+from .sites import claim_processes, partition
 from .trunks import plan_trunks
 
 __all__ = ["LayoutReport", "build_layout_report"]
@@ -35,6 +37,11 @@ class LayoutReport:
     prepared: PreparedPlan | None
     tiers: TierChoice
     lay: Layout | None = None
+    #: One stack per declared site, in spec order, with anything unclaimed last. Empty
+    #: when no partition was given, in which case ``lay`` is the single stack. When set,
+    #: ``lay`` is those same stacks concatenated (stages kept disjoint per site), so
+    #: every whole-plan total still reads off one object.
+    site_layouts: list[tuple[str, Layout]] = field(default_factory=list)
     #: The best pump this save can PLACE, which is not the best pump that exists.
     pump_cls: str = ""
     pump_name: str = "pump"
@@ -78,14 +85,31 @@ def build_layout_report(
         return report
     sol = prepared.solution
 
-    report.lay = lay = build_layout(
-        g,
-        sol,
-        belt_ipm=tiers.belt_ipm,
-        pipe_m3min=tiers.pipe_m3min,
-        max_floor_foundations=max_floor_foundations,
-        order_floors_by=order_floors_by,
-    )
+    if sites:
+        # A declared partition means SEPARATE BUILDINGS, so each site gets its own
+        # stack and its own floor ordering. One merged stack was measured getting this
+        # badly wrong: order_floors_by="head" over a three-site plan fused rig, hall
+        # and resin plant into one 80 m tower and priced 46 pumps of fluid lift where
+        # the per-site stacks need 6.
+        lay, report.site_layouts = _layout_by_site(
+            g,
+            sol,
+            sites,
+            belt_ipm=tiers.belt_ipm,
+            pipe_m3min=tiers.pipe_m3min,
+            max_floor_foundations=max_floor_foundations,
+            order_floors_by=order_floors_by,
+        )
+        report.lay = lay
+    else:
+        report.lay = lay = build_layout(
+            g,
+            sol,
+            belt_ipm=tiers.belt_ipm,
+            pipe_m3min=tiers.pipe_m3min,
+            max_floor_foundations=max_floor_foundations,
+            order_floors_by=order_floors_by,
+        )
 
     # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
     # nothing about head. Chain depth tends to make every fluid climb; the model has no
@@ -160,3 +184,77 @@ def build_layout_report(
         report.scope_name = resolved_name
         report.fit = assess_fit(resolved_name, machines, lay, st.structures, st.projection)
     return report
+
+
+def _layout_by_site(
+    g: GameData,
+    sol: Solution,
+    spec: dict[str, list[str]],
+    *,
+    belt_ipm: float,
+    pipe_m3min: float,
+    max_floor_foundations: int,
+    order_floors_by: str,
+) -> tuple[Layout, list[tuple[str, Layout]]]:
+    """One stack per declared site, plus the concatenation the report totals read from.
+
+    The unit of assignment is the same as ``partition``'s -- ``claim_processes``, so the
+    floors and the interface table can never disagree about where a machine stands.
+    Anything unclaimed or contested lands in a trailing ``(unassigned)`` stack rather
+    than vanishing: a block dropped here would silently shrink the materials bill.
+
+    The merge is a relabelling, not a re-solve: every site's stages, floor indexes and
+    buses are shifted by a per-site offset so they stay disjoint and contiguous in the
+    combined object. That keeps ``fluid_head`` exact on the concatenation -- a stage
+    maps to one floor, and the floors between two same-site stages are same-site -- so
+    the whole-plan riser count is the SUM of the per-site counts, never a lift invented
+    between buildings that share no pipe.
+    """
+    claims = claim_processes(sol.processes, spec)
+    groups: list[tuple[str, list[dict]]] = []
+    for name in spec:
+        procs = [p for p in sol.processes if claims.get(p["pid"]) == [name]]
+        if procs:
+            groups.append((name, procs))
+    leftover = [p for p in sol.processes if len(claims.get(p["pid"], [])) != 1]
+    if leftover:
+        groups.append(("(unassigned)", leftover))
+
+    site_layouts: list[tuple[str, Layout]] = []
+    blocks, buses, floors, warnings = [], [], [], []
+    stage_base = 0
+    index_base = 0
+    for name, procs in groups:
+        sub = build_layout(
+            g,
+            replace_solution(sol, processes=procs),
+            belt_ipm=belt_ipm,
+            pipe_m3min=pipe_m3min,
+            max_floor_foundations=max_floor_foundations,
+            order_floors_by=order_floors_by,
+        )
+        # Shift IN PLACE, uniformly, so the sub-layout stays self-consistent and the
+        # merged view shares its objects rather than describing different ones.
+        for b in sub.blocks:
+            b.stage += stage_base
+        for bus in sub.buses:
+            bus.from_stage += stage_base
+            bus.to_stage += stage_base
+        for f in sub.floors:
+            if f.stage is not None:
+                f.stage += stage_base
+            f.index += index_base
+            f.site = name
+        site_layouts.append((name, sub))
+        blocks += sub.blocks
+        buses += sub.buses
+        floors += sub.floors
+        for w in sub.warnings:
+            tagged = f"{name}: {w}"
+            if tagged not in warnings:
+                warnings.append(tagged)
+        stage_base = max((b.stage for b in sub.blocks), default=stage_base) + 1
+        index_base = floors[-1].index + 1 if floors else 0
+
+    merged = Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings)
+    return merged, site_layouts

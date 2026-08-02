@@ -58,7 +58,7 @@ from ...core.gamedata.model import GameData
 from .carrier import carrier_for
 from .slice import PlanSlice, slice_of
 
-__all__ = ["Interface", "Site", "SitePlan", "partition"]
+__all__ = ["Interface", "Site", "SitePlan", "claim_processes", "partition"]
 
 #: Net rate below this is LP noise rather than a flow between two places.
 _EPS = 1e-6
@@ -152,6 +152,21 @@ def _matches(proc: dict, pattern: str) -> bool:
     )
 
 
+def claim_processes(processes: list[dict], spec: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Which sites claim each process: pid -> owner names, in spec order.
+
+    The one matching pass, shared by ``partition`` (the interface table) and the layout
+    (per-site floor stacks), because two matchers would disagree about exactly the
+    processes a caller cares where they stand.
+    """
+    return {
+        proc["pid"]: [
+            name for name, patterns in spec.items() if any(_matches(proc, p) for p in patterns)
+        ]
+        for proc in processes
+    }
+
+
 def partition(
     prepared,
     game: GameData,
@@ -168,16 +183,13 @@ def partition(
         return out
 
     processes = prepared.solution.processes
-    claims: dict[str, list[str]] = {}
+    claims = claim_processes(processes, spec)
     for proc in processes:
-        owners = [
-            name for name, patterns in spec.items() if any(_matches(proc, p) for p in patterns)
-        ]
+        owners = claims[proc["pid"]]
         if not owners:
             out.unassigned.append(proc)
         elif len(owners) > 1:
             out.contested.append((proc["label"], owners))
-        claims[proc["pid"]] = owners
 
     for name, patterns in spec.items():
         site = Site(name=name, patterns=list(patterns))

@@ -192,6 +192,77 @@ def test_a_power_token_is_exact_not_a_substring(decoupled, game):
     assert all("hall" in owners and "also-hall" in owners for _, owners in sp.contested)
 
 
+def test_head_order_respects_the_site_partition(decoupled, game):
+    """order_floors_by="head" used to optimise ONE merged stack: over this three-site
+    plan it fused rig, hall and resin plant into a single tower and priced the fluid
+    lift accordingly, where the right answer stacks each site by itself. Declared sites
+    are separate buildings, so the floors are ordered within each independently and the
+    whole-plan riser count is the SUM of the per-site counts."""
+    from satisfactory_mcp.domain.planning.layout import build_layout, fluid_head
+    from satisfactory_mcp.domain.planning.layout_service import _layout_by_site
+
+    fused = build_layout(game, decoupled.solution, order_floors_by="head")
+    merged, per_site = _layout_by_site(
+        game,
+        decoupled.solution,
+        THREE,
+        belt_ipm=780.0,
+        pipe_m3min=600.0,
+        max_floor_foundations=0,
+        order_floors_by="head",
+    )
+
+    def pumps(lay):
+        return sum(d["pumps"] for d in fluid_head(lay, 50.0))
+
+    assert pumps(merged) < pumps(fused)
+    assert pumps(merged) == sum(pumps(sub) for _, sub in per_site)
+    # A relabelling, never a re-solve: every machine and every tile survives the split.
+    assert merged.machines == fused.machines
+    assert {b.key for b in merged.blocks} == {b.key for b in fused.blocks}
+    assert merged.total_foundations == fused.total_foundations
+    # Every floor is owned by a declared site -- this partition is complete, so nothing
+    # falls into the trailing "(unassigned)" stack.
+    assert {f.site for f in merged.floors} == set(THREE)
+
+
+def test_an_incomplete_partition_still_lays_out_every_block(decoupled, game):
+    """Unclaimed processes land in a visible "(unassigned)" stack rather than vanishing
+    -- a block dropped here would silently shrink the materials bill."""
+    from satisfactory_mcp.domain.planning.layout import build_layout
+    from satisfactory_mcp.domain.planning.layout_service import _layout_by_site
+
+    merged, per_site = _layout_by_site(
+        game,
+        decoupled.solution,
+        {"A-rig": RIG, "B-hall": HALL},
+        belt_ipm=780.0,
+        pipe_m3min=600.0,
+        max_floor_foundations=0,
+        order_floors_by="head",
+    )
+    assert dict(per_site).keys() == {"A-rig", "B-hall", "(unassigned)"}
+    whole = build_layout(game, decoupled.solution)
+    assert merged.machines == whole.machines
+
+
+def test_the_tool_reports_per_site_stacks(game):
+    out = srv.plan_layout(
+        plan="spire-coast-full",
+        sites=THREE,
+        order_floors_by="head",
+        sources=list(REFERENCE_FIELD),
+    )
+    if out.startswith("! "):
+        pytest.skip("the reference plan is not saved on this machine")
+    # One height per building, never one summed tower.
+    assert "stacks=A-rig" in out
+    assert "stack_height=" not in out
+    assert "sites are SEPARATE buildings" in out
+    # The floor table names the site each deck belongs to.
+    assert "site\tfloor\tkind" in out
+
+
 def test_a_dead_pattern_is_named(decoupled, game):
     """A site can match SOMETHING while one of its patterns matches nothing -- a typo in
     a four-pattern list would otherwise never surface."""
