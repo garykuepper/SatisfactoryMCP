@@ -9,8 +9,14 @@ naively yields 22 x 4 m, when the real footprint is roughly 22 x 22 -- an unders
 of about 1,000 foundations across a 176-generator plan. So every box is transformed by
 its `RelativeTransform` and the union of all of them is taken.
 
-Boxes flagged `ExcludeForSnapping` or typed `CT_Soft` are skipped: those are approach
-clearances and soft overlaps, not the building's own volume.
+Boxes flagged `ExcludeForSnapping` are always skipped: those are approach clearances,
+not the building's own volume. `CT_Soft` boxes are skipped only while a hard box
+exists: on a machine, soft boxes are the overlap allowances AROUND the hard volume,
+and counting them would overstate the machine. But every architecture piece --
+foundation, wall, pillar, ramp, beam -- carries ONLY soft boxes, because soft
+clearance is how the game lets them clip into each other, and for them the soft box
+IS the piece's own size. So a buildable with no hard box falls back to the union of
+its soft ones rather than reporting no size at all.
 """
 
 from __future__ import annotations
@@ -175,20 +181,36 @@ def _corners(mn: dict, mx: dict) -> list[tuple[float, float, float]]:
 
 
 def extract_footprint(raw: object) -> Footprint | None:
-    """Union AABB of a building's own clearance boxes, in metres."""
-    entries = as_list(parse_struct(raw))
+    """Union AABB of a building's own clearance boxes, in metres.
+
+    Hard boxes when the buildable has any; otherwise its soft ones. Architecture
+    pieces carry ONLY `CT_Soft` boxes (soft clearance is what lets a wall meet a
+    foundation without a collision refusal), so skipping soft unconditionally
+    reported every foundation, wall, pillar, ramp and beam as having no size --
+    which sent a player out to measure a Big Pillar Support in-game.
+    """
+    entries = [
+        e
+        for e in as_list(parse_struct(raw))
+        if isinstance(e, dict)
+        # Approach clearance is never the building's volume, hard or soft.
+        and str(e.get("ExcludeForSnapping", "")).strip().lower() != "true"
+    ]
+    hard = _union(e for e in entries if e.get("Type") != "CT_Soft")
+    # No hard box anywhere: the soft union IS the piece (and cannot overstate a hard
+    # volume that does not exist). Never mixed with hard boxes -- on machines the
+    # soft boxes are overlap allowances around the hard one, and the Fuel Generator
+    # would grow past the 20x20 its own hard boxes measure.
+    return hard if hard is not None else _union(entries)
+
+
+def _union(entries) -> Footprint | None:
+    """Axis-aligned union of transformed clearance boxes, or None for no boxes."""
     lo = [float("inf")] * 3
     hi = [float("-inf")] * 3
     seen = False
 
     for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        # Approach clearance and soft overlaps are not the building's volume.
-        if str(entry.get("ExcludeForSnapping", "")).strip().lower() == "true":
-            continue
-        if entry.get("Type") == "CT_Soft":
-            continue
         box = entry.get("ClearanceBox")
         if not isinstance(box, dict):
             continue
