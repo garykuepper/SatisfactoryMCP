@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from ...core.gamedata.constants import WATER_EXTRACTOR_WARN_AT
 from ...core.gamedata.model import GameData
 from ..world.state import WorldState
+from .optimize import MW, build_processes
 from .prepare import PreparedPlan, prepare
 from .scenario import resolve_item
 from .slice import PlanSlice, slice_of
@@ -53,6 +54,11 @@ class PlanFactoryReport:
     needed_buildings: set[str] = field(default_factory=set)
     #: Processes above 100%, production machines first and extractors last.
     overclocked: list = field(default_factory=list)
+    #: Items the caller NAMED in exports that the solution exports at zero, each with
+    #: what the LP can say about why. An export is a whitelist, not a demand, so "766
+    #: Plastic and 0 Rubber" is a legal optimum -- but it answered a question the caller
+    #: did not ask, and silence here cost a real session exactly that.
+    zero_exports: list[dict] = field(default_factory=list)
 
 
 def build_plan_report(
@@ -135,6 +141,41 @@ def build_plan_report(
         for p in sol.processes
         if p["building_id"] and st.built(p["building_id"]) == 0
     }
+
+    # An export the caller NAMED that comes out at zero. Legal -- exports is a
+    # whitelist and every balance is an equality, so zero is often the optimum -- but a
+    # session asked for Plastic and Rubber, got 766 Plastic and 0 Rubber, and nothing
+    # said so. Three causes the LP can distinguish, cheapest evidence first: everything
+    # made was eaten as an intermediate (or sunk), nothing in scope CAN make it (the
+    # unmakeable note names the missing recipe or machine), or nothing rewarded making
+    # it, since only the objective and export_minimums give an export value.
+    zero_named = [
+        item
+        for item in prepared.request.scenario.exports
+        if item != MW and sol.exports.get(item, 0.0) <= 1e-6
+    ]
+    if zero_named:
+        produced: dict[str, float] = {}
+        for p in sol.processes:
+            for item, rate in p["rates"].items():
+                if rate > 0:
+                    produced[item] = produced.get(item, 0.0) + rate
+        can_make = {
+            item
+            for proc in build_processes(prepared.request.scenario)
+            for item, rate in proc.rates.items()
+            if rate > 0
+        }
+        report.zero_exports = [
+            {
+                "item": item,
+                "name": g.item_name(item),
+                "produced": produced.get(item, 0.0),
+                "sunk": sol.sunk.get(item, 0.0),
+                "makeable": item in can_make,
+            }
+            for item in zero_named
+        ]
 
     # Rows rank by volume, and a two-item question usually lives in the tail: at the
     # old hard cap of 6, Plastic and Rubber fell off the bottom of a large oil plan --

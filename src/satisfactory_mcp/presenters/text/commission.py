@@ -24,6 +24,7 @@ def render_commission(
     *,
     objective: str,
     limit: int,
+    offset: int = 0,
     plan_name: str = "",
     plan_notes: list[str] | None = None,
 ) -> str:
@@ -69,10 +70,16 @@ def render_commission(
     # Truncation is applied to the WHOLE sequence, never per wave. Chopping each wave at
     # `limit` silently dropped its generator rows -- they sort last by chain depth -- and
     # those are the only rows that pay for the next wave.
+    #
+    # `offset` continues that one sequence, so the envelope's "call again with offset=N"
+    # is an instruction the tool can actually follow -- it used to name a parameter the
+    # schema did not have. A page that starts mid-wave shows no wave summary line, which
+    # is honest: the summary belongs to the wave, and the wave started on an earlier page.
     body = render.table(
         ("wave", "chain", "on", "cum", "process", "MW", "free after"),
-        rows[: render.clamp(limit, default=40)],
+        rows[offset : offset + render.clamp(limit, default=40)],
         total=len(rows),
+        offset=offset,
         limit=limit,
     )
 

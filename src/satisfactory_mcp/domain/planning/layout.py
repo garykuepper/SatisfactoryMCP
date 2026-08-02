@@ -128,6 +128,10 @@ class Floor:
     height_m: float
     blocks: list[Block] = field(default_factory=list)
     buses: list[Bus] = field(default_factory=list)
+    #: Which declared site this floor belongs to. Empty outside a site partition; set by
+    #: ``layout_service`` when floors are stacked per site, so a reader can tell three
+    #: separate buildings from one tower.
+    site: str = ""
 
     @property
     def foundations(self) -> int:
@@ -425,9 +429,11 @@ def fluid_head(layout: Layout, pump_head_m: float = 0.0) -> list[dict]:
     figure is -- pipe friction and the head a full pipe holds are not modelled.
     """
     floor_of: dict[int, int] = {}
+    site_of: dict[int, str] = {}
     for floor in layout.floors:
         if floor.stage is not None:
             floor_of[floor.stage] = floor.index
+            site_of[floor.stage] = floor.site
     height_of = {floor.index: floor.height_m for floor in layout.floors}
 
     out: list[dict] = []
@@ -453,6 +459,9 @@ def fluid_head(layout: Layout, pump_head_m: float = 0.0) -> list[dict]:
                 "pumps_per_line": per_line,
                 "pumps": per_line * bus.lines,
                 "direction": "climbs" if end > start else "falls",
+                # Under a site partition every bus is within ONE site (a cross-site flow
+                # is external to both), so the riser can be named to its building.
+                "site": site_of.get(bus.from_stage, ""),
             }
         )
     out.sort(key=lambda d: (-d["floors"], -d["rate"]))

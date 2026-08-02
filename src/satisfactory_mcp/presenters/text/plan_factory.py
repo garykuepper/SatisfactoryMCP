@@ -56,7 +56,32 @@ def render_plan_factory(
         )
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
-    notes = [*sel.errors, *req.recipe_errors, *prepared.notes]
+
+    # An export the caller NAMED coming out at zero leads the notes: it is the answer to
+    # a question the caller did not ask, and a session that requested Plastic and Rubber
+    # read "766 Plastic" as success with nothing saying Rubber was 0. One sentence of
+    # why, where the LP can tell.
+    zero_notes = []
+    for z in report.zero_exports:
+        name = z["name"]
+        if z["produced"] > 1e-6:
+            fate = "consumed inside the plan as an intermediate"
+            if z["sunk"] > 1e-6:
+                fate += f" or sunk ({render.num(z['sunk'])}/min)"
+            why = f"all {render.num(z['produced'])}/min made is {fate}"
+        elif not z["makeable"]:
+            why = "nothing in scope can make it -- the note naming what is missing says why"
+        else:
+            why = (
+                "nothing in the plan makes it: an export is a whitelist, not a demand, "
+                f"and objective {objective!r} earns nothing from it, so zero is the optimum"
+            )
+        zero_notes.append(
+            f"EXPORT AT ZERO: {name} is named in exports but 0/min leaves this plan -- "
+            f"{why}. Pass export_minimums={{{name!r}: <rate>}} to require it"
+        )
+
+    notes = [*zero_notes, *sel.errors, *req.recipe_errors, *prepared.notes]
 
     n_water = report.water_pumps
     if report.water is not None:
@@ -273,12 +298,16 @@ def render_plan_factory(
                     ("grid_import_MW", render.num(sol.grid_import_mw)),
                 ]
             ),
+            # Zero-solved NAMED exports are printed as 0 rather than omitted: the
+            # exports line is where a caller checks what they asked for, and a missing
+            # row reads as "forgot to look", not as "the solver said none".
             "exports: "
             + render.kv(
                 [
                     ("MW" if k == MW else g.item_name(k), render.num(v))
                     for k, v in sol.exports.items()
                 ]
+                + [(z["name"], "0") for z in report.zero_exports if z["item"] not in sol.exports]
             ),
             "raw: " + render.kv([(g.item_name(k), render.num(v)) for k, v in sol.raw_used.items()]),
             "sunk: "

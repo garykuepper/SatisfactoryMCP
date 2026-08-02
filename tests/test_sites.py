@@ -152,16 +152,115 @@ def test_site_power_excludes_the_sink_charge(decoupled, game):
 
 
 def test_an_empty_site_is_reported_not_silent(decoupled, game):
-    """The failure that cost a caller the entire fuel interface: they keyed a generator
-    site on the item it produces (MW), which matches no process LABEL. The site came back
-    empty, its 460 generators fell into `unassigned`, and the one flow the whole
-    multi-building design turns on was missing from the table."""
-    sp = partition(decoupled, game, {"hall": ["MW"], "rest": [*RIG, "Residual"]})
+    """A site whose every pattern hits nothing must fail loudly: nothing it should
+    contain reaches the interface table, which is exactly how a supplier goes missing
+    from a hand reconciliation."""
+    sp = partition(decoupled, game, {"hall": ["Nuclear Pasta"], "rest": [*RIG, "Residual"]})
     assert not sp.ok
     assert sp.empty == ["hall"]
     assert any("matched NO process" in n for n in sp.notes)
     # And it says what a pattern actually matches, since that is the misconception.
-    assert any("not the item it produces" in n for n in sp.notes)
+    assert any("never any other item" in n for n in sp.notes)
+
+
+def test_a_site_can_be_keyed_on_the_power_it_produces(decoupled, game):
+    """The failure that cost a caller the entire fuel interface: they keyed a generator
+    site on the item it produces (MW), which matched no process LABEL. The site came
+    back empty, its 460 generators fell into `unassigned`, and the 9,200 m3/min fuel
+    flow -- the one number the whole three-building split turns on -- was missing from
+    the table. Power is a product a site can be defined by, in the spellings exports
+    already accepts."""
+    for pattern in ("MW", "mw", "power", "Power"):
+        sp = partition(decoupled, game, {"hall": [pattern], "rest": [*RIG, "Residual"]})
+        assert sp.ok, (pattern, sp.notes)
+        hall = next(s for s in sp.sites if s.name == "hall")
+        assert hall.machines == 460, pattern
+        fuel = next(i for i in sp.interfaces if i.name == "Fuel" and i.target == "hall")
+        assert fuel.rate == pytest.approx(9_200, rel=0.01), pattern
+
+
+def test_a_power_token_is_exact_not_a_substring(decoupled, game):
+    """"power" as a substring would also claim every "Fuel-Powered Generator" LABEL --
+    redundantly today, and wrongly the day a non-generator label contains the word. The
+    token means "the generators", never "anything mentioning power"."""
+    sp = partition(
+        decoupled, game, {"hall": ["power"], "also-hall": ["Fuel-Powered Generator"]}
+    )
+    # Every generator is CONTESTED between the two spellings -- proof the token matched
+    # the same machines the label does, rather than a superset grown by substring.
+    assert sp.contested
+    assert all("hall" in owners and "also-hall" in owners for _, owners in sp.contested)
+
+
+def test_head_order_respects_the_site_partition(decoupled, game):
+    """order_floors_by="head" used to optimise ONE merged stack: over this three-site
+    plan it fused rig, hall and resin plant into a single tower and priced the fluid
+    lift accordingly, where the right answer stacks each site by itself. Declared sites
+    are separate buildings, so the floors are ordered within each independently and the
+    whole-plan riser count is the SUM of the per-site counts."""
+    from satisfactory_mcp.domain.planning.layout import build_layout, fluid_head
+    from satisfactory_mcp.domain.planning.layout_service import _layout_by_site
+
+    fused = build_layout(game, decoupled.solution, order_floors_by="head")
+    merged, per_site = _layout_by_site(
+        game,
+        decoupled.solution,
+        THREE,
+        belt_ipm=780.0,
+        pipe_m3min=600.0,
+        max_floor_foundations=0,
+        order_floors_by="head",
+    )
+
+    def pumps(lay):
+        return sum(d["pumps"] for d in fluid_head(lay, 50.0))
+
+    assert pumps(merged) < pumps(fused)
+    assert pumps(merged) == sum(pumps(sub) for _, sub in per_site)
+    # A relabelling, never a re-solve: every machine and every tile survives the split.
+    assert merged.machines == fused.machines
+    assert {b.key for b in merged.blocks} == {b.key for b in fused.blocks}
+    assert merged.total_foundations == fused.total_foundations
+    # Every floor is owned by a declared site -- this partition is complete, so nothing
+    # falls into the trailing "(unassigned)" stack.
+    assert {f.site for f in merged.floors} == set(THREE)
+
+
+def test_an_incomplete_partition_still_lays_out_every_block(decoupled, game):
+    """Unclaimed processes land in a visible "(unassigned)" stack rather than vanishing
+    -- a block dropped here would silently shrink the materials bill."""
+    from satisfactory_mcp.domain.planning.layout import build_layout
+    from satisfactory_mcp.domain.planning.layout_service import _layout_by_site
+
+    merged, per_site = _layout_by_site(
+        game,
+        decoupled.solution,
+        {"A-rig": RIG, "B-hall": HALL},
+        belt_ipm=780.0,
+        pipe_m3min=600.0,
+        max_floor_foundations=0,
+        order_floors_by="head",
+    )
+    assert dict(per_site).keys() == {"A-rig", "B-hall", "(unassigned)"}
+    whole = build_layout(game, decoupled.solution)
+    assert merged.machines == whole.machines
+
+
+def test_the_tool_reports_per_site_stacks(game):
+    out = srv.plan_layout(
+        plan="spire-coast-full",
+        sites=THREE,
+        order_floors_by="head",
+        sources=list(REFERENCE_FIELD),
+    )
+    if out.startswith("! "):
+        pytest.skip("the reference plan is not saved on this machine")
+    # One height per building, never one summed tower.
+    assert "stacks=A-rig" in out
+    assert "stack_height=" not in out
+    assert "sites are SEPARATE buildings" in out
+    # The floor table names the site each deck belongs to.
+    assert "site\tfloor\tkind" in out
 
 
 def test_a_dead_pattern_is_named(decoupled, game):
