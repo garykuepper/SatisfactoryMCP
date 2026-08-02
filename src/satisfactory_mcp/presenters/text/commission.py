@@ -75,6 +75,7 @@ def render_commission(
     # is an instruction the tool can actually follow -- it used to name a parameter the
     # schema did not have. A page that starts mid-wave shows no wave summary line, which
     # is honest: the summary belongs to the wave, and the wave started on an earlier page.
+    offset = max(0, offset)
     body = render.table(
         ("wave", "chain", "on", "cum", "process", "MW", "free after"),
         rows[offset : offset + render.clamp(limit, default=40)],
