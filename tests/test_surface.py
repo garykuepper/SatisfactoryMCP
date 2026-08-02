@@ -201,6 +201,42 @@ def test_an_unknown_export_token_is_refused_by_name():
     assert "REPLACES the default" in out
 
 
+# --------------------------------------------------------- a named export solved to zero
+
+
+def test_a_named_export_solved_to_zero_is_said_out_loud():
+    """A session asked for Plastic and Rubber, got 766 Plastic and 0 Rubber, and nothing
+    said so -- exports is a whitelist and the zero was a legal optimum, but it answered a
+    question the caller did not ask. The zero now leads the notes AND appears on the
+    exports line, where a caller checks what they asked for."""
+    out = srv.plan_factory(
+        objective="max_item",
+        target_item="Plastic",
+        sources=list(REFERENCE_FIELD),
+        exports=["Plastic", "Rubber"],
+    )
+    assert "EXPORT AT ZERO: Rubber" in out
+    assert "Rubber=0" in out
+    # And the way out is named: only export_minimums makes a whitelisted item leave.
+    assert "export_minimums={'Rubber': <rate>}" in out
+
+
+def test_a_zero_export_names_the_intermediate_that_ate_it():
+    """Where the LP can tell WHY, it says so in one sentence: under max_mw every drop of
+    fuel is worth more burned than exported, so all of it is consumed inside the plan."""
+    out = srv.plan_factory(
+        objective="max_mw", sources=list(REFERENCE_FIELD), exports=["MW", "Fuel"]
+    )
+    assert "EXPORT AT ZERO: Fuel" in out
+    assert "consumed inside the plan as an intermediate" in out
+
+
+def test_a_satisfied_export_raises_no_alarm():
+    """The warning must mean something: a plan whose named exports all flow stays quiet."""
+    out = srv.plan_factory(**OIL_PLAN)
+    assert "EXPORT AT ZERO" not in out
+
+
 def test_prompts_render_with_arguments():
     res = _run(
         srv.mcp.get_prompt("design_factory", {"target_item": "Rubber", "rate_per_min": "120"})
