@@ -21,8 +21,56 @@ def _rows(out: str) -> list[str]:
 
 
 def test_all_reaches_every_building(game):
+    """Paged now, so reachability means the header counts every building and walking
+    the offsets visits that many rows -- not that one response carries them all."""
+    first = srv.list_buildings(kind="all")
+    total = int(first.split()[1])
+    assert total > 400
+    seen, offset = 0, 0
+    while True:
+        page = _rows(srv.list_buildings(kind="all", offset=offset))
+        if not page:
+            break
+        seen += len(page)
+        offset += len(page)
+    assert seen == total
+
+
+def test_the_first_call_is_the_same_answer_as_the_second(game):
+    """Field report: a first call answered '0 all building(s)' and a later identical
+    call answered 60k characters. The cause (kind='all' matching no filter branch) is
+    long fixed; this pins the property that made it a report -- the answer must not
+    depend on when it is asked."""
+    assert srv.list_buildings(kind="all") == srv.list_buildings(kind="all")
+    assert _rows(srv.list_buildings(kind="all"))
+
+
+def test_all_is_paged_rather_than_a_context_eviction(game):
+    """The 539-building table unpaged was ~60k characters -- past client token limits,
+    so the honest full answer was still a failure. The page says what it is showing and
+    how to get the rest, in the same envelope every other list tool uses."""
     out = srv.list_buildings(kind="all")
-    assert len(_rows(out)) > 400
+    assert len(out) < 5000
+    assert len(_rows(out)) == 25
+    assert "539 match(es), showing 25 from offset 0" in out
+    assert "call again with offset=25" in out
+    # And the offset genuinely advances: no shared rows between page one and page two.
+    page_two = srv.list_buildings(kind="all", offset=25)
+    assert not set(_rows(out)) & set(_rows(page_two))
+
+
+def test_the_build_piece_families_are_kinds(game):
+    """'foundation' was refused while 'all' was accepted, which made a foundation's
+    size reachable only by paging the whole table. Each family is a kind now, and the
+    rows carry the sizes item 3 was filed about."""
+    for kind in ("foundation", "ramp", "wall", "pillar", "beam", "architecture"):
+        out = srv.list_buildings(kind=kind)
+        assert not out.startswith("! unknown kind"), kind
+        assert _rows(out), kind
+    # The exact piece the player had to measure in-game: Big Pillar Support, 8x8x4 m.
+    pillars = srv.list_buildings(kind="pillar")
+    row = next(line for line in _rows(pillars) if "Big Pillar Support" in line)
+    assert "8x8x4m" in row
 
 
 def test_an_unknown_kind_lists_the_kinds(game):
