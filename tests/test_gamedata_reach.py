@@ -95,6 +95,17 @@ def test_recipe_detail_takes_a_display_name(game):
     assert "Refinery" in out
 
 
+def test_recipe_detail_takes_the_reported_name_in_any_case(game):
+    """The exact string from the field report, and lower-cased: 'Recycled Plastic' is a
+    substring of exactly one display name, so it resolves to that recipe without
+    listing candidates or costing the round trip the report was about."""
+    for spelling in ("Recycled Plastic", "recycled plastic"):
+        out = srv.recipe_detail(spelling)
+        assert "unknown recipe" not in out, spelling
+        assert "matches" not in out.splitlines()[0], spelling
+        assert "Refinery" in out
+
+
 def test_an_ambiguous_name_lists_the_candidates(game):
     """Ambiguous is not unknown, and listing what matched beats sending the caller back
     to search."""
