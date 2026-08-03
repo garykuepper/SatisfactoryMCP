@@ -117,6 +117,7 @@ def test_docs_summary_reports_no_normalisation_warnings():
         ("power_report", {}),
         ("unlocked_recipes", {}),
         ("factory_sites", {"limit": 5}),
+        ("search_conduits", {"near": "239,-1928"}),
         ("search_resource_nodes", {"sources": ["north"], "resource": "Crude Oil"}),
         ("rank_build_sites", {"resource": "Crude Oil", "sources": ["north"]}),
         ("plan_factory", {"objective": "max_mw", "sources": list(REFERENCE_FIELD)}),
@@ -263,15 +264,16 @@ def test_every_tool_module_is_imported_by_the_package():
 
 def test_the_registered_surface_survives_the_split():
     """Pinned counts, because the split moved 36 tools between files and a decorator
-    that fails to run is invisible. 42: +commission_plan, +mam_research, +rank_unlocks,
-    +somersloops, +trace_upstream, +collected_from_world."""
+    that fails to run is invisible. 43: +commission_plan, +mam_research, +rank_unlocks,
+    +somersloops, +trace_upstream, +collected_from_world, +search_conduits."""
     tools = _run(srv.mcp.list_tools())
-    assert len(tools) == 42
+    assert len(tools) == 43
     assert {
         "collected_from_world",
         "commission_plan",
         "mam_research",
         "rank_unlocks",
+        "search_conduits",
         "somersloops",
         "trace_upstream",
     } <= {t.name for t in tools}

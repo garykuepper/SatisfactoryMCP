@@ -20,7 +20,7 @@ testing contract. Section numbers are continuous with the rest of the spec;
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`, `phase_requirements`, `power_shards`, `collected_from_world`
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
-**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`
+**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
@@ -321,6 +321,71 @@ the same guards.
 domain call that already exists; there is no second copy to drift from. Extracting those
 would add indirection and remove nothing. The rule applied was: extract where logic is
 *duplicated* or *unreachable without the MCP layer*, not wherever a function is long.
+
+### 10.1f `search_conduits` — belts and pipes become queryable text
+
+The projection has carried every conveyor and pipeline polyline since schemas 12/13 and the
+web map drew them, but no *text* tool could see them: `trace_upstream` walks through logistics
+deliberately, and `describe_location` sampled only nodes, buildings and foundations. Field
+result: the assistant twice told the player a build **did not exist** when the tools simply
+could not look.
+
+```
+search_conduits(near="x,y"|"me"|<factory>, radius_m=250, to=None, to_radius_m=None,
+                kind="belt"|"pipe"|None, limit=12, offset=0)
+  -> per-run rows: id (chain:<n> / pipe:<row>), kind+tier, drawn length, both ends
+     (position + what stands there where known), elevation span, carries, connects
+```
+
+Decisions that took measurement:
+
+- **A run is a belt CHAIN or a single pipeline piece.** Chains are the game's own grouping
+  (1,909 over 3,085 pieces on the reference world); pipes have no chain, and their network is
+  a whole plumbing system (19 networks claim all 503 pipes), so network-granularity "runs"
+  would have no endpoints.
+- **Proximity is measured against the drawn line, not the corner points.** A 500 m straight
+  belt has exactly two stored points; point-distance calls its middle 250 m away, which is the
+  exact blindness being retired.
+- **`to=` asks "between two areas", and pipes answer it exactly.** A pipe route is usually
+  several pieces, none of which spans both areas — but the game's own `FGPipeNetwork` id is a
+  connectivity fact, so a network touching both areas is reported as joining them even when no
+  single piece qualifies. Belts have no such id (a route through a splitter is several
+  chains); a note owns that gap rather than a guess.
+- **`connects` is labelled a geometric read.** The interned belt table carries no actor
+  identity to join the save's connection components by, so ends are attributed to the nearest
+  placed thing whose footprint (plus port reach) covers them, `?` where nothing known stands
+  there, and a `chain:`/`pipe:` ident where the run simply continues into another — which is
+  what lets a route be followed piece to piece.
+- **Lengths follow the chords.** The points are spline control points and a bend's arc is up
+  to 16.4 m longer than its chords on one measured piece, so curved runs read slightly short
+  and the response says so instead of inventing an arc length.
+- **It pages on the surface's `offset=` convention.** The truncation envelope ends "call again
+  with offset=N", and a busy junction really does carry hundreds of chains — a next step the
+  caller cannot take would be worse than none.
+
+`describe_location` gained a `conduits=` field counted the same way — **printed even at
+zero**, so with a readable save, absence in that answer finally means absence in the world.
+
+### 10.1g `factory_map show=slabs` — bare platforms are places too
+
+`show=slabs` listed only slabs *carrying machines*, because the slab signal exists to propose
+factories — so a bare 1,901-foundation platform, the most important object in that user's
+build, was invisible, and the client reconstructed its extent from **nine `describe_location`
+probes by hand**. Bare (machine-less) slabs are now their own table: tile count, extent,
+**bounding box**, elevation and a floors count, largest platform first.
+
+- **`bbox` is stored on the `Slab`, not derived**, because it cannot be: `centre` is the tile
+  *mean* and sits wherever the tiles are dense, so `centre ± extent/2` invents corners an
+  L-shaped platform does not have.
+- **Extents span tile centres.** The poured edge reaches about half a tile further, and the
+  response says so rather than quietly measuring two different things.
+- **Elevation is the whole span** (`lo..hi`, one number where the pour is flat). A platform
+  built over three storeys stands at both heights, and a plan reading only the bottom one
+  puts a machine under the floor.
+- **Helper pads are summarised, and the threshold is printed.** Bare slabs under
+  `BARE_TILE_FLOOR = 12` tiles (a 3×4 pour of 8 m foundations — below that it is a tile under
+  a power pole or a jump-pad landing) collapse to one count line that names the threshold, so
+  a summarised pad is a known omission instead of a blind spot.
 
 ### 10.2 Context budget
 

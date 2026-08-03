@@ -412,6 +412,75 @@ def test_walls_bridge_slabs_only_when_chained():
     assert len(set(joined.slab_of.values())) == 1
 
 
+def test_a_slab_records_the_box_its_tiles_occupy_not_one_invented_from_the_centre():
+    """`centre` is the tile MEAN and sits wherever the tiles are dense, so
+    `centre +- extent/2` puts corners on an L-shaped platform that do not exist. The
+    reference user reconstructed a bare platform's box from nine describe_location
+    probes by hand; `bbox` is that box, stored, from the tiles themselves."""
+    from satisfactory_mcp.domain.factories.structure import build_structures
+
+    arm_x = [[0, x * 800, 0, 0] for x in range(5)]
+    arm_y = [[0, 0, y * 800, 0] for y in range(1, 5)]
+    sx = build_structures(
+        {
+            "structures": {
+                "classes": ["Build_Foundation_8x1_01_C"],
+                "instances": [*arm_x, *arm_y],
+            },
+            "machines": [],
+            "extractors": [],
+            "generators": [],
+        }
+    )
+    slab = sx.slabs[0]
+    assert slab.bbox == (0, 0, 3200, 3200)
+    # The mean leans into the dense corner; the box does not follow it.
+    assert slab.centre[0] < (slab.bbox[0] + slab.bbox[2]) / 2
+
+
+def test_factory_map_lists_bare_platforms_and_summarises_pads_by_a_stated_threshold(
+    game, monkeypatch
+):
+    """show=slabs listed only slabs CARRYING machines, so a bare 1,901-foundation
+    platform -- the most important object in that user's build -- was invisible. Bare
+    platforms are now rows with extent, bbox and elevation; helper pads below the
+    threshold are one summary line that names the threshold, so the omission is a
+    known one."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    platform = [[0, 40000 + (i % 4) * 800, 100000 + (i // 4) * 800, 1600] for i in range(16)]
+    pad = [[0, -50000, -50000, 0]]
+    carrying = [[0, x * 800, 0, 0] for x in range(3)]
+    projection = {
+        "header": {"save_identifier": "TEST-bare-slabs", "session_name": "t"},
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [*platform, *pad, *carrying],
+        },
+        "machines": [
+            {
+                "instance": "L:P.Build_SmelterMk1_C_1",
+                "cls": "Build_SmelterMk1_C",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [800, 0, 100],
+            }
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+
+    out = ftools.factory_map(show="slabs")
+    assert "## bare platforms (no machines): 2, 17 tiles" in out
+    # The 16-tile platform is a row: its extent, box and elevation, in metres.
+    assert "16\t412,1012\t24x24m\t400,1000..424,1024\t16" in out
+    # The single-tile pad is only the summary line, and the threshold is stated.
+    assert "plus 1 pad(s) under 12 tiles (1 tiles total)" in out
+    assert "-500,-500" not in out
+
+
 def test_slab_selector_uses_the_index_factory_map_prints():
     """Slabs are numbered by tile count; groups() is ordered by machine count. Indexing
     into the wrong one silently returns a different platform -- it once re-anchored the
