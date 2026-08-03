@@ -858,7 +858,8 @@ def trace_upstream(
     one is not.
 
     Belts and pipes are walked THROUGH and left out of the table: a trace from the
-    generators touches 331 nodes at depth 72, nearly all of it conveyor.
+    generators touches 331 nodes at depth 72, nearly all of it conveyor. The runs
+    themselves are `search_conduits`' subject.
     """
     g = game()
     try:
@@ -914,7 +915,8 @@ def trace_upstream(
     notes = [
         (
             f"walked {result.visited} node(s) to depth {result.deepest}; belts and pipes are "
-            "traversed but not listed, because a path through them is unreadable"
+            "traversed but not listed, because a path through them is unreadable -- "
+            "search_conduits lists the runs themselves, with endpoints and lengths"
         ),
         (
             "direction comes from each edge's connector role, and from the machine's own "

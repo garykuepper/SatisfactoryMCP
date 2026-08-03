@@ -145,6 +145,15 @@ class WorldState:
         return world_flow.pipe_flow(self.projection)
 
     @cached_property
+    def conduit_runs(self):
+        """Belt and pipe runs as queryable geometry. Cached like ``graph``: ~70 ms to
+        group and join on the reference world, and describe_location and the conduit
+        search both want the whole set."""
+        from . import conduits
+
+        return conduits.build_runs(self.projection, self.game, self.pipe_flow)
+
+    @cached_property
     def structures(self):
         """Foundation slabs -- what was physically built as one platform."""
         from ..factories.structure import build_structures

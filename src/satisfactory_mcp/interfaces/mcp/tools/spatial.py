@@ -80,7 +80,7 @@ def describe_location(
     save: str | None = None,
     world: str | None = None,
 ) -> str:
-    """Name the region at a coordinate, with confidence, and sample its elevation.
+    """Name the region at a coordinate, sample its elevation, and count what runs through.
 
     Returns 'off-map or ocean' rather than guessing the nearest land region.
 
@@ -89,6 +89,11 @@ def describe_location(
     nodes rest on terrain and are quoted as ground; foundations and buildings are quoted
     separately as built elevation, because a platform is wherever the player put it.
     Where the two disagree, the difference is the fill already stacked there.
+
+    Belts and pipes are counted too, measured against the runs' drawn lines rather than
+    their corner points, so a conduit crossing mid-span is seen. With a readable save,
+    a zero here means nothing runs through -- absence in this output is absence in the
+    world. `search_conduits` lists the runs themselves.
     """
     rm = regions_mod.load_regions()
     x, y = x_m * 100, y_m * 100
@@ -147,6 +152,26 @@ def describe_location(
             "resource node is near, so the height is genuinely unknown -- widen radius_m "
             "or accept that this is unsurveyed ground"
         )
+    # Conduits are counted against their drawn lines, not their corner points, so a belt
+    # crossing mid-span is seen. Reported even at zero: with a readable save, absence in
+    # this answer finally means absence in the world.
+    if st is not None:
+        from ....domain.world import conduits as conduits_mod
+
+        counted = conduits_mod.near_counts(st.conduit_runs, x, y, radius_m)
+        fields.append(
+            (
+                "conduits",
+                (
+                    f"{counted['belt']} belt run(s), {counted['pipe']} pipe run(s) "
+                    f"within {radius_m:g}m"
+                ),
+            )
+        )
+        if counted["belt"] or counted["pipe"]:
+            notes.append("search_conduits lists those runs with endpoints, lengths and elevation")
+    else:
+        notes.append("no save read: belts and pipes here are unknown, not absent")
     # Ground elevation here IS node z, so a stale node row is a stale ground level -- and
     # it can flip the 1 m threshold the fill note above is quoted at. Only the nodes inside
     # the probe radius are in scope, so an untouched location stays silent.
@@ -155,6 +180,186 @@ def describe_location(
         [n["instance"] for n in table.filter(center=(x, y), radius_m=radius_m)],
     )
     return render.envelope(render.kv(fields), "", notes)
+
+
+@mcp.tool(structured_output=False)
+def search_conduits(
+    near: Annotated[str, Field(description="centre: 'x,y' in metres, 'me', or a named factory")],
+    radius_m: float = 250.0,
+    to: Annotated[
+        str | None,
+        Field(description="second area: list only runs passing near BOTH, same forms as near"),
+    ] = None,
+    to_radius_m: Annotated[
+        float | None, Field(description="radius around `to`, defaults to radius_m")
+    ] = None,
+    kind: Annotated[str | None, Field(description="belt | pipe")] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 12,
+    offset: int = 0,
+) -> str:
+    """Belt and pipe runs near a point or between two areas: ends, length, elevation.
+
+    The web map has drawn these all along; this is the text answer to "is there a pipe
+    between those extractors and that platform, where does it run, how long is it". A
+    run is one belt CHAIN (consecutive conveyor pieces, split at splitters, mergers and
+    machines) or one placed pipeline piece. Longest first; each row carries both ends
+    with what stands there where known, the drawn length, and the elevation span.
+
+    `near` and `to` accept a coordinate in metres, `me`, or a named factory. With `to`
+    set, only runs passing within both radii are listed. Proximity is measured against
+    the runs' drawn lines, not their corner points, so a run crossing mid-span counts.
+
+    Long lists page with `offset=`, and the truncation line names the next offset --
+    a busy junction can carry hundreds of chains and the tail of that list is as real
+    as its head.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc} (conduits are read from the save)"
+
+    want = (kind or "").strip().casefold() or None
+    if want not in (None, "belt", "pipe"):
+        return f"! unknown kind {kind!r}. Choose from: belt, pipe"
+
+    try:
+        origin, where = resolve_origin(st, near)
+    except ValueError as exc:
+        return f"! {exc}"
+    second, where2 = None, ""
+    if to is not None:
+        try:
+            second, where2 = resolve_origin(st, to)
+        except ValueError as exc:
+            return f"! {exc}"
+    r2 = to_radius_m if to_radius_m is not None else radius_m
+
+    # In between-mode a run must pass near BOTH areas -- but a pipe ROUTE is usually
+    # several pieces, so the game's own network id is consulted too: one network is one
+    # connected plumbing system, and a network touching both areas joins them even when
+    # no single piece spans the distance. Belts have no such id (a route through a
+    # splitter is several chains), so a note owns that gap rather than a guess.
+    hits = []
+    bridged: dict[int, dict] = {}
+    direct_nets: set[int] = set()
+    for run in st.conduit_runs:
+        if want is not None and (run.kind == "pipe") != (want == "pipe"):
+            continue
+        near_a = run.dist_m(*origin) <= radius_m
+        if second is None:
+            if near_a:
+                hits.append(run)
+            continue
+        near_b = run.dist_m(*second) <= r2
+        if near_a and near_b:
+            hits.append(run)
+            if run.network is not None:
+                direct_nets.add(run.network)
+        elif run.network is not None and (near_a or near_b):
+            entry = bridged.setdefault(run.network, {"fluid": run.fluid, "a": 0, "b": 0})
+            entry["a"] += near_a
+            entry["b"] += near_b
+    hits.sort(key=lambda r: -r.length_m)
+
+    label = f"{want} run(s)" if want else "conduit run(s)"
+    scope = f"within {radius_m:g}m of {where}"
+    if second is not None:
+        scope += f" AND {r2:g}m of {where2}"
+
+    belts = [r for r in hits if r.kind != "pipe"]
+    pipes = [r for r in hits if r.kind == "pipe"]
+    fluids = sorted({g.item_name(r.fluid) for r in pipes if r.fluid})
+    summary = (
+        f"# {st.age_note}\n"
+        f"# {len(hits)} {label} {scope}: "
+        f"{len(belts)} belt ({sum(r.length_m for r in belts):.0f}m drawn), "
+        f"{len(pipes)} pipe ({sum(r.length_m for r in pipes):.0f}m"
+        + (f"; {', '.join(fluids)}" if fluids else "")
+        + ")"
+    )
+
+    bridge_notes = [
+        f"pipe network {net} ({g.item_name(entry['fluid']) if entry['fluid'] else '?'}) "
+        f"touches BOTH areas -- one connected plumbing system, {entry['a']} piece(s) near "
+        f"{where} and {entry['b']} near {where2}, though no single piece spans both"
+        for net, entry in sorted(bridged.items())
+        if entry["a"] and entry["b"] and net not in direct_nets
+    ]
+    if second is not None and want != "pipe" and (belts or hits or bridge_notes):
+        bridge_notes.append(
+            "a belt route through a splitter is several chains, so a chain near only one "
+            "end may still continue to the other -- follow its connects column, or "
+            "trace_upstream from the machine it feeds"
+        )
+
+    if not hits:
+        return render.envelope(
+            summary,
+            "",
+            [
+                *bridge_notes,
+                (
+                    "this reads the save's own belt and pipe geometry, so nothing listed "
+                    "means nothing runs there -- widen radius_m to check further out"
+                ),
+            ],
+        )
+
+    def _end(e) -> str:
+        return f"{e.x / 100:.0f},{e.y / 100:.0f},{e.z / 100:.0f}"
+
+    rows = []
+    start = max(0, offset)
+    for run in hits[start : start + render.clamp(limit, default=12)]:
+        joiner = "->" if run.directed else "--"
+        connects = f"{(run.a.plugs or '?')[:22]} {joiner} {(run.b.plugs or '?')[:22]}"
+        if run.via:
+            connects += " via " + ", ".join(run.via)[:24]
+        rows.append(
+            (
+                run.ident,
+                run.label,
+                f"{run.length_m:.0f}m",
+                _end(run.a),
+                _end(run.b),
+                f"{run.z_min_m:.0f}..{run.z_max_m:.0f}",
+                # A pipe says WHAT it carries (the network's own answer, ? where no
+                # network claims it); a belt has no such fact, so it quotes capacity.
+                (g.item_name(run.fluid) if run.fluid else "?")
+                if run.kind == "pipe"
+                else render.rate(run.rate, "/min"),
+                connects,
+            )
+        )
+    notes = [
+        *bridge_notes,
+        (
+            "a/b are the run's ends in metres; -> is travel/flow direction, -- means the "
+            "direction is not established. 'connects' is the nearest placed thing whose "
+            "footprint covers the end -- a geometric read, ? where nothing known stands "
+            "there, and a chain:/pipe: entry is the run it continues into"
+        ),
+        (
+            "length follows the drawn line corner to corner, so a curved run reads a "
+            "touch short of its true arc"
+        ),
+    ]
+    if any("-mk" in r.label for r in hits):
+        notes.append("a mixed-tier chain shows its tier span and quotes the slowest cap")
+    return render.envelope(
+        summary,
+        render.table(
+            ("id", "kind", "len", "a(m)", "b(m)", "z(m)", "carries", "connects"),
+            rows,
+            total=len(hits),
+            offset=start,
+            limit=limit,
+        ),
+        notes,
+    )
 
 
 @mcp.tool(structured_output=False)
