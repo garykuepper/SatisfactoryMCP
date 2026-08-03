@@ -101,13 +101,22 @@ _CELL = 800.0
 
 @dataclass
 class Slab:
-    """One connected platform."""
+    """One connected platform.
+
+    ``bbox`` is the tiles' axis-aligned XY bounding box, ``(min_x, min_y, max_x,
+    max_y)`` in cm. Stored beside ``centre``/``extent`` rather than derived from them,
+    because it cannot be: ``centre`` is the tile MEAN, which sits wherever the tiles
+    are dense, so ``centre +- extent/2`` invents corners an L-shaped platform does not
+    have. The reference user reconstructed exactly this box from nine
+    describe_location probes by hand, which is what it exists to retire.
+    """
 
     index: int
     tiles: int
     centre: tuple[float, float, float]
     extent: tuple[float, float]
     z_span: tuple[float, float]
+    bbox: tuple[float, float, float, float]
 
     @property
     def storeys(self) -> int:
@@ -230,6 +239,7 @@ def build_structures(
                 centre=(sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs)),
                 extent=(max(xs) - min(xs), max(ys) - min(ys)),
                 z_span=(min(zs), max(zs)),
+                bbox=(min(xs), min(ys), max(xs), max(ys)),
             )
         )
         for i in members:

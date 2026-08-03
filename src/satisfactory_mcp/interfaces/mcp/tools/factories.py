@@ -19,6 +19,25 @@ from ....domain.spatial import nodes as nodes_mod
 from ....presenters.text import primitives as render
 from ..app import Limit, _state, game, mcp
 
+#: Bare (machine-less) slabs at or above this many tiles are listed individually by
+#: factory_map; smaller ones are one summary line. 12 tiles is a 3x4 pour of 8 m
+#: foundations -- below that a bare slab is a helper pad (a tile under a power pole, a
+#: jump-pad landing), and the reference save has dozens of those against a handful of
+#: real platforms. The response quotes this number so a summarised pad is a known
+#: omission rather than a blind spot.
+BARE_TILE_FLOOR = 12
+
+
+def _z_range(slab) -> str:
+    """A slab's elevation in metres -- both ends of it where they differ.
+
+    Not just the deck it starts on: a platform poured over three storeys stands at
+    BOTH heights, and a build plan that reads only the bottom one puts a machine
+    under the floor. One number where the whole pour is flat, which is most of them.
+    """
+    lo, hi = slab.z_span[0] / 100, slab.z_span[1] / 100
+    return f"{lo:.0f}" if round(lo) == round(hi) else f"{lo:.0f}..{hi:.0f}"
+
 
 def _cand_row(c, store, labelled: set[str]) -> tuple:
     named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
@@ -51,6 +70,11 @@ def factory_map(
     are the sharpest of the three but say nothing about the ground-built parts of a
     factory. Where they disagree, carve the difference with `name_factory` and a
     `product:`, `near:` or `slab:` selector.
+
+    show=slabs also lists BARE platforms -- poured foundations carrying no machine yet
+    -- with tile count, extent, bounding box and elevation, because a freshly built
+    platform is a real place a build plan refers to. Pads under a stated tile threshold
+    are summarised in one line.
     """
     try:
         st = _state(save, world)
@@ -147,6 +171,62 @@ def factory_map(
                 limit=n,
             )
         )
+
+        # Bare platforms too. show=slabs used to list only slabs CARRYING machines, so a
+        # freshly poured 1,901-foundation platform -- the most important object in that
+        # build -- was invisible, and its extent got reconstructed from nine
+        # describe_location probes by hand. The threshold below keeps helper pads (a
+        # tile under a pole, a jump-pad) from drowning the platforms worth naming, and
+        # the output states it so a summarised pad is a known omission, not a blind one.
+        occupied = set(sx.slab_of.values())
+        bare = [s for s in sx.slabs if s.index not in occupied]
+        listed = [s for s in bare if s.tiles >= BARE_TILE_FLOOR]
+        pads = [s for s in bare if s.tiles < BARE_TILE_FLOOR]
+        if bare:
+            brows = [
+                (
+                    slab.index,
+                    slab.tiles,
+                    f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
+                    f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
+                    (
+                        f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
+                        f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}"
+                    ),
+                    _z_range(slab),
+                    slab.storeys,
+                )
+                for slab in listed[:n]
+            ]
+            header = (
+                f"## bare platforms (no machines): {len(bare)}, {sum(s.tiles for s in bare)} tiles"
+            )
+            body = render.table(
+                ("slab", "tiles", "x,y(m)", "extent", "bbox(m)", "z(m)", "floors"),
+                brows,
+                total=len(listed),
+                limit=n,
+            )
+            if pads:
+                body += (
+                    f"\n# plus {len(pads)} pad(s) under {BARE_TILE_FLOOR} tiles "
+                    f"({sum(s.tiles for s in pads)} tiles total), summarised here "
+                    "by that threshold"
+                )
+            chunks.append(f"{header}\n{body}")
+            notes.append(
+                "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
+                "about half a tile past the box quoted"
+            )
+            if any(slab.storeys > 1 for slab in listed[:n]):
+                notes.append(
+                    "floors is the z span counted in 4 m storeys, so a slab poured UP A "
+                    "HILLSIDE counts its climb as decks -- read it beside z(m) rather "
+                    "than as a tower"
+                )
+        else:
+            chunks.append("## bare platforms (no machines): none")
+
         ground = len(machines) - len(sx.slab_of)
         if ground:
             notes.append(

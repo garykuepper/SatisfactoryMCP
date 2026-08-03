@@ -366,6 +366,27 @@ Decisions that took measurement:
 `describe_location` gained a `conduits=` field counted the same way — **printed even at
 zero**, so with a readable save, absence in that answer finally means absence in the world.
 
+### 10.1g `factory_map show=slabs` — bare platforms are places too
+
+`show=slabs` listed only slabs *carrying machines*, because the slab signal exists to propose
+factories — so a bare 1,901-foundation platform, the most important object in that user's
+build, was invisible, and the client reconstructed its extent from **nine `describe_location`
+probes by hand**. Bare (machine-less) slabs are now their own table: tile count, extent,
+**bounding box**, elevation and a floors count, largest platform first.
+
+- **`bbox` is stored on the `Slab`, not derived**, because it cannot be: `centre` is the tile
+  *mean* and sits wherever the tiles are dense, so `centre ± extent/2` invents corners an
+  L-shaped platform does not have.
+- **Extents span tile centres.** The poured edge reaches about half a tile further, and the
+  response says so rather than quietly measuring two different things.
+- **Elevation is the whole span** (`lo..hi`, one number where the pour is flat). A platform
+  built over three storeys stands at both heights, and a plan reading only the bottom one
+  puts a machine under the floor.
+- **Helper pads are summarised, and the threshold is printed.** Bare slabs under
+  `BARE_TILE_FLOOR = 12` tiles (a 3×4 pour of 8 m foundations — below that it is a tile under
+  a power pole or a jump-pad landing) collapse to one count line that names the threshold, so
+  a summarised pad is a known omission instead of a blind spot.
+
 ### 10.2 Context budget
 
 The binding constraint. All 291 automatable recipes in optimal TSV = 25,313 chars (~7k tokens). **No tool
