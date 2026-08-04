@@ -22,7 +22,7 @@ testing contract. Section numbers are continuous with the rest of the spec;
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`
 **Layout:** `plan_layout`
-**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
+**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `site_plan`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -118,6 +118,20 @@ by an older build cannot break a newer `build_scenario`.
 
 Stored per world under `saveIdentifier` in `user_data_dir/plans/`, beside the labels and
 for the same reason.
+
+**Siting.** A stored plan may also record **where it stands**: origin (the footprint's
+centre, metres, optional z), yaw (degrees about world Z, +X towards +Y — the same
+convention the save stores machine facing with), and footprint (`WxD` metres, either
+caller-measured or the square `plan_layout` budgets for the largest floor, and the record
+says which). Set at save time (`plan_factory site_at=... save_as=...`) or afterwards
+(`site_plan`), cleared with `site_plan(clear=True)`. A siting is a *record of the
+decision, never a constraint*: nothing feeds it to the LP, and re-solving neither reads
+nor moves it. Once sited: every recall prints it, `list_plans` grows a `sited(m)` column,
+`diff_vs_save plan=...` adds an **ON SITE** census — counts by building class inside the
+(properly rotated) footprint against the plan's bill, named *approximate* because it
+checks neither recipes nor clocks — and `show_on_map target='plan:<name>'` centres both
+the public map and this project's own web map (`#z=…&c=x,y`) on the origin. Old plan
+files load unchanged; no siting is an ordinary state, not an error.
 
 **Scoping.** `diff_vs_save(factory=...)` — or a plan saved with `for_factory` — limits
 what counts as *already built* to that factory's machines. Unscoped, "you already have 12

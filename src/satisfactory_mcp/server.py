@@ -65,6 +65,7 @@ from .interfaces.mcp.tools.planning import (
     plan_factory,
     plan_layout,
     rank_unlocks,
+    site_plan,
 )
 from .interfaces.mcp.tools.progression import (
     collected_from_world,
@@ -145,6 +146,7 @@ __all__ = [
     "search_resource_nodes",
     "select_machines",
     "show_on_map",
+    "site_plan",
     "somersloops",
     "trace_upstream",
     "unlocked_recipes",

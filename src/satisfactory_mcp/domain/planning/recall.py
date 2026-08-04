@@ -12,6 +12,7 @@ copies, and the copy that was forgotten would be the tool that answered silently
 from __future__ import annotations
 
 from . import provenance as prov
+from . import siting as siting_mod
 
 #: The declared default of every stored planning argument. Needed because MCP fills
 #: defaults in before the tool sees them, so "objective" always arrives as "max_mw" and
@@ -62,6 +63,11 @@ def recall_plan(st, plan: str | None, supplied: dict) -> tuple[dict, str, list[s
     notes = []
     if stored.notes:
         notes.append(f"{stored.name}: {stored.notes}")
+    # The siting rides along on every recall, whichever tool recalled it -- this is the
+    # one place all five pass through, the same reason the field check lives here.
+    sit = siting_mod.parse(stored)
+    if sit is not None:
+        notes.append(f"sited: {sit.describe()}")
     changed = sorted(k for k, v in overrides.items() if stored.kwargs().get(k) != v)
     if changed:
         notes.append(

@@ -20,6 +20,7 @@ from ...core.gamedata.model import GameData
 from ..factories.resolve import resolve_factory
 from ..factories.select import SelectorError
 from ..world.state import WorldState
+from . import siting as siting_mod
 from .commission import Tracking, commission, track
 from .diff import DiffReport, build_diff
 from .prepare import PreparedPlan, prepare
@@ -43,6 +44,11 @@ class DiffVsSaveReport:
     drift_note: str = ""
     #: Feasible, but the solve chose to build nothing. Distinct from a failure.
     empty: bool = False
+    #: The recalled plan's recorded site and the approximate what-stands-here census over
+    #: it, both only when the plan carries a siting. See ``planning.siting`` for why the
+    #: survey is honest about being counts-by-class rather than a second identity match.
+    site: siting_mod.Siting | None = None
+    site_survey: siting_mod.SiteSurvey | None = None
 
 
 def build_diff_report(
@@ -94,6 +100,15 @@ def build_diff_report(
 
     report.rep = rep = build_diff(g, st, sol, req, scope=scope)
     report.power = pw = st.power_report()
+
+    # A sited plan gets the census over its own pad. Beside the identity-matched diff,
+    # not instead of it: the diff says whether the machines exist, the survey says
+    # whether they stand where the plan was sited.
+    if plan and (stored := st.plans.find(plan)) is not None:
+        sit = siting_mod.parse(stored)
+        if sit is not None:
+            report.site = sit
+            report.site_survey = siting_mod.survey(g, st, sit, sol.processes)
 
     # Stage detection is the same partition commission_plan emits, matched against the
     # save -- nothing is stored and nothing is re-solved. It is off unless asked for,

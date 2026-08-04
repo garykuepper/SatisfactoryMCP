@@ -78,6 +78,11 @@ class Plan:
     #: Defaulted, so a plan file written before this existed still loads; empty then
     #: means "not recorded", which a recall reports as such rather than as "unchanged".
     provenance: dict = field(default_factory=dict)
+    #: Where this plan is to STAND -- origin, yaw and footprint; ``planning.siting`` owns
+    #: the shape. Defaulted for the same reason as ``provenance``: empty means "not
+    #: sited". Deliberately untouched by ``put``: re-saving a plan's arguments re-states
+    #: WHAT it is, and where it goes is a separate statement with its own verb.
+    siting: dict = field(default_factory=dict)
 
     def kwargs(self) -> dict:
         """Stored arguments, filtered to those a planning call still accepts."""

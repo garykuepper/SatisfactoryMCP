@@ -12,6 +12,7 @@ from ....domain.factories.select import SelectorError
 from ....domain.planning import bom as bom_mod
 from ....domain.planning import compare
 from ....domain.planning import provenance as prov
+from ....domain.planning import siting as siting_mod
 from ....domain.planning.carrier import resolve_tiers
 from ....domain.planning.commission_service import build_commission_report
 from ....domain.planning.diff_service import build_diff_report
@@ -71,6 +72,7 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
         except Exception as exc:  # a stored plan can outlive the thing it referenced
             status.append(f"broken: {type(exc).__name__}")
         args = stored.args
+        sit = siting_mod.parse(stored)
         rows.append(
             (
                 stored.name,
@@ -78,6 +80,7 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
                 args.get("target_item") or "-",
                 ",".join(args.get("sources") or [])[:28] or "whole map",
                 stored.factory or "-",
+                f"{sit.x_m:.0f},{sit.y_m:.0f}" if sit else "-",
                 "; ".join(status),
                 stored.notes[:30],
             )
@@ -105,7 +108,8 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
     return render.envelope(
         f"# {st.age_note}\n# {len(rows)} saved plan(s)",
         render.table(
-            ("name", "objective", "target", "sources", "factory", "status", "notes"), rows
+            ("name", "objective", "target", "sources", "factory", "sited(m)", "status", "notes"),
+            rows,
         ),
         notes,
     )
@@ -125,6 +129,135 @@ def forget_plan(name: str, save: str | None = None, world: str | None = None) ->
     st.plans.remove(stored.name)
     st.plans.save()
     return f"forgot plan {stored.name!r}"
+
+
+@mcp.tool(structured_output=False)
+def site_plan(
+    plan: str,
+    at: Annotated[
+        str,
+        Field(
+            description="site origin (the footprint's CENTRE): 'x,y[,z]' in metres, "
+            "'me', or a factory name. Blank keeps the stored origin"
+        ),
+    ] = "",
+    yaw_deg: Annotated[
+        float | None,
+        Field(description="degrees about world Z, positive +X towards +Y; omit to keep"),
+    ] = None,
+    footprint: Annotated[
+        str,
+        Field(
+            description="'WxD' in metres ('96' = square). Blank keeps the stored one, "
+            "or derives the layout's own square if none is stored"
+        ),
+    ] = "",
+    clear: bool = False,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Record, update or clear WHERE a stored plan stands. Nothing is re-solved.
+
+    A plan stores what to build; this stores where -- origin (x, y and optionally z, in
+    metres, at the footprint's centre), orientation (yaw about world Z, the same
+    convention the save stores machine facing with), and footprint (width x depth,
+    metres). The footprint defaults to the square plan_layout budgets for the plan's
+    largest floor, and the record keeps track of whether it was measured or derived.
+
+    Once sited: plan recalls print the siting; ``diff_vs_save plan=<name>`` adds an
+    approximate what-stands-on-the-pad census; ``show_on_map target='plan:<name>'``
+    centres a map link on the origin.
+
+    The siting is a RECORD of your decision, not a constraint on the solve -- re-running
+    the plan neither reads nor moves it, and ``save_as`` over the same name keeps it.
+    """
+    g = game()
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    stored = st.plans.find(plan)
+    if stored is None:
+        known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+        return f"! no saved plan named {plan!r}. Saved: {known}"
+
+    if clear:
+        if not stored.siting:
+            return f"plan {stored.name!r} carries no siting; nothing to clear"
+        stored.siting = {}
+        st.plans.save()
+        return f"cleared the siting of plan {stored.name!r}. The plan itself is untouched"
+
+    existing = siting_mod.parse(stored)
+    if not at and existing is None:
+        return (
+            f"! plan {stored.name!r} has no siting yet, so there is no origin to keep -- "
+            "pass at='x,y[,z]' in metres, 'me', or a factory name"
+        )
+
+    when = str(st.header.get("save_datetime") or st.header.get("filename") or "")
+    try:
+        if at:
+            sit = siting_mod.build_siting(
+                g,
+                st,
+                at=at,
+                yaw_deg=yaw_deg if yaw_deg is not None else (existing.yaw_deg if existing else 0.0),
+                footprint=footprint
+                or (
+                    f"{existing.width_m:g}x{existing.depth_m:g}"
+                    if existing and existing.has_footprint
+                    else ""
+                ),
+                plan_kwargs=stored.kwargs(),
+                when=when,
+            )
+        else:
+            # Origin kept, yaw and/or footprint updated in place.
+            width, depth, source = existing.width_m, existing.depth_m, existing.source
+            if footprint:
+                width, depth = siting_mod.parse_footprint(footprint)
+                source = "given"
+            sit = siting_mod.Siting(
+                x_m=existing.x_m,
+                y_m=existing.y_m,
+                z_m=existing.z_m,
+                yaw_deg=yaw_deg if yaw_deg is not None else existing.yaw_deg,
+                width_m=width,
+                depth_m=depth,
+                source=source,
+                origin_label=existing.origin_label,
+                when=when,
+            )
+    except ValueError as exc:
+        return f"! {exc}"
+
+    stored.siting = sit.to_dict()
+    path = st.plans.save()
+
+    from ....domain.spatial import maplink, regions
+
+    label = regions.load_regions().label_for(sit.x_m * 100, sit.y_m * 100)
+    verb = "re-sited" if existing else "sited"
+    return render.envelope(
+        f"# {verb} plan {stored.name!r}: {sit.describe()}\n"
+        f"# region: {label.describe()}\n"
+        f"stored in {path}",
+        "map: "
+        + maplink.local_map_url(sit.x_m, sit.y_m, world=st.plans.world_id)
+        + "\n"
+        + maplink.map_url(sit.x_m * 100, sit.y_m * 100),
+        [
+            (
+                f"diff_vs_save plan={stored.name!r} now reports what stands inside this "
+                f"footprint; show_on_map target='plan:{stored.name}' centres on it"
+            ),
+            (
+                "the siting is a record, not a constraint: re-solving the plan neither "
+                "reads nor moves it"
+            ),
+        ],
+    )
 
 
 @mcp.tool(structured_output=False)
@@ -168,6 +301,21 @@ def plan_factory(
     save_as: Annotated[str | None, Field(description="store this request under a name")] = None,
     plan_notes_text: Annotated[str, Field(description="note stored with save_as")] = "",
     for_factory: Annotated[str, Field(description="factory label this plan is for")] = "",
+    site_at: Annotated[
+        str | None,
+        Field(
+            description="with save_as: record where this plan will STAND -- 'x,y[,z]' in "
+            "metres, 'me', or a factory name (the footprint's centre)"
+        ),
+    ] = None,
+    site_yaw_deg: Annotated[
+        float,
+        Field(description="site orientation: degrees about world Z, positive +X towards +Y"),
+    ] = 0.0,
+    site_footprint: Annotated[
+        str,
+        Field(description="site footprint 'WxD' in metres; blank = the layout's own square"),
+    ] = "",
 ) -> str:
     """Optimise a factory with an LP over this world's unlocked recipes.
 
@@ -226,6 +374,11 @@ def plan_factory(
     ``logistics_items`` pins named items into the belt/pipe table however small their
     flow, as rows ADDED to the ``limit`` biggest by volume. Without it, a two-item
     question can fall off the bottom of a big plan's flow table.
+
+    ``site_at`` (with ``save_as``) records where the plan will STAND -- origin, yaw and
+    footprint -- so later calls can answer "does what stands there match it"
+    (diff_vs_save) and "show me" (show_on_map target='plan:<name>'). Recorded, never
+    solved against. Use site_plan to set or move the siting of an already-stored plan.
     """
     g = game()
     try:
@@ -268,21 +421,51 @@ def plan_factory(
         # selector starts meaning a different part of the map, which is a different
         # staleness and the one that re-planned this world's reference plan in silence.
         field = prov.record(g, st, plan_kwargs.get("sources"))
+        when = str(st.header.get("save_datetime") or st.header.get("filename") or "")
+        sit = None
+        if site_at:
+            # Resolved BEFORE the store is touched, so a bad coordinate refuses the whole
+            # save rather than leaving a half-written plan behind. The footprint falls
+            # back to the square the layout budgets, off the solution this call paid for.
+            try:
+                sit = siting_mod.build_siting(
+                    g,
+                    st,
+                    at=site_at,
+                    yaw_deg=site_yaw_deg,
+                    footprint=site_footprint,
+                    solution=report.prepared.solution,
+                    plan_kwargs=plan_kwargs,
+                    when=when,
+                )
+            except ValueError as exc:
+                return f"! {exc} -- nothing saved"
         stored = st.plans.put(
             save_as,
             plan_kwargs,
             plan_id,
             notes=plan_notes_text,
             factory=for_factory,
-            when=str(st.header.get("save_datetime") or st.header.get("filename") or ""),
+            when=when,
             provenance=field,
         )
+        sited = ""
+        if sit is not None:
+            stored.siting = sit.to_dict()
+            sited = f". Sited: {sit.describe()}"
         path = st.plans.save()
         pinned = "; ".join(f"{e['selector']}={e['count']} node(s)" for e in field["selectors"])
         save_as_note = (
             f"saved as {stored.name!r} (plan_id {plan_id}) in {path}. "
             f"Recall with plan={stored.name!r} on plan_factory, plan_layout or diff_vs_save"
             + (f". Field recorded: {pinned}" if pinned else "")
+            + sited
+        )
+    elif site_at:
+        save_as_note = (
+            "site_at was given without save_as, so nothing was recorded: a siting lives "
+            "on a STORED plan. Pass save_as=<name> here, or site an existing plan with "
+            "site_plan"
         )
 
     return render_plan_factory(

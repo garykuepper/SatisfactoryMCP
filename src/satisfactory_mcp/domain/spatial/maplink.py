@@ -23,9 +23,14 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-__all__ = ["BASE", "COLLECTIBLES", "LAYERS", "layers_for", "map_url"]
+__all__ = ["BASE", "COLLECTIBLES", "LAYERS", "LOCAL_BASE", "layers_for", "local_map_url", "map_url"]
 
 BASE = "https://satisfactory-calculator.com/en/interactive-map"
+
+#: This project's own web map. The port is pinned in ``interfaces.web.__main__`` (8712,
+#: chosen to collide with nothing); repeated here as data rather than imported, because
+#: domain may not reach into interfaces and a URL is a string either way.
+LOCAL_BASE = "http://127.0.0.1:8712/"
 
 #: The layer group in the supplied link. The site has others (map/game); this is the one
 #: resource markers live on.
@@ -115,3 +120,22 @@ def map_url(
     # The fragment is semicolon- and pipe-delimited by design, so those must survive;
     # only genuinely unsafe characters are escaped.
     return f"{BASE}#{quote(fragment, safe=';|.-')}"
+
+
+def local_map_url(x_m: float, y_m: float, zoom: float = 1, world: str = "") -> str:
+    """A deep link into this project's own web map, centred on a coordinate in METRES.
+
+    The fragment format is read from the frontend's own writer (``writeHash`` in
+    ``map.ts``): ``#world=…&z=…&c=x,y``, with ``c`` in metres on save axes and rounded to
+    one decimal, exactly as the page itself writes it. ``save`` is omitted on purpose --
+    an absent save means "follow the newest", which is what a link pasted later should do.
+
+    Metres, unlike ``map_url`` above, because that is the unit the page's fragment
+    carries; the two writers each match their reader.
+    """
+    parts = []
+    if world:
+        parts.append("world=" + quote(world, safe=""))
+    parts.append(f"z={zoom:g}")
+    parts.append(f"c={round(x_m, 1):g},{round(y_m, 1):g}")
+    return LOCAL_BASE + "#" + "&".join(parts)
