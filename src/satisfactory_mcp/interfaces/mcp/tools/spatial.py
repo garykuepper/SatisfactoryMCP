@@ -380,8 +380,8 @@ def show_on_map(
     target: Annotated[
         str,
         Field(
-            description="'x,y' in metres, 'me', a factory label, a node id, or a "
-            "resource name like 'Crude Oil'"
+            description="'x,y' in metres, 'me', a factory label, a node id, a "
+            "resource name like 'Crude Oil', or 'plan:<name>' for a sited plan's origin"
         ),
     ],
     layers: Annotated[
@@ -395,8 +395,9 @@ def show_on_map(
     """A satisfactory-calculator.com map link centred on something, with layers on.
 
     `target` accepts a coordinate in metres, `me`, one of your named factories, a node
-    id from `search_resource_nodes`, or a resource name — the last centres on that
-    resource's nodes and switches its overlays on.
+    id from `search_resource_nodes`, a resource name — the last centres on that
+    resource's nodes and switches its overlays on — or `plan:<name>` for a plan that
+    has a recorded siting (see site_plan), which also links this project's own web map.
 
     Only the Crude Oil layer tokens are confirmed; the rest follow the same pattern and
     are flagged. A wrong token still opens the map in the right place, just without that
@@ -413,12 +414,38 @@ def show_on_map(
     table = nodes_mod.load_nodes()
     notes: list[str] = []
     resources: list[str] = []
+    extra_links: list[str] = []
     text = target.strip()
 
     # A node id centres on that node and lights up its own resource.
     by_instance = {k.rsplit(".", 1)[-1]: v for k, v in table.by_instance().items()}
     node = by_instance.get(text)
-    if node is not None:
+    if text.casefold().startswith("plan:"):
+        # A sited plan's origin. This is the one target that also gets a link into this
+        # project's OWN web map -- the siting is first-party data the public map cannot
+        # show, and the local fragment (#z=…&c=x,y) is read from the frontend's writer.
+        from ....domain.planning import siting as siting_mod
+
+        if st is None:
+            return "! reading a plan needs a readable save"
+        pname = text[5:].strip()
+        stored = st.plans.find(pname)
+        if stored is None:
+            known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+            return f"! no saved plan named {pname!r}. Saved: {known}"
+        sit = siting_mod.parse(stored)
+        if sit is None:
+            return (
+                f"! plan {stored.name!r} has no siting recorded -- set one with "
+                f"site_plan, or plan_factory site_at=... save_as={stored.name!r}"
+            )
+        node = None
+        origin = (sit.x_m * 100, sit.y_m * 100)
+        where = f"plan {stored.name!r} site ({sit.describe()})"
+        extra_links.append(
+            "web map: " + maplink.local_map_url(sit.x_m, sit.y_m, world=st.plans.world_id)
+        )
+    elif node is not None:
         origin = (node["x"], node["y"])
         where = f"{text} ({g.item_name(node['resource'])}, {node['purity']})"
         resources = [node["resource"]]
@@ -465,6 +492,8 @@ def show_on_map(
 
     url = maplink.map_url(origin[0], origin[1], tokens, zoom=zoom)
     body = url
+    for link in extra_links:
+        body += "\n" + link
     if tokens:
         body += "\n# layers: " + ", ".join(tokens)
     return render.envelope(

@@ -345,6 +345,28 @@ def render_diff(
             f"materials, but NOT in it: {near}"
             "\n#   yours to keep or reclaim; no action proposed"
         )
+    if report.site is not None and report.site_survey is not None:
+        sv = report.site_survey
+        site_rows = [
+            (r.name[:24], r.planned, r.standing, f"{r.standing - r.planned:+d}")
+            for r in sv.rows[: render.clamp(limit, default=20)]
+        ]
+        parts.append(
+            f"# ON SITE (approximate): {report.site.describe()}\n"
+            f"# {sv.standing_total} machine(s) stand inside that footprint; "
+            f"the plan wants {sv.planned_total}\n"
+            + render.table(
+                ("building", "planned", "on_site", "delta"),
+                site_rows,
+                total=len(sv.rows),
+                limit=limit,
+            )
+        )
+        notes.append(
+            "ON SITE counts by BUILDING CLASS inside the sited footprint only -- it checks "
+            "neither recipes nor clocks, so it says whether the pad holds the right SHAPE "
+            "of plant; the rows above are the identity-matched truth"
+        )
     if show_cost and rep.cost:
         parts.append(
             "# cost of the build counts. stock is spendable only, never machine buffers."
