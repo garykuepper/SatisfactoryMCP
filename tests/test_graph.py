@@ -510,6 +510,45 @@ def test_factory_map_lists_bare_platforms_and_summarises_pads_by_a_stated_thresh
     assert "-500,-500" not in out
 
 
+def test_a_bare_platform_answers_a_slab_selector_instead_of_refusing_it(game, monkeypatch):
+    """factory_map lists bare platforms by index and the selector that index feeds
+    refused exactly that case, so the table added to retire a nine-probe workflow
+    dead-ended into an error. A poured platform is a place; the answer is to describe it.
+    """
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    platform = [[0, 40000 + (i % 4) * 800, 100000 + (i // 4) * 800, 0] for i in range(16)]
+    carrying = [[0, x * 800, 0, 0] for x in range(3)]
+    projection = {
+        "header": {"save_identifier": "TEST-bare-selector", "session_name": "t"},
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [*platform, *carrying],
+        },
+        "machines": [
+            {
+                "instance": "L:P.Build_SmelterMk1_C_1",
+                "cls": "Build_SmelterMk1_C",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [800, 0, 100],
+            }
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    assert st.structures.machines_on(0) == [], "slab 0 is the big empty one"
+    assert _sel(["slab:0"], st.graph, game, projection, structures=st.structures) == []
+
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.select_machines(["slab:0"])
+    assert "nothing stands on this platform yet" in out
+    assert "tiles=16" in out
+    # The occupied one still answers the same question with what is standing on it.
+    assert "1x Smelter" in ftools.select_machines(["slab:1"])
+
+
 def test_an_occupied_slab_reports_the_shape_a_bare_one_does(game, monkeypatch):
     """The half of the table you can already build against was the half with no
     footprint: bare platforms got a bounding box, a z span and a storey count, and a

@@ -54,6 +54,37 @@ def _slab_shape(slab) -> tuple:
     )
 
 
+def _empty_platform(select: list[str], structures) -> str:
+    """The platform a lone ``slab:`` term names, when nothing stands on it yet.
+
+    An empty string when the selector is anything else, so the caller's own "matched no
+    machines" still speaks for every other way of picking nothing.
+    """
+    terms = [t.strip() for t in select if t.strip().casefold().startswith("slab:")]
+    if len(terms) != 1 or len(select) != 1:
+        return ""
+    try:
+        slab = structures.slabs[int(terms[0].split(":", 1)[1])]
+    except (ValueError, IndexError):
+        return ""
+    box, z, floors = _slab_shape(slab)
+    return (
+        render.kv(
+            [
+                ("slab", slab.index),
+                ("machines", 0),
+                ("tiles", slab.tiles),
+                ("at", f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}"),
+                ("extent", f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m"),
+                ("bbox(m)", box),
+                ("z(m)", z),
+                ("floors", floors),
+            ]
+        )
+        + "\nnothing stands on this platform yet -- it is poured ground, not a factory"
+    )
+
+
 def _cand_row(c, store, labelled: set[str]) -> tuple:
     named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
     covered = sum(1 for m in c.machines if m in labelled)
@@ -766,6 +797,9 @@ def select_machines(
     Worth running first on anything product-based: 17 machines make Concrete on the
     reference save, but 15 of them are a construction feed inside the steel site and
     only one is the player's "concrete setup".
+
+    `slab:<n>` answers "what stands on this platform", and answers it for an empty one
+    too: a poured platform with nothing on it yet is described rather than refused.
     """
     try:
         st = _state(save, world)
@@ -789,6 +823,9 @@ def select_machines(
     except gsel.SelectorError as exc:
         return f"! {exc}"
     if not picked:
+        empty = _empty_platform(select, st.structures)
+        if empty:
+            return render.envelope(f"# {st.age_note}", empty)
         return "! that selector matched no machines"
 
     cand = identity.describe(picked, st.graph, st.game, st.projection, "selector")

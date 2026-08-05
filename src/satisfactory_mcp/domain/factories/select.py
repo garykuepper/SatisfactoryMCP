@@ -222,10 +222,10 @@ def _resolve(
             raise SelectorError(f"slab:{value!r} needs an integer index") from exc
         if not 0 <= index < len(structures.slabs):
             raise SelectorError(f"slab:{index} out of range (0..{len(structures.slabs) - 1})")
-        hits = set(structures.machines_on(index))
-        if not hits:
-            raise SelectorError(f"slab:{index} is a platform with no machines standing on it")
-        return hits
+        # A platform with nothing on it selects nothing, and that is an answer rather than
+        # an error: factory_map lists bare platforms by this index, so refusing them made
+        # that table point at a selector it had just told the reader to use.
+        return set(structures.machines_on(index))
     if kind == "proposal":
         if proposals is None:
             raise SelectorError("proposal: needs the proposal list; re-read the save")
