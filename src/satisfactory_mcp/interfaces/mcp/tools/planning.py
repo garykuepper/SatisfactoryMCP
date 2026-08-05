@@ -1225,9 +1225,8 @@ def rank_unlocks(
         "already existed, and that machine is named in 'needs'"
     )
     if sweep.unsolved:
-        # Their stored gain is 0, which is indistinguishable from the 78 candidates that
-        # were measured and found worthless. Adding a recipe only widens the LP, so an
-        # unsolved counterfactual is a solver failure and never a verdict on the recipe.
+        # Adding a recipe only ever widens the LP, so an unsolved counterfactual is a
+        # solver failure and never a verdict on the recipe.
         shown = sweep.unsolved[:4]
         notes.append(
             f"INFEASIBLE: {len(sweep.unsolved)} candidate(s) did not solve with the recipe "
