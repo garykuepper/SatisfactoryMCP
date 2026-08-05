@@ -40,6 +40,11 @@ RANGE_CAVEAT = (
 )
 
 
+#: Cost rows shown. Deliberately below ``limit``: the bill is ranked by shortfall and the
+#: gate on a build is at its head, so this is a headline and not the whole bill.
+COST_ROWS = 5
+
+
 def _stage_state(stage) -> str:
     """One phrase per stage, saying only what the save supports."""
     if stage.built_max <= 0:
@@ -375,8 +380,9 @@ def render_diff(
                 ("item", "need", "stock", "your_lines"),
                 [
                     (c.name[:24], render.num(c.need), render.num(c.stock), c.lines)
-                    for c in rep.cost[:5]
+                    for c in rep.cost[:COST_ROWS]
                 ],
+                total=len(rep.cost),
             )
         )
     # Suppressed when the stage table is present: "place it in >=18 proportional slices"

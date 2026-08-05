@@ -377,6 +377,25 @@ def test_one_scenario_path_serves_every_planning_tool(game, state):
     assert req.node_rows and all(r["reachable"] for r in req.node_rows)
 
 
+def test_the_cost_table_says_when_it_hid_rows(game, state):
+    """A five-row slice with no envelope reads as the whole bill. The slice is right --
+    the list is ranked by shortfall, so the gate on the build is at its head -- but the
+    reader has to be able to tell that a sixth shortfall exists. The fixture world has
+    only three, so the rows are fabricated: this pins the envelope, not the bill."""
+    from satisfactory_mcp.domain.planning.diff import CostLine
+    from satisfactory_mcp.domain.planning.diff_service import build_diff_report
+    from satisfactory_mcp.presenters.text.diff import COST_ROWS, render_diff
+
+    report = build_diff_report(game, state, dict(SPIRE), objective="max_mw")
+    assert len(report.rep.cost) <= COST_ROWS, "this world stopped being the short case"
+    report.rep.cost = [
+        CostLine(item=f"Desc_{i}_C", name=f"Item {i}", need=100.0, stock=1.0, lines=0)
+        for i in range(COST_ROWS + 3)
+    ]
+    out = render_diff(game, state, report, objective="max_mw", limit=20)
+    assert f"{COST_ROWS + 3} match(es), showing {COST_ROWS}" in out
+
+
 def test_both_tools_print_the_id_they_tell_the_reader_to_compare():
     """diff_vs_save's own docstring says two responses carrying the same id are provably
     the same plan -- and plan_factory printed the id only when the plan was SAVED, so the
