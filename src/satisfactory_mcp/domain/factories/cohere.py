@@ -83,6 +83,7 @@ class Proposal:
 
     machines: list[str]
     #: Weakest internal link. Under complete linkage every pair scores at least this.
+    #: 0.0 for a one-machine proposal, which has no internal link to be weakest.
     cohesion: float = 0.0
     evidence: Counter = field(default_factory=Counter)
     seeded_by: str = ""
@@ -322,7 +323,12 @@ def propose(
             link[(i, j)] = min(score(a, b) for a in clusters[i] for b in clusters[j])
 
     alive = set(range(len(clusters)))
-    cohesion = dict.fromkeys(alive, math.inf)
+    # Seeded from each seed's own weakest pair rather than from infinity: a slab seed that
+    # never merges is a proposal like any other and has a real cohesion to report.
+    cohesion = {
+        i: min((score(a, b) for x, a in enumerate(c) for b in c[x + 1 :]), default=math.inf)
+        for i, c in enumerate(clusters)
+    }
     while True:
         best, target = 0.0, None
         for (i, j), value in link.items():
@@ -343,6 +349,7 @@ def propose(
 
     linked = [[pool[x] for x in clusters[i]] for i in sorted(alive)]
     seeds = {frozenset(c): seeded[i] for i, c in zip(sorted(alive), linked, strict=False)}
+    weakest = {frozenset(c): cohesion[i] for i, c in zip(sorted(alive), linked, strict=False)}
     pieces = {frozenset(c): len(c) for c in linked}
     manufacturing = {
         r["instance"].rsplit(".", 1)[-1] for r in projection.get("machines", ()) if r.get("recipe")
@@ -359,10 +366,11 @@ def propose(
             for b in ids[x + 1 :]:
                 for name in fired.get((min(a, b), max(a, b)), ()):
                     evidence[name] += 1
+        link = next((v for c, v in weakest.items() if c <= held), math.inf)
         out.append(
             Proposal(
                 machines=sorted(members),
-                cohesion=0.0,
+                cohesion=0.0 if math.isinf(link) else link,
                 evidence=evidence,
                 seeded_by=next((s for c, s in seeds.items() if c <= held), ""),
                 parts=parts,

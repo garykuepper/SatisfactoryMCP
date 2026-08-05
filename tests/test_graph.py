@@ -595,6 +595,27 @@ def test_weakening_the_weights_only_ever_refines(graph, game, projection):
         )
 
 
+def test_a_proposal_publishes_the_weakest_link_holding_it_together(graph, game, projection):
+    """The merge loop computed a real cohesion per cluster and the constructor threw it
+    away for a literal 0.0, so every proposal scored the same and nothing ranked them.
+    The steel site -- one product, one place -- has to outscore the cluster that only
+    collects what is left over, or the number is not measuring cohesion."""
+    import math
+
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
+
+    props = cohere.propose(graph, game, projection, build_structures(projection))
+    by_size = {p.size: p for p in props}
+    tight = next(p for p in props if set(STEEL) <= set(p.machines))
+    loose = next(p for p in props if ORPHAN in p.machines)
+    assert all(math.isfinite(p.cohesion) for p in props), "a score the map cannot serialise"
+    assert tight.cohesion > loose.cohesion
+    assert len({p.cohesion for p in props if p.size > 1}) > 1, "one score for all is no ranking"
+    # A single machine has no internal link, so it has no weakest one and ranks last.
+    assert by_size[1].cohesion == 0.0
+
+
 def test_proposals_carry_the_evidence_that_made_them(graph, game, projection):
     from satisfactory_mcp.domain.factories import cohere
     from satisfactory_mcp.domain.factories.structure import build_structures
