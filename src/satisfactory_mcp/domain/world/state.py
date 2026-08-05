@@ -1,16 +1,11 @@
 """Derived views over a save projection, joined against normalized game data.
 
-``WorldState`` used to hold every one of those views itself, which made it the one
-class in the package that owned a dozen subjects: unlocks, the build census, power,
-progression, research gates, hard drives, overclocking, inventories, the map's
-collectible table and the save's own identity. Each of those is now a small
-dataclass of its own -- one subject each, built from the same two fields -- and this
-class holds them and delegates.
-
-The delegation is not a transitional layer. ``WorldState`` is the context every
-other domain package takes as an argument, and the surface it had before is the
-surface those callers spell, so it keeps all of it: the properties, the methods, the
-class-level constants and the module-level names alike.
+Each subject -- unlocks, the build census, power, progression, research gates, hard drives,
+overclocking, inventories, the map's collectible table, the save's identity -- is a small
+dataclass of its own, built from the same two fields. ``WorldState`` holds them and
+delegates. It is the context every other domain package takes as an argument, so the whole
+delegating surface is load-bearing: properties, methods, class-level constants and the
+module-level names alike.
 """
 
 from __future__ import annotations
@@ -39,8 +34,7 @@ from .inventory import Inventory
 
 __all__ = ["CollectibleTable", "HardDriveOffer", "WorldState", "load_collectibles"]
 
-#: Re-exported rather than used: ``_name_stem`` was born in this module and the
-#: collectibles tests still import it from here.
+#: Re-exported rather than used: the collectibles tests import ``_name_stem`` from here.
 _ = (_name_stem,)
 
 
@@ -53,9 +47,8 @@ class WorldState:
 
     # ---- facets ---------------------------------------------------------
     #
-    # One cached_property each, so a facet is built at most once per state and the
-    # ``cached_property`` caches inside it live as long as this object does. That is
-    # exactly the lifetime those caches had while they were attributes here.
+    # One cached_property each, so a facet is built at most once per state and the caches
+    # inside it live as long as this object does.
 
     @cached_property
     def identity(self) -> SaveIdentity:
@@ -137,11 +130,8 @@ class WorldState:
 
     @cached_property
     def pipe_flow(self) -> list[dict]:
-        """Which way each pipe carries fluid, inferred once per state.
-
-        Cached for the same reason ``graph`` is: it walks the plumbing once per pipe, and
-        every caller wants the whole answer rather than one row of it.
-        """
+        """Which way each pipe carries fluid. Cached like ``graph``: it walks the plumbing
+        once per pipe, and every caller wants the whole answer rather than one row."""
         return world_flow.pipe_flow(self.projection)
 
     @cached_property
@@ -317,9 +307,8 @@ class WorldState:
     def collectibles(self) -> CollectibleTable | None:
         """The map's placement table, or ``None`` when it has not been generated.
 
-        Loaded here rather than inside ``RemovedActors`` on purpose: whether a caller
-        can see a table at all is the caller's business, and reading it through this
-        module's own global is what lets a test stand in a clone that has none.
+        Read through this module's own global rather than inside ``RemovedActors``, so a
+        test can stand in a clone that has none.
         """
         return load_collectibles()
 

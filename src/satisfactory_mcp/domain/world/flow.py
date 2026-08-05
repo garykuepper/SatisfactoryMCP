@@ -1,65 +1,15 @@
 """Which way the fluid goes, inferred from the plumbing rather than read off a pipe.
 
-The game does not store a pipe's flow direction and this module does not claim it does. What
-it does claim is that the direction is usually *implied*, and that refusing to say so on a
-pipe hanging off a water extractor reads as obtuseness rather than honesty.
-
-**What the save actually hands over** -- measured in ``extract._pipes``, not assumed:
-
-* Every fluid connection is a component carrying ``mConnectedComponent``, folded into
-  ``graph["material"]``. On the reference save that is **1,560 directed couplings, total and
-  symmetric, none crossing a network id**. The plumbing graph is not inferred; it is read.
-* The component's NAME types the port at a machine. ``PipeInputFactory`` is a consumer,
-  ``PipeOutputFactory`` a producer, ``ConnectionAny0``/``1`` an explicit "either way" on a
-  buffer -- the game's own Consumer/Producer/Any surviving into the file. Where a building
-  has one port and a generic ``FGPipeConnectionFactory``, the building settles it: an
-  extractor cannot consume its own resource and a generator cannot produce its fuel.
-* ``PipelineConnection0`` is the spline's first point and ``PipelineConnection1`` its last,
-  so an answer about connections converts into an answer about the drawn line.
-
-So the only guessing left is *propagation*, and the two models below are both conservative:
-each declines wherever more than one ordering is consistent.
-
-**Model 1, the cut.** Fluid is conserved, so on an edge whose removal splits the network in
-two, everything crossing goes one way, and which way is fixed by which side has the
-producers. Formally: if side A holds a producer and no consumer while side B holds a
-consumer, flow is A to B. Both halves matter -- the "and B has a consumer" clause is what
-stops a full, stagnant dead-end branch being drawn as if it ran. An edge inside a cycle
-splits nothing, so it is left alone, which is the honest answer: with two routes available
-the game really can send fluid down either.
-
-**Model 2, the one-way device.** A pump and a valve move fluid one way by construction, from
-``Connection0`` to ``Connection1``. That orientation is measured twice over, never assumed
-from the name. Against model 1: of the reference save's 23 pumps and valves, every one whose
-neighbours model 1 had already settled reads ``Connection0`` as the inlet -- **13 of 13, no
-counterexample**. And against gravity, which knows nothing about either model: this world
-holds an unfinished 696 m crude-oil lift, 45 pipes and 9 Mk2 pumps climbing 240 m with both
-ends not yet plumbed to anything, and a pump pushes UP. Reading ``Connection0`` as the inlet
-sends the oil **191 m uphill, 22 pipes climbing against 3 descending**. The other reading is
-the same number with the sign flipped, i.e. nine pumps arranged to help oil fall.
-
-**Then conservation propagates both**, to a fixpoint: at a junction with no port of its own,
-if every settled edge but one points inward, the last must point out. That step carries a
-guard, added because a hold-out caught it wrong without one -- an edge is only settled toward
-a side holding something able to take the fluid, a consumer or a pump's intake, so the rule
-can never invent flow into a stub that consumes nothing.
-
-**How well it does, on the reference save's 503 pipes.** 365 resolved, 138 left unknown. What
-stays unknown stays unknown for a reason worth saying out loud: a trunk with producers and
-consumers on both sides genuinely has no fixed direction without the RATES, and a pipe in a
-loop has two legal answers.
-
-**And it is checked four ways, none of which is the inference marking its own homework:**
-
-* The two models are independent, so where both speak they check each other: **118 pipes,
-  118 agreements, no disagreement.**
-* A conservation audit over the finished answer: **293 nodes, none where fluid appears from
-  nowhere or vanishes into nothing.**
-* Following the inferred flow to its end from each of the 365: **not one arrives at a
-  producer going downstream or leaves a consumer going upstream**, which a single flipped
-  sign would cause. 297 of them trace upstream to an actual producer.
-* Water extractor to coal generator is known a priori. Of the water pipes touching either,
-  **39 are oriented correctly and 0 point into an extractor or out of a generator.**
+The save stores no flow direction, but it does store the couplings and it types the ports:
+``PipeInputFactory`` is a consumer, ``PipeOutputFactory`` a producer, ``ConnectionAny0``/``1``
+an explicit "either way", and ``PipelineConnection0``/``1`` are a segment's first and last
+spline point, which is what ``forward`` and ``reverse`` are measured against. Two models then
+orient pipes -- the cut, where an edge whose removal splits the network carries everything
+from the side holding a producer and no consumer to a side holding a consumer, and the one-way
+device, a pump or valve running ``Connection0`` to ``Connection1`` -- and conservation
+propagates both to a fixpoint. Both decline wherever more than one ordering is consistent: an
+edge inside a cycle splits nothing, and a trunk with producers and consumers on both sides has
+no fixed direction without the RATES. On the reference save 365 of 503 pipes resolve.
 """
 
 from __future__ import annotations
@@ -75,11 +25,9 @@ FORWARD = "forward"
 REVERSE = "reverse"
 UNKNOWN = "unknown"
 
-#: The connector role names that belong to FLUID plumbing. Listed rather than pattern-matched
-#: for the same reason ``PIPE_CLASSES`` is: ``PipeHyperConnection0`` is a hypertube, which
-#: moves a player and no fluid, and a substring match on ``Pipe`` would drag it in. The belt
-#: side of ``graph["material"]`` spells its roles ``Input*`` / ``Output*`` / ``ConveyorAny*``
-#: and so cannot collide with any of these.
+#: The connector role names that belong to FLUID plumbing. Listed rather than matched on
+#: ``Pipe``, which would drag in ``PipeHyperConnection0`` -- a hypertube moves a player and no
+#: fluid.
 _FLUID_ROLES = frozenset(
     {
         "PipelineConnection0",
@@ -97,22 +45,21 @@ _FLUID_ROLES = frozenset(
 )
 
 #: A junction and a buffer are ONE volume of fluid: what arrives at any port can leave by any
-#: other, so their ports collapse into a single node. A pump and a valve emphatically are not,
-#: which is the whole of their contribution below.
+#: other, so their ports collapse into a single node.
 _BODIES = (
     "Build_PipelineJunction_Cross_C",
     "Build_IndustrialTank_C",
     "Build_PipeStorageTank_C",
 )
 
-#: One-way by construction, inlet first. See the module docstring for the measurement.
+#: One-way by construction, from ``Connection0`` (the inlet) to ``Connection1``.
 _ONE_WAY = (
     "Build_PipelinePump_C",
     "Build_PipelinePumpMk2_C",
     "Build_Valve_C",
 )
 
-#: Basis labels, most local evidence first -- a popup should say which of these it is.
+#: Basis labels, most local evidence first.
 BASIS_PORT = "machine port"
 BASIS_DEVICE = "pump"
 BASIS_NETWORK = "propagated"
@@ -149,11 +96,9 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
     """The plumbing as (pipe edges, one-way edges, terminals, adjacency, buffer nodes).
 
     A node is a place fluid can be: a coupling between two connectors, or a junction or
-    buffer body whose ports have been merged into one.
-
-    The buffer nodes come out separately because a tank is a peculiar thing: it holds fluid,
-    so it can supply and it can accept, but it PRODUCES nothing and CONSUMES nothing, so it
-    can never orient a pipe. It is not a terminal, and it is not a dead end either.
+    buffer body whose ports have been merged into one. The buffer nodes come out separately
+    because a tank holds fluid, so it can supply and it can accept, yet it PRODUCES nothing
+    and CONSUMES nothing and so can never orient a pipe.
     """
     graph = projection.get("graph") or {}
     actors = list(graph.get("actors") or ())
@@ -179,14 +124,12 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
             for role in ports:
                 joins.union((actor, first), (actor, role))
 
-    # Decoded once and held, because the segments are walked twice here: for the actors that
-    # ARE pipes, and then for the node pair each of those pipes joins.
     segments = list(saverows.iter_pipe_segments(projection))
     pipe_actors = {seg.actor_index for seg in segments if seg.actor_index >= 0}
 
     # An extractor cannot consume what it pulls out of the ground and a generator cannot
-    # produce its fuel, so the projection's own sorting of the world settles the buildings
-    # whose single port carries the generic name.
+    # produce its fuel, which settles the buildings whose single port carries the generic
+    # ``FGPipeConnectionFactory`` name.
     producers = {r.get("cls") for r in projection.get("extractors") or () if isinstance(r, dict)}
     consumers = {r.get("cls") for r in projection.get("generators") or () if isinstance(r, dict)}
 
@@ -200,8 +143,7 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
         if actor in pipe_actors:
             continue  # emitted below, in the segments' own order
         if cls in _BODIES:
-            # One merged node, no port of its own and no direction to give. A tank is also a
-            # STORE, which the guard below needs; a junction is not, and holds nothing.
+            # A tank is a STORE, which the guard in ``_solve`` needs; a junction holds nothing.
             if cls != "Build_PipelineJunction_Cross_C":
                 stores.add(joins.find((actor, min(ports))))
             continue
@@ -229,8 +171,7 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
 
     # One entry per ROW of the table, not per row that decoded: ``/api/pipes`` joins to this
     # list by a segment's position, so a torn row owes it a slot that says "no idea" rather
-    # than shifting every pipe after it up by one. `saverows.iter_pipe_segments` reports each
-    # segment's own ordinal for exactly this, and `pipe_segment_count` sizes the list.
+    # than shifting every pipe after it up by one.
     c0, c1 = role_ix.get("PipelineConnection0"), role_ix.get("PipelineConnection1")
     pipes: list[tuple[tuple | None, tuple | None]] = [(None, None)] * saverows.pipe_segment_count(
         projection
@@ -353,15 +294,9 @@ def _solve(
             else:
                 continue
             # The guard. Settling this edge says fluid crosses it, so the side it would be
-            # sent to has to hold something able to take it -- otherwise the far end is a
-            # stub, nothing flows, and the honest answer is still nothing.
-            #
-            # Two things count besides a machine port. A PUMP, which pulls at its inlet and
-            # pushes at its outlet, and is why this world's unfinished 696 m oil lift -- 45
-            # pipes and 9 pumps climbing 240 m, neither end plumbed to anything -- still gets
-            # an answer. And a TANK, which holds fluid, so it can supply and it can accept
-            # even though it produces and consumes nothing. What is left for the guard to
-            # veto is the case it was written for: a bare stub of pipe ending in nothing.
+            # sent to has to hold something able to take it: a machine port, a pump's intake
+            # (it pulls at its inlet and pushes at its outlet) or a tank. Without this, flow
+            # is invented into a bare stub of pipe that ends in nothing.
             n0, n1 = pipes[index]
             far = n1 if at_first else n0
             outbound = (direction == 1) == at_first

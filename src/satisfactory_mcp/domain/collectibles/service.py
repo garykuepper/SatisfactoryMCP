@@ -1,15 +1,11 @@
 """What the map placed, what this save took, and which rows answer the question asked.
 
-``collected_from_world`` used to do all of this inline: validate the mode, rename a
-retired group, refuse the modes the map table is required for, resolve an origin, pick
-and sort the rows, drop the pedestals and tally the observed states -- and then format
-them, in the same function bodies.
-
-None of that first list is presentation. It is the decision of *which* placements answer
-the question, which is a domain question with a domain answer, so it lives here and hands
-the presenter a finished view. Every refusal is a string on the view rather than an early
-``return`` of formatted text, because the caller that renders is not always the caller
-that decides.
+Validating the mode, un-retiring a group, refusing the modes the map table is required for,
+resolving an origin, picking and sorting the rows, dropping the pedestals and tallying the
+observed states are all the decision of *which* placements answer the question, which is a
+domain decision -- so it happens here and hands the presenter a finished view. Every refusal
+is a string on the view rather than an early return of formatted text, because the caller
+that renders is not always the caller that decides.
 """
 
 from __future__ import annotations

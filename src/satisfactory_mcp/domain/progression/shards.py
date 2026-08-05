@@ -27,27 +27,19 @@ class OverclockBudget:
     inventory: Inventory
     records: list[dict] = field(default_factory=list)
 
-    #: The Somersloop and Mercer Sphere item classes. Named here rather than resolved by
-    #: display name because both are stable class ids and a name lookup would silently
-    #: match nothing in a localised dump.
+    #: The Somersloop and Mercer Sphere item classes. Class ids rather than display names,
+    #: which would silently match nothing in a localised dump.
     SLOOP_ITEM: ClassVar[str] = "Desc_WAT1_C"
     MERCER_ITEM: ClassVar[str] = "Desc_WAT2_C"
 
     def shard_budget(self) -> dict:
         """Power Shards held, committed and free.
 
-        Committed shards are READ, never derived. Every buildable carries an
-        ``InventoryPotential`` component holding the shards actually slotted into it,
-        and that is the only faithful count: a shard raises the maximum clock, it does
-        not set it, so a building may hold more shards than its current clock needs. On
-        the reference save 39 of 41 overclocked buildings hold exactly
-        ``shards_for_clock``, and two hold 3 while running at 2.0 -- deriving from clock
-        would report 95 spent where 97 are.
-
-        "Free" excludes machine inventories on purpose (see ``stock``): the 97 in
-        InventoryPotential components are all inside machines, so counting the raw
-        ``inventories["machine"]`` total as shards on hand overstates the free pool by
-        more than 4x on this save.
+        Committed shards are READ off each buildable's ``InventoryPotential`` component and
+        never derived from its clock: a shard raises the maximum clock rather than setting
+        it, so a building may hold more shards than its clock needs. ``free`` excludes
+        machine inventories (see ``stock``), because slotted shards live inside machines and
+        counting the raw machine total as shards on hand overstates the spendable pool.
         """
         from ...core.gamedata.constants import POTENTIAL_SHARD_SLOTS, shards_for_clock
 
@@ -56,15 +48,10 @@ class OverclockBudget:
         stock = self.inventory.stock()
         free = sum(stock.get(item, 0.0) for item in shard_items)
 
-        # Uncrafted slugs are latent shards. They sit wherever stock() looks -- carried,
-        # in crates, or in the Dimensional Depot -- and on the reference save the depot
-        # alone holds 93 Blue, 58 Yellow and 39 Purple, worth 404 shards against 22
-        # already crafted. Reporting only the crafted pool understates what the player
-        # can overclock with by ~19x, which is the same class of error as counting
-        # machine buffers as stock.
-        # Where they physically are. "free" pools carried + crates + Depot, which is
-        # correct for spending but hides the answer to "is that the Depot?" -- a question
-        # worth not making the player ask.
+        # Uncrafted slugs are latent shards and are counted separately: on the reference
+        # save the Depot alone holds slugs worth 404 shards against 22 already crafted.
+        # ``by_place`` splits where they physically are, since ``free`` pools carried,
+        # crates and Depot together and so cannot answer "is that in the Depot?".
         wanted = set(shard_items) | set(self.game.slug_yields())
         by_place: dict[str, dict[str, float]] = {}
         for place, source in (
@@ -131,36 +118,21 @@ class OverclockBudget:
             "owned": free + committed,
             "holders": holders,
             "slots_per_building": POTENTIAL_SHARD_SLOTS,
-            #: Buildings whose InventoryPotential is unreadable get no entry at all, so
-            #: a projection predating schema 9 reports 0 committed rather than a wrong
-            #: number. Flagged so a caller can tell the two apart.
+            #: False on a projection too old to carry InventoryPotential, where ``committed``
+            #: is unknown rather than zero.
             "measured": any("potential_slots" in r for r in self.records),
         }
 
     def sloop_budget(self) -> dict:
         """Somersloops on hand and in machines.
 
-        Free ones are read the same way as shards: ``stock`` pools carried, crates and
-        the Dimensional Depot, which is exactly the set that can be spent.
-
-        **Committed ones are read too, and this module used to claim they could not be.**
-        That was wrong, and wrong in an instructive way: a save taken before Production
-        Amplifier was researched contains no somersloop anywhere, so probing it found
-        nothing and the absence was read as "the game does not record this". It does --
-        in ``InventoryPotential``, the *same component* that holds Power Shards, which the
-        sidecar had been reading into ``potential_slots`` the whole time. The component
-        carries both, distinguished only by item class, and its ``mArbitrarySlotSizes``
-        shows the shape: ``[1, 1, 1, 2]`` on an Assembler is three shard slots plus one
-        somersloop slot holding up to two.
-
-        So the number is exact, like the shard one, and for the same reason: it is the
-        slot contents, not something derived from the boost. ``mPendingProductionBoost``
-        does record the resulting MULTIPLIER (1.5 on an Assembler with one of two slots
-        filled), which is a useful cross-check but a worse source -- inverting a
-        multiplier to a count needs the building's base and step, and rounds.
-
-        Mercer Spheres are counted separately and never added in. They share the WAT
-        prefix and the same alien-artifact feel, and they do nothing for production.
+        Free ones come from ``stock`` -- carried, crates and the Dimensional Depot -- which
+        is exactly the set that can be spent. Committed ones are read from
+        ``InventoryPotential``, the same component that holds Power Shards, the two being
+        distinguished only by item class; the count is the slot contents and never derived
+        from ``mPendingProductionBoost``, since inverting that multiplier needs the
+        building's base and step and rounds. Mercer Spheres are counted separately and never
+        added in: they share the WAT prefix and do nothing for production.
         """
         stock = self.inventory.stock()
         free = float(stock.get(self.SLOOP_ITEM, 0.0))
@@ -203,8 +175,6 @@ class OverclockBudget:
             "owned": free + committed,
             "holders": holders,
             "mercer_spheres": float(stock.get(self.MERCER_ITEM, 0.0)),
-            #: False only on a projection too old to carry InventoryPotential at all, in
-            #: which case `committed` is unknown rather than zero. Same flag, and the same
-            #: reason, as the shard budget's.
+            #: As the shard budget's ``measured``: false means unknown, not zero.
             "committed_measured": any("potential_slots" in r for r in self.records),
         }

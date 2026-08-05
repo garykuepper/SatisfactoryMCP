@@ -1,9 +1,8 @@
 """Map collectibles as text: the per-category census, and the per-placement listings.
 
 Which placements answer the question is ``collectibles.service``'s decision; this module only
-says it. The three shapes are different enough to be three functions -- a census is a
-tally with its caveats, a listing is coordinates with their hazards, and the degraded
-save-only answer is a name-prefix guess that has to admit it is one.
+says it, in three shapes -- a census is a tally with its caveats, a listing is coordinates
+with their hazards, and the degraded save-only answer is a name-prefix guess.
 """
 
 from __future__ import annotations
@@ -16,12 +15,7 @@ __all__ = ["render_collectibles"]
 
 
 def _hazard_tokens(hazard: dict) -> str:
-    """The hazard block as a few tokens, distances in metres.
-
-    Every one of these is inference from map geometry plus a radius the other actor's class
-    declares -- see the note the tool prints. Gas is presence-only: the volume's shape is
-    level geometry and is not in any file this reads.
-    """
+    """The hazard block as a few tokens, distances in metres."""
     out = []
     if hazard.get("hostiles_nearby"):
         n = sum(hazard["hostiles_nearby"].values())
@@ -42,9 +36,9 @@ def _hazard_tokens(hazard: dict) -> str:
 def _holds(row: dict, g) -> str:
     """What is in this one, where the map records it.
 
-    A looted drop pod is reported as LOOTED and nothing else: its ``mUnlockCost`` is still
-    on the actor after it has given up its hard drive, and quoting a price for something
-    already taken is the kind of true-but-useless line a player acts on by mistake.
+    A looted drop pod is reported as LOOTED and nothing else: its ``mUnlockCost`` is still on
+    the actor after it has given up its hard drive, so quoting the price would offer a player
+    something already taken.
     """
     contents = row.get("contents") or {}
     if contents.get("item"):
@@ -63,8 +57,7 @@ def _placement_table(rows: list[dict], g, distance: bool, total: int, limit: int
     """One row per placement, with the empty optional columns dropped.
 
     Names are never truncated: ``(cell, name)`` is the only identity a placement has, and
-    half a key joins to nothing. ``hazard`` and ``holds`` are annotations rather than
-    identity, so a slug listing -- where both are always blank -- does not carry them.
+    half a key joins to nothing.
     """
     hazard = [_hazard_tokens(r["hazard"]) for r in rows]
     holds = [_holds(r, g) for r in rows]
@@ -96,10 +89,9 @@ def _placement_table(rows: list[dict], g, distance: bool, total: int, limit: int
     return render.table(headers, body, total=total, limit=limit)
 
 
-#: Census columns beyond the four every save has. Rendered only when some row is non-zero:
+#: Census columns beyond the four every save has, rendered only when some row is non-zero:
 #: ``gone_later`` needs an older save than the newest on disk, and ``unstated`` needs a table
-#: newer than this code. Both are silent when they have nothing to say, and neither is
-#: dropped from the arithmetic when they do.
+#: newer than this code. Neither is dropped from the arithmetic when it is hidden.
 _CONDITIONAL_COLUMNS: tuple[tuple[str, str], ...] = (
     ("gone_in_a_later_save", "gone_later"),
     ("unstated", "unstated"),
@@ -109,9 +101,8 @@ _CONDITIONAL_COLUMNS: tuple[tuple[str, str], ...] = (
 def _census(st, view: CollectiblesView, limit: int) -> str:
     """The per-category table: placed, collected, remaining, and how much is observed.
 
-    ``group`` narrows the table to one category and takes its notes with it. The summary
-    line stays whole-world and says so, because a scoped count under an unscoped header is
-    how a category total gets read as a world total.
+    ``group`` narrows the table to one category and takes its notes with it; the summary line
+    stays whole-world.
     """
     removed, table, group = view.removed, view.table, view.group
     census = [r for r in removed["census"] if group is None or r["category"] == group]
@@ -216,8 +207,8 @@ def _census(st, view: CollectiblesView, limit: int) -> str:
     return render.envelope(
         f"# {st.age_note}\n"
         f"# map table: {len(table)} placements, {table.build}\n"
-        # Whole-world figures, labelled as such: they do not narrow with `group`, and a
-        # scoped table under an unscoped total is how one gets read as the other.
+        # Labelled whole-world because they do not narrow with `group`: a scoped table under
+        # an unscoped total is how one gets read as the other.
         + render.kv(
             [
                 ("whole_world_collected", removed["resolved"]),
@@ -291,9 +282,8 @@ def _listing(st, view: CollectiblesView, limit: int) -> str:
 def _save_only(st, view: CollectiblesView, limit: int) -> str:
     """The census a save can build alone: collected counts by name prefix, and wrong.
 
-    Reached only when ``data/world_collectibles.json`` is absent. It is untracked, so a
-    fresh clone lands here, and the honest thing is to answer with what the save does know
-    while naming everything this costs.
+    Reached only when ``data/world_collectibles.json`` is absent, which a fresh clone is,
+    since the file is untracked.
     """
     removed, group = view.removed, view.group
     notes = [

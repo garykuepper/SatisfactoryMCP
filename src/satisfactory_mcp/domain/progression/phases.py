@@ -51,35 +51,19 @@ class PhaseLedger:
             "available_recipes": len(self.unlocks.available_recipe_ids),
         }
 
-    #: EGamePhase -> GP_Project_Assembly_Phase_N.
+    #: EGamePhase -> GP_Project_Assembly_Phase_N, and it is MEASURED, not read.
     #:
-    #: The keys of mGamePhaseCosts are the DEPRECATED EGamePhase enum
-    #: (FGGamePhaseManager.h: "The old enum that defined the phases of the game.
-    #: Replaced by UFGGamePhase. DEPRECATED Only kept for save compatibility"), while
-    #: mCurrentGamePhase / mTargetGamePhase point at UFGGamePhase assets named
-    #: GP_Project_Assembly_Phase_N. Nothing in Docs.json joins them: the assets do not
-    #: ship there at all (0 occurrences of "GP_Project" in the 10 MB dump; the only
-    #: "EGP_" string in it is an EGP_Victory schematic dependency), and the field that
-    #: WOULD join them, UFGGamePhase::mGamePhase, lives on those unshipped assets.
-    #: The save cannot join them directly either -- the manager's own legacy scalar
-    #: mGamePhase is absent, i.e. UE-default EGP_NA, whose declaration comment reads
-    #: "Added N/A to have a state that indicates we have migrated the save".
+    #: ``mGamePhaseCosts`` is keyed by the deprecated EGamePhase enum while
+    #: ``mCurrentGamePhase``/``mTargetGamePhase`` point at UFGGamePhase assets, and nothing
+    #: joins the two: those assets do not ship in Docs.json, the field that would join them
+    #: lives on them, and the manager's own legacy scalar is absent from the save. The anchor
+    #: is EGP_EndGame -> Phase_3, from a save where the target phase had exactly one item
+    #: paid off and the EGP_EndGame entry showed the same three items with the same one
+    #: settled; the rest follow by the enum order declared in the shipped header, the four
+    #: stored keys being contiguous in it.
     #:
-    #: EGP_EndGame -> Phase_3 is nonetheless MEASURED, from two save epochs of the same
-    #: world. At 180-244 h the save reads mTargetGamePhase = Phase_3 with
-    #: mTargetGamePhasePaidOffCosts = {SpaceElevatorPart_2: 2500} -- exactly one item
-    #: paid. The EGP_EndGame entry of the deprecated array at the same instant reads
-    #: {Part_2: 0 remaining, Part_4: 500, Part_5: 100}: the same three items, with the
-    #: same single one settled. No other key mentions Part_2 as outstanding, and
-    #: nothing can have been paid into a phase that was never the target.
-    #:
-    #: The other three follow by enum order (EarlyGame 0 < MidGame 1 < LateGame 2 <
-    #: EndGame 3 < FoodCourt 4, declared in the shipped header) anchored on that pin,
-    #: the four stored keys being contiguous in it. Corroborated but NOT relied on: the
-    #: vendored wiki-derived PROJECT_ASSEMBLY_COSTS table lists Phase 1-4 item sets that
-    #: match these four keys exactly and in order.
-    #: ClassVar, not a field: a bare dict annotation on a dataclass is a mutable
-    #: default and raises at class-creation time.
+    #: ClassVar and not a field: a bare dict annotation on a dataclass is a mutable default
+    #: and raises at class-creation time.
     EGP_TO_PHASE: ClassVar[dict[str, str]] = {
         "EGP_MidGame": "GP_Project_Assembly_Phase_1",
         "EGP_LateGame": "GP_Project_Assembly_Phase_2",
@@ -90,22 +74,15 @@ class PhaseLedger:
     def phase_requirements(self) -> dict:
         """Space Elevator deliveries, live record first and deprecated record labelled.
 
-        Two sources disagree and only one is alive:
-
-        * ``mCurrentGamePhase`` / ``mTargetGamePhase`` / ``mTargetGamePhasePaidOffCosts``
-          are the live ones. Deliveries go to the TARGET phase
-          (``PayOffOnTargetGamePhase``, ``GetTargetGamePhaseCosts``), so "what do I owe"
-          is the target's cost minus what is paid off.
-        * ``mGamePhaseCosts`` is deprecated and **frozen**. Byte-identical across all 29
-          parseable saves of the reference world, 180 h to 316 h, spanning the session
-          where the player finished Phase 3 -- it still bills them 500 Modular Engine
-          and 100 Adaptive Control Unit for it.
-
-        The frozen table is still the only source of per-phase item lists, because the
-        UFGGamePhase assets that hold ``mCosts`` do not ship in Docs.json. It is
-        trustworthy for exactly one row: the phase that has never been targeted, whose
-        untouched snapshot still equals its full cost. Every row is returned with a
-        ``stale`` flag saying which case it is, rather than being silently filtered.
+        Two sources disagree and only one is alive. ``mCurrentGamePhase`` /
+        ``mTargetGamePhase`` / ``mTargetGamePhasePaidOffCosts`` are live: deliveries go to
+        the TARGET phase, so "what do I owe" is its cost minus what is paid off.
+        ``mGamePhaseCosts`` is deprecated and **frozen** -- byte-identical across 29 saves of
+        the reference world spanning the session that finished Phase 3, which it still bills
+        for -- but it is the only source of per-phase item lists, since the UFGGamePhase
+        assets holding ``mCosts`` do not ship in Docs.json. It is trustworthy for one row
+        only, the phase never targeted, so every row carries a ``stale`` flag rather than
+        being silently filtered.
         """
         p = self.projection.get("progression", {}) or {}
         current = p.get("game_phase") or ""

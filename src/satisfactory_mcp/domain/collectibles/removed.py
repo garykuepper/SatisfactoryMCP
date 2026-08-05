@@ -16,9 +16,8 @@ __all__ = ["RemovedActors"]
 class RemovedActors:
     """What this save has taken off the map, and what that leaves standing.
 
-    Holds the placement table rather than loading it, because the table is a
-    process-wide singleton and whether a caller can see one is the caller's
-    business: with ``table=None`` every answer here degrades to the save-only
+    Holds the placement table rather than loading it: whether a caller can see one is the
+    caller's business, and with ``table=None`` every answer here degrades to the save-only
     name-prefix census and says so.
     """
 
@@ -29,9 +28,7 @@ class RemovedActors:
     def destroyed_keys(self) -> frozenset[tuple[str, str]]:
         """``(cell, instance name)`` of every actor this save records as gone.
 
-        The pair, never the bare name, because a bare name is not identity: auto-numbered
-        placements reuse names across cells, while ``(cell, name)`` is unique over all
-        69,364 map actors. A name-only join both invents matches and misses real ones.
+        The pair, never the bare name, for the reason ``CollectibleTable.by_key`` gives.
         """
         removed = self.projection.get("removed") or {}
         cells: list[str] = removed.get("cells") or []
@@ -41,9 +38,8 @@ class RemovedActors:
         )
 
     #: The placement table's ``state`` -> what it means about a placement this save has NOT
-    #: collected. Worded so that "3 remain" and "3 I can see" cannot be read as the same
-    #: claim: ``never_streamed`` is a placement no save has ever loaded, and the whole point
-    #: of naming it is that it must never be presented as standing there.
+    #: collected. ``never_streamed`` is a placement no save has ever loaded, and must never
+    #: be presented as standing there.
     OBSERVED: ClassVar[dict[str, str]] = {
         "present": "standing",
         "unknown": "never_streamed",
@@ -53,11 +49,9 @@ class RemovedActors:
     def placements(self, category: str | None = None, remaining_only: bool = False) -> list[dict]:
         """Map placements annotated with what THIS save says about each one.
 
-        ``collected`` is exact and is about the loaded save: it either holds a destroyed
-        record at that ``(cell, name)`` or it does not. ``observed`` is the one field that is
-        not about the loaded save -- it is the placement table's own scan of every save on
-        disk, which is what lets a placement nobody has ever visited be reported as such
-        instead of as standing there.
+        ``collected`` is exact and about the loaded save. ``observed`` is the one field that
+        is not: it comes from the placement table's scan of every save on disk, which is what
+        lets a placement nobody has visited be reported as such rather than as standing.
         """
         table = self.table
         if table is None:
@@ -93,10 +87,9 @@ class RemovedActors:
     ) -> list[dict]:
         """Remaining placements, nearest first, each with a planar distance in metres.
 
-        Only remaining ones: "where do I go and get one" is the question, and a placement
-        this save has already collected is not an answer to it. Planar because Z spans a
-        few hundred metres against a 7 km map, and mixing them would flatter a placement
-        directly up a cliff face.
+        Only remaining ones, since the question is "where do I go and get one". Planar,
+        because Z spans a few hundred metres against a 7 km map and mixing them in would
+        flatter a placement directly up a cliff face.
         """
         rows = self.placements(category, remaining_only=True)
         for row in rows:
@@ -107,20 +100,13 @@ class RemovedActors:
     def collectible_census(self) -> list[dict]:
         """Per category: what the map placed, what this save collected, and what is left.
 
-        ``placed`` is the map's own count and ``collected`` is this save's own destroyed
-        list, so ``remaining = placed - collected`` is arithmetic between two exact numbers
-        -- for every category the game actually records. Where it does not,
-        ``remaining`` is ``None`` and not a number: see ``CollectibleTable.state_tracked``.
-
-        ``remaining`` then splits by how much has been *observed*, and the split is the
-        honest part. A placement in a cell no save has ever streamed in is counted as
-        remaining, because nothing has collected it, and is reported as
-        ``never_streamed`` rather than as standing there.
-
-        Counted off ``placements`` rather than off the table again, so the census and the
-        listing cannot drift apart: what you can list is what was counted. That invariant
-        has been broken here before, by exactly two code paths reading the same thing two
-        ways.
+        ``placed`` is the map's own count and ``collected`` this save's own destroyed list,
+        so ``remaining`` is arithmetic between two exact numbers -- for every category the
+        game records. Where it does not, ``remaining`` is ``None`` and not a number: see
+        ``CollectibleTable.state_tracked``. It then splits by how much has been *observed*,
+        so a placement in a cell no save ever streamed in counts as remaining while being
+        reported as ``never_streamed``. Counted off ``placements`` rather than off the table
+        again, so that what can be listed is exactly what was counted.
         """
         table = self.table
         if table is None:
@@ -168,16 +154,12 @@ class RemovedActors:
     def removed_actors(self, group: str | None = None) -> dict:
         """What this save records as collected off the map, resolved against the map itself.
 
-        **Why the save alone cannot answer this.** The world is not saved. Every slug,
-        mushroom, sphere and drop pod sits where the map put it, and a save never mentions
-        the ones still standing -- it records the negative, which actors are gone. So the
-        destroyed list *is* the collected list. What it does not carry is a class: an entry
-        is a bare ``(cell, name)``, and a name does not decide a class. Joining it to the
-        map's placement table by that pair does, exactly, which is the whole difference
-        between this and what it replaced -- 40 yellow slugs used to be counted as blue.
-
-        Without the table (it is untracked, so a fresh clone has none) this degrades to the
-        name-prefix census under ``source: "save-only"``, and says so rather than raising.
+        **The world is not saved.** Every slug, mushroom, sphere and drop pod sits where the
+        map put it, and a save never mentions the ones still standing -- it records the
+        negative, which actors are gone, so the destroyed list *is* the collected list. What
+        it does not carry is a class: an entry is a bare ``(cell, name)``, and only the join
+        to the map's placement table by that pair decides one. Without the table this
+        degrades to the name-prefix census under ``source: "save-only"`` rather than raising.
         """
         removed = self.projection.get("removed") or {}
         cells: list[str] = removed.get("cells") or []
@@ -205,11 +187,10 @@ class RemovedActors:
         out["groups"] = dict(sorted(collected.items(), key=lambda kv: -kv[1]))
         out["resolved"] = sum(collected.values())
         out["unresolved"] = sum(stems.values())
-        #: Destroyed records the map places nothing at. Two known causes, and they are not
-        #: interchangeable: a class the table deliberately excludes (scenery, regrowing
-        #: flora, resource nodes -- each with the map's own count in ``_meta.excluded``), or
-        #: an actor the map never placed at all, which is what a pickup the player dropped
-        #: is. Reported by name stem, which is a label and not a class.
+        #: Destroyed records the map places nothing at, by name stem -- a label, not a class.
+        #: Two causes, and they are not interchangeable: a class the table excludes (scenery,
+        #: regrowing flora, resource nodes, each counted in ``_meta.excluded``), or an actor
+        #: the map never placed, which is what a pickup the player dropped is.
         out["unresolved_stems"] = dict(sorted(stems.items(), key=lambda kv: (-kv[1], kv[0])))
         out["census"] = self.collectible_census()
         if group is None:
@@ -226,9 +207,9 @@ class RemovedActors:
     ) -> dict:
         """The census the save can build on its own: counts by name prefix, and wrong.
 
-        Kept because a fresh clone has no placement table and "collected 889 things" is
-        still worth having. Every caller must label it: this cannot say what remains, and
-        the counts it does give are known to misfile one actor in fourteen.
+        A fresh clone has no placement table, and "collected 889 things" is still worth
+        having. Every caller must label it: this cannot say what remains, and the counts it
+        does give are known to misfile one actor in fourteen.
         """
         grouped: dict[str, int] = {}
         unmatched: dict[str, int] = {}
@@ -260,20 +241,14 @@ class RemovedActors:
     #: map's placement table is absent: ``(label, prefixes, strict)``, first match wins, so
     #: ``BP_Crystal_mk2`` must be tried before the ``BP_Crystal`` that is its prefix.
     #:
-    #: **This rule is measurably wrong and is kept only as a degraded fallback.** Scored
-    #: against the map's own answer for the 713 removed actors the map resolves on the
-    #: reference save, it misfiles 51 -- 40 yellow slugs read as blue -- and leaves 65 as
-    #: ``artifact_unsplit``. The table's own wider scoring of a name rule over all 4,446
-    #: placements is in ``_meta.naming``: 231 wrong, 1,607 unmatched.
-    #:
-    #: Why it cannot be fixed. These lists carry no class path -- only an instance name -- and
-    #: 68% of those are level-placed actors whose placement counter is glued straight onto the
-    #: blueprint name with no separator. A somersloop is ``BP_WAT1`` and a Mercer sphere
-    #: ``BP_WAT2``, one digit apart exactly where the counter lands, so ``BP_WAT112`` is
-    #: undecidable and the ``strict`` groups refuse to guess it. Worse, the map's actors kept
-    #: the names of the actors they were copied from: 98 rows the map calls
-    #: ``BP_Crystal_mk2_C`` are named ``BP_Crystal_C_<n>``, which spells a class outright and
-    #: spells the wrong one. No name rule survives that; only the map does.
+    #: **The rule is measurably wrong and no fix exists.** A destroyed record carries an
+    #: instance name and no class path, and most of those names have the placement counter
+    #: glued straight onto the blueprint name: a somersloop is ``BP_WAT1`` and a Mercer sphere
+    #: ``BP_WAT2``, so ``BP_WAT112`` is undecidable and the ``strict`` groups refuse it. Worse,
+    #: the map's own actors kept the names of the actors they were copied from -- 98 rows the
+    #: map calls ``BP_Crystal_mk2_C`` are named ``BP_Crystal_C_<n>`` -- which spells a class
+    #: outright and spells the wrong one. Scored against the map on the reference save it
+    #: misfiles 51 of 713 and leaves 65 as ``artifact_unsplit``.
     REMOVED_GROUPS: ClassVar[tuple[tuple[str, tuple[str, ...], bool], ...]] = (
         ("slug_purple", ("BP_Crystal_mk3",), False),
         ("slug_yellow", ("BP_Crystal_mk2",), False),
@@ -291,13 +266,8 @@ class RemovedActors:
     def removed_group(self, name: str) -> str | None:
         """Which name-prefix group a removed actor belongs to, for the fallback census only.
 
-        First match wins, which is the whole reason ``REMOVED_GROUPS`` is an ordered tuple:
-        ``BP_Crystal_mk3_C_2146`` starts with ``BP_Crystal`` as well as ``BP_Crystal_mk3``, so
-        testing the plain slug prefix first would file every purple slug as blue. A ``strict``
-        group only accepts a name that spells its class out with ``_C``, because ``BP_WAT112``
-        cannot be assigned without guessing.
-
-        Neither guard is enough: see ``REMOVED_GROUPS``. The map is what resolves these.
+        First match wins, and a ``strict`` group only accepts a name spelling its class out
+        with ``_C``. Neither guard is enough -- see ``REMOVED_GROUPS``.
         """
         for label, prefixes, strict in self.REMOVED_GROUPS:
             if strict:

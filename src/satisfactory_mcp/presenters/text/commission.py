@@ -1,10 +1,10 @@
 """A startup sequence as TSV: the waves, and the warnings that make them safe.
 
-The table is two interleaved row shapes -- a summary line per wave and the processes
-inside it -- because the numbers that decide whether the sequence is safe belong to the
-wave rather than to any row in it. Most of this module is notes, and that is the right
-proportion: the sequence is four columns of arithmetic and a pile of things that go
-wrong if the player treats it as a build order.
+The table is two interleaved row shapes -- a summary line per wave and the processes inside
+it -- because the numbers that decide whether the sequence is safe, what it costs and what
+it hands back, belong to the wave rather than to any row in it. The rest is notes, because
+the arithmetic is four columns and the ways a player can come to grief treating it as a
+build order are not.
 """
 
 from __future__ import annotations
@@ -41,9 +41,6 @@ def render_commission(
 
     rows = []
     for w in plan_run.waves:
-        # A summary line per wave, because the numbers that decide whether the sequence
-        # is safe -- what it costs and what it hands back -- belong to the wave and not
-        # to any row in it.
         rows.append(
             (
                 f"W{w.index}",
@@ -67,14 +64,9 @@ def render_commission(
                     "",
                 )
             )
-    # Truncation is applied to the WHOLE sequence, never per wave. Chopping each wave at
-    # `limit` silently dropped its generator rows -- they sort last by chain depth -- and
-    # those are the only rows that pay for the next wave.
-    #
-    # `offset` continues that one sequence, so the envelope's "call again with offset=N"
-    # is an instruction the tool can actually follow -- it used to name a parameter the
-    # schema did not have. A page that starts mid-wave shows no wave summary line, which
-    # is honest: the summary belongs to the wave, and the wave started on an earlier page.
+    # Truncation applies to the WHOLE sequence, never per wave: a wave's generator rows sort
+    # last by chain depth, and they are the only rows that pay for the next wave. `offset`
+    # continues that one sequence, so a page can start mid-wave and show no wave summary line.
     offset = max(0, offset)
     body = render.table(
         ("wave", "chain", "on", "cum", "process", "MW", "free after"),
@@ -117,10 +109,7 @@ def render_commission(
             "build EVERYTHING first, unpowered: a machine draws only when it runs, so "
             "construction is never the constraint. These waves are switch-ons"
         )
-        # What the sequence is standing on. A wave that repipes an extractor already
-        # feeding live generators takes that power down mid-startup, which is exactly the
-        # moment the plan has least headroom to spare. Read from the save's own
-        # connections rather than assumed, and only PROVEN-running generators are charged.
+        # Read from the save's own connections, and only PROVEN-running generators count.
         if report.live:
             notes.append(
                 "CUTOVER RISK -- these are already feeding running generators, so "

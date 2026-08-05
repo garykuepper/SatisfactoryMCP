@@ -1,9 +1,9 @@
 """A layout report as TSV: the stack, and whichever table ``detail`` asked for.
 
-Six tables share one header and one pile of caveats, because they are six views of the
-SAME schematic -- change ``detail`` and the plan underneath does not move. The caveats
-are what stop a schematic being read as a blueprint: there is no terrain data here, so
-routing, lengths and coordinates are absent on purpose rather than by omission.
+Six tables share one header and one pile of caveats, because they are six views of the SAME
+schematic -- change ``detail`` and the plan underneath does not move. The caveats are what
+stop a schematic being read as a blueprint: there is no terrain data here, so routing,
+lengths and world coordinates are absent.
 """
 
 from __future__ import annotations
@@ -277,7 +277,6 @@ def render_layout(
             climb = ""
             if t.carrier == "pipe" and abs(t.lift_m) >= 1.0:
                 climb = f"{'down' if t.lift_m > 0 else 'UP'} {abs(t.lift_m):.0f}m"
-                # A real count now: mDesignPressure is the pump's head lift in metres.
                 need = t.pumps(pump_head)
                 if need:
                     climb += f" ({need}x {pump_name})"
@@ -335,8 +334,8 @@ def render_layout(
             limit=limit,
         )
     else:
-        # A site column only when a partition exists: it is what separates "three
-        # buildings, read each stack from its own F0" from one fused tower.
+        # A site column only when a partition exists: it separates "three buildings, read
+        # each stack from its own F0" from one fused tower.
         with_site = any(f.site for f in lay.floors)
         rows = []
         for f in lay.floors:

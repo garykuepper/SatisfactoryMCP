@@ -9,7 +9,7 @@ __all__ = ["render_comparison"]
 
 
 def render_comparison(cmp: RouteComparison, limit: int = 10) -> str:
-    """Compact TSV. Formatting primitives come from ``primitives``, as everywhere else."""
+    """The routes as compact TSV, best first."""
     unit = cmp.primary_unit
     short_primary = cmp.primary_name.split()[-1].lower()
     head = (
@@ -66,9 +66,8 @@ def render_comparison(cmp: RouteComparison, limit: int = 10) -> str:
 def _machines(r: Route) -> str:
     """``9/6``: buildings at the cheapest raw draw, and the fewest at any draw.
 
-    Two numbers because they are two different decisions. Collapsing them hid a
-    real finding on this save -- Recycled Plastic is 9 buildings when crude is what
-    you are short of and 6 when buildings are.
+    Two numbers because they answer two different decisions -- Recycled Plastic is 9
+    buildings when crude is what you are short of and 6 when buildings are.
     """
     if r.machines_floor and r.machines_floor < r.machines:
         return f"{r.machines}/{r.machines_floor}"
@@ -84,8 +83,8 @@ def _with(upstream: list[str], keep: int = 2) -> str:
 
 
 def _gap_line(cmp: RouteComparison, short_primary: str, unit: str) -> str:
-    """State the spread explicitly. A reader who has to divide two table cells to
-    find a 4x difference has been shown the data and not told the answer."""
+    """The best-to-worst spread as a line of its own, so the multiple is stated rather than
+    left to be divided out of two table cells."""
     ok = cmp.feasible
     if len(ok) < 2:
         return ""
