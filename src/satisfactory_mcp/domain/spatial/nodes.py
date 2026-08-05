@@ -542,19 +542,27 @@ def annotate(
     projection: dict | None = None,
     unlocked_buildings: set[str] | None = None,
 ) -> list[dict]:
-    """Attach rate, grid cell, tapped status and reachability to node rows."""
+    """Attach rate, grid cell, occupancy and reachability to node rows.
+
+    The whole occupancy record travels, not a boolean: which extractor stands there, at
+    what clock, whether it is switched off and where it is are what "is this node worth
+    reclaiming" is answered from, and ``occupancy`` computes all of it anyway.
+    """
     occ = occupancy(projection) if projection else {}
     out = []
     for n in nodes:
-        taken = occ.get(n["instance"])
+        taken = occ.get(n["instance"]) or {}
         out.append(
             {
                 **n,
                 "rate": node_rate(n, game),
                 "grid": geo.grid_cell(n["x"], n["y"]),
-                "tapped": taken is not None,
-                "tapped_by": taken["extractor"] if taken else None,
-                "tapped_clock": taken["clock"] if taken else None,
+                "tapped": bool(taken),
+                "tapped_by": taken.get("extractor"),
+                "tapped_clock": taken.get("clock"),
+                "tapped_paused": taken.get("paused"),
+                "tapped_instance": taken.get("instance"),
+                "tapped_pos": taken.get("pos"),
                 "reachable": reachable(n, unlocked_buildings),
             }
         )

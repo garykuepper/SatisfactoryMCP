@@ -142,6 +142,54 @@ def test_the_old_group_argument_still_works(game):
     assert old == new
 
 
+def test_a_tapped_node_names_the_miner_on_it_and_its_clock(game):
+    """``tapped_by`` and ``tapped_clock`` were computed for every node on every call and
+    then rendered as the bare word "tapped", so "which miner is on that node, at what
+    clock, is it worth reclaiming" was thrown away on each one."""
+    rows = _rows(srv.search_resource_nodes(resource="Coal", mode="nodes", limit=25))
+    tapped = [r for r in rows if r["status"] == "tapped"]
+    assert tapped, "no coal node on this save is tapped, so this proves nothing"
+    assert all("@" in r["occupant"] for r in tapped), tapped
+    assert all(r["occupant"] == "-" for r in rows if r["status"] != "tapped")
+
+
+def test_a_switched_off_miner_is_not_a_producing_one(game):
+    """``occupancy`` reads ``paused`` and ``annotate`` used to drop it, so a node with a
+    switched-off miner on it read exactly like a node being mined."""
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
+    from satisfactory_mcp.interfaces.mcp.tools.spatial import _occupant
+
+    node = {
+        "instance": "L:P.BP_ResourceNode_1",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0,
+        "kind": "node",
+        "resource": "Desc_Coal_C",
+        "purity": "pure",
+    }
+    off = {
+        "extractors": [
+            {
+                "instance": "L:P.Build_MinerMk2_C_1",
+                "cls": "Build_MinerMk2_C",
+                "node": node["instance"],
+                "clock": 2.5,
+                "paused": True,
+                "pos": [10.0, 20.0, 30.0],
+            }
+        ]
+    }
+    row = nodes_mod.annotate([node], game, off)[0]
+    assert row["tapped"] and row["tapped_paused"] is True
+    assert row["tapped_pos"] == [10.0, 20.0, 30.0]
+    assert _occupant(row, game).endswith("@250% OFF")
+
+    free = nodes_mod.annotate([node], game, {})[0]
+    assert free["tapped"] is False and free["tapped_paused"] is None
+    assert _occupant(free, game) == "-"
+
+
 def test_only_free_narrows_the_nearest_list(game):
     everything = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=25)
     free_only = srv.search_resource_nodes(

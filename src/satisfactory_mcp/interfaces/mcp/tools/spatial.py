@@ -407,6 +407,24 @@ def search_conduits(
     )
 
 
+def _occupant(row: dict, g) -> str:
+    """The extractor standing on a node, at its clock. ``-`` where none does.
+
+    A node whose miner is switched off still reads ``tapped``, and the difference between
+    a tapped node and one being MINED is the whole of "is this worth reclaiming".
+    """
+    cls = row.get("tapped_by")
+    if not cls:
+        return "-"
+    parts = [g.building_name(cls) or cls]
+    clock = row.get("tapped_clock")
+    if clock is not None:
+        parts.append(f"@{clock:.0%}")
+    if row.get("tapped_paused"):
+        parts.append("OFF")
+    return " ".join(parts)
+
+
 @mcp.tool(structured_output=False)
 def search_resource_nodes(
     sources: list[str] | None = None,
@@ -550,6 +568,7 @@ def search_resource_nodes(
                 f"{r['z'] / 100:.0f}",
                 render.num(r["rate"]),
                 "tapped" if r["tapped"] else ("LOCKED" if not r["reachable"] else "free"),
+                _occupant(r, g),
                 rm.label_for_node(r).name or "-",
             )
             for r in rows_all[: render.clamp(limit, default=25)]
@@ -563,10 +582,15 @@ def search_resource_nodes(
             "z(m)",
             "rate",
             "status",
+            "occupant",
             "region",
         )
         body = render.table(headers, rows, total=len(rows_all), limit=limit)
         notes.append("node_id doubles as a source selector: node:<id>")
+        notes.append(
+            "occupant is the extractor standing on the node at its saved clock; OFF means "
+            "it is switched off, so that node's rate is not being produced"
+        )
     else:
         clusters = geo.cluster(rows_all, link_m=200.0)
         crows = []
