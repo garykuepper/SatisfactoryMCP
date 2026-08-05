@@ -1,43 +1,10 @@
 """What a stored plan's source selectors resolved to, and whether they still do.
 
-A stored plan keeps the REQUEST and re-solves on recall, which is what makes it answer
-about the world as it is now (see ``store``). ``plan_id`` catches the world moving --
-an unlock, a freed node, a new building. It does NOT catch the selectors moving, and
-they can: ``sources: ["region:Spire Coast"]`` is a name looked up in a table this
-repository generates, and when that table was re-derived from the game's own
-``FGMapAreaTexture`` the name went from 51 nodes to 18. Nothing about the plan changed;
-the plan simply started planning over a different 1.6 km2 of the map, silently.
-
-A region name is advisory BY DESIGN -- ``domain.spatial.regions`` says so in its first
-paragraph, and that is not the bug. The bug is a STORED plan whose meaning moves without
-saying so, which is the exact staleness class everything else here announces: the node
-table declares what a game update moved (``spatial.nodes.TableSkew``), the tile probe
-declares a recut. So a plan records what each selector actually resolved to, and a recall
-re-resolves and reports the difference.
-
-What is recorded, per LOCATION selector (filters are folded into each one, since they are
-per-node predicates and distribute over the union -- see ``spatial.select.split_spec``):
-
-``selector``
-    the selector text exactly as the plan stores it.
-``count`` / ``hash``
-    how many nodes it returned, and a hash over their sorted leaf names. Either one
-    changing is drift; the hash catches a swap that leaves the count alone.
-``nodes``
-    those leaf names, so a note can say WHICH appeared and vanished. Capped: a whole-map
-    spec is 608 rows and 17 kB of names, which is not what a hand-written plan file is
-    for. Past the cap the list is empty and ``count != len(nodes)`` says so, leaving the
-    count and the hash to detect drift that then cannot be named node by node.
-``bbox``
-    the box those nodes occupied, in metres, and the most load-bearing field here. It is
-    what makes the note ACTIONABLE rather than merely alarming: the fix for a selector
-    that moved is to state the field geographically instead, and the box is that
-    statement. ``tests/conftest.py`` did exactly this by hand after the region re-cut,
-    for exactly this reason -- ``REFERENCE_FIELD`` is the bounding box of the nodes the
-    retired selector returned, and it can never move again.
-
-A plan saved before any of this has no record, and that is reported as "cannot be
-checked" rather than as "unchanged". Absence of a record is not evidence of stability.
+``plan_id`` catches the world moving under a stored plan; it cannot catch the SELECTORS
+moving, and they can -- ``region:Spire Coast`` is a name in a table this repository
+generates, and re-deriving that table took it from 51 nodes to 18 with the plan untouched.
+So a plan records, per location selector, what it resolved to, and a recall re-resolves and
+reports the difference. A plan with no record is reported as "cannot be checked".
 """
 
 from __future__ import annotations
@@ -63,16 +30,14 @@ __all__ = [
     "recorded",
 ]
 
-#: Shape of the recorded block, so a later reader can tell a v1 record from a v2 one
-#: rather than guessing from which keys happen to be present.
+#: Shape of the recorded block, so a later reader can tell a v1 record from a v2 one.
 PROVENANCE_SCHEMA = 1
 
-#: How many node names one selector may store. Past this the set is counted and hashed
-#: but not named: "all" is 608 rows, and a plan file is something a person opens.
+#: How many node names one selector may store. Past this the set is counted and hashed but
+#: not named: "all" is 608 rows, and a plan file is something a person opens.
 LEAF_CAP = 250
 
-#: How many names one note may print per side. A selector that lost 33 nodes is a fact;
-#: 33 instance ids in a tool response is a wall.
+#: How many names one note may print per side.
 NAME_CAP = 5
 
 
@@ -103,11 +68,9 @@ def _entry(selector: str, nodes: list[dict]) -> dict:
 def record(game: GameData, state: WorldState, sources: list[str] | None) -> dict:
     """Resolve ``sources`` selector by selector, as a block to store with the plan.
 
-    A spec with no location selector is the whole map, so there is nothing selector-shaped
-    to pin and the block is recorded EMPTY rather than not at all: an empty list means
-    "checked, nothing to check", which is a different answer from a plan that predates the
-    check entirely. Filters with no location ("resource:Crude Oil" alone) do narrow the
-    map, so they are recorded as one entry under their own text.
+    A spec with no location selector is the whole map, so the block is recorded EMPTY
+    rather than not at all: "checked, nothing to check" is a different answer from a plan
+    that predates the check. Filters alone do narrow the map and get their own entry.
     """
     locations, filters = split_spec(sources)
     entries = []
@@ -133,7 +96,6 @@ class SelectorDrift:
     selector: str
     then: int
     now: int
-    #: Leaf names that were in the saved set and are not in it now, and the reverse.
     #: Empty when the saved set was past ``LEAF_CAP`` and so was never named.
     gone: tuple[str, ...] = ()
     appeared: tuple[str, ...] = ()
@@ -152,15 +114,13 @@ class SelectorDrift:
 def compare(game: GameData, state: WorldState, plan: Plan) -> list[SelectorDrift]:
     """Re-resolve every recorded selector; report only the ones that moved.
 
-    Empty means "nothing to say" -- either every selector still resolves to the set it
-    resolved to, or the plan carries no record. Ask ``recorded`` to tell those apart;
-    conflating them is precisely the silence this module exists to remove.
+    Empty means "nothing to say" -- either nothing moved, or the plan carries no record.
+    Ask ``recorded`` to tell those apart.
     """
     if not recorded(plan):
         return []
-    # Re-resolved by the very function that wrote the record, so the two sides can never
-    # be built differently -- a comparison whose halves disagree about how a spec is split
-    # would report drift that is really a refactor.
+    # Re-resolved by the very function that wrote the record: halves that disagree about
+    # how a spec is split would report drift that is really a refactor.
     fresh_by_selector = {
         e["selector"]: e for e in record(game, state, plan.kwargs().get("sources"))["selectors"]
     }
@@ -170,9 +130,7 @@ def compare(game: GameData, state: WorldState, plan: Plan) -> list[SelectorDrift
         fresh = fresh_by_selector.get(selector)
         if fresh is None:
             # The plan's own `sources` no longer contain this selector, so the ARGUMENTS
-            # were edited rather than the world moving under them. `put` rewrites the
-            # record whenever it stores arguments, so this is a stale half-record and
-            # reporting it as drift would blame the map for an edit.
+            # were edited; reporting it as drift would blame the map for an edit.
             continue
         if fresh["hash"] == entry.get("hash") and fresh["count"] == entry.get("count"):
             continue
@@ -201,11 +159,7 @@ def _named(leaves: tuple[str, ...]) -> str:
 
 
 def notes(game: GameData, state: WorldState, plan: Plan) -> list[str]:
-    """What to tell the reader on a recall. Empty when the field has not moved.
-
-    Silence on an unchanged field is deliberate: a "checked, still fine" line on every
-    recall is noise that trains a reader to skip the line that does matter.
-    """
+    """What to tell the reader on a recall. Empty when the field has not moved."""
     if not recorded(plan):
         return _unrecorded_notes(game, state, plan)
     drifts = compare(game, state, plan)
@@ -239,10 +193,8 @@ def notes(game: GameData, state: WorldState, plan: Plan) -> list[str]:
 def _unrecorded_notes(game: GameData, state: WorldState, plan: Plan) -> list[str]:
     """The degraded path: no record, so say that, and say what the selectors mean NOW.
 
-    Not a refusal and not a guess. The plan still recalls; what it cannot do is claim its
-    field is the one it was drawn over. Stating today's resolution as a bbox gives the
-    reader the one thing that settles it -- they know what they planned over, and can
-    compare a box to a memory in a way they cannot compare a hash.
+    Today's resolution is stated as a bbox because a reader can compare a box to a memory
+    and cannot compare a hash.
     """
     fresh = record(game, state, plan.kwargs().get("sources"))["selectors"]
     if not fresh:
@@ -265,8 +217,7 @@ def _unrecorded_notes(game: GameData, state: WorldState, plan: Plan) -> list[str
                 "another field."
             )
         else:
-            # No box because nothing matched. Saying "pass that box" would be pointing at
-            # a rectangle that does not exist.
+            # No box because nothing matched, so there is no rectangle to point at.
             tail = " -- it selects nothing in this world, so there is no field to compare."
         out.append(f"{entry['selector']!r} resolves to {entry['count']} node(s) HERE AND NOW{tail}")
     return out

@@ -1,51 +1,13 @@
 """One coherence score over every signal, agglomerated into proposed factories.
 
-Each earlier signal fails alone -- power islands over-merge, belt components fragment,
-slabs are blind to ground-built machines. Combining them works, and measured against the
-player's twelve hand-named factories with leave-one-factory-out (weights fitted on the
-other eleven, then the held-out one scored):
-
-    precision 1.000   recall 0.945
-
-Ten of the twelve are recovered exactly. Precision is 1.000 on **every** fold: this never
-merges two factories, it only ever splits one. That is the failure direction to want,
-since an over-segmented proposal is fixed by naming it and an over-merged one is not.
-
-What actually does the work
----------------------------
-Not the weights. Ablated on the same 382 labelled machines:
-
-============================  ====  =========  ======  ======
-variant                       clus  precision  recall      F1
-============================  ====  =========  ======  ======
-fitted log-odds                 15      1.000   0.973   0.986
-round numbers below             15      1.000   0.973   0.986
-every weight set to 1           20      1.000   0.926   0.961
-**slab weight set to 0**        15      1.000   0.973   0.986
-random +-50% (worst of 12)       -          -       -   0.967
-no power-island veto            15      1.000   0.973   0.986
-**no distance cap**             14    **0.776**  0.973   0.863
-============================  ====  =========  ======  ======
-
-Two conclusions, both against intuition:
-
-1. **The weights are barely load-bearing.** Rounding them changes nothing, perturbing
-   them 50% costs 0.02 F1, and removing the strongest signal entirely costs nothing --
-   because the others already separate the same pairs. They are kept for interpretability
-   in the evidence report, not because the arithmetic needs them.
-2. **The linkage rule and the distance cap are everything.** The identical score under
-   single linkage scores F1 0.521: one chain of adjacent machines welds a base into a
-   blob. Complete linkage requires every cross pair to clear the bar. And dropping the
-   distance cap costs 0.12 F1 outright.
-
-The power-island veto was measured redundant and is therefore not applied.
-
-A caveat that no internal cross-validation can remove
------------------------------------------------------
-These numbers come from one save, one player's building style. Leave-one-factory-out
-tests generalisation across *that player's* factories, not across players. The insensitivity
-to weights above is the real reassurance: a result that survives 50% perturbation of every
-parameter is not resting on a fit.
+Each signal fails alone -- power islands over-merge, belt components fragment, slabs are
+blind to ground-built machines -- while together they recover ten of the reference save's
+twelve hand-named factories exactly, at precision 1.000 and recall 0.945 under
+leave-one-factory-out. Precision holds on every fold, so this never merges two factories
+and only ever splits one. The weights are not what does the work: perturbing every one of
+them by 50% costs 0.02 F1, while the complete-linkage rule and the span cap carry the
+result outright. All of it is fitted against one save and one player's building style, so
+that insensitivity to the weights is the only evidence there is that it generalises.
 """
 
 from __future__ import annotations
@@ -69,7 +31,8 @@ __all__ = [
     "propose",
 ]
 
-#: Signal weights. Deliberately round: see the ablation above, they are not load-bearing.
+#: Signal weights, round because they are not load-bearing. They are kept so the evidence
+#: report can name which signals fired, not because the arithmetic needs them.
 WEIGHTS = {
     "slab": 10.0,  # same foundation platform
     "near": 5.0,  # within NEAR_M of each other
@@ -97,25 +60,20 @@ MAX_DEPENDENT_RATIO = 0.5
 
 #: ...and only if it MANUFACTURES almost nothing. Infrastructure -- miners, water pumps,
 #: generators -- runs no recipe at all, so a cluster with several machines actually making
-#: something is a factory in its own right and is never absorbed however exclusively it
-#: feeds one. Size alone cannot express this: the player's space-elevator-parts area is 15
-#: machines against a 110-machine host, comfortably inside the size ratio, but 3 of those
-#: 15 manufacture (Automated Wiring, Computer) and the other 12 are biomass burners and
-#: miners powering them. Every correctly absorbed dependent measured on the reference save
-#: has 0 or 1.
+#: something is a factory in its own right however exclusively it feeds another. Size
+#: alone cannot express this: a small area with three manufacturers and a dozen burners
+#: powering them sits comfortably inside the size ratio and is still its own factory.
 MAX_DEPENDENT_RECIPES = 2
 
 #: A dependent is also absorbed when the cluster its belts reach FIRST is this many times
 #: nearer, in material hops, than the runner-up. Exclusivity alone cannot attribute a
-#: remote miner: the four mines feeding the steel factory reach it in 26-43 hops and the
-#: tor factory in 88-123, but steel and tor are belt-connected to EACH OTHER downstream,
-#: so counting every reachable machine dilutes exclusivity to 0.55. First arrival is
-#: unambiguous, and the measured margins are 42-69 hops.
+#: remote mine, because the two factories it might belong to are belt-connected to EACH
+#: OTHER downstream, which dilutes the share reaching either; first arrival is unambiguous.
 NEAREST_MARGIN = 2.0
 
 #: No proposal may span more than this. THE load-bearing constant -- removing it drops
-#: precision from 1.000 to 0.776. Note it also caps a proposal's diameter, so a genuinely
-#: sprawling factory (the player's oil setup spans 381 m) is proposed in pieces.
+#: precision from 1.000 to 0.776. It also caps a proposal's diameter, so a genuinely
+#: sprawling factory (the reference oil setup spans 381 m) is proposed in pieces.
 MAX_SPAN_M = 250.0
 
 
@@ -200,31 +158,18 @@ def attach_dependents(
 ) -> list[list[str]]:
     """Absorb clusters whose entire material existence serves one other cluster.
 
-    Complete linkage cannot express this, and the coal plant is the proof. Its water
-    pumps sit 21-184 m away, inside the span cap, and 94% of what their pipes reach is
-    that plant -- but the plant is fed by TWO separate pipe networks, so every pump
-    against a generator in the other network scores negative, and complete linkage takes
-    the MINIMUM over cross pairs. One blind pair vetoes the merge.
+    Complete linkage cannot express this: a coal plant fed by two separate pipe networks
+    scores every pump against a generator in the OTHER network negative, and linkage takes
+    the minimum over cross pairs, so one blind pair vetoes a merge that 94% of the pumps'
+    reach argues for. Exclusivity is a property of a cluster rather than of a pair, so it
+    cannot be a feature and has to be this second pass. It is asymmetric: a pump farm
+    belongs to the plant it feeds, and a plant does not belong to its pumps.
 
-    Exclusivity is a property of a cluster, not of a pair, so it cannot be a feature; it
-    has to be a second pass. Asymmetric on purpose: a pump farm belongs to the plant it
-    feeds, but a plant does not belong to its pumps.
-
-    Two ways to qualify, because one rule cannot attribute both a pump farm and a remote
-    mine:
-
-    * **exclusivity** -- most of what it reaches is one cluster. Good for something
-      embedded in the factory it serves.
-    * **nearest consumer** -- the cluster it reaches FIRST is ``nearest_margin`` times
-      nearer in hops than the next. Good for something at the far end of a long belt,
-      where exclusivity fails for a reason that has nothing to do with the miner: the
-      four mines feeding the steel factory reach it in 26-43 hops and the tor factory in
-      88-123, but steel and tor are belt-connected to each other downstream, so counting
-      everything reachable dilutes exclusivity to 0.55.
-
-    ``manufacturing`` is the set of machines running a recipe. A candidate dependent with
-    more than ``max_recipes`` of them is a factory rather than an outlier and is left
-    alone, whatever its exclusivity or nearness.
+    A candidate qualifies either by exclusivity -- most of what it reaches is one cluster,
+    which fits something embedded in the factory it serves -- or by nearest consumer,
+    which fits something at the far end of a long belt. ``manufacturing`` is the set of
+    machines running a recipe, and a candidate with more than ``max_recipes`` of them is
+    left alone whatever its exclusivity or nearness.
     """
     adjacency = graph.adjacency("material")
     makes = manufacturing or set()
@@ -327,9 +272,9 @@ def propose(
 ) -> list[Proposal]:
     """Agglomerate machines into proposed factories, most cohesive first.
 
-    Seeded from foundation slabs rather than from singletons. Slabs have measured
-    precision 1.000 as a same-factory signal, so starting there costs nothing and turns
-    563 starting clusters into roughly 170.
+    Seeded from foundation slabs rather than from singletons: slabs score precision 1.000
+    as a same-factory signal, so starting there costs nothing and starts the agglomeration
+    a long way along.
     """
     weights = {**WEIGHTS, **(weights or {})}
     pool = sorted(machines if machines is not None else graph.machines())

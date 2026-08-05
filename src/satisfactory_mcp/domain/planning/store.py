@@ -1,27 +1,10 @@
 """Named, persisted plans.
 
-**The request is stored, never the solution.** A solve depends on the world it was run
-against -- the unlocked recipe set, which nodes are free, which buildings exist -- and all
-three change as the game is played. A stored solution would keep answering with a world
-that no longer exists, and would do it silently. Storing the arguments and re-solving on
-recall always answers about the world as it is now.
-
-That makes ``plan_id`` do real work. It already hashes the arguments together with the
-save-derived solve inputs, so recording it at save time and comparing it on recall detects
-exactly the case that matters: *the plan did not change, the world did*. Recall reports
-the drift instead of pretending the old answer still holds.
-
-``plan_id`` covers the world moving. It does NOT cover the ARGUMENTS changing meaning,
-which they can: ``sources: ["region:Spire Coast"]`` is a name resolved through a table
-this repository generates, and re-deriving that table took the name from 51 nodes to 18
-with no argument touched and no id disturbed -- the recall re-solved over a different
-sixth of the map and said nothing. So a plan also records what its selectors RESOLVED
-to, and recall re-resolves them; ``planning.provenance`` owns that, including why the
-answer to a plan that predates the record is "cannot be checked" and not "unchanged".
-
-Stored per world under ``saveIdentifier``, beside the factory labels and for the same
-reason: a plan for one world is meaningless in another, and neither belongs in the cache
-that ``cache_prune`` wipes.
+**The request is stored, never the solution.** A solve depends on unlocked recipes, free
+nodes and built buildings, so a stored solution would keep answering about a world that no
+longer exists; re-solving on recall answers about the world as it is now, and a saved
+``plan_id`` that no longer matches says the world moved rather than the plan. Stored per
+world under ``saveIdentifier``: a plan for one world is meaningless in another.
 """
 
 from __future__ import annotations
@@ -37,9 +20,8 @@ __all__ = ["SCHEMA", "Plan", "PlanStore"]
 
 SCHEMA = 1
 
-#: Argument names a plan captures. Everything build_scenario takes that changes the
-#: answer -- deliberately NOT `limit` (presentation) or `save`/`world` (which save was
-#: read, not what was asked for).
+#: Argument names a plan captures: everything build_scenario takes that changes the
+#: answer, and so not `limit` (presentation) or `save`/`world` (which save was read).
 PLAN_ARGS = (
     "objective",
     "target_item",
@@ -67,21 +49,16 @@ class Plan:
     name: str
     args: dict = field(default_factory=dict)
     notes: str = ""
-    #: plan_id at the moment it was saved. A different id on recall means the WORLD
-    #: moved, not the plan.
+    #: plan_id at the moment it was saved. A different id on recall means the WORLD moved.
     plan_id: str = ""
     #: Optional factory label this plan is for, so a diff can be scoped to it.
     factory: str = ""
     created: str = ""
-    #: What each source selector RESOLVED to when this plan was saved -- see
-    #: ``planning.provenance`` for the shape and for why plan_id cannot cover it.
-    #: Defaulted, so a plan file written before this existed still loads; empty then
-    #: means "not recorded", which a recall reports as such rather than as "unchanged".
+    #: What each source selector RESOLVED to when saved; ``provenance`` owns the shape.
+    #: Empty means "not recorded", which a recall reports as such and not as "unchanged".
     provenance: dict = field(default_factory=dict)
-    #: Where this plan is to STAND -- origin, yaw and footprint; ``planning.siting`` owns
-    #: the shape. Defaulted for the same reason as ``provenance``: empty means "not
-    #: sited". Deliberately untouched by ``put``: re-saving a plan's arguments re-states
-    #: WHAT it is, and where it goes is a separate statement with its own verb.
+    #: Where this plan is to STAND; ``planning.siting`` owns the shape and empty means "not
+    #: sited". Untouched by ``put``: where a plan goes has its own verb.
     siting: dict = field(default_factory=dict)
 
     def kwargs(self) -> dict:
@@ -113,12 +90,8 @@ class PlanStore:
         )
 
     def save(self) -> Path:
-        """Persist the store. Atomic, because these are the player's own words.
-
-        A plan is a request the reader typed and nothing on this machine can reconstruct
-        it -- not a save, not the docs dump, not the cache. So the file is replaced whole
-        rather than truncated and rewritten in place; see ``core.atomic``.
-        """
+        """Persist the store, atomically: a plan is a request the reader typed and nothing
+        on this machine can reconstruct it."""
         path = self.path_for(self.world_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         return atomic.write_text(
@@ -157,16 +130,13 @@ class PlanStore:
         if existing is None:
             existing = Plan(name=name.strip(), created=when)
             self.plans.append(existing)
-        # Only what actually shapes the solve, and only non-defaults, so a stored plan
-        # reads as the request that was made rather than a dump of every parameter.
+        # Only non-defaults, so a stored plan reads as the request that was made.
         existing.args = {
             k: v for k, v in args.items() if k in PLAN_ARGS and v not in (None, [], {})
         }
         existing.plan_id = plan_id
-        # Rewritten WITH the arguments, never left behind them: a record describing the
-        # previous `sources` would be checked against the new ones on the next recall and
-        # report drift that is really an edit. None means "this caller has no record to
-        # offer" -- the world could not be read -- and leaves whatever was there alone.
+        # Rewritten WITH the arguments: a record describing the previous `sources` would
+        # report drift that is really an edit. None means the caller has none to offer.
         if provenance is not None:
             existing.provenance = provenance
         if notes:

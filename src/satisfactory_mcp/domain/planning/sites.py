@@ -1,53 +1,18 @@
 """Cutting one solved plan into named sites, and reporting what crosses the boundaries.
 
-This is deliberately NOT a joint multi-site solver, and the reason came from the planner
-who asked for one:
+This is NOT a joint multi-site solver: nothing in the model prices distance, so a joint LP
+with no per-site cap would collapse every site into one and would be RIGHT to, since a
+split into rig, generator hall and resin plant is usually a preference the caller never
+expressed as a constraint. What has a defensible answer is to declare the partition and
+report it -- every flow crossing a boundary, as item, rate, direction and carrier count.
 
-> The thing that actually bit me wasn't optimisation across sites -- it was accounting
-> across sites.
-
-Their three-module split (rig / generator hall / resin plant) turned out to be
-preference-driven, not physics-driven: only the rig's siting is forced, by water being
-drawable at sea level. A joint LP with no per-site cap would collapse all three into one
-site -- and that collapse would be *correct*, because nothing in the model prices distance.
-Honouring a preference the user never expressed as a constraint would be the optimiser
-being wrong.
-
-So what is built here is the half that has a defensible answer: **declare a partition, and
-report it.** Every flow crossing a boundary, as item, rate, direction and carrier count.
-
-The error worth catching
-------------------------
-Reconciling the modules by hand, the planner computed generator count from the rig's total
-fuel output -- assuming all 9,200 m3/min reached the generator hall. It did not; the resin
-plant's plastic cycle consumed some of it. The number was wrong by a whole interface.
-
-A partition cannot make that mistake, because the plan it cuts is already mass-balanced by
-the LP's equality rows. What it CAN do is state where each flow lands -- 8,060 to the hall,
-1,140 to the resin plant -- so the assumption is never available to make. And when a
-partition is incomplete, the unassigned processes are named rather than quietly folded into
-"external", because an unassigned refinery is precisely how a supplier goes missing.
-
-A process cannot be split across sites
---------------------------------------
-The unit of assignment is a PROCESS, not a machine, so shared infrastructure has to live
-wholly in one site and export. This surfaced immediately on the reference plan: the design
-says the resin plant draws its own ~1,100 m3/min from its own shore, but the partition put
-all 64 Water Extractors in the rig, so the table reports `A-rig -> C-resin Water 1100`.
-Both are physically valid builds and the written design had never said which was meant --
-the tool exposing that ambiguity is it working.
-
-The cost is real though: a water farm serving two coastal sites appears as an interface
-that may not exist on the ground. Splitting a process would mean per-MACHINE assignment,
-which is a much larger idea and would break the "a machine is in one place" rule that
-makes `contested` meaningful. Stated here rather than worked around.
-
-Why a zero interface is a row
------------------------------
-The decoupled design is characterised entirely by ONE flow being zero: no fuel returns from
-the resin plant. That is the insight the whole architecture rests on, and a table that
-printed only nonzero flows would omit it. Interfaces the caller names are reported at zero
-rather than dropped.
+The unit of assignment is a PROCESS rather than a machine, so shared infrastructure lives
+wholly in one site and exports: a water farm serving two coastal sites appears as an
+interface that may not exist on the ground, and splitting it would mean per-MACHINE
+assignment, which breaks the "a machine is in one place" rule that makes ``contested``
+meaningful. An interface the caller named is reported even at zero, because a decoupled
+design is characterised entirely by one flow BEING zero and a table of nonzero rows would
+omit exactly that.
 """
 
 from __future__ import annotations
@@ -107,9 +72,9 @@ class SitePlan:
     contested: list[tuple[str, list[str]]] = field(default_factory=list)
     #: Items some site consumes that no site produces and no extractor supplies.
     unsupplied: list[tuple[str, str]] = field(default_factory=list)
-    #: Declared sites that matched no process at all, and patterns that matched none.
-    #: A site silently coming back empty is how a whole building's flows vanish from the
-    #: interface table -- see the module docstring.
+    #: Declared sites that matched no process at all, and patterns that matched none. A
+    #: site silently coming back empty is how a whole building's flows vanish from the
+    #: interface table.
     empty: list[str] = field(default_factory=list)
     dead_patterns: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -119,24 +84,19 @@ class SitePlan:
         return not (self.unassigned or self.contested or self.unsupplied or self.empty)
 
 
-#: The spellings ``exports`` already accepts for grid power, so a site can be keyed on
-#: the thing it exists to produce. A generator hall's product is MW -- the ``__MW__``
-#: sentinel, which is no process label -- and a caller who wrote ``{"hall": ["MW"]}``
-#: got an EMPTY site: 460 generators fell into `unassigned` and the 9,200 m3/min fuel
-#: interface, the one flow the whole multi-building design turns on, vanished from the
-#: table. Warning about the empty site was honest; refusing the obvious spelling was
-#: still the gap.
+#: The spellings ``exports`` already accepts for grid power, so a site can be keyed on the
+#: thing it exists to produce. A generator hall's product is MW -- the ``__MW__`` sentinel,
+#: which is no process label -- so without these a caller who writes ``{"hall": ["MW"]}``
+#: gets an empty site and every generator in `unassigned`.
 _POWER_TOKENS = frozenset({"mw", "power", "__mw__"})
 
 
 def _matches(proc: dict, pattern: str) -> bool:
-    """Same widening match as ``exclude_recipes``: label, building name, building id --
-    plus MW/power, which matches every generator, because power is a product a site can
-    be defined by.
+    """Same widening match as ``exclude_recipes``: label, building name, building id, plus
+    MW/power for every generator, since power is a product a site can be defined by.
 
-    Deliberately the grammar a caller already knows. "Fuel-Powered Generator" names a
-    synthesised process that has no recipe at all, which is why matching on the recipe
-    set alone would leave generators unassignable.
+    A synthesised process such as "Fuel-Powered Generator" has no recipe at all, so
+    matching on the recipe set alone would leave every generator unassignable.
     """
     needle = pattern.strip().casefold()
     if not needle:
@@ -155,9 +115,8 @@ def _matches(proc: dict, pattern: str) -> bool:
 def claim_processes(processes: list[dict], spec: dict[str, list[str]]) -> dict[str, list[str]]:
     """Which sites claim each process: pid -> owner names, in spec order.
 
-    The one matching pass, shared by ``partition`` (the interface table) and the layout
-    (per-site floor stacks), because two matchers would disagree about exactly the
-    processes a caller cares where they stand.
+    The one matching pass, shared by ``partition`` and by the per-site layout: two matchers
+    would disagree about exactly the processes a caller cares where they stand.
     """
     return {
         proc["pid"]: [
@@ -244,12 +203,9 @@ def partition(
                     )
                 )
 
-    # A site that matched nothing, and a pattern that matched nothing. Both were silent,
-    # and the silence cost a caller the entire fuel interface: they keyed a generator site
-    # on the item it produces (MW), the site came back empty, its 460 generators landed in
-    # `unassigned`, and the one flow the whole multi-building design turns on was missing
-    # from the table. MW now matches generators (see `_POWER_TOKENS`), so this loudness is
-    # for the patterns that still hit nothing -- a typo, or a recipe this plan does not run.
+    # Both loudly: a site or a pattern that quietly matches nothing takes every flow it
+    # should have carried out of the interface table, leaving a plausible table that is
+    # short by a whole building.
     for site in out.sites:
         if site.machines == 0:
             out.empty.append(site.name)

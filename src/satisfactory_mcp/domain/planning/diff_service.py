@@ -1,15 +1,9 @@
 """Everything ``diff_vs_save`` has to DECIDE before a delta can be written down.
 
-``build_diff`` answers "what is missing", and it answers it against a scope and a
-solution somebody else had to choose. That choosing was the half of the tool that was
-not presentation: solve the plan, work out which machines even count as already built
-(a named factory, or the one a stored plan was saved for), read the grid, and -- only
-when a stage question was asked -- partition the plan into startup stages and match
-them against the save.
-
-The stage partition is deliberately conditional. Nothing is stored and nothing is
-re-solved for it, but a diff nobody asked a stage question of should not pay the
-context for one, and the numbering is only stable for a STORED plan.
+``build_diff`` answers "what is missing" against a scope and a solution somebody else had
+to choose: solve the plan, work out which machines count as already built (a named factory,
+or the one a stored plan was saved for), read the grid, and -- only when a stage question
+was asked -- partition the plan into startup stages and match them against the save.
 """
 
 from __future__ import annotations
@@ -45,8 +39,8 @@ class DiffVsSaveReport:
     #: Feasible, but the solve chose to build nothing. Distinct from a failure.
     empty: bool = False
     #: The recalled plan's recorded site and the approximate what-stands-here census over
-    #: it, both only when the plan carries a siting. See ``planning.siting`` for why the
-    #: survey is honest about being counts-by-class rather than a second identity match.
+    #: it, both only when the plan carries a siting. The survey counts by class rather than
+    #: matching identity; ``planning.siting`` says why.
     site: siting_mod.Siting | None = None
     site_survey: siting_mod.SiteSurvey | None = None
 
@@ -110,10 +104,7 @@ def build_diff_report(
             report.site = sit
             report.site_survey = siting_mod.survey(g, st, sit, sol.processes)
 
-    # Stage detection is the same partition commission_plan emits, matched against the
-    # save -- nothing is stored and nothing is re-solved. It is off unless asked for,
-    # because the numbering is only stable for a STORED plan and because a diff that
-    # nobody asked a stage question of should not pay the context for one.
+    # Off unless asked for: the stage numbering is only stable for a STORED plan.
     if plan or stage is not None:
         report.tracking = track(
             prepared,
@@ -124,9 +115,8 @@ def build_diff_report(
             plan_name=plan_name,
         )
         if plan_name and (stored := st.plans.find(plan_name)) and stored.plan_id != req.plan_id:
-            # The same drift list_plans reports, said where it bites hardest: a stage
-            # number is a milestone the player remembers, and a re-solve against a moved
-            # world can renumber the whole partition under them.
+            # A stage number is a milestone the player remembers, and a re-solve against a
+            # moved world can renumber the whole partition under them.
             report.drift_note = (
                 f"plan {plan_name!r} was saved against plan_id {stored.plan_id} and "
                 f"re-solves to {req.plan_id} -- the WORLD moved, so these stage numbers "
