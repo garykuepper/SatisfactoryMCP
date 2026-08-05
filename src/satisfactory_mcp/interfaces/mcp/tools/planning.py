@@ -193,9 +193,11 @@ def list_plans(
         ),
         (
             "pass name=<plan> for one plan's stored arguments, its recorded field and its "
-            "full siting, without solving anything. A '~' marks a cell that was cut"
+            "full siting, without solving anything"
         ),
     ]
+    if any("~" in str(cell) for row in rows for cell in row):
+        notes.append("a '~' ends a cell this table had to cut; name=<plan> prints it whole")
     if drifted:
         notes.append(
             "'field N->M' means the plan's own selectors no longer resolve to the nodes it "
