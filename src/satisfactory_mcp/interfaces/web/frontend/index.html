@@ -5,17 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Satisfactory &mdash; world map</title>
     <!--
-      Bundled, not CDN'd: this tool reads a local save directory and has no business
-      needing the internet to draw. Leaflet arrives as the pinned `leaflet` npm package and
-      is compiled into the one bundle below together with its own stylesheet; the build
-      copies vendor/LEAFLET-LICENSE next to it, because that BSD-2-Clause text is what
-      redistribution requires. No game textures and no map tiles are shipped or fetched --
-      everything drawn here is data the save and the docs dump already contain.
+      Bundled, not CDN'd: this tool reads a local save directory and has no business needing
+      the internet to draw. Leaflet is compiled into the bundle, so every build carries its
+      BSD-2-Clause text -- vite.config.ts copies it. No game textures and no map tiles are
+      shipped or fetched.
 
-      Both stylesheets are imported by main.ts rather than linked here, and that is what
-      pins their ORDER: Leaflet's own rules first, this page's overrides second. Several of
-      those overrides match Leaflet's specificity exactly and win on source order alone --
-      see the note above `.leaflet-control-layers .layer-folded` in style.css.
+      Both stylesheets are imported by main.ts rather than linked here, and that is what pins
+      their ORDER: Leaflet's own rules first, this page's overrides second. Several of those
+      overrides match Leaflet's specificity exactly and win on source order alone -- see the
+      note above `.leaflet-control-layers .layer-folded` in style.css.
     -->
   </head>
   <body>
@@ -28,10 +26,7 @@
     </header>
     <div id="map"></div>
     <!-- The encodings no checkbox can explain, because they are inside a layer rather than
-         a layer of their own: purity is dot size, a conveyor lift is a ring because a lift is
-         vertical and its top-down route is a single point, a chevron is which way the fluid
-         goes on the pipes the network settled a direction for, and HOLLOW says two different
-         things.
+         a layer of their own.
 
          Hollow is the trap, so the shape is named in front of it every time. A hollow DOT is
          a node with an extractor standing on it -- drawn away, because the thing on top of it
@@ -41,9 +36,7 @@
          unqualified. (A paused machine is hollow too and is not a third meaning: it is the
          dashed outline that says so, and the fade only follows it.)
 
-         Static, because these never change -- and kept in step with four files by hand:
-         PURITY_RADIUS in palette.ts, the fillOpacity lines in markers.ts and placements.ts,
-         ROUTE_CHEVRONS in routes.ts, and POLE_RADIUS_PX / TOWER_CLASS in power.ts.
+         Kept in step with four files by hand: PURITY_RADIUS in markers.ts, the fillOpacity lines in markers.ts and placements.ts, ROUTE_CHEVRONS in routes.ts, and POLE_RADIUS_PX / TOWER_CLASS in power.ts.
 
          A details element and not a strip, so the map's bottom edge belongs to the map: the
          closed state is a chip the size of its two words, and the open card grows upward off

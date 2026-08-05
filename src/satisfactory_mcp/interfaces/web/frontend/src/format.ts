@@ -1,9 +1,8 @@
 /* Three ways of saying what the data means, in words rather than in identifiers.
  *
- * Pure, and shared: a resource short name, a region line and a phase name each appear in
- * more than one place -- the node dot's popup and the right-click inspector both name a
- * resource and a region, and disagreeing about how would be the page contradicting itself
- * about the same fact at two different clicks.
+ * Pure, and shared: the node dot's popup and the right-click inspector both name a resource
+ * and a region, and disagreeing about how would be the page contradicting itself about the
+ * same fact at two different clicks.
  */
 
 import type { Region } from "./api-shapes";
@@ -17,11 +16,10 @@ export function shortResource(resource: string | null | undefined): string {
 
 /* A region lookup as one line: "Northern Forest, interior".
  *
- * The confidence word is never dropped, not even for an interior hit. The raster is 256 m
- * per cell, so the name and how far it can be trusted are one claim -- and a name printed
- * bare next to a MEASURED elevation would borrow that measurement's authority. `null` is
- * the ocean-or-off-map answer, and it is said plainly rather than softened into the
- * nearest bit of land. */
+ * The confidence word is never dropped, not even for an interior hit. The raster is 256 m per
+ * cell, so the name and how far it can be trusted are one claim, and a name printed bare next
+ * to a MEASURED elevation would borrow that measurement's authority. `null` is the
+ * ocean-or-off-map answer, said plainly rather than softened into the nearest bit of land. */
 export function regionLine(region: Region | null | undefined): string {
   return region ? region.name + ", " + region.confidence : "off the map";
 }

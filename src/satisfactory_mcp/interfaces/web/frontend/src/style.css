@@ -2,25 +2,14 @@
    one second, and that order is the whole of why several selectors here win -- see the note
    above `.leaflet-control-layers .layer-folded`.
 
-   What the ground looks like is NOT decided here, and that is the thing this preamble used
-   to get wrong. It said "flat colour, no imagery", which described a page that could only
-   ever paint the 256 m biome raster; the base map is now a MODE -- the game's own artwork,
-   a hypsometric terrain render, a biome-coloured satellite render, or plain -- each a tile
-   pyramid the server cuts, chosen by the radios in the layer control and swapped by
-   tiles.ts. Read that file for which pictures exist and how one is picked.
+   What the ground looks like is not decided here: the base map is a MODE and tiles.ts owns
+   which pictures exist and how one is picked. One consequence lands in this file -- `--sea`
+   below is the background showing through the cells the biome raster calls void, so it is
+   visible in plain mode and covered in every other. It is a colour for the absence of data,
+   not for water.
 
-   Two consequences land in this file, and they are the reason it needs to know at all:
-
-     * the `basemap` pane sits UNDER the region cells (map.ts pins the z-indices), so the
-       biome colours in regions.ts are a tint over a photograph as often as they are the
-       ground itself -- their alpha is the pane's, not the cells', and it changes with the
-       mode. REGION_BLEND in regions.ts owns that number.
-     * the sea is still just the background showing through the cells the raster calls void,
-       so --sea below is visible in plain mode and covered in every other. It is a colour for
-       the absence of data, not for water.
-
-   Everything else here is chrome: the header bar, the layer control's two folds, the popup
-   table, the toast, and the legend strip index.html spells out. */
+   Everything else here is chrome: the header bar, the layer control's folds, the popup
+   table, the toast, and the legend index.html spells out. */
 
 :root {
   --ink: #e8e6e1;
@@ -145,8 +134,8 @@ select {
 
 /* The static half of the legend: the encodings no layer-control swatch can carry. Closed it
    is a two-word chip; open it is a card growing upward from the same bottom anchor, which is
-   what `position: fixed; bottom:` gives for free. Interactive now (a summary is a button),
-   so no pointer-events: none -- the map loses only the pixels under the chip itself. */
+   what `position: fixed; bottom:` gives for free. A summary is a button, so no
+   pointer-events: none -- the map loses only the pixels under the chip itself. */
 #legend {
   position: fixed;
   left: 0.5rem;
@@ -226,37 +215,25 @@ select {
      folded-row rule below, and overflow-x would otherwise answer a long name with a
      horizontal scrollbar. */
   overflow-x: hidden;
-  /* The scrollbar's strip is reserved in EVERY state, scrollbar or not. Past about thirty
-     rows the list hits the 70vh cap and starts scrolling, and a classic scrollbar arriving
-     at that moment takes its 15 px out of the interior -- which is the same horizontal jump
-     this section is here to remove, just one row later. Chromium counts a stable gutter in
-     the shrink-to-fit width (measured: 15 px, and 0 where scrollbars are overlays), so this
-     costs one constant strip and removes the last case where the box moves sideways. */
+  /* Reserved in EVERY state, scrollbar or not. Past about thirty rows the list hits the 70vh
+     cap and starts scrolling, and a classic scrollbar arriving at that moment takes its 15 px
+     out of the interior -- the same horizontal jump the folded-row rule below removes, one
+     row later. Chromium counts a stable gutter in the shrink-to-fit width. */
   scrollbar-gutter: stable;
 }
 
-/* The control's two folds -- see decorateControl() in layercontrol.ts. Leaflet's own
-   collapsed mode is never used, so `.leaflet-control-layers-expanded` is always set and its
-   toggle anchor (whose icon is an image nothing here requests) stays display:none where
-   Leaflet's own stylesheet put it. These rules match that stylesheet's specificity and win
-   on order, which is the only reason no !important is needed -- and the order is pinned by
-   main.ts importing Leaflet's stylesheet before this one. */
-/* A folded row is COLLAPSED, not removed -- and that one word is the whole reason the
-   control now keeps one width.
+/* The control's folds -- see decorateControl() in layercontrol.ts. These rules match
+   Leaflet's own stylesheet's specificity and win on order, which is the only reason no
+   !important is needed; main.ts pins that order.
 
-   `display: none` was the obvious rule, and it is what made the box jump. A display:none
-   row contributes no width at all, so the box shrank to its widest VISIBLE row and every
-   unfold re-widened it: 164 px folded, 178 with the nodes open, 291 with the pickups open.
-   The control is a floated, shrink-to-fit box, so each of those was a reflow that slid the
-   map sideways under a pointer that was only trying to open a section.
-
-   A collapsed row still takes part in layout, so its max-content width still counts toward
-   that shrink-to-fit -- which means the browser measures the widest row the control can
-   ever hold, on the real strings in the real font, and holds that width in every fold
-   state. That is deliberately not a px constant derived from today's data: the widest row
-   on the reference world is `pickup: customization_unlock_pickup`, a category palette.ts's own
-   colour palette does not list at all, so a constant would have been fitted to a vocabulary
-   this file cannot see the end of. The layout engine can, on every world, for free.
+   A folded row is COLLAPSED, not removed, and that one word is what keeps the control at one
+   width. A `display: none` row contributes no width at all, so the box would shrink to its
+   widest VISIBLE row and every unfold would re-widen it -- and this control is a floated,
+   shrink-to-fit box, so each of those is a reflow that slides the map sideways under a
+   pointer that was only trying to open a section. A collapsed row still takes part in layout,
+   so the browser measures the widest row the control can ever hold, on the real strings in
+   the real font. Not a px constant: the widest row is a pickup category name, and the
+   vocabulary has no end this file can see.
 
    visibility:hidden as well as height:0, because a folded row must also leave the tab order
    and the accessibility tree -- it is put away, not merely clipped to nothing. */
@@ -334,13 +311,11 @@ select {
   color: #9aa0a8;
 }
 
-/* The MODE section: which picture the base map is, as radios rather than checkboxes.
-
-   The rule under it is the whole of what makes the two kinds of row read as two kinds of
-   question. Above it: one answer out of four, and picking one un-picks the others. Below it:
-   a couple of dozen independent yes/nos. Leaflet draws its own separator between base layers
-   and overlays for the same reason and this section is not one of its base layers -- see
-   renderModes in layercontrol.ts for why -- so the line is drawn here. */
+/* The MODE section: which picture the base map is, as radios rather than checkboxes. The rule
+   under it is what makes the two kinds of row read as two kinds of question -- one answer out
+   of four above it, a couple of dozen independent yes/nos below. Leaflet draws its own
+   separator between base layers and overlays, and these are not its base layers, so the line
+   is drawn here. */
 .layer-modes {
   padding-bottom: 6px;
   margin-bottom: 4px;
@@ -349,25 +324,23 @@ select {
 
 /* Leaflet's own rows are `display: block` labels and these sit in the same column, so they
    are too: a flex row here would put the radio and its word on a different baseline from
-   the checkbox and its word one row down. */
+   the checkbox and its word one row down. Same for `.layer-floor` below. */
 .layer-mode {
   display: block;
 }
 
 /* A mode whose pyramid has never been generated stays LISTED and greyed rather than being
-   left out. The row is where the page names the tool that would draw it -- in `title`, put
-   there by renderModes -- and a name that is simply absent asks nobody to go looking. The
-   help cursor is the hint that the row has something to say; the disabled radio inside it
-   already refuses clicks and the keyboard. */
+   left out: the row's `title` is where the page names the tool that would draw it, and a name
+   that is simply absent asks nobody to go looking. The help cursor is the hint that the row
+   has something to say; the disabled radio inside it already refuses clicks and the
+   keyboard. */
 .layer-mode-off {
   opacity: 0.45;
   cursor: help;
 }
 
 /* What a fold head says without being opened: how many of a folded family are drawn, or --
-   for the modes, where one of four is always the answer -- which one. "resource nodes, 14 of
-   14" answers "are the ore dots on?" and "base map, satellite" answers "what am I looking
-   at?", both without unfolding anything. */
+   for the modes, where one of four is always the answer -- which one. */
 .layer-count {
   margin-left: auto;
   padding-left: 10px;
@@ -378,21 +351,16 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-/* The FLOOR section: which storey of one factory the map is showing.
-
-   Above the modes, and that order is the question order: which slice of the world, then what
-   picture it is drawn on, then what is ticked over it. It carries the same rule underneath
-   for the same reason the modes do -- one answer out of n, against a list of independent
-   yes/nos -- and it is only in the document at all while the page is slicing something, so
-   the extra rule never appears over a world map. */
+/* The FLOOR section: which storey of one factory the map is showing. Above the modes, which
+   is the question order -- which slice of the world, then what picture it is drawn on, then
+   what is ticked over it. It is only in the document while the page is slicing something, so
+   its rule never appears over a world map. */
 .layer-floors {
   padding-bottom: 6px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--line);
 }
 
-/* Leaflet's own rows are `display: block` labels and these sit in the same column, so they
-   are too -- the same reason the mode rows are. */
 .layer-floor {
   display: block;
 }
@@ -408,10 +376,10 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-/* A mezzanine, subordinate BY ITS CELL SHARE -- which is the measurement that makes it one.
-   Indented and dimmed rather than renamed or hidden: a six-cell ledge is a real band that a
-   machine can stand on, and stage 0 measured that merging it into the storey below would put
-   machines on a floor they are not on. It reads as minor and stays pickable. */
+/* A mezzanine, subordinate BY ITS CELL SHARE. Indented and dimmed rather than renamed or
+   hidden: a six-cell ledge is a real band that a machine can stand on, and merging it into
+   the storey below would put machines on a floor they are not on. It reads as minor and stays
+   pickable. */
 .layer-floor-minor {
   padding-left: 12px;
   opacity: 0.72;
@@ -455,13 +423,9 @@ select {
   white-space: normal;
 }
 
-/* A floor connector's glyph: which way a lift or riser leaves this storey.
-
-   The box is REAL and is set by GLYPH_PX in floors.ts, unlike the factory anchors, which are
-   0x0 on purpose because their tooltip is what a reader clicks. Here the arrow is what a
-   reader clicks, so the icon has to be as big as the arrow -- an overflowing character on a
-   zero-size icon looks the same and cannot be hit, which makes the popup saying where the
-   connector goes unreachable.
+/* A floor connector's glyph: which way a lift or riser leaves this storey. The box is REAL
+   and is set by GLYPH_PX in floors.ts, because here the arrow is what a reader clicks -- an
+   overflowing character on a zero-size icon looks the same and cannot be hit.
 
    The colour is the belts' own steel, because a connector is a piece of the network it
    belongs to rather than a fifth thing on the page. The shadow is what keeps it readable over
@@ -487,15 +451,14 @@ select {
   color: #93a5b4;
 }
 
-/* The crate glyph's body: an SVG box at a fixed pixel size, drawn by crateGlyph() in
-   crates.ts, which owns the colour and the shape. Everything left for CSS is the two things a
-   divIcon does not get for free -- `line-height: 0` so the inline SVG sits on the icon's own
-   box instead of on a text baseline three pixels below it, and a pointer, because the popup
-   IS this layer and a mark that does not look clickable will not be clicked.
+/* The crate glyph's body: an SVG box drawn by crateGlyph() in crates.ts, which owns the
+   colour and the shape. What is left here is what a divIcon does not get for free --
+   `line-height: 0` so the inline SVG sits on the icon's own box instead of on a text baseline
+   three pixels below it, and a pointer, because the popup IS this layer.
 
    A drop shadow rather than a second stroke: a 13 px box has to be findable against bright
-   terrain and against the concrete alike, and a dark halo does that without spending another
-   colour or thickening the outline the dashed kind depends on being able to show. */
+   terrain and against the concrete alike, and a dark halo does that without thickening the
+   outline the dashed kind depends on being able to show. */
 .crate-mark {
   line-height: 0;
   cursor: pointer;
@@ -553,10 +516,9 @@ select {
   color: #fff;
 }
 
-/* The zero-size body a factory label hangs from. It exists so the tooltip has an anchor
-   in the marker pane; it draws nothing and, at 0x0 with no image, catches nothing. Its
-   predecessor was an opacity-0 default marker, whose two missing PNGs were the page's
-   only 404s and whose 25x41 px of invisible <img> ate every click near a factory. */
+/* The zero-size body a factory label hangs from. It exists so the tooltip has an anchor in
+   the marker pane; it draws nothing and, at 0x0 with no image, catches nothing -- the tooltip
+   is the whole visible and clickable body. */
 .factory-anchor {
   width: 0;
   height: 0;
@@ -594,27 +556,18 @@ select {
   background: #9ecbf0;
 }
 
-/* Biome names: printed on the ground the way an atlas prints a region, which means they
-   have to stay out of the way -- no box, no pointer events, and quiet enough that the
-   factory labels and the ore dots still win the eye.
+/* Biome names: printed on the ground the way an atlas prints a region, so they stay out of
+   the way -- no box, no pointer events, quiet enough that the factory labels and the ore dots
+   still win the eye.
 
-   These were tuned against a flat dark background that no longer exists. The base map is
-   now a render of the real world, and the real world has pale sand in the west and near
-   black forest in the south -- so a 42%-opacity light grey with a soft drop shadow was
-   invisible over half the map and merely faint over the rest. The ground under a label is
-   not knowable from here, which rules out picking a colour to suit it.
-
-   So: light text with a dark HALO, the atlas answer, which needs to know nothing about
-   what it sits on. The halo is eight offsets plus two blurs rather than a single shadow --
-   a drop shadow protects one side of a glyph and leaves the other three on the bare
-   ground, which is exactly how "CRATER LAKES" disappeared into the sand. paint-order and
-   -webkit-text-stroke would be the tidier spelling and are not used: a stroke centred on
-   the glyph outline eats into thin uppercase strokes at 11 px, and paint-order on HTML
-   text is not something this page can assume.
-
-   The fill goes opaque and the size up one step, because a halo on 42% grey just makes a
-   grey smudge legible. Letterspacing comes DOWN a little (0.18em -> 0.14em) to pay for the
-   width the larger size costs, so a long name still fits the region it names. */
+   Light text with a dark HALO, which is the atlas answer and needs to know nothing about what
+   it sits on -- and the ground under a label is not knowable from here, which rules out
+   picking a colour to suit it. The halo is eight offsets plus two blurs rather than a single
+   shadow, because a drop shadow protects one side of a glyph and leaves the other three on
+   the bare ground. paint-order and -webkit-text-stroke would be the tidier spelling and are
+   not used: a stroke centred on the glyph outline eats into thin uppercase strokes at 11 px,
+   and paint-order on HTML text is not something this page can assume. The letterspacing pays
+   for the width the size costs, so a long name still fits the region it names. */
 .region-label {
   background: none;
   border: none;
@@ -643,36 +596,27 @@ select {
   display: none;
 }
 
-/* The label column of every popup card. `nowrap` because these are LABELS and not sentences:
-   the longest one on the page is "through this floor" at about 110 px, and the widest card is
-   380, so nothing here can push a popup out of shape. What it prevents is the opposite --
-   "dismantle crate" folding into two lines because the value beside it happened to be a long
-   sentence, which is auto table layout deciding which column loses and picking the wrong one. */
+/* The label column of every popup card. `nowrap` because these are LABELS and not sentences,
+   and auto table layout otherwise folds "dismantle crate" into two lines whenever the value
+   beside it happens to be a long sentence. The longest label is about 110 px against a 380 px
+   card, so nothing here can push a popup out of shape. */
 .popup-key {
   color: #9aa0a8;
   padding-right: 0.5rem;
   white-space: nowrap;
 }
 
-/* THE INVENTORY GRID: what is in a crate or a container, drawn the way the game draws a
-   container. See contentsRows() in dom.ts, and routers/icons.py for where the pictures
-   come from.
+/* THE INVENTORY GRID: what is in a crate or a container. See contentsRows() in dom.ts.
 
-   A wrapping flex row rather than `display: grid`, and the difference is what happens to the
-   last row: a grid with a fixed column count reserves the empty cells, so a container holding
-   nine kinds draws five tiles and five holes. These are stacks, not slots -- the save gives no
-   slot ORDER, only what is in the box -- so the picture must not imply a layout the data does
-   not have. The tiles are one size, they wrap, and the last row is as long as it is.
+   A wrapping flex row rather than `display: grid`, because a grid with a fixed column count
+   reserves the empty cells, and a container holding nine kinds would draw five tiles and five
+   holes. These are stacks, not slots -- the save gives no slot ORDER, only what is in the box
+   -- so the picture must not imply a layout the data does not have.
 
-   The width is the cap the popup was widened for: 7 x 38 + 6 x 4 = 290, inside the value cell
-   of a 380 px card. See CONTENTS_POPUP_PX in dom.ts, which holds the arithmetic.
-
-   `width` and not `max-width`, which is the difference between a grid that is seven wide and
-   one that is seven wide when nothing else on the card wanted the room. A wrapping flex box
-   has a min-content width of ONE tile, so under `max-width` the table hands this column
-   whatever is left after every other row has had its say -- and the same twelve stacks then
-   wrap 7+5 on one card and 6+6 on another, which makes the grid look like it is measuring
-   something. Asking for the width outright makes the shape a property of the grid. */
+   7 x 38 + 6 x 4 = 290, inside the value cell of a 380 px card; see CONTENTS_POPUP_PX in
+   dom.ts. `width` and not `max-width`: a wrapping flex box has a min-content width of ONE
+   tile, so under `max-width` the table hands this column whatever is left after every other
+   row has had its say, and the same twelve stacks wrap 7+5 on one card and 6+6 on another. */
 .item-grid {
   display: flex;
   flex-wrap: wrap;
@@ -681,13 +625,11 @@ select {
   padding: 2px 0;
 }
 
-/* One tile. `position: relative` is the whole trick of the thing: it is what lets the count
-   sit ON the picture the way it does in the game, rather than beside it in a column that
-   would make this a table again.
-
-   The frame and the wash under it are doing a real job and not a decorative one -- an item
-   icon is a transparent PNG of a mostly-dark object, and a row of them on the popup's own
-   panel colour reads as a scatter of shapes rather than as a set of things in a box. */
+/* One tile. `position: relative` is what lets the count sit ON the picture the way it does in
+   the game, rather than beside it in a column that would make this a table again. The frame
+   and the wash under it are not decoration: an item icon is a transparent PNG of a mostly
+   dark object, and a row of them on the popup's own panel colour reads as a scatter of shapes
+   rather than as a set of things in a box. */
 .item-tile {
   position: relative;
   display: inline-flex;
@@ -711,11 +653,10 @@ select {
   object-fit: contain;
 }
 
-/* The quantity, over the bottom-right corner, which is where the game puts it and therefore
-   where a reader's eye already goes. Not a box: a badge with a background would cover a
-   quarter of the artwork on every tile, and the artwork is the thing being identified. What
-   makes it legible over a picture of any brightness is the ring of shadow, which is the same
-   device the region labels use over terrain. */
+/* The quantity, over the bottom-right corner, which is where the game puts it. Not a box: a
+   badge with a background would cover a quarter of the artwork on every tile, and the artwork
+   is the thing being identified. The ring of shadow is what makes it legible over a picture
+   of any brightness -- the same device the region labels use over terrain. */
 .item-count {
   position: absolute;
   right: 2px;
@@ -732,11 +673,10 @@ select {
     0 0 3px rgba(6, 8, 10, 0.9);
 }
 
-/* The tile for a class with no picture, and it is a TILE and not a hole. Six of the game's
-   750 item classes ship no icon, and a reader who never ran the generator has none at all --
-   so this is the ordinary state rather than the edge case, and a grid with gaps in it would
-   be a grid lying about how many kinds are in the box. Hidden until the <img> above it fails
-   and removes itself; see tile() in dom.ts. */
+/* The tile for a class with no picture, and it is a TILE and not a hole: a reader who never
+   ran the icon generator has no pictures at all, so this is the ordinary state rather than
+   the edge case. Hidden until the <img> above it fails and removes itself; see tile() in
+   dom.ts. */
 .item-abbr {
   display: none;
 }
@@ -744,9 +684,8 @@ select {
 .item-tile-bare .item-abbr {
   display: block;
   /* The bottom 11 px are the count's, so a name that needs three lines is clipped rather
-     than printed under the number. The count is the one thing on a tile that is never
-     ambiguous, and a text tile is already the degraded case -- the full name is on the tile's
-     `title` and in the caption line either way. */
+     than printed under the number. The full name is on the tile's `title` and in the caption
+     line either way. */
   padding: 2px 2px 11px;
   font-size: 9px;
   line-height: 1.1;
@@ -766,8 +705,7 @@ select {
 
 /* The names under the grid, and the half that keeps a grid honest: a picture identifies a
    thing to whoever recognises it, and this identifies it to everyone else -- with no pointer
-   to hover, no screen reader, and no icon directory. Small and muted so that it reads as the
-   caption it is, and never nowrap: it is a sentence, and it is meant to wrap. */
+   to hover and no icon directory. Never nowrap: it is a sentence, and it is meant to wrap. */
 .item-names {
   display: inline-block;
   color: #9aa0a8;

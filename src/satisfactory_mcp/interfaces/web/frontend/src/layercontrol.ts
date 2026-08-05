@@ -1,21 +1,17 @@
 /* The layer control: the map's legend, its only filter, and the two folds that make
  * thirty-five rows fit on a laptop.
  *
- * The largest module here, and it stays one file because it is one widget: the folds, the
- * tri-state family boxes, the focus that has to survive Leaflet emptying the list, and the
- * batching that stops fourteen layer events becoming twenty-eight renders are four halves of
- * the same problem, and each of them is written the way it is because of the other three.
+ * One file because it is one widget: the folds, the tri-state family boxes, the focus that has
+ * to survive Leaflet emptying the list, and the batching that stops fourteen layer events
+ * becoming twenty-eight renders are four halves of one problem.
  *
- * Above all of that sits the MODE section, and it is deliberately a different kind of thing:
- * radios, not checkboxes. "Which picture is the base map" is one question with one answer,
- * and "what is drawn on top of it" is a couple of dozen independent ones -- so the two are
- * different gestures with a rule between them, rather than one more checkbox that happens to
- * turn the others off. That is the split Google Earth makes, and it is the reason a mode
- * switch leaves every overlay exactly as the player left it.
+ * The MODE section above the overlays is RADIOS, not checkboxes: "which picture is the base
+ * map" is one question with one answer, and "what is drawn on top of it" is two dozen
+ * independent ones -- which is why a mode switch leaves every overlay exactly as the player
+ * left it.
  *
- * It knows about layers and nothing about what is drawn in them, and about modes without
- * knowing what a tile pyramid is. `onSettled` and `onModePick` are why -- see the notes
- * there.
+ * This file knows about layers and nothing about what is drawn in them, and about modes
+ * without knowing what a tile pyramid is; `onSettled` and `onModePick` are how.
  */
 
 import { esc } from "./dom";
@@ -31,14 +27,12 @@ export var control = L.control.layers(
   {
     collapsed: false,
     sortLayers: true,
-    /* The ROW RANK, and the only thing on the page that reads one: [band, slot, name],
-     * stamped onto every group by `layer()`. Read when this control rebuilds its list and
-     * nowhere else -- it is not draw order, and layers.ts says why at length.
+    /* The ROW RANK, and the only thing on the page that reads one: [band, slot, name], stamped
+     * onto every group by `layer()`. It is not draw order; layers.ts says why.
      *
-     * `[9, 0, ""]` is `BAND.unknown` written out rather than imported, because layers.ts
-     * imports THIS file and importing it back would be the ring the ratchet next door
-     * forbids. It is also unreachable through `layer()`, which supplies the same band
-     * itself: what it defends against is a group that reached the control another way. */
+     * `[9, 0, ""]` is `BAND.unknown` WRITTEN OUT rather than imported, because layers.ts
+     * imports this file. It defends against a group that reached the control some other way,
+     * `layer()` supplying the same band itself. */
     sortFunction: function (a: L.Layer, b: L.Layer) {
       var ra = a._rank || [9, 0, ""];
       var rb = b._rank || [9, 0, ""];
@@ -51,38 +45,29 @@ export var control = L.control.layers(
 state.control = control;
 L.control.scale({ imperial: false }).addTo(map);
 
-/* Thirty-five overlay rows on the reference world, plus the four modes above them --
- * 306x700 px fully open, 13% of a 1600x1000 viewport and a great deal more of a laptop --
- * permanently, because the control was built with `collapsed: false` and nothing else could
- * fold it. (Thirty-three when this was written; the pickup families grew.)
+/* Thirty-five overlay rows plus four modes is 306x700 px fully open, which is why there are
+ * folds at all.
  *
- * `collapsed: true` is not the fix. This control is the map's legend (every swatch) and
- * its only filter, so hiding it behind Leaflet's own hover toggle would make the page's
- * one index invisible until the pointer happened to cross a 36 px square -- a square drawn
- * from `vendor/images/layers.png`, which this project does not vendor and which would
- * therefore be the page's only 404. Both folds below are the page's own.
+ * `collapsed: true` IS NOT THE FIX. This control is the map's legend and its only filter, so
+ * Leaflet's own hover toggle would hide the page's one index behind a 36 px square drawn from
+ * `vendor/images/layers.png` -- which this project does not vendor, and which would be the
+ * page's only 404. All three folds below are the page's own.
  *
- *   * The head row folds the whole list to one labelled strip that still says how many
- *     layers exist and how many are drawn, so "there ARE layers here" survives folding.
- *   * A section head folds one data-driven family -- the `node:` rows, the `pickup:` rows
- *     -- and those two start folded, because they are the families that grow with the
- *     world and that turned a nine-row legend into thirty-five. Their heads carry the
- *     same "n of m" count, which is what lets a folded section still answer "are the ore
- *     dots on?" without unfolding it. WHICH families exist, and which start shut, is not
- *     this file's to say any more: both are declared by the module that draws them, and
- *     `registerSection` below is the seam.
- *   * The MODE head folds the four base-map radios, and starts OPEN: it is four rows that
- *     never grow, and it is the row that answers "why is the map dark?". Its tail is the
- *     active mode's name rather than a count, because one of four is always the answer.
+ *   * The head row folds the whole list to one strip that still says how many layers exist and
+ *     how many are drawn, so "there ARE layers here" survives folding.
+ *   * A section head folds one data-driven family. Which families exist and which start shut is
+ *     declared by the module that draws them; `registerSection` below is the seam.
+ *   * The MODE head folds the four base-map radios and starts OPEN, because it answers "why is
+ *     the map dark?". Its tail is the active mode's name rather than a count, since one of four
+ *     is always the answer.
  *
- * A section head also OWNS its family: the checkbox on it ticks or unticks all fourteen
- * node rows at once, in the three states such a box can honestly be in -- see sectionBox.
- * That is a second gesture on one row, so the two are kept on separate elements rather
- * than separated by guesswork about where inside the row the click landed.
+ * A section head also OWNS its family: the checkbox on it ticks or unticks every row at once,
+ * in the three states such a box can honestly be in -- see sectionBox. That is a second gesture
+ * on one row, so the two live on separate elements rather than being told apart by guesswork
+ * about where inside the row the click landed.
  *
- * The choices persist across a world switch the same way the checkboxes do, and for the
- * same reason: both live in objects built once at module scope, and a switch replaces
- * layer CONTENTS without rebuilding the control, the layer groups or these flags.
+ * All of these survive a world switch, because they live in objects built once at module scope
+ * and a switch replaces layer CONTENTS without rebuilding the control.
  */
 /** One data-driven family of control rows, folded together and toggled together. */
 export interface Section {
@@ -93,21 +78,14 @@ export interface Section {
   prefix: string;
   /** What the head calls the family, and what its two tooltips are phrased around. */
   title: string;
-  /** Whether it starts unfolded. Both families that exist say no, for the reason the block
-   *  above gives: they are the ones that grow with the world, and their heads carry a count
-   *  that answers "are the ore dots on?" without being opened. */
+  /** Whether it starts unfolded. A family that grows with the world says no, because its head
+   *  carries a count that answers "are the ore dots on?" without being opened. */
   startOpen: boolean;
 }
 
-/* The families, registered by the module that names them rather than listed here.
- *
- * The MECHANISM is this file's -- a family is a fold, a tri-state box, a count and a place
- * in the render, and all four are the control's business. WHICH families exist is not: the
- * two that do are "the `node: ` rows" and "the `pickup: ` rows", and the module that creates
- * those rows is markers.ts, which now says so beside the `layer()` calls that make them.
- * That is the same inversion registry.ts made for fetches, one seam down: the control owned
- * a list of prefixes it could not create and could not check, and a third data-driven family
- * would have meant editing two files to add one feature.
+/* The families, registered by the module that names them. The MECHANISM is this file's -- a
+ * fold, a tri-state box, a count and a place in the render -- and WHICH families exist is the
+ * business of whichever module creates their rows.
  *
  * Order here is registration order and is not load-bearing: a head is inserted immediately
  * before its own family's first row, and where that row sits was decided by the row rank.
@@ -124,10 +102,8 @@ export function registerSection(section: Section): void {
     }
   }
   SECTIONS.push(section);
-  // The default fold, set at registration rather than in the table below: the module that
-  // declares a family is the one with an opinion about whether it starts open. Safe to write
-  // into `state.panel` from here because every caller is another module, and this file has
-  // finished evaluating -- panel and all -- before any of them can be evaluated at all.
+  // Safe to write into `state.panel` from here because every caller is another module, and this
+  // file has finished evaluating -- panel and all -- before any of them can be evaluated.
   state.panel.sections[section.key] = section.startOpen;
 }
 
@@ -184,20 +160,15 @@ function fold(element: HTMLElement | null, folded: boolean): void {
   else L.DomUtil.removeClass(element, "layer-folded");
 }
 
-/* A fold head, in the one grammar all three of them share: a caret, a title, and a tail at
- * the right edge that says what is inside without opening it.
- *
- * The tail is a STRING rather than the "n of m" it started as, because the MODE head's
- * answer is not a count: one of four is always chosen, so "1 of 4" would be a fact that is
- * true forever and says nothing, where the mode's own name is the whole answer. `note` is
- * the same sentence for the tooltip, which each caller phrases for itself -- "drawn right
- * now" is true of a family of layers and false of a radio. */
+/* A fold head, in the grammar all three share: a caret, a title, and a tail at the right edge
+ * that says what is inside without opening it. The tail is a STRING and not an "n of m",
+ * because the MODE head's answer is a name -- one of four is always chosen. `note` is the same
+ * sentence for the tooltip, phrased by each caller: "drawn right now" is true of a family of
+ * layers and false of a radio. */
 function foldHead(
   element: HTMLElement,
-  // `boolean | undefined`, because a section key that is not in `state.panel.sections`
-  // yet is a section nobody has folded, and that reads as closed here exactly as `false`
-  // does. Narrowing this to `boolean` would push a `?? false` up to both callers to say
-  // the same thing twice.
+  // `boolean | undefined`, because a section key not yet in `state.panel.sections` is a section
+  // nobody has folded, which reads as closed here exactly as `false` does.
   open: boolean | undefined,
   title: string,
   tail: string,
@@ -238,45 +209,34 @@ function onActivate(element: HTMLElement, action: () => void): void {
   });
 }
 
-/* Ticking a family of fourteen is fourteen layer events, and Leaflet re-renders the whole
- * list on each one -- measured on the reference world, one click on "resource nodes" cost
- * 28 full control renders and 14 ms. 14 ms is not a freeze, and this is not really a speed
- * fix: every intermediate render also DESTROYED the checkbox the pointer was on and re-ran
- * the focus restore against a half-toggled family, so the tri-state flickered through
- * thirteen wrong values and the focus this control is careful about was rebuilt thirteen
- * times for nothing.
+/* Ticking a family of fourteen is fourteen layer events, and Leaflet re-renders the whole list
+ * on each one -- 28 full control renders for one click on "resource nodes". The cost is not the
+ * point: every intermediate render DESTROYS the checkbox the pointer is on and re-runs the
+ * focus restore against a half-toggled family, so the tri-state flickers through thirteen wrong
+ * values.
  *
  * `_handlingClick` is Leaflet's own flag for exactly this -- its `_onLayerChange` skips the
- * re-render while it is set, which is how its own checkboxes stay sane. The two decorators
- * this file adds take the same hint, and one render happens at the end. */
+ * re-render while it is set. The two decorators this file adds take the same hint, and one
+ * render happens at the end. */
 var batching = false;
 
-/* Read through a function rather than exported as a variable, because the one caller
- * outside this file -- the label declutter pass, which is heavier than a control render and
- * has the same reason to run once -- needs the value at the moment it asks, not the value at
- * the moment it imported. */
+/* Read through a function rather than exported as a variable, so the caller outside this file
+ * gets the value at the moment it asks rather than at the moment it imported. */
 export function isBatching() {
   return batching;
 }
 
-/* What runs once a batched change has settled, registered rather than imported.
- *
- * `batch()` used to end by calling `declutter()` by name. That is the right thing to happen
- * and the wrong way round to say it: it makes the layer control import the module that draws
- * factory labels, which imports the module that creates layers, which imports this one --
- * three files in a ring to express "the list has stopped changing". The control's claim is
- * only that; who cares about it is main.ts's business, and main.ts registers the pass. */
+/* What runs once a batched change has settled, REGISTERED rather than imported: calling
+ * `declutter()` by name here would make the layer control import the module that draws factory
+ * labels, which imports the module that creates layers, which imports this one. The control's
+ * claim is only that the list has stopped changing; who cares is main.ts's business. */
 var settled: Array<() => void> = [];
 
 export function onSettled(pass: () => void): void {
   settled.push(pass);
 }
 
-/* Exported for the one caller outside this file that also changes several layers in one
- * gesture: `reveal` in labels.ts, which turns three layers on for a single click on a factory
- * label. It was doing that outside this guard, so a click cost six control renders and three
- * declutter passes to reach one answer -- the same fourteen-for-one arithmetic the family box
- * above was fixed for, at a fifth of the scale and on the page's most-used gesture.
+/* Exported for the callers outside this file that also change several layers in one gesture.
  *
  * A function rather than a "please batch" flag, because the end of a batch is not just "stop
  * suppressing": it is one `_update` and then the settled passes, and a caller that had to
@@ -313,14 +273,12 @@ function setSection(rows: HTMLElement[], on: boolean): void {
 
 /* The family's own checkbox, and its third state.
  *
- * `indeterminate` is not decoration: a family with one member ticked would otherwise draw
- * an empty box, which is the same picture as a family with none -- and the count beside it
- * ("3 of 14") would then be contradicting its own checkbox. Mixed has to LOOK like mixed.
+ * `indeterminate` is not decoration: a family with one member ticked would otherwise draw an
+ * empty box, the same picture as a family with none, contradicting the "3 of 14" beside it.
  *
- * What a click means is decided from the MEMBERS, never from the box's own post-click
- * state: a click on an indeterminate box lands on a different `checked` value in different
- * engines, and "some are on, so turn them all on" is the rule regardless. The box is not
- * the state; it is a picture of the rows, redrawn from them on every render.
+ * What a click MEANS is decided from the members, never from the box's own post-click state: a
+ * click on an indeterminate box lands on a different `checked` value in different engines, and
+ * "some are on, so turn them all on" is the rule regardless.
  */
 function sectionBox(section: Section, rows: HTMLElement[]): HTMLInputElement {
   var on = rows.filter(rowOn).length;
@@ -342,11 +300,10 @@ function sectionBox(section: Section, rows: HTMLElement[]): HTMLInputElement {
   return box;
 }
 
-/* A section head is two controls on one row, and keeping them apart IS the grammar: the
- * BOX toggles the family, the caret and title fold it. One click can only ever do one of
- * them -- which is why the fold listener sits on the text span rather than on the row, as
- * it used to. A fold handler on the row would also fire for a click on the box, so ticking
- * "pickups" would fold the section shut under the pointer in the same gesture. */
+/* A section head is two controls on one row: the BOX toggles the family, the caret and title
+ * fold it. The fold listener sits on the TEXT SPAN and not on the row, because a handler on the
+ * row would also fire for a click on the box -- ticking "pickups" would fold the section shut
+ * under the pointer in the same gesture. */
 function sectionHead(section: Section, rows: HTMLElement[]): HTMLElement {
   var head = L.DomUtil.create("div", "layer-section");
   head.appendChild(sectionBox(section, rows));
@@ -363,19 +320,13 @@ function sectionHead(section: Section, rows: HTMLElement[]): HTMLElement {
   return head;
 }
 
-/* The top head stays fold-only: it gets no master checkbox, on purpose.
+/* The top head is FOLD-ONLY: no master checkbox. A family box is undoable, because its rows are
+ * all on or all off either way; a master box is not, because this control's rows are not
+ * uniform, so one click that unticked all 35 would throw the selection away and re-ticking
+ * would turn all 35 on rather than restore it.
  *
- * A family box is undoable -- untick "pickups", tick it again, and the ten rows are back
- * where they were, because they were all on or all off either way. A master box is not:
- * this control's rows are deliberately NOT uniform (regions on, machines off, nine of ten
- * pickup families off), and one click that unticked all 35 would throw that selection away.
- * Re-ticking would not restore it -- it would turn all 35 ON, which is a different map than
- * the one the player had. So the one gesture whose undo does not undo is the one gesture
- * this head does not offer.
- *
- * The MODE radios are not counted here and never were candidates for it: they are not
- * overlays, they live outside the list this head measures, and "how many of four modes are
- * drawn" has one answer forever. */
+ * The MODE radios are not counted here: they are not overlays, they live outside the list this
+ * head measures, and "how many of four modes are drawn" has one answer forever. */
 function panelHead(rows: HTMLElement[]): HTMLElement {
   var container = control.getContainer()!;
   var head = container.querySelector<HTMLElement>(".layers-head");
@@ -412,12 +363,10 @@ export interface ModeChoice {
 var choices: ModeChoice[] = [];
 var activeMode = "";
 
-/* Who to tell when a radio is picked, registered rather than imported -- the same seam as
- * `onSettled` above, and here for the same reason: this control draws the modes and must
- * not know what a tile pyramid is. Importing tiles.ts to call it would also close a ring,
- * because tiles.ts reaches this file through layers.ts already.
+/* Who to tell when a radio is picked, registered rather than imported: this control draws the
+ * modes and must not know what a tile pyramid is, and importing tiles.ts would close a ring.
  *
- * One owner rather than a list, unlike `onSettled`: "which picture is the base map" has a
+ * ONE owner rather than a list, unlike `onSettled`: "which picture is the base map" has a
  * single answer applied in a single place, and a second listener could only disagree. */
 var pickMode: (key: string) => void = function () {};
 
@@ -433,19 +382,14 @@ export function showModes(rows: ModeChoice[], active: string): void {
   renderModes();
 }
 
-/* The MODE section is built ONCE and updated in place, which is the opposite of how the
- * family heads above are handled -- and the difference is what the rows are.
- *
- * A family head is rebuilt on every render because Leaflet empties the overlays list it
- * lives in, and decorateControl therefore has to carry keyboard focus across the wipe by
- * hand. These rows are real form controls in a radio group: rebuilding them would drop the
- * keyboard mid-arrow-walk and reset the group's roving tabindex on every switch, for four
- * rows whose set never changes after the probes land. So they are put somewhere `_update`
- * does not reach -- a child of the list ELEMENT, ahead of Leaflet's own base and overlay
- * divs, which are the only two things it empties -- and only their state is written.
+/* The MODE section is built ONCE and updated in place, unlike the family heads, which Leaflet
+ * wipes on every render. These rows are real form controls in a radio group: rebuilding them
+ * would drop the keyboard mid-arrow-walk and reset the group's roving tabindex on every switch.
+ * So they live somewhere `_update` does not reach -- a child of the list ELEMENT, ahead of
+ * Leaflet's own base and overlay divs, which are the only two things it empties.
  *
  * Inside the list rather than beside it, so the page's one fold puts the modes away with
- * everything else: a folded control is one strip, not one strip and four radios. */
+ * everything else. */
 var modeBox: HTMLElement | null = null;
 var modeHead: HTMLElement | null = null;
 var modeRows: Record<string, HTMLElement> = {};
@@ -538,25 +482,16 @@ function renderModes(): void {
 
 /* ------------------------------------------------------------------ the floors */
 
-/* The floor picker: the MODE radios' sibling, and deliberately not the same code.
+/* The floor picker: the MODE radios' sibling, in the same grammar -- one question with one
+ * answer, radios in a folded section, drawn here and decided elsewhere through a registered
+ * callback -- and not the same code. A mode is a word; a floor is a word plus a measurement,
+ * a MINOR band has to read as subordinate to the storey it is a mezzanine of, and the section
+ * carries two things the modes have no use for: the name of what is being sliced, and a way
+ * out.
  *
- * It is the same GRAMMAR -- one question with one answer, radios in a folded section at the
- * top of the control, drawn here and decided elsewhere through a registered callback -- and
- * that is why it lives in this file rather than in the module that knows what a storey is.
- * §18's split is the whole reason the modes are radios; which floor to look at is the same
- * kind of question about the same map.
- *
- * What it is not is another `showModes`, and the differences are all in what a row has to
- * say. A mode is a word; a floor is a word plus a measurement -- `+42.2 m · 175 cells · 35
- * machines` -- and a MINOR band has to read as subordinate to the storey it is a mezzanine
- * of, which is a class rather than a label. The section also carries two things the modes
- * have no use for: the name of what is being sliced, and a way out. Folding those into the
- * mode machinery would have meant four optional parameters on every call and two branches
- * in every row, to save a fold head and a radio group that are eight lines each.
- *
- * The section only exists while the page is in floor mode. `hideFloors` removes the box
- * outright rather than emptying it, because an empty floor picker over a world map is a
- * control asking a question that has no subject.
+ * The section only exists while the page is in floor mode. `hideFloors` REMOVES the box rather
+ * than emptying it, because an empty floor picker over a world map is a control asking a
+ * question that has no subject.
  */
 /** One row of the FLOOR section: a storey, and what makes it worth picking. */
 export interface FloorChoice {
@@ -730,15 +665,11 @@ function renderFloors(): void {
   );
 }
 
-/* Which half of which section head holds the keyboard, as a value that can outlive the
- * element holding it.
- *
- * Reading `document.activeElement` inside the decorator is enough when the decorator is
- * the one doing the removing -- a fold click goes that way. It is NOT enough on the path a
- * family box takes: Leaflet's `_update` empties the whole overlays list first, the section
- * heads live inside that list, and so by the time the decorator runs the focused box is
- * already gone and activeElement is <body>. Every family toggle would drop the keyboard on
- * the floor. The mark is therefore taken BEFORE the wipe and parked here. */
+/* Which half of which section head holds the keyboard, as a value that can outlive the element
+ * holding it. Reading `document.activeElement` inside the decorator is enough on a fold click,
+ * where the decorator does the removing; it is NOT enough for a family box, because Leaflet's
+ * `_update` empties the overlays list first and activeElement is <body> by the time the
+ * decorator runs. THE MARK IS TAKEN BEFORE THE WIPE. */
 /** Which half of which section head held the keyboard, as a value, not an element. */
 interface FocusMark {
   key: string;
@@ -760,9 +691,8 @@ function decorateControl(): void {
   if (!container) return;
   var list = container.querySelector(".leaflet-control-layers-overlays");
   if (!list) return;
-  // A section head is replaced, not updated, so keyboard focus would land on a removed
-  // node and the NEXT Enter would go to the document. Restored below -- and which HALF of
-  // the head held it matters now that a head is a box plus a fold.
+  // A section head is replaced, not updated, so keyboard focus would land on a removed node and
+  // the next Enter would go to the document. Restored below.
   var focused = focusMark() || pendingFocus;
   pendingFocus = null;
   var heads: Element[] = Array.prototype.slice.call(list.querySelectorAll(".layer-section"));

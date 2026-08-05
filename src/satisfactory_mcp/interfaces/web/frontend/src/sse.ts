@@ -1,9 +1,7 @@
 /* The live loop: one EventSource, and what a save write means.
  *
  * Small and separate because the failure it exists to prevent is specific -- a page quietly
- * presenting stale data as live. The dot's three states, the toast when an ESTABLISHED
- * connection drops, and the replayed first event that must not be treated as news are one
- * concern, and none of them belongs in a loader.
+ * presenting stale data as live.
  */
 
 import { el } from "./dom";
@@ -12,13 +10,10 @@ import { state } from "./state";
 import { fail } from "./toast";
 import { refreshWorlds } from "./worlds";
 
-/* The live loop. One EventSource for the process; a save write is an edge trigger and
- * the response is a refetch of the two things a save can change.
- *
- * The grey dot used to mean three different things (connecting, retrying, dead) with one
- * constant title. The title now says which, and losing an ESTABLISHED connection also
- * says so in a toast -- a page quietly presenting stale data as live is the failure mode
- * this block exists to prevent. */
+/* One EventSource for the process; a save write is an edge trigger and the response is a
+ * refetch of the two things a save can change. The grey dot means connecting, retrying or
+ * dead, so its title says which, and losing an ESTABLISHED connection also says so in a
+ * toast. */
 export function listen() {
   var source = new EventSource("/api/events");
   var dot = el("live");

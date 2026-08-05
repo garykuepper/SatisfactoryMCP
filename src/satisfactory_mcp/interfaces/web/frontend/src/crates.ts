@@ -1,20 +1,12 @@
 /* The crates on the ground: what a pioneer dropped, and what is still in it.
  *
- * Its own file for the reason `routers/crates.py` is its own router: A CRATE IS A SITUATION,
- * NOT INFRASTRUCTURE. `placements.ts` next door draws 151 containers the player built and
- * left standing, and the question they answer is "where did I put the steel". These are a
- * handful of actors that did not exist until somebody died or dismantled something with a
- * full inventory, and that DELETE THEMSELVES the moment they are emptied -- so every crate on
- * this map is live information by construction, which is not true of a single storage box.
- * Two marks that are events do not belong in a layer of 151 that are places.
- *
- * It is also not the same drawing problem, which is what settles the file rather than the
- * argument above. Everything in placements.ts is a rotated footprint at a measured size, and
- * a crate has no footprint at all: it is not a buildable, the docs dump carries no clearance
- * for a `BP_Crate_C`, and the server refuses to invent one. It is a 2 m prop, which at this
- * map's factory zoom is a couple of pixels and at world zoom is a hundredth of one. So it is
- * a MARK at a fixed pixel size -- the node dots' and the power poles' grammar -- and the
- * shape has to say "crate" rather than "one more small rectangle".
+ * A CRATE IS A SITUATION, NOT INFRASTRUCTURE. These actors do not exist until somebody dies
+ * or dismantles something with a full inventory, and they DELETE THEMSELVES the moment they
+ * are emptied -- so every crate on this map is live information by construction, which is not
+ * true of a storage box. It is also not the same drawing problem as `placements.ts` next
+ * door: a crate is not a buildable, the docs dump carries no clearance for a `BP_Crate_C`,
+ * and a 2 m prop at world zoom is a hundredth of a pixel -- so it is a mark at a fixed pixel
+ * size rather than a footprint.
  */
 
 import { CONTENTS_POPUP_PX, code, contentsRows, count, popup } from "./dom";
@@ -25,66 +17,37 @@ import { registerFetch } from "./registry";
 
 import type { Row } from "./dom";
 
-/* The payload types come off the server's own schema now -- T3 gave /api/crates a
- * response_model, which is the moment this module's original observed-payload block said
- * it would move to api-shapes.ts and die. The absences remain as load-bearing as the
- * fields: no w_m/l_m, and NO OWNER -- `mCrateType` is the actor's only saved property, so
- * a co-op world's crate cannot say whose it is, and the popup below must not put a name
- * on one. */
+/* The absences are as load-bearing as the fields: no w_m/l_m, and NO OWNER -- `mCrateType` is
+ * the actor's only saved property, so a co-op world's crate cannot say whose it is. */
 import type { CrateRow, CratesResponse } from "./api-shapes";
 
-/* Spring green, and picked by measuring against every colour already declared on this page,
- * the way the pipe rust, the storage magenta and the wire violet were.
- *
- * The warm half of the wheel is spent -- amber on the extractors, red on the generators, rust
- * on the pipes, cream on the chevrons -- and so is the cool half a network runs through: blue
- * is the machines, violet the wires, magenta the storage, steel the belts. What is left is the
- * green-cyan quarter, and a crate is the right thing to spend it on: it is the only mark on
- * this map that is neither built nor a resource, so it should not be a value step away from
- * anything.
- *
- * Its nearest colours anywhere on the page are the uranium node dot at dE 24.0 and the pickup
- * fallback at dE 24.3, and BOTH of those comparisons are honest ones rather than the storage
- * magenta's "a box in a factory against a dot on open terrain" -- a crate glyph, a node dot
- * and a pickup dot are all small marks lying on the ground, so this is the same square metre
- * and the distance has to carry the whole load. 24 is well past the dE 15 the audit fails
- * under, and the two marks differ in SHAPE as well: those are discs and this is a box.
- * Nothing else on the page is within dE 34.
- *
- * The nearest ground is Bamboo Fields at dE 50.2, which is the comparison that decides whether
- * a 13 px glyph can be found on open terrain at world zoom -- and that is the zoom this layer
- * has to work at, because "where did I die" is a question about the whole map.
- */
+/* Spring green, measured against every colour already declared on this page the way every
+ * other network tone here was. Its nearest colours anywhere are the uranium node dot at dE
+ * 24.0 and the pickup fallback at 24.3, and both are honest comparisons -- a crate glyph, a
+ * node dot and a pickup dot are all small marks lying on the same ground. The nearest ground
+ * is Bamboo Fields at dE 50.2, which is what decides whether a 13 px glyph can be found on
+ * open terrain at world zoom, and that is the zoom this layer has to work at. */
 var CRATE_COLOUR = declareColours("crates", { crates: "#3fcc94" }).crates;
 
-/* The glyph's box, in screen PIXELS, and pixels for the reason power.ts gives for its poles:
- * the question a crate mark answers is "is there one here", not "does this fit". A crate is a
- * 2 m prop, so a true-size mark would be 0.28 px at the world view -- invisible at exactly the
- * zoom the layer is most useful, since the whole point is finding the one you left somewhere.
- *
- * 13 px is the size of the floor connectors' arrows next door, which are the page's other
- * fixed glyph that has to be CLICKED rather than merely seen: the popup is the layer, so the
- * mark is also its own pointer target and must not be a 4 px speck. There are 2 of these on
- * the reference world and 170 across every save on this machine, so nothing is crowded by it.
- */
+/* The glyph's box, in screen PIXELS, for the reason power.ts gives for its poles: the
+ * question a crate mark answers is "is there one here", not "does this fit", and a true-size
+ * 2 m prop would be 0.28 px at the world view. 13 px is the size of the floor connectors'
+ * arrows, which are the page's other fixed glyph that has to be CLICKED rather than merely
+ * seen: the popup is the layer, so the mark is also its own pointer target. */
 var CRATE_PX = 13;
 
-/* Three kinds, and the glyph tells apart the ONE distinction a reader scans a map for.
+/* Three kinds, and the glyph tells apart the one distinction a reader scans a map for.
  *
  *   death      a filled box.   Somebody died here and their pockets are still on the ground.
  *   dismantle  a hollow box.   Overflow from dismantling with a full inventory.
  *   none       a DASHED box.   The crate predates the game's own death/dismantle property.
  *
  * The third is dashed rather than drawn as one of the other two, and that is the whole care
- * this table needs. `mCrateType` arrived in build 433351 and 125 of the 170 crates on this
- * machine are older than it, so a `none` crate MIGHT be a death -- drawing it hollow would
- * quietly file it as "not a death", which is the one fact the save withheld. A dashed outline
- * is the page's existing word for "this is not a reading": `placements.ts` dashes a machine it
- * cannot vouch for the state of, and the same stroke here says "this box does not say".
- *
- * The fill on a death is 0.55 rather than solid so that the strap still reads across it. A
- * fourth kind a later extractor learns is drawn as `none`, which is honest for the same
- * reason: this build does not know what it is looking at.
+ * this table needs. `mCrateType` arrived in build 433351 and most crates on disk are older
+ * than it, so a `none` crate MIGHT be a death -- drawing it hollow would quietly file it as
+ * "not a death", which is the one fact the save withheld. A dashed outline is this page's
+ * word for "this is not a reading", as it is on a machine placements.ts cannot vouch for.
+ * A fourth kind a later extractor learns is drawn as `none`, for the same reason.
  */
 function crateGlyph(kind: string): string {
   var death = kind === "death";
@@ -93,62 +56,49 @@ function crateGlyph(kind: string): string {
   return (
     '<svg width="' + box + '" height="' + box + '" viewBox="0 0 ' + box + " " + box + '" ' +
     'aria-hidden="true" focusable="false">' +
-    // The box. Inset by 2 so the 1.5 px stroke has room and the glyph's outer edge is its
-    // stated size rather than its stated size plus a stroke.
+    // Inset by 2 so the 1.5 px stroke has room and the glyph's outer edge is its stated size
+    // rather than its stated size plus a stroke.
     '<rect x="2" y="2" width="' + (box - 4) + '" height="' + (box - 4) + '" rx="1" ' +
     'fill="' + CRATE_COLOUR + '" fill-opacity="' + (death ? 0.55 : 0) + '" ' +
     'stroke="' + CRATE_COLOUR + '" stroke-width="1.5"' +
     (told ? "" : ' stroke-dasharray="2.2 1.6"') +
     "/>" +
-    // The strap across it, which is the whole of what makes this read as a crate rather than
-    // as one more small square on a map that already has 438 of them.
+    // The strap, which is what makes this read as a crate rather than as one more small
+    // square on a map that already has hundreds of them.
     '<path d="M2 ' + box / 2 + " H" + (box - 2) + '" stroke="' + CRATE_COLOUR + '" ' +
     'stroke-width="1.2" stroke-opacity="0.9"/>' +
     "</svg>"
   );
 }
 
-/* What the title row calls one, and the word for the third kind is the point.
- *
- * "unknown" would be wrong twice over: the save is not unreadable and the crate is not a
- * mystery, it simply predates the property that would have said. So a crate that cannot say
- * is called a CRATE -- which is what it is -- and the sentence under it, the server's own,
- * explains why there is nothing more to call it. Naming the absence is the server's job and
- * it does it; inventing a word for it here would undo that.
- */
+/* What the title row calls one. A crate that cannot say which kind it is is called a CRATE:
+ * the save is not unreadable and the crate is not a mystery, it simply predates the property
+ * that would have said, and the sentence under the title -- the server's own -- explains why
+ * there is nothing more to call it. */
 function crateTitle(kind: string): string {
   if (kind === "death") return "death crate";
   if (kind === "dismantle") return "dismantle crate";
   return "crate";
 }
 
-/* One crate's whole card.
+/* One crate's whole card. Contents first, on the storage popup's terms exactly: a reader who
+ * clicks a crate is asking what is in it, and where it is was answered by the click.
  *
- * Contents first, under the title, on the storage popup's terms exactly: a reader who clicks
- * a crate is asking what is in it, and where it is was answered by the click.
- *
- * NO OWNER ROW, and it is an absence worth stating rather than a field that was forgotten.
- * `mCrateType` is the actor's only saved property -- no player, no timestamp, no cause -- so
- * in a co-op world nothing on this page can say whose death this was, and a row that guessed
- * would arrive looking exactly like a row that knew.
- */
+ * NO OWNER ROW. `mCrateType` is the actor's only saved property -- no player, no timestamp,
+ * no cause -- so in a co-op world nothing here can say whose death this was, and a row that
+ * guessed would arrive looking exactly like a row that knew. */
 function cratePopup(c: CrateRow): Row[] {
   var rows: Row[] = [[crateTitle(c.kind), c.kind_text || c.kind]];
   /* The same inventory grid a storage box gets, out of the same helper: "what is in it" is
-   * one question wherever it is asked, and a crate that answered it in a different shape
-   * would be the map claiming the two are different sorts of fact.
-   *
-   * The whole crate, every kind: the server's old twelve-kind cap was justified as what a
-   * popup could show without scrolling, and this grid was measured holding all 38 kinds of
-   * the fullest crate this machine has cut -- a whole pioneer's pockets in 55 slots -- at
-   * 381x568 px without overflow, so the cap is gone and `more` arrives as 0. contentsRows
-   * still honours a non-zero `more` with its "+N" tile, as the net under any server that
-   * truncates again. */
+   * one question wherever it is asked. Whole crates, every kind -- the grid was measured
+   * holding all 38 kinds of the fullest crate on this machine at 381x568 px without
+   * overflow, so `more` arrives as 0 and contentsRows' "+N" tile is the net under any server
+   * that truncates again. */
   contentsRows(c.items || [], c.more || 0).forEach(function (row) {
     rows.push(row);
   });
-  // How much is out there, and only when the list did not already show all of it: repeating
-  // "4 kinds, 24 items" over a card that lists four kinds is a row that says nothing.
+  // Only when the list did not already show all of it: repeating "4 kinds, 24 items" over a
+  // card that lists four kinds is a row that says nothing.
   rows.push([
     "in all",
     c.more ? c.item_kinds + " kinds, " + count(c.total) + " items" : null,
@@ -161,86 +111,58 @@ function cratePopup(c: CrateRow): Row[] {
 }
 
 export function drawCrates(data: CratesResponse): void {
-  /* ON BY DEFAULT, and the only layer added to the built band in years that is.
+  /* ON BY DEFAULT, alone among the built band's recent arrivals.
    *
-   * The page's default-off layers are all off for one measured reason: they are a smear at
-   * the whole-world zoom. 438 machines, 3,588 routes and 151 containers over 7 km resolve
-   * into nothing a reader can use, so each of them is a toggle you reach for once you have
-   * zoomed into a base. NONE OF THAT ARITHMETIC APPLIES HERE. There are 2 crates on the
-   * reference world and 170 across all 67 saves on this machine -- the layer cannot crowd
-   * anything, at any zoom, ever.
+   * The page's default-off layers are off because they smear at the whole-world zoom, and
+   * none of that arithmetic applies here: a couple of crates per world cannot crowd anything
+   * at any zoom. What decides it is the other half -- "where did I die" is asked precisely
+   * once, in a hurry, and an answer behind a checkbox nobody has noticed is not an answer.
    *
-   * What decides it is the other half: a crate is the answer to a question a reader does not
-   * know to ask. "Where did I die" is asked precisely once, in a hurry, by somebody who has
-   * just lost a full inventory somewhere in 7 km of countryside -- and an answer sitting
-   * behind a checkbox they have never noticed is not an answer. Every other layer here can
-   * wait to be turned on because the thing it draws will still be standing there tomorrow;
-   * this one draws actors that DELETE THEMSELVES the moment they are emptied, so what it
-   * shows is never stale and never worth hiding.
-   *
-   * Last of the built band, after the containers, because that is what a crate is next to:
-   * the reader has just gone down the list through the concrete, the networks, the machines
-   * and the boxes, and a crate is the inventory among them that nobody built.
-   */
+   * Last of the built band, after the containers: a crate is the inventory nobody built. */
   var group = layer("crates", true, CRATE_COLOUR, [BAND.built, 80, "crates"]);
 
   data.crates.forEach(function (c) {
-    // A crate whose position would not read is still SENT -- the projection knows it exists,
-    // and the server says so rather than dropping the row. Skipping it is this page's call to
-    // make, and it is the same one every drawing module here makes: there is nowhere to put a
-    // mark with no coordinate.
+    // A crate whose position would not read is still SENT -- the projection knows it exists.
+    // Skipping it is this page's call, and the same one every drawing module here makes.
     if (c.x_m === null || c.y_m === null) return;
     L.marker([-c.y_m, c.x_m], {
       /* A divIcon rather than a path, for the reason floors.ts's connector arrows are one: a
        * crate is a SHAPE at a fixed pixel size, and the canvas renderer this page draws paths
        * on offers a fixed-size circle and nothing else. A square drawn as a polygon would be
-       * in world metres and would vanish at world zoom, which is the one zoom this layer has
-       * to survive. The icon is anchored on its own centre so the box sits on the coordinate
-       * rather than hanging below and right of it.
+       * in world metres and would vanish at world zoom.
        *
        * It therefore lives in the marker pane, above the shared canvas, so a crate always
-       * takes the click from whatever it is lying on. That is the right way round and not a
-       * side effect: a crate is 13 px, it is the smaller and rarer of any two things at one
-       * spot, and a mark that cannot be clicked is a layer with no content at all. */
+       * takes the click from whatever it is lying on -- which is right: it is the smaller and
+       * rarer of any two things at one spot, and a mark that cannot be clicked is a layer
+       * with no content at all. */
       icon: L.divIcon({
         className: "crate-mark",
         html: crateGlyph(c.kind),
         iconSize: [CRATE_PX, CRATE_PX],
         iconAnchor: [CRATE_PX / 2, CRATE_PX / 2],
       }),
-      // What the mark says before it is clicked, which for two marks on a 7 km map is most of
-      // what a reader needs: they are hovering it to find out whether it is the death one.
+      // What the mark says before it is clicked: a reader hovering one is finding out whether
+      // it is the death one.
       title: crateTitle(c.kind),
       alt: crateTitle(c.kind),
     })
-      // The wider card the storage popup takes, and for the same reason plus one: this list
-      // runs to twelve names rather than six. See CONTENTS_POPUP_PX in dom.ts.
+      // The wider card the storage popup takes; see CONTENTS_POPUP_PX in dom.ts.
       .bindPopup(popup(cratePopup(c)), { maxWidth: CONTENTS_POPUP_PX })
       .addTo(group);
   });
 }
 
-/* THE LIVE WAVE, and it is the wave the data picks rather than the one its neighbours use.
+/* THE LIVE WAVE, and it is the wave the data picks rather than the one its neighbours use. A
+ * crate is created by dying and destroyed by being emptied, and both happen between one
+ * autosave and the next, so a crate layer refetched only on a world switch would be showing a
+ * reader where they died two sessions ago.
  *
- * `/api/storage` is static because the boxes move when the player BUILDS. A crate is created
- * by dying and destroyed by being emptied, and both of those happen between one autosave and
- * the next -- so a crate layer refetched only on a world switch would be showing a reader
- * where they died two sessions ago and nothing about the last five minutes, which is the
- * opposite of what the layer is for.
+ * Rank 25, ahead of the summary, because the summary is the fetch that clears the dimmed map
+ * and says the switch has finished -- nothing should be issued after it.
  *
- * Rank 25, between the pickups and the summary, and the position is about the summary: it is
- * the fetch that clears the dimmed map and rewrites the header, i.e. the one that says the
- * switch has finished, so nothing should be issued after it. Ahead of it and behind the two
- * live layers that actually cover the map, because two marks are the least urgent pixels here.
- *
- * `refilters: false`, which makes it the third entry to say so, after /api/power and
- * /api/summary. The floor filter's FILTERED list is the concrete, the machines, the routes and
- * the storage -- a crate is on none of them. It is not decomposed by /api/floors, it has no
- * instance a band could list, and a crate on the ground outside a factory is the ordinary
- * case, so the pass would find nothing of its own to do. The consequence is stated rather than
- * hidden: a crate stays visible in floor mode, exactly as the power network does, because
- * neither is a thing a storey contains.
- */
+ * `refilters: false`: a crate is on none of the floor filter's layers. It is not decomposed
+ * by /api/floors, it has no instance a band could list, and a crate outside a factory is the
+ * ordinary case -- so it stays visible in floor mode rather than being filtered to nothing. */
 registerFetch<CratesResponse>({
   wave: "live",
   rank: 25,

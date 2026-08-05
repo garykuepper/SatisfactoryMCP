@@ -28,12 +28,9 @@ import type {
   SummaryResponse,
 } from "./api-shapes";
 
-/* Everything shares one canvas, so hit-testing is draw order: last drawn wins the click.
- * An extractor is drawn exactly on the node it drains, and whichever of /api/nodes and
- * /api/machines resolved last used to decide -- usually making all 44 occupied nodes
- * unclickable. The node dots are raised explicitly after either draw, so the dot (the
- * card with purity, region and the node: selector) always takes the click; the extractor
- * keeps the rest of its rectangle. */
+/* Raised explicitly after either draw, because otherwise whichever of /api/nodes and
+ * /api/machines resolved last decides who takes the click on an occupied node. The dot wins;
+ * the extractor keeps the rest of its rectangle. */
 export function raiseNodeDots() {
   Object.keys(state.layers).forEach(function (name) {
     if (name.indexOf("node: ") !== 0) return;
@@ -44,13 +41,12 @@ export function raiseNodeDots() {
   });
 }
 
-// Ore colours follow the in-game item tints closely enough to be recognisable without
-// shipping a single game asset: they are hex strings, not textures. Which is also why they are
-// the one family here that cannot simply be moved when the audit objects -- an ore's colour is
-// the ore's, and the page borrowed it rather than chose it. Where that collided, the OTHER
-// side moved (the pipe rust went to oxide to get off the bauxite dot), and where neither side
-// could move the pair is DISCHARGED in palette.ts with a measured warrant: coal against eight
-// dark grounds, water against the machine blue, limestone against the fast belt.
+// Ore colours follow the in-game item tints closely enough to be recognisable without shipping
+// a single game asset: they are hex strings, not textures. That is also why they are the one
+// family here that cannot MOVE when the audit objects -- an ore's colour is the ore's. Where
+// they collide the other side moves, and where it cannot the pair is DISCHARGED in palette.ts
+// with a measured warrant: coal against eight dark grounds, water against the machine blue,
+// limestone against the fast belt.
 var RESOURCE_COLOUR: Record<string, string> = declareColours("markers", {
   Desc_OreIron_C: "#c8b6a6",
   Desc_OreCopper_C: "#e08a4b",
@@ -132,28 +128,23 @@ export function drawNodes(data: NodesResponse): void {
   }
 }
 
-/* The `node: ` rows as a family: one fold, one tri-state box, one "n of 14".
+/* The `node: ` rows as a family: one fold, one tri-state box, one "n of 14". Declared here
+ * because this is the file that makes those rows, and a prefix spelled in one file and created
+ * in another is two edits for one feature. Shut by default, because fourteen rows that grow
+ * with the world are a legend nobody can read, and the head's own count answers "are the ore
+ * dots on?" without opening it.
  *
- * Declared here rather than in the control because this is the file that makes those rows --
- * `layer("node: " + short, …)` a few lines up is the only thing that ever will -- and a
- * family whose prefix is spelled in one file and created in another is two edits for one
- * feature. Shut by default: fourteen rows that grow with the world are what turned a nine-row
- * legend into thirty-seven, and the head's own count answers "are the ore dots on?" without
- * opening it.
- *
- * NOT the same statement as the row rank above, and the two are independent on purpose. The
- * rank puts these rows together and in order; the section puts a head on them. A family with
- * no rank would still fold -- its rows would just be scattered through the list, which is
- * what the head would then be a head OF. */
+ * NOT the same statement as the row rank above: the rank puts these rows together and in order,
+ * the section puts a head on them. */
 registerSection({ key: "nodes", prefix: "node: ", title: "resource nodes", startOpen: false });
 
-/* First of the static wave, which is where it was when the wave was a list of calls: the node
- * dots are the layer every other placement is read against, and the extractors drawn on top
- * of them arrive with the live wave. `clears` carries the trailing space because the layer
- * names are data -- one per resource -- and "node:" alone is a prefix of more than this.
+/* First of the static wave: the node dots are the layer every other placement is read against,
+ * and the extractors drawn on top of them arrive with the live wave. `clears` carries the
+ * trailing space because the layer names are data -- one per resource -- and "node:" alone is a
+ * prefix of more than this.
  *
  * FETCH RANK, not row rank: this is the first request of the wave and its rows are the
- * second-to-last band in the control. See layers.ts for why neither follows from the other. */
+ * second-to-last band in the control. See layers.ts. */
 registerFetch<NodesResponse>({
   wave: "static",
   rank: 10,
@@ -167,19 +158,12 @@ registerFetch<NodesResponse>({
 /* The player's last known position: the map's only you-are-here, and the reference every
  * "is this near me" judgement needs. Ring-styled so it reads as a position, not a node.
  *
- * NO ROW WHEN THERE IS NO POSITION, and the two lines that arrange it are not the same line.
- *
- * `layer()` both creates the control row and clears the group, so asking for the layer before
- * the guard gave every save a "player" checkbox -- including a dedicated-server save, which
- * has no pawn at all. That box ticked and unticked nothing, which is worse than a missing row:
- * the control is the map's legend, and a legend entry is a claim that the thing exists.
- *
- * Moving the call below the guard is only half of it, and the missing half is why this is a
- * branch rather than a reordering. The clear was riding on that same call, so a switch FROM a
- * world with a pawn TO one without would have left the previous world's dot on the map under
- * the previous world's row -- a you-are-here pointing at a place in a different save. So the
- * empty case reaches the registry directly: it clears a group that exists and creates nothing
- * if one does not.
+ * NO ROW WHEN THERE IS NO POSITION. `layer()` both creates the control row and clears the
+ * group, so calling it before the guard would give a dedicated-server save a "player" checkbox
+ * that ticks nothing -- and the control is the map's legend, where an entry is a claim that the
+ * thing exists. The empty case therefore reaches the registry directly: it clears a group that
+ * exists and creates nothing if one does not, which is what stops a switch away from a world
+ * with a pawn leaving its dot on the map.
  */
 /* Near-white and warm, the one thing on the page that is not a colour ABOUT anything: it is
  * not an ore, not a tier and not a biome, so it is the value nothing else on the map spends. */
@@ -212,18 +196,15 @@ export function drawPlayer(p: SummaryResponse["player"]): void {
     .addTo(group);
 }
 
-// One colour per pickup category, so ten separate checkboxes stop drawing one
-// indistinguishable teal dot. Unlisted categories share the old teal as the fallback below.
+// One colour per pickup category, so ten separate checkboxes stop drawing one indistinguishable
+// teal dot. Unlisted categories share the fallback below.
 //
-// Handed out one per kind rather than measured against the page, and the audit in palette.ts
-// said what that cost: the crashed drop pod sat at dE 2.1 from the belt steel -- the closest
-// pair anywhere on this map -- with the somersloop 4.7 from the generator red and the hard
-// drive 8.7 from the machine blue. Those three are now the measured ones. The drop pod went
-// to the drab olive no network or ground spends: nearest cross-owner neighbour Dune Desert at
-// dE 28.1, the three belt tones 50.8 to 53.5 away. The somersloop took the rose the page's
-// reds leave free, dE 28.3 from the generator red and 28.7 from the storage magenta. The hard
-// drive moved one hue step from its old blue into indigo, dE 42.1 from the machine blue and
-// 36.6 from the wire violet -- still blue enough to be the drive it always was.
+// Handed out one per kind rather than measured against the page, except for the three the audit
+// caught. The drop pod is the drab olive no network or ground spends: nearest cross-owner
+// neighbour Dune Desert at dE 28.1, the three belt tones 50.8 to 53.5 away. The somersloop
+// takes the rose the page's reds leave free, dE 28.3 from the generator red and 28.7 from the
+// storage magenta. The hard drive is an indigo, dE 42.1 from the machine blue and 36.6 from the
+// wire violet -- still blue enough to be the drive it is.
 var PICKUP_COLOUR: Record<string, string> = declareColours("markers", {
   somersloop: "#d84378",
   mercer_sphere: "#b06ae0",
@@ -237,10 +218,9 @@ var PICKUP_COLOUR: Record<string, string> = declareColours("markers", {
   tape_pickup: "#e09a6e",
 });
 
-/* The old single teal, kept for the categories the table above does not name -- and DECLARED
- * rather than left as a bare literal, because a world with a category nobody has coloured yet
- * draws this one for real: `customization_unlock_pickup` is a row on the reference save. A
- * stand-in that reaches the screen is a colour on the page and belongs in the comparison. */
+/* For the categories the table above does not name, and DECLARED rather than left a bare
+ * literal: a stand-in that reaches the screen is a colour on the page and belongs in the
+ * comparison. `customization_unlock_pickup` draws it on the reference save. */
 var PICKUP_FALLBACK = declareColours("markers", { "pickup fallback": "#7fd1b9" })[
   "pickup fallback"
 ];
@@ -303,9 +283,7 @@ export function drawCollectibles(data: CollectiblesResponse): void {
 registerSection({ key: "pickups", prefix: "pickup: ", title: "pickups", startOpen: false });
 
 /* The live wave, because a pickup is collected between one autosave and the next, and
- * `mode=remaining` because the question the layer answers is "what is left". The query string
- * is spelled at the registration rather than plumbed through `get`, which is what the two
- * callers that take one have always done. */
+ * `mode=remaining` because the question the layer answers is "what is left". */
 registerFetch<CollectiblesResponse>({
   wave: "live",
   rank: 20,

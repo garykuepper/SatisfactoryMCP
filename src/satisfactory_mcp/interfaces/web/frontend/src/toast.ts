@@ -1,24 +1,18 @@
 /* The message strip: what the page says when something failed, and the one thing it says
- * when something went right without being asked.
- *
- * Separated from the drawing because every loader needs it and none of them should have to
- * know how it is drawn -- and because the two kinds of message are one mechanism with two
- * lifetimes and two colours, which is a decision worth keeping in one place.
+ * when something went right without being asked. Two kinds of message, one mechanism, two
+ * lifetimes and two colours.
  */
 
 import { el } from "./dom";
 
-/* Errors stack instead of overwriting each other: six endpoints failing together used to
- * collapse into whichever message landed last, gone six seconds later. Each failure gets
- * its own row, stays up long enough to read, and a click dismisses it -- so the toast is
- * never an undismissable patch of dead map. */
+/* Long enough to read when six endpoints fail at once, because failures stack into their own
+ * rows rather than overwriting each other. A click dismisses one, so the strip is never an
+ * undismissable patch of dead map. */
 var FAIL_MS = 12000;
 
-/* The same strip carries the page's one non-failure message: "I turned a layer on for
- * you". One mechanism, so a note cannot end up somewhere a reader has not learned to
- * look -- and a different colour, because a note the eye reads as an error is worse than
- * no note. Shorter-lived too: a failure has to survive being read twice, a note describes
- * something the reader can already see on the map. */
+/* Shorter, because a note describes something the reader can already see on the map. Its
+ * colour differs from a failure's for the same reason: a note the eye reads as an error is
+ * worse than no note. */
 var NOTE_MS = 6000;
 
 export function toast(message: string, kind: "fail" | "note", ms: number): void {
@@ -52,10 +46,9 @@ export function note(message: string): void {
 /* Browser-internal error phrases, translated to what they mean HERE. "Failed to fetch"
  * is Chrome for "the server you started is gone", and that is the actionable sentence. */
 export function friendly(error: unknown): string {
-  // Read structurally rather than with `instanceof Error`, which is what the untyped version
-  // did: everything this catches today is a real Error, but a rejected fetch in one more
-  // browser being a DOMException with a message would silently start printing "[object
-  // DOMException]" if this asked about the constructor instead of about the field.
+  // Read structurally rather than with `instanceof Error`: a rejected fetch that arrives as a
+  // DOMException still carries a `message`, and asking about the constructor would start
+  // printing "[object DOMException]" instead.
   var message = (error as { message?: unknown } | null | undefined)?.message;
   var text = error && message ? String(message) : String(error);
   if (/Failed to fetch|NetworkError|Load failed/i.test(text)) {
