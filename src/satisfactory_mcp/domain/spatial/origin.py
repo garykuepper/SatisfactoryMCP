@@ -1,4 +1,4 @@
-"""Where "near" points: a coordinate, the player, or a named factory.
+"""Where "near" points: a coordinate, the player, a named factory, or a conduit run.
 
 Lives with the map code rather than with any one tool group because the map tools and
 the node tools both ask the same question.
@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from . import geo
 
+#: The conduit-run spelling this project settles on, everywhere: ``chain:<n>`` for a belt
+#: chain and ``pipe:<n>`` for a pipeline piece, which is the ident ``search_conduits``
+#: prints in its own id and connects columns. The web map's "pipe #12" is a caption.
+RUN_PREFIXES = ("chain", "pipe")
+
 
 def player_xy(st) -> tuple[float, float] | None:
     """Player XY for the near:me selector, or None if the save has no pawn."""
@@ -15,14 +20,33 @@ def player_xy(st) -> tuple[float, float] | None:
     return (here[0], here[1]) if here else None
 
 
+def _run_origin(st, text: str) -> tuple[tuple[float, float], str]:
+    """Centre on a belt chain or pipe piece, by the ident ``search_conduits`` prints.
+
+    Its MIDPOINT, so a radius around it reaches both ways along the run; the answer names
+    the run's own length, because a radius smaller than that only sees part of it.
+    """
+    if st is None:
+        raise ValueError(f"{text!r} names a conduit run, which needs a readable save")
+    want = text.casefold()
+    for run in st.conduit_runs:
+        if run.ident.casefold() == want:
+            return run.midpoint(), f"{run.ident} (midpoint of a {run.length_m:.0f}m {run.label})"
+    raise ValueError(f"no conduit run called {text!r}; search_conduits lists the ids it takes")
+
+
 def resolve_origin(st, near: str) -> tuple[tuple[float, float], str]:
-    """Resolve a location: "x,y" in metres, "me", or the name of a named factory.
+    """Resolve a location: "x,y" in metres, "me", a named factory, or a conduit run.
 
     A factory name is the useful one now that factories exist -- "nearest coal to the
     coal powerplant" is the question actually being asked, and hand-copying a centroid
-    out of another tool's output is how the wrong coordinate gets used.
+    out of another tool's output is how the wrong coordinate gets used. A run ident --
+    ``chain:7``, ``pipe:333`` -- closes the same loop for the ids ``search_conduits``
+    prints and told the reader to follow.
     """
     text = near.strip()
+    if text.partition(":")[0].casefold() in RUN_PREFIXES and ":" in text:
+        return _run_origin(st, text)
     if "," in text:
         try:
             x_m, y_m = (float(v) for v in text.split(",", 1))

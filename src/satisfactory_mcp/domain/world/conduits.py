@@ -113,6 +113,29 @@ class Run:
     #: The polylines (cm) the distance query runs over; one per piece.
     _lines: list[list[list[float]]] = field(default_factory=list)
 
+    def midpoint(self) -> tuple[float, float]:
+        """The point half way along the drawn line, in centimetres.
+
+        Where to centre a search on a run named by its ident. The mean of the two ends is
+        not it: a chain that doubles back around a platform has a mean sitting off the
+        belt entirely.
+        """
+        spans = [
+            (p, q, geo.distance_3d_m(p, q))
+            for line in self._lines
+            for p, q in itertools.pairwise(line)
+        ]
+        total = sum(d for _p, _q, d in spans)
+        if not total:
+            return self.a.x, self.a.y
+        walked, half = 0.0, total / 2.0
+        for p, q, d in spans:
+            if walked + d >= half:
+                t = (half - walked) / d
+                return p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])
+            walked += d
+        return self.b.x, self.b.y
+
     def dist_m(self, x: float, y: float) -> float:
         """Closest 2D approach of the run to a point (cm in, metres out). Segment
         distance, not point distance: a 500 m straight belt has exactly two stored

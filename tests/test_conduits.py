@@ -259,6 +259,61 @@ def test_the_tool_pages_the_offset_its_truncation_line_promises(game, monkeypatc
     assert "chain:2" in second and "chain:4" not in second
 
 
+def test_a_run_ident_centres_on_that_runs_midpoint(game):
+    """The tool printed 'connects: pipe:333 -> pipe:335' and told the reader to follow
+    it, while taking no run id -- so following a 20-piece route meant 20 coordinate
+    round trips. The MIDPOINT, because a radius around one end sees half the run."""
+    from satisfactory_mcp.domain.spatial.origin import resolve_origin
+    from satisfactory_mcp.domain.world.state import WorldState
+
+    # An L: 20 m east, then 20 m south. Half the drawn line is the corner.
+    projection = {
+        "belts": {
+            "classes": ["Build_ConveyorBeltMk1_C"],
+            "segments": [
+                [3, 0, [[0, 0, 0], [2000, 0, 0]], None],
+                [3, 0, [[2000, 0, 0], [2000, 2000, 0]], None],
+            ],
+        },
+        "machines": [],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    (x, y), where = resolve_origin(st, "chain:3")
+    assert (x, y) == pytest.approx((2000.0, 0.0))
+    assert where.startswith("chain:3 (midpoint of a 40m belt mk1")
+
+
+def test_an_unknown_run_ident_names_the_tool_that_lists_them(game):
+    from satisfactory_mcp.domain.spatial.origin import resolve_origin
+    from satisfactory_mcp.domain.world.state import WorldState
+
+    st = WorldState(projection={"machines": []}, game=game)
+    with pytest.raises(ValueError, match="search_conduits lists the ids"):
+        resolve_origin(st, "chain:9999")
+    with pytest.raises(ValueError, match="needs a readable save"):
+        resolve_origin(None, "pipe:1")
+
+
+def test_the_tool_takes_back_the_ids_it_prints(game, monkeypatch):
+    """One spelling, end to end: the id in the `id` and `connects` columns is the id
+    `near=` reads."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import spatial as stools
+
+    projection = {
+        "header": {"save_identifier": "TEST-conduit-ident", "session_name": "t"},
+        **PIPE_PROJECTION,
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None: st)
+
+    out = stools.search_conduits(near="pipe:0", radius_m=25)
+    assert "midpoint of a 30m pipe" in out
+    assert "pipe:1" in out
+
+
 # ------------------------------------------------------------ the tool, live
 
 

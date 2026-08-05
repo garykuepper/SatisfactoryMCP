@@ -220,7 +220,13 @@ def describe_location(
 
 @mcp.tool(structured_output=False)
 def search_conduits(
-    near: Annotated[str, Field(description="centre: 'x,y' in metres, 'me', or a named factory")],
+    near: Annotated[
+        str,
+        Field(
+            description="centre: 'x,y' in metres, 'me', a named factory, or a run id "
+            "from this tool ('chain:7', 'pipe:333')"
+        ),
+    ],
     radius_m: float = 250.0,
     to: Annotated[
         str | None,
@@ -243,7 +249,9 @@ def search_conduits(
     machines) or one placed pipeline piece. Longest first; each row carries both ends
     with what stands there where known, the drawn length, and the elevation span.
 
-    `near` and `to` accept a coordinate in metres, `me`, or a named factory. With `to`
+    `near` and `to` accept a coordinate in metres, `me`, a named factory, or one of this
+    tool's own run ids -- `chain:7`, `pipe:333` -- which centres on that run's midpoint,
+    so the ids in the `connects` column can be followed one call at a time. With `to`
     set, only runs passing within both radii are listed. Proximity is measured against
     the runs' drawn lines, not their corner points, so a run crossing mid-span counts.
 
@@ -376,11 +384,12 @@ def search_conduits(
             "a/b are the run's ends in metres; -> is travel/flow direction, -- means the "
             "direction is not established. 'connects' is the nearest placed thing whose "
             "footprint covers the end -- a geometric read, ? where nothing known stands "
-            "there, and a chain:/pipe: entry is the run it continues into"
+            "there, and a chain:/pipe: entry is the run it continues into, which this "
+            "tool takes straight back as near= to walk the route"
         ),
         (
-            "length is the drawn line, with every bend the save records tangents for "
-            "integrated along its spline -- the same number the web map measures"
+            "length is the drawn line: a bend whose tangents the save records is "
+            "integrated along its spline, so this is the number the map measures too"
         ),
     ]
     if any("-mk" in r.label for r in hits):
