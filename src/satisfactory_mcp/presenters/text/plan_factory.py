@@ -279,14 +279,14 @@ def render_plan_factory(
         [
             (
                 f"# {objective} over {sel.description} "
-                f"({'free nodes only' if only_free_nodes else 'all nodes'})"
+                f"({'free nodes only' if only_free_nodes else 'all nodes'}) "
+                # Spelled exactly as diff_vs_save spells it, because the cross-check it
+                # documents is the reader comparing the two strings.
+                f"[plan {req.plan_id}]"
             ),
             f"# {st.age_note}",
             render.kv(
                 [
-                    # diff_vs_save tells the reader to cross-check this id against its
-                    # own, so it has to be printed for an unsaved plan too.
-                    ("plan_id", req.plan_id),
                     ("net_MW", render.num(sol.net_mw)),
                     ("buildings", render.num(sol.machines_total)),
                     ("water_extractors", n_water or None),

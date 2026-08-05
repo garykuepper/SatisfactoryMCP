@@ -440,7 +440,7 @@ def test_both_tools_print_the_id_they_tell_the_reader_to_compare():
     cross-check it advertises could not be performed on an unsaved one."""
     plan = srv.plan_factory(**SPIRE)
     diff = srv.diff_vs_save(**SPIRE)
-    plan_id = plan.split("plan_id=", 1)[1].split()[0]
+    plan_id = plan.split("[plan ", 1)[1].split("]")[0]
     assert f"[plan {plan_id}/save " in diff
 
 
