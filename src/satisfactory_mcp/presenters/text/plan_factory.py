@@ -284,6 +284,9 @@ def render_plan_factory(
             f"# {st.age_note}",
             render.kv(
                 [
+                    # diff_vs_save tells the reader to cross-check this id against its
+                    # own, so it has to be printed for an unsaved plan too.
+                    ("plan_id", req.plan_id),
                     ("net_MW", render.num(sol.net_mw)),
                     ("buildings", render.num(sol.machines_total)),
                     ("water_extractors", n_water or None),

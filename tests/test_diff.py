@@ -377,6 +377,16 @@ def test_one_scenario_path_serves_every_planning_tool(game, state):
     assert req.node_rows and all(r["reachable"] for r in req.node_rows)
 
 
+def test_both_tools_print_the_id_they_tell_the_reader_to_compare():
+    """diff_vs_save's own docstring says two responses carrying the same id are provably
+    the same plan -- and plan_factory printed the id only when the plan was SAVED, so the
+    cross-check it advertises could not be performed on an unsaved one."""
+    plan = srv.plan_factory(**SPIRE)
+    diff = srv.diff_vs_save(**SPIRE)
+    plan_id = plan.split("plan_id=", 1)[1].split()[0]
+    assert f"[plan {plan_id}/save " in diff
+
+
 # ----------------------------------------------------------------- the surface
 
 
