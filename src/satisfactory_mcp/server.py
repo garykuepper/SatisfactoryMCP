@@ -44,6 +44,7 @@ from .interfaces.mcp.tools.factories import (
     select_machines,
     trace_upstream,
 )
+from .interfaces.mcp.tools.floors import factory_floors
 from .interfaces.mcp.tools.gamedata import (
     alternates_for_item,
     list_buildings,
@@ -112,6 +113,7 @@ __all__ = [
     "diff_vs_save",
     "docs_summary",
     "explain_byproducts",
+    "factory_floors",
     "factory_health",
     "factory_labels",
     "factory_map",
