@@ -206,6 +206,20 @@ def test_selectors_explain_themselves_when_they_fail(graph, game, projection):
         _sel(["-product:Concrete"], graph, game, projection)
 
 
+def test_a_machine_selector_takes_ids_and_refuses_the_ones_that_do_not_exist(
+    graph, game, projection
+):
+    """It used to return whatever string it was handed, so a typo, a stale id and a
+    machine standing right there all produced the same "0 machines" answer."""
+    from satisfactory_mcp.domain.factories.select import SELECTOR_HELP
+
+    picked = _sel([f"machine:{STEEL[0]},{STEEL[1]}"], graph, game, projection)
+    assert set(picked) == set(STEEL[:2])
+    with pytest.raises(SelectorError, match="no machine"):
+        _sel(["machine:Build_FoundryMk1_C_9999"], graph, game, projection)
+    assert "machine:" in SELECTOR_HELP, "a selector nothing documents is a selector nobody uses"
+
+
 def test_label_and_near_label_resolve_through_the_store(graph, game, projection):
     store = LabelStore(world_id="TESTWORLD")
     store.put("steel factory", STEEL)

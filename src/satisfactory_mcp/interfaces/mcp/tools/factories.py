@@ -991,7 +991,7 @@ def trace_upstream(
                 group[0].kind,
                 len(group),
                 f"{min(hops)}..{max(hops)}" if min(hops) != max(hops) else str(min(hops)),
-                ", ".join(r.instance[-10:] for r in group[:3]),
+                ", ".join(r.instance for r in group[:3]),
             )
         )
     notes = [

@@ -76,3 +76,9 @@ def test_a_factory_label_is_a_seed(traced):
 def test_an_instance_and_a_building_name_still_seed_it(traced):
     assert "Smelter" in ftools.trace_upstream(CONSTRUCTOR)
     assert "Smelter" in ftools.trace_upstream("Constructor")
+
+
+def test_the_example_ids_it_prints_resolve_as_selectors(traced):
+    """Cut to their last ten characters they named nothing, anywhere in the MCP."""
+    assert SMELTER in ftools.trace_upstream(CONSTRUCTOR)
+    assert not ftools.factory_query(f"machine:{SMELTER}").startswith("! ")

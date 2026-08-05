@@ -14,6 +14,7 @@ can say which machines they mean without listing 50 instance ids. Hence selector
     slab:2                        foundation platform, largest first
     proposal:7                    the nth cluster from propose_factories
     label:steel factory           what a label already covers
+    machine:Build_SmelterMk1_C_3  named instances, exactly as the tools print them
     all                           every machine
 
 Terms combine as an intersection, and any term may be negated with a leading ``-``::
@@ -55,8 +56,8 @@ SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
     "near:<x,y@radius_m or label@radius_m> | base:<n> | line:<n> | slab:<n> | "
     "proposal:<n> | "
-    "label:<name> | all. Terms are ANDed; comma-separated values inside one term "
-    "are ORed; prefix a term with '-' to exclude it"
+    "label:<name> | machine:<instance> | all. Terms are ANDed; comma-separated values "
+    "inside one term are ORed; prefix a term with '-' to exclude it"
 )
 
 
@@ -241,7 +242,19 @@ def _resolve(
             raise SelectorError(f"no label named {value!r}")
         return set(label.anchors)
     if kind == "machine":
-        return {value}
+        # Checked against the graph, because an unknown id used to select itself: the term
+        # resolved to a one-element set of a machine that does not exist, and every tool
+        # then reported "0 machines" for a typo, a stale id and a real machine alike.
+        known = set(graph.machines())
+        wanted = _values(value)
+        missing = [v for v in wanted if v not in known]
+        if missing:
+            raise SelectorError(
+                f"no machine {', '.join(repr(v) for v in missing)} in this save -- an id is "
+                "the full instance name, as factory_query(of='machines') and trace_upstream "
+                "print it"
+            )
+        return set(wanted)
     raise SelectorError(f"unknown selector {kind!r}. Use one of: {SELECTOR_HELP}")
 
 
