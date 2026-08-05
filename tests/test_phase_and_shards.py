@@ -149,6 +149,52 @@ def test_absent_paid_off_record_is_empty_not_missing(state):
     assert st.phase_requirements()["paid_off_target"] == {}
 
 
+# ------------------------------------------------------ what the tool prints about it
+
+
+@pytest.fixture
+def tool(state, monkeypatch):
+    """`phase_requirements` answering about the committed projection.
+
+    The tool reads the newest save on the machine, so judging its numbers against the
+    frozen fixture means pointing it at the fixture -- the same trick the research tests
+    use, for the same reason.
+    """
+    from satisfactory_mcp.interfaces.mcp.tools import progression as progression_tools
+
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: state)
+    return progression_tools.phase_requirements
+
+
+def test_the_phase_table_says_what_is_held_and_what_is_missing(tool):
+    """The join that was 150 lines away in the same file. "What is Phase 3 still short of"
+    was one `stock.get` per row from being answerable, and the answer is not the
+    outstanding column: this world holds 1200 Modular Engine against the 500 that row
+    still bills for, and is short only the Adaptive Control Units.
+    """
+    out = tool()
+    assert "items\thave\tshort by" in out
+    row = next(r for r in out.splitlines() if r.startswith("GP_Project_Assembly_Phase_3"))
+    assert "1200 Modular Engine + 10 Adaptive Control Unit" in row
+    assert row.endswith("90 Adaptive Control Unit")
+
+
+def test_an_item_none_of_which_is_held_is_left_out_of_have(tool):
+    """Phase 4 is untouched and nothing it wants is in stock, so `have` is a dash rather
+    than four zeroes: a column of zeroes is the same information spelled out at four times
+    the width, in the column a reader scans for what they have got."""
+    row = next(r for r in tool().splitlines() if r.startswith("GP_Project_Assembly_Phase_4"))
+    columns = row.split("\t")
+    assert columns[-2] == "-"
+    assert columns[-1].startswith("4000 Assembly Director System")
+
+
+def test_the_summary_answers_can_i_deliver_the_target_now(tool):
+    """The question the tool exists for, answered in the header instead of left to the
+    reader to compute across two columns."""
+    assert "target_deliverable_now=no, short on 4 of 4 item(s)" in tool()
+
+
 # --------------------------------------------------------------- the shard rule
 
 

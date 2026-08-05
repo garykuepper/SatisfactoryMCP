@@ -29,10 +29,15 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
         return f"could not read save: {exc}"
     g = st.game
     req = st.phase_requirements()
+    stock = st.stock()
 
     rows = []
+    short_by_phase = {}
     for row in req["phases"]:
         outstanding = row["outstanding"]
+        ordered = sorted(outstanding.items(), key=lambda kv: -kv[1])
+        short = {i: a - stock.get(i, 0.0) for i, a in ordered if stock.get(i, 0.0) < a}
+        short_by_phase[row["phase"] or row["egp"]] = short
         rows.append(
             (
                 row["phase"] or f"?({row['egp']})",
@@ -40,17 +45,33 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
                 row["stale"],
                 len(outstanding),
                 len(row["complete"]),
+                " + ".join(f"{render.num(a)} {g.item_name(i)}" for i, a in ordered) or "-",
                 " + ".join(
-                    f"{render.num(a)} {g.item_name(i)}"
-                    for i, a in sorted(outstanding.items(), key=lambda kv: -kv[1])
+                    f"{render.num(stock[i])} {g.item_name(i)}" for i, _ in ordered if stock.get(i)
                 )
                 or "-",
+                " + ".join(f"{render.num(a)} {g.item_name(i)}" for i, a in short.items()) or "-",
             )
         )
 
     target_row = next((r for r in req["phases"] if r["phase"] == req["target_phase"]), None)
     outstanding_total = sum(target_row["outstanding"].values()) if target_row else 0
+    target_short = short_by_phase.get(req["target_phase"]) or {}
     paid = req["paid_off_target"]
+
+    deliverable = ""
+    if target_row is not None:
+        if target_short:
+            deliverable = (
+                f"no, short on {len(target_short)} of "
+                f"{len(target_row['outstanding'])} item(s) -- see the short by column"
+            )
+        else:
+            deliverable = "yes, every outstanding item is in stock"
+        # The verdict is only as good as the row it reads, and every row but an untouched
+        # one is a frozen snapshot of a cost the player may already have paid.
+        if target_row["stale"] != "usable":
+            deliverable += f" (from a {target_row['stale']} row)"
 
     notes = [
         (
@@ -73,6 +94,12 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
             "key's single settled item. The rest follow by enum order from that anchor."
         ),
     ]
+    notes.append(
+        "have and short by join each phase's outstanding items to spendable stock -- "
+        "carried, storage containers and the Dimensional Depot, the same pool mam_research "
+        "prices research against. What sits in machines and on belts is NOT counted, so a "
+        "phase can be deliverable in practice while this says short"
+    )
     if not paid:
         notes.append(
             "nothing has been delivered toward the target phase yet "
@@ -88,6 +115,7 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
                         ("current_phase", req["current_phase"]),
                         ("target_phase", req["target_phase"]),
                         ("outstanding_on_target", outstanding_total or "-"),
+                        ("target_deliverable_now", deliverable),
                     ]
                 ),
                 "delivered to target: "
@@ -97,7 +125,10 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
                 ),
             ]
         ),
-        render.table(("phase", "legacy_key", "trust", "outstanding", "done", "items"), rows),
+        render.table(
+            ("phase", "legacy_key", "trust", "outstanding", "done", "items", "have", "short by"),
+            rows,
+        ),
         notes,
     )
 
