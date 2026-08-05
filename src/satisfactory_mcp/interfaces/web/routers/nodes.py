@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 
 from ....domain.spatial import nodes as spatial_nodes
 from ....domain.spatial import regions as spatial_regions
-from ..serial import Region, _fail, _label_json, _state, _xyz
+from ..serial import Region, _fail, _label_json, _resource_name, _state, _xyz
 
 __all__ = ["router"]
 
@@ -33,10 +33,14 @@ class NodeRow(TypedDict):
     ``occupant_cls`` and ``occupant_name`` are nullable because the occupancy join resolves
     only the extractors whose target is a node key. ``region`` is null for the handful of
     nodes the raster calls void.
+
+    ``resource`` is the class id, which is what the layer keys and the colour table are keyed
+    by; ``resource_name`` is the word a reader reads, and is the same word the MCP tools use.
     """
 
     id: str
     resource: str
+    resource_name: str
     name: str
     kind: str
     purity: str
@@ -108,6 +112,7 @@ def nodes(
             {
                 "id": n["instance"],
                 "resource": n["resource"],
+                "resource_name": _resource_name(game, n["resource"]),
                 "name": str(n["instance"]).rsplit(".", 1)[-1],
                 "kind": n["kind"],
                 "purity": n["purity"],

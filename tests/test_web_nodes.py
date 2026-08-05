@@ -61,6 +61,24 @@ def test_nodes_resolve_their_occupant_to_a_display_name(client):
     assert all(r["occupant_name"] is None for r in rows if not r["occupied"])
 
 
+def test_nodes_resolve_their_resource_to_the_word_the_tools_use(client):
+    """One vocabulary across both surfaces: 'Iron Ore', not OreIron and not Desc_OreIron_C.
+
+    The class id stays beside it, because it is what the layer keys and the ore colours are
+    keyed by -- the page needs both and must not have to cut one out of the other.
+
+    ``Desc_Geyser_C`` is the case that makes this more than a lookup: a geyser is a placement
+    target rather than an item, so the docs dump has no entry for it and ``item_name`` alone
+    would hand the class id straight back into the popup.
+    """
+    rows = client.get("/api/nodes").json()["nodes"]
+    names = {r["resource"]: r["resource_name"] for r in rows}
+    assert names["Desc_OreIron_C"] == "Iron Ore"
+    assert names["Desc_OreGold_C"] == "Caterium Ore"
+    assert names["Desc_Geyser_C"] == "Geyser"
+    assert not any(n.startswith("Desc_") for n in names.values()), names
+
+
 def test_nodes_can_be_filtered_by_resource(client):
     body = client.get("/api/nodes", params={"resource": "Desc_OreIron_C"}).json()
     assert body["resource"] == "Desc_OreIron_C"

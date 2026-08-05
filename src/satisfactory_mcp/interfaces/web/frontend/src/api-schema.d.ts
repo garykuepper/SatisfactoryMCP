@@ -1353,12 +1353,17 @@ export interface components {
          *     ``occupant_cls`` and ``occupant_name`` are nullable because the occupancy join resolves
          *     only the extractors whose target is a node key. ``region`` is null for the handful of
          *     nodes the raster calls void.
+         *
+         *     ``resource`` is the class id, which is what the layer keys and the colour table are keyed
+         *     by; ``resource_name`` is the word a reader reads, and is the same word the MCP tools use.
          */
         NodeRow: {
             /** Id */
             id: string;
             /** Resource */
             resource: string;
+            /** Resource Name */
+            resource_name: string;
             /** Name */
             name: string;
             /** Kind */

@@ -101,7 +101,9 @@ export function drawNodes(data: NodesResponse): void {
         })
           .bindPopup(
             popup([
-              ["node", short + " (" + n.purity + ")"],
+              // The server's word, not the class id the layer key is cut from: the popup is
+              // read next to an assistant that says "Iron Ore".
+              ["node", n.resource_name + " (" + n.purity + ")"],
               // Joined server-side: the raster and its orientation trap stay on one side.
               ["region", regionLine(n.region)],
               // Always present, because the absence of a row cannot be told apart from a
