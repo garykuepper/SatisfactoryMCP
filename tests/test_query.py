@@ -136,6 +136,24 @@ def test_measured_draw_weights_each_machine_by_its_own_window(game):
     assert view.measured_draw_mw < view.draw_mw
 
 
+def test_the_internal_aspect_names_what_never_crosses_the_boundary(game, monkeypatch):
+    """``FactoryView.internal`` was written, documented as "the mark of a self-contained
+    line", and rendered by nothing. The fixture is balanced on purpose: 30 Iron Ingot
+    made, 30 consumed, so the ingots appear in neither outputs nor inputs and the only
+    place they can be seen at all is here."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-internal", "session_name": "t"}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="internal,summary")
+    assert "## internal" in out
+    assert "Iron Ingot\t30" in out
+    assert "keeps: Iron Ingot 30/min" in out
+
+
 def test_the_machines_aspect_says_where_each_machine_stands(game, monkeypatch):
     """MachineRow has carried a 3-D position since it was written and no aspect printed
     it, so the one table that names individual machines could not place any of them."""

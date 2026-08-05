@@ -333,6 +333,7 @@ def factory_query(
     - **balance** per-item produced vs consumed vs net -- the sign is the point
     - **outputs** net surplus: it leaves the factory, or it backs up
     - **inputs** net deficit: it has to be fed in from outside
+    - **internal** made and eaten inside the set -- the mark of a self-contained line
     - **machines** every machine with its building, recipe and clock
     - **recipes** / **buildings** counts
     - **power** draw vs generation, nameplate AND measured -- which factory is really
@@ -389,7 +390,8 @@ def factory_query(
             )
             makes = ", ".join(f"{k} {v:.0f}/min" for k, v in view.outputs()[:5]) or "-"
             needs = ", ".join(f"{k} {v:.0f}/min" for k, v in view.inputs()[:5]) or "-"
-            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}")
+            keeps = ", ".join(f"{k} {v:.0f}/min" for k, v in view.internal()[:5]) or "-"
+            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}\nkeeps: {keeps}")
         elif aspect == "balance":
             rows = []
             for item in sorted(view.flows, key=lambda k: -abs(view.net(k))):
@@ -423,6 +425,23 @@ def factory_query(
                     total=len(data),
                     limit=n,
                 )
+            )
+        elif aspect == "internal":
+            data = view.internal()
+            body = (
+                render.table(
+                    ("item", "per min"),
+                    [(k, render.num(v)) for k, v in data[:n]],
+                    total=len(data),
+                    limit=n,
+                )
+                if data
+                else "none: every item this factory touches crosses its boundary"
+            )
+            chunks.append(
+                "## internal (made and consumed inside this factory, at saved clocks)\n"
+                "# nothing on this list crosses the boundary: it neither needs feeding\n"
+                f"# nor leaves, which is what a finished line looks like\n{body}"
             )
         elif aspect == "machines":
             rows = [

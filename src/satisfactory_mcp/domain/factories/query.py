@@ -43,6 +43,7 @@ ASPECTS = (
     "balance",
     "inputs",
     "outputs",
+    "internal",
     "power",
     "nodes",
     "links",
