@@ -6,7 +6,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from ....domain.spatial import elevation, geo
+from ....domain.spatial import elevation, geo, heightfield
 from ....domain.spatial import nodes as nodes_mod
 from ....domain.spatial import ranking as ranking_mod
 from ....domain.spatial import regions as regions_mod
@@ -84,11 +84,14 @@ def describe_location(
 
     Returns 'off-map or ocean' rather than guessing the nearest land region.
 
-    There is no heightmap in any data this reads, so elevation is a SAMPLE and is
-    reported with its count and spread rather than as one invented number. Resource
-    nodes rest on terrain and are quoted as ground; foundations and buildings are quoted
-    separately as built elevation, because a platform is wherever the player put it.
-    Where the two disagree, the difference is the fill already stacked there.
+    Elevation is answered two ways and the two are never averaged. Where this machine
+    carries the extracted 1 m terrain field, `terrain_m` is one texel read at exactly
+    this coordinate, with the layer that answered, that layer's measured accuracy, and
+    the water surface and depth where water stands. Everything else is a SAMPLE
+    population reported with its count and spread: resource nodes rest on terrain and
+    are quoted as ground, foundations and buildings are quoted separately as built
+    elevation because a platform is wherever the player put it, and the gap between the
+    two is the fill already stacked there.
 
     Belts and pipes are counted too, measured against the runs' drawn lines rather than
     their corner points, so a conduit crossing mid-span is seen. With a readable save,
@@ -107,7 +110,8 @@ def describe_location(
     except Exception:
         pass
     table = nodes_mod.load_nodes()
-    near = elevation.probe(x, y, elevation.sample_points(table, st), radius_m)
+    field = heightfield.load_field()
+    near = elevation.probe(x, y, elevation.sample_points(table, st), radius_m, terrain_field=field)
 
     fields = [
         ("region", label.describe()),
@@ -117,6 +121,26 @@ def describe_location(
         ("bearing_deg", render.num(geo.bearing_deg(x, y))),
     ]
     notes: list[str] = []
+    reading = near.terrain
+    if reading is not None:
+        accuracy = "" if reading.accuracy_m is None else f", +-{reading.accuracy_m:g}m"
+        fields.append(("terrain_m", f"{reading.z_m:.1f} ({reading.source}{accuracy})"))
+        if reading.submerged:
+            depth = reading.water_depth_m
+            fields.append(("water_surface_m", f"{reading.water_m:.1f}"))
+            fields.append(("water_depth_m", "unknown" if depth is None else f"{depth:.1f}"))
+            if depth is None:
+                notes.append(
+                    f"the ground under this water is the {reading.source} layer, too coarse "
+                    "to subtract a surface from, so the depth here is not known"
+                )
+    elif field is None:
+        notes.append(
+            "no terrain field on this machine, so the heights below are things standing "
+            "nearby rather than the ground -- run tools/gen_world_heightmap.py to measure it"
+        )
+    else:
+        notes.append("the terrain field has no data at this point -- open ocean, or a cave mouth")
     if near.samples:
         for what, values in (("ground", near.ground), ("built", near.built)):
             if not values:
@@ -142,15 +166,19 @@ def describe_location(
                 "-- that gap is foundation already stacked here, not terrain"
             )
         notes.append(
-            "elevation is SAMPLED, not a heightmap: there is no terrain data in the dump "
-            "or the save. Resource nodes rest on the ground; foundations and buildings "
-            "are wherever they were placed"
+            "these elevations are SAMPLED from things standing nearby, never interpolated: "
+            "resource nodes rest on the ground, foundations and buildings are wherever "
+            "they were placed"
         )
     else:
         notes.append(
-            f"no known elevation within {radius_m:g}m. Nothing is built here and no "
-            "resource node is near, so the height is genuinely unknown -- widen radius_m "
-            "or accept that this is unsurveyed ground"
+            f"no known elevation within {radius_m:g}m: nothing is built here and no "
+            "resource node is near -- "
+            + (
+                "the terrain reading above is the whole answer here"
+                if reading is not None
+                else "widen radius_m or accept that this is unsurveyed ground"
+            )
         )
     # Conduits are counted against their drawn lines, not their corner points, so a belt
     # crossing mid-span is seen. Reported even at zero: with a readable save, absence in

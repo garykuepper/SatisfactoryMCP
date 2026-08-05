@@ -1,9 +1,10 @@
-"""Elevation, sampled -- because there is no heightmap anywhere in this project's inputs.
+"""Elevation: measured where the extracted terrain field reaches, sampled everywhere else.
 
 `search_resource_nodes` already reports a fluid field's head span, and `plan_layout
 detail="trunks"` attaches it to a pipe. This closes the other half: what a bare coordinate
 is at. The whole risk here is the same one twice -- a plausible single number invented from
-too few points reads as measured, so every assertion below is about refusing to do that.
+too few points reads as measured, so every assertion below is about refusing to do that,
+and about keeping the field's one texel apart from the population standing near it.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from copy import deepcopy
 import pytest
 
 from satisfactory_mcp import server as srv
-from satisfactory_mcp.domain.spatial import elevation
+from satisfactory_mcp.domain.spatial import elevation, heightfield
 from satisfactory_mcp.domain.spatial import nodes as nodes_mod
 from satisfactory_mcp.domain.world.state import WorldState
 
@@ -158,11 +159,77 @@ def test_describe_location_reports_elevation(game):
     assert "structure" in out
 
 
-def test_it_says_the_number_is_sampled_not_a_heightmap(game):
-    """The standing rule in this project: name what the data cannot do rather than
-    letting a confident-looking number imply it can."""
+class _OneTexel:
+    """As much of a ``heightfield.Field`` as ``probe`` uses: it calls ``at`` and nothing
+    else. A synthetic reading, so these tests answer the same on a machine that has run
+    the generator and one that never will."""
+
+    def __init__(self, reading: heightfield.Reading | None) -> None:
+        self._reading = reading
+
+    def at(self, x_cm: float, y_cm: float) -> heightfield.Reading | None:
+        return self._reading
+
+
+def test_the_measured_terrain_is_reported_where_the_field_reaches(game, monkeypatch):
+    """``/api/inspect`` has printed this texel all along while this tool asserted there was
+    no terrain data in anything it reads. The seam was already built -- ``probe`` takes the
+    field -- and only the MCP side never passed one."""
+    monkeypatch.setattr(
+        heightfield,
+        "load_field",
+        lambda: _OneTexel(
+            heightfield.Reading(z_m=118.3, provenance=heightfield.PROV_LANDSCAPE, accuracy_m=0.2)
+        ),
+    )
     out = srv.describe_location(*ON_PLATFORM)
-    assert "SAMPLED, not a heightmap" in out
+    assert "terrain_m=118.3 (landscape, +-0.2m)" in out
+
+
+def test_water_depth_is_quoted_only_where_the_bed_was_measured(game, monkeypatch):
+    """The field's own refusal, carried out to the text surface: over the fill layer the
+    ground is a 3.9 m raster, so subtracting it from a sea surface invents a depth."""
+    monkeypatch.setattr(
+        heightfield,
+        "load_field",
+        lambda: _OneTexel(
+            heightfield.Reading(
+                z_m=-17.0,
+                provenance=heightfield.PROV_FILL,
+                accuracy_m=3.9,
+                water_m=-2.0,
+                water_quality=heightfield.WATER_LEVEL_ONLY,
+            )
+        ),
+    )
+    out = srv.describe_location(*OPEN_OCEAN)
+    assert "water_surface_m=-2.0" in out
+    assert "water_depth_m=unknown" in out
+    assert "too coarse" in out
+
+    monkeypatch.setattr(
+        heightfield,
+        "load_field",
+        lambda: _OneTexel(
+            heightfield.Reading(
+                z_m=-17.0,
+                provenance=heightfield.PROV_LANDSCAPE,
+                accuracy_m=0.2,
+                water_m=-2.0,
+                water_quality=heightfield.WATER_MEASURED,
+            )
+        ),
+    )
+    assert "water_depth_m=15.0" in srv.describe_location(*OPEN_OCEAN)
+
+
+def test_without_a_field_it_names_the_gap_rather_than_denying_terrain_exists(game, monkeypatch):
+    """The standing rule: name what the data cannot do. What it must NOT do any more is
+    state that no terrain data exists -- it exists, this machine has not extracted it."""
+    monkeypatch.setattr(heightfield, "load_field", lambda: None)
+    out = srv.describe_location(*ON_PLATFORM)
+    assert "no terrain field on this machine" in out
+    assert "SAMPLED from things standing nearby" in out
 
 
 def test_unsurveyed_ground_says_unknown_rather_than_guessing(game):
