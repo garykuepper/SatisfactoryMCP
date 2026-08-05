@@ -36,6 +36,11 @@ class NodeRow(TypedDict):
 
     ``resource`` is the class id, which is what the layer keys and the colour table are keyed
     by; ``resource_name`` is the word a reader reads, and is the same word the MCP tools use.
+
+    ``reachable`` is false for a node no unlocked extractor can work -- the state the text
+    surface prints as ``LOCKED`` and excludes from free capacity. It is null, never true, when
+    the save could not be read: reachability is a fact about what this world has researched,
+    and with no world there is nothing to have researched it.
     """
 
     id: str
@@ -50,6 +55,7 @@ class NodeRow(TypedDict):
     occupied: bool
     occupant_cls: str | None
     occupant_name: str | None
+    reachable: bool | None
     region: Region | None
 
 
@@ -84,9 +90,14 @@ def nodes(
     the grid for the page to index into would put the orientation trap (row 0 is the north
     edge) in two places. It is ``null`` for a node the raster calls void.
 
+    **A free node is not always a usable one.** ``reachable`` is the same test the text
+    surface marks ``LOCKED`` and leaves out of free capacity -- a resource well satellite
+    with no Pressurizer researched is not somewhere a plan can go.
+
     **A failed save is not a failed answer.** The node table is static and needs no ``.sav``,
     so a world whose save will not load still gets its geography; what it loses is the
-    occupancy join, and ``save_error`` says so with ``occupied`` null beside it.
+    occupancy join and the unlock set, and ``save_error`` says so with ``occupied`` and every
+    row's ``reachable`` null beside it.
     """
     try:
         table = spatial_nodes.load_nodes()
@@ -96,9 +107,11 @@ def nodes(
 
     save_error: str | None = None
     taken: dict = {}
+    unlocked: set[str] | None = None
     try:
         st = _state(request, save, world)
         taken = spatial_nodes.occupancy(st.projection)
+        unlocked = st.unlocked_building_ids
     except Exception as exc:
         save_error = f"could not read save: {exc}"
 
@@ -120,6 +133,12 @@ def nodes(
                 "occupied": held is not None,
                 "occupant_cls": occupant,
                 "occupant_name": game.building_name(occupant),
+                # Not `reachable(n, unlocked)`: the domain reads a null unlock set as "no
+                # world to judge against, so assume yes", which is the right default for a
+                # capacity sum and the wrong one for a dot somebody plans around.
+                "reachable": (
+                    None if unlocked is None else spatial_nodes.reachable(n, unlocked)
+                ),
                 "region": _label_json(rmap.label_for_node(n)),
             }
         )
