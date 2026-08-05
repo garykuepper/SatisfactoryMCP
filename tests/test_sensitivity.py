@@ -156,6 +156,69 @@ def test_an_infeasible_plan_has_nothing_to_rank(game):
     assert "nothing to rank against" in out
 
 
+# ------------------------------------------------------ what to research, and what failed
+
+
+def test_every_candidate_names_the_schematic_that_grants_it(sweep):
+    """The tool exists to decide what to research next, and the schematic is the thing
+    you research. It is a separate identifier from the recipe -- the recipe id is what
+    only_recipes takes -- and this game names the two the same, which is the answer to
+    "what do I look for in the MAM", not an absence of one."""
+    assert all(r.unlocked_by for r in sweep.rows)
+    assert sweep.movers[0].unlocked_by == [sweep.movers[0].name]
+
+
+def test_the_tool_prints_the_schematic_column(game):
+    out = srv.rank_unlocks(**SPIRE)
+    assert "alternate\tgranted by" in out
+
+
+def test_an_unsolved_candidate_is_not_filed_with_the_worthless_ones():
+    """Both report gain 0, and only one of them means "worth nothing here". `after`
+    falls back to the baseline when the counterfactual does not solve, because there is
+    no other number to fall back to -- so the flag, not the gain, has to separate them."""
+    from satisfactory_mcp.domain.planning.sensitivity import UnlockDelta, UnlockSweep
+
+    def delta(name: str, ok: bool) -> UnlockDelta:
+        return UnlockDelta(
+            recipe=name,
+            name=name,
+            before=100.0,
+            after=100.0,
+            machines_before=1.0,
+            machines_after=1.0,
+            ok=ok,
+        )
+
+    measured, failed = delta("measured", True), delta("failed", False)
+    sweep = UnlockSweep(objective="max_mw", baseline=100.0, rows=[measured, failed], tried=2)
+    assert measured.gain == failed.gain == 0.0
+    assert sweep.movers == []
+    assert sweep.unsolved == [failed]
+
+
+def test_an_infeasible_candidate_is_marked_rather_than_left_at_zero(game, monkeypatch):
+    """It printed nothing at all: gain 0 drops it out of the movers, so a candidate that
+    could not be measured was indistinguishable from one measured and found irrelevant."""
+    from satisfactory_mcp.domain.planning import sensitivity
+    from satisfactory_mcp.interfaces.mcp.tools import planning as tool
+
+    real = sensitivity.sweep_unlocks
+    broke: list[str] = []
+
+    def one_fails(request, state, candidates=None):
+        out = real(request, state, candidates)
+        out.rows[0].ok = False
+        broke.append(out.rows[0].name)
+        return out
+
+    monkeypatch.setattr(tool, "sweep_unlocks", one_fails)
+    out = srv.rank_unlocks(**SPIRE)
+    assert "INFEASIBLE: 1 candidate(s) did not solve" in out
+    assert "UNKNOWN rather than zero" in out
+    assert broke[0] in out
+
+
 # ------------------------------------------------------------ what a gain depends on
 
 

@@ -1049,6 +1049,9 @@ def rank_unlocks(
             render.num(r.gain),
             f"{r.gain / sweep.baseline:+.1%}" if sweep.baseline else "",
             r.name[:34],
+            # The thing you actually research. A recipe with no schematic behind it cannot
+            # be reached at all, which is a different answer from "worth nothing".
+            "; ".join(r.unlocked_by)[:30] or "NOT GRANTED",
             render.num(r.machines),
             f"drive {on_offer[r.recipe]}" if r.recipe in on_offer else "",
             ", ".join(r.needs)[:18],
@@ -1068,6 +1071,17 @@ def rank_unlocks(
         "deltas are an UPPER bound: a candidate is solved as if any machine it needs "
         "already existed, and that machine is named in 'needs'"
     )
+    if sweep.unsolved:
+        # Their stored gain is 0, which is indistinguishable from the 78 candidates that
+        # were measured and found worthless. Adding a recipe only widens the LP, so an
+        # unsolved counterfactual is a solver failure and never a verdict on the recipe.
+        shown = sweep.unsolved[:4]
+        notes.append(
+            f"INFEASIBLE: {len(sweep.unsolved)} candidate(s) did not solve with the recipe "
+            "added, so their worth is UNKNOWN rather than zero -- "
+            + ", ".join(r.name for r in shown)
+            + (f" (+{len(sweep.unsolved) - len(shown)} more)" if len(sweep.unsolved) > 4 else "")
+        )
     notes.append(
         "'activates' is what the gain DEPENDS on -- processes the counterfactual switches "
         "on that this plan does not currently use. A headline number that turns on "
@@ -1104,7 +1118,16 @@ def rank_unlocks(
             ]
         ),
         render.table(
-            ("gain", "vs base", "alternate", "machines", "on offer", "needs", "activates"),
+            (
+                "gain",
+                "vs base",
+                "alternate",
+                "granted by",
+                "machines",
+                "on offer",
+                "needs",
+                "activates",
+            ),
             rows,
             total=len(movers),
             limit=limit,
