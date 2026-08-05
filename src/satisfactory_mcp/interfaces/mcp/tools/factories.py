@@ -280,13 +280,15 @@ def factory_query(
     - **inputs** net deficit: it has to be fed in from outside
     - **machines** every machine with its building, recipe and clock
     - **recipes** / **buildings** counts
-    - **power** draw vs generation at saved clocks
+    - **power** draw vs generation, nameplate AND measured -- which factory is really
+      burning the grid, rather than which could
     - **nodes** resource nodes its extractors sit on
     - **links** which other factories it exchanges material with
     - **issues** paused, recipe-less, or unresolved machines
 
     Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
-    starved factory still reports its full rate.
+    starved factory still reports its full rate. Power is the one exception, and it
+    prints both figures side by side rather than blending them.
     """
     from ....domain.factories.query import build_view
 
@@ -409,12 +411,17 @@ def factory_query(
             )
         elif aspect == "power":
             chunks.append(
-                "## power (nameplate at saved clocks)\n"
+                "## power\n"
                 + render.kv(
                     [
-                        ("draw", f"{view.draw_mw:.1f} MW"),
+                        ("draw (nameplate)", f"{view.draw_mw:.1f} MW"),
+                        ("draw (measured)", f"{view.measured_draw_mw:.1f} MW"),
                         ("generation", f"{view.generation_mw:.1f} MW"),
-                        ("net", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                        ("net (nameplate)", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                        (
+                            "net (measured)",
+                            f"{view.generation_mw - view.measured_draw_mw:+.1f} MW",
+                        ),
                     ]
                 )
             )
@@ -455,6 +462,12 @@ def factory_query(
     notes += nodes_mod.identity_notes(
         nodes_mod.skew_for_save(st.header), [row[0] for row in view.nodes]
     )
+    if "power" in asked:
+        notes.append(
+            "measured weights each machine's draw by its own 300s productivity window. "
+            f"{view.unmonitored} machine(s) here keep no monitor and are charged in FULL, "
+            "since unknown utilisation must not read as idle"
+        )
     loose = view.links.get("(unlabelled)")
     if loose:
         notes.append(
@@ -503,20 +516,27 @@ def factory_health(
     if factory.strip().casefold() in ("all", "*"):
         if not st.labels.labels:
             return "! nothing named yet -- run propose_factories, then name_factory"
+        from ....domain.factories.query import build_view
+
         rows, notes = [], []
+        blocked_total = 0
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
-            report = assess(
-                label.name, [m for m in label.anchors if m in alive], st.game, st.projection
+            standing = [m for m in label.anchors if m in alive]
+            report = assess(label.name, standing, st.game, st.projection)
+            view = build_view(
+                label.name, standing, st.graph, st.game, st.projection, st.labels
             )
             mean = report.mean_uptime
             actionable = sum(
                 report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
             )
+            blocked_total += report.by_state["blocked"]
             rows.append(
                 (
                     label.name,
                     len(report.machines),
                     "-" if mean is None else f"{mean:.0%}",
+                    f"{view.measured_draw_mw:.0f}",
                     report.by_state["blocked"] or "",
                     report.by_state["starved"] or "",
                     report.by_state["stalled"] or "",
@@ -529,7 +549,10 @@ def factory_health(
         # Sort on the accumulated values, not on a column position: inserting a column
         # once silently reordered this table by the wrong field.
         rows.sort(key=lambda r: (-(r[-1] or 0), r[2]))
-        blocked_total = sum(r[3] or 0 for r in rows)
+        notes.append(
+            "measured MW is each machine's rated draw weighted by its own 300s productivity "
+            "window -- what the factory is actually taking off the grid, not what it could"
+        )
         if blocked_total:
             notes.append(
                 f"{blocked_total} machine(s) are blocked -- their output stack is full. "
@@ -543,6 +566,7 @@ def factory_health(
                     "factory",
                     "n",
                     "uptime",
+                    "measured MW",
                     "blocked",
                     "starved",
                     "stalled",

@@ -121,6 +121,35 @@ def test_power_draw_accumulates_over_the_set(game):
     assert view.generation_mw == 0.0
 
 
+def test_measured_draw_weights_each_machine_by_its_own_window(game):
+    """Every machine's rated draw is weighted by its own 300 s monitor and the whole
+    per-machine figure used to be destroyed where it was computed, so "which factory is
+    burning the grid" -- as against which one could -- had no answer anywhere."""
+    projection = _projection()
+    projection["machines"][0]["uptime"] = {"window_s": 300.0}  # monitored, never produced
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
+    # ROD_B carries no monitor at all, and is charged in full for it.
+    view = _view(game, projection)
+    rod = game.recipe_power_mw(game.recipes["Recipe_IronRod_C"], 1.0)
+    assert view.unmonitored == 1
+    assert view.measured_draw_mw == pytest.approx(rod * 1.5)
+    assert view.measured_draw_mw < view.draw_mw
+
+
+def test_the_power_aspect_prints_both_figures(game, monkeypatch):
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-power", "session_name": "t"}
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="power")
+    assert "draw (nameplate)" in out
+    assert "draw (measured)" in out
+
+
 def test_a_machine_with_no_recipe_is_an_issue_not_a_silent_zero(game):
     projection = _projection()
     projection["machines"][1].pop("recipe")
