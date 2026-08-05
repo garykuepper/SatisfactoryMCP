@@ -1,20 +1,11 @@
 """``/api/collectibles``: slugs, mercer spheres and the rest, filtered as the tool filters.
 
-Thin on purpose, and the thinness is the point: every refusal this endpoint makes is
-``collect_view``'s -- unknown mode, retired group, and the one that matters, that
-``mode=remaining`` needs the generated placement table and without it the honest answer is
-a refusal rather than a shorter list. Duplicating any of that here would give the map and
-the MCP tool two different opinions about the same question.
+Every refusal this endpoint makes is ``collect_view``'s, so that the map and the MCP tool
+cannot hold two opinions about one question.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
 
-**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
-FILTERS -- routers/floors.py writes both rules out at length. That filtering is why
-``CollectiblesResponse`` spells out all seven top-level keys rather than the one the page
-draws: ``api-types.ts`` declared ``rows`` alone, because ``rows`` is all markers.ts reads,
-and a model that faithful would have DELETED the other six from the wire.
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -37,20 +28,13 @@ router = APIRouter(prefix="/api")
 class CollectibleRow(TypedDict):
     """One map placement, and what this save says about it.
 
-    The three coordinates are NOT nullable, and this is the one field group here that had to
-    be read back rather than copied: ``_xyz`` can answer three nulls, but its argument is
-    ``removed.placements``' own ``(row["x"], row["y"], row["z"])`` off the generated
-    placement table, where a row without all three does not exist. The same shape of claim
-    ``/api/nodes`` and ``/api/structures`` already make about their triples.
+    The three coordinates are not nullable: they come off the generated placement table,
+    where a row without all three does not exist.
 
     ``observed`` is the placement table's scan of every save on disk rather than of the
-    loaded one, and it is null for two different reasons that mean the same thing here: a
-    row this save has COLLECTED gets no observed state at all, and a state this build does
-    not know is answered ``None`` rather than with a nearest guess.
-
-    ``distance_m`` is populated only by ``mode=nearest``, which is the one mode that
-    resolves an origin -- so it is null on every row of every other mode, and null is the
-    honest "not measured from anywhere" rather than a zero.
+    loaded one, and it is null both for a row this save has collected and for a state this
+    build does not know. ``distance_m`` is populated only by ``mode=nearest``, the one mode
+    that resolves an origin; elsewhere it is null rather than zero.
     """
 
     category: str
@@ -64,25 +48,17 @@ class CollectibleRow(TypedDict):
 
 
 class CollectiblesResponse(TypedDict):
-    """The view ``collect_view`` decided, in emission order.
+    """The view ``collect_view`` decided.
 
-    ``mode`` is a CLOSED union and ``kind`` on ``/api/crates`` deliberately is not, which is
-    the same distinction read from two sides. This one is closed because the guard that
-    fills it is next door and exhaustive: ``collect_view`` refuses anything outside these
-    four before a view exists at all, so a fifth mode cannot reach the wire without
-    ``service.py`` changing -- and then it should be loud here. A crate's ``kind`` comes
-    from the PROJECTION, which is versioned and read from disk, so a fourth value must be
-    served whole rather than 500ed on.
+    ``mode`` is a closed union because ``collect_view`` refuses anything outside these four
+    before a view exists at all, so a fifth mode cannot reach the wire without the domain
+    service changing -- and then it should be loud here.
 
-    ``rows`` is a list and never null. The view's own ``rows`` is ``None`` for
-    ``mode=census``, which counts off the removed list instead of listing anything, and the
-    handler spells that as the empty list it has always sent.
-
-    ``counts`` is an open map on purpose: its keys are observed STATES -- ``standing``,
-    ``never_streamed``, ``gone_in_a_later_save``, ``collected`` -- and a save whose rows are
-    all in one of them sends a one-key object. Declaring the four would make a missing key
-    look like a schema, when it is a tally. ``where`` is ``str`` and never null: it is
-    ``""`` for every mode that measures no distance, which is the same "" the view defaults.
+    ``rows`` is a list and never null: the view answers ``None`` for ``mode=census``, which
+    counts instead of listing, and the handler sends the empty list. ``counts`` is an open
+    map because its keys are observed states and a save whose rows are all in one of them
+    sends a one-key object -- a tally, not a schema. ``where`` is ``""`` for every mode that
+    measures no distance.
     """
 
     mode: Literal["census", "collected", "remaining", "nearest"]
@@ -105,9 +81,9 @@ def collectibles(
 ) -> Any:
     """Map placements, filtered exactly the way the MCP tool filters them.
 
-    ``collect_view`` owns every refusal -- unknown mode, retired group, and the one
-    that matters here: ``mode=remaining`` needs the generated placement table, and
-    without it the honest answer is the refusal rather than a shorter list.
+    ``collect_view`` owns every refusal -- unknown mode, retired group, and the one that
+    matters here: ``mode=remaining`` needs the generated placement table, and without it the
+    honest answer is that refusal rather than a shorter list.
     """
     try:
         st = _state(request, save, world)

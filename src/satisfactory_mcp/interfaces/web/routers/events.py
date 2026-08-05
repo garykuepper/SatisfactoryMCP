@@ -1,18 +1,13 @@
 """``/api/events``: the server-sent event stream, and the only route that is not JSON.
 
-The one endpoint on this surface that holds a connection open, which is why it is the one
-endpoint with no ``?save=``/``?world=`` and no ``_state`` call: it never reads a world. It
-subscribes to ``app.state.watcher`` -- the ``SaveWatcher`` the app's lifespan starts -- and
-forwards the trigger, never the payload.
+The one endpoint that holds a connection open, and the one with no ``?save=``/``?world=``:
+it never reads a world. It subscribes to the ``SaveWatcher`` the app's lifespan starts,
+through ``request.app.state`` rather than through ``Depends`` -- a dependency would put a
+parameter into ``/openapi.json`` for a stream that has no schema.
 
-**Reached through ``request.app.state``, like every other handler here**, rather than
-through a dependency. Introducing ``Depends`` for it would put a parameter into
-``/openapi.json`` and churn the committed ``api-schema.d.ts`` for a stream that has no
-schema in the first place.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -25,9 +20,8 @@ from fastapi.responses import StreamingResponse
 
 __all__ = ["PING_SECONDS", "router"]
 
-#: How long a quiet SSE stream waits before sending a comment. Proxies and browsers
-#: both drop a connection that has said nothing for a while, and a comment line is the
-#: cheapest thing that counts as having said something.
+#: How long a quiet SSE stream waits before sending a comment line. Proxies and browsers
+#: both drop a connection that has said nothing for a while.
 PING_SECONDS = 15.0
 
 router = APIRouter(prefix="/api")
@@ -46,10 +40,9 @@ def _sse(event: str | None, data: str) -> bytes:
 async def events(request: Request) -> StreamingResponse:
     """Server-sent events: one ``save`` event per observed write, plus keepalives.
 
-    The stream carries the trigger, never the payload. A save event says which file
-    moved and when; the page decides what to refetch. That keeps this endpoint O(1) in
-    the size of the world and means a browser that missed an event is one refetch, not
-    one resync, behind.
+    The stream carries the trigger, never the payload. A save event says which file moved
+    and when; the page decides what to refetch, so a browser that missed one is a refetch
+    behind rather than a resync behind.
     """
     watcher = request.app.state.watcher
     queue = watcher.subscribe()

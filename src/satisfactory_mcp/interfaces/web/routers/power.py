@@ -1,25 +1,17 @@
 """``/api/power``: every pole and tower, and the span of every wire between them.
 
-The geometry half of a network whose connectivity has been in the projection since schema
-11. Its own file because the join it makes is its own -- ``wires[i]`` is the span of
-``graph["power"][i]``, positional, and this is the one place the two lists are put back
-together -- and because naming a wire's ends needs a lookup built from five record lists
-that nothing else on this surface wants.
+The geometry half of a network whose connectivity the projection has carried since schema
+11, and the JOIN is positional: ``wires[i]`` is the span of ``graph["power"][i]``, and this
+is the one place the two lists are put back together.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+A pole is an interned table row, so its ``cls`` is an index into a legend and
+``saveio.rows`` answers ``None`` for an index past the end -- and its ``name`` with it,
+because ``building_name`` is None in, None out. Its COORDINATES are the other way round:
+``iter_power_poles`` drops a row whose class index or position will not read.
 
-**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
-FILTERS -- routers/floors.py writes both rules out at length.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
 
-**THE TWO ROWS SIT ON OPPOSITE SIDES OF THE ONE LINE THIS SURFACE KEEPS REDRAWING**, which
-routers/placements.py states as a file-level fact: an ACTOR record always carries a class
-and an INTERNED table row may not. A pole is interned, so its ``cls`` is an index into a
-legend and ``saveio.rows`` answers ``None`` for an index past the end -- and its ``name``
-with it, because ``building_name`` is None in, None out. Its COORDINATES are the other way
-round: ``iter_power_poles`` drops a row whose class index or position will not read, so a
-pole that reaches this payload has three floats, exactly as ``/api/structures`` does.
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -44,14 +36,11 @@ router = APIRouter(prefix="/api")
 class PoleRow(TypedDict):
     """A power pole, wall outlet or tower platform: where it stands and how busy it is.
 
-    ``cls`` and ``name`` are nullable on the interned-table terms above; the three
-    coordinates are not, because the iterator drops a row that has none. ``yaw`` is null on
-    ``_yaw``'s own terms -- a projection older than schema 12 carries no rotation, which is a
-    different claim from "this pole is axis-aligned".
+    ``cls`` and ``name`` are nullable on the interned-table terms above; the coordinates are
+    not, because the iterator drops a row that has none.
 
-    ``connections`` is an ``int`` and is never null: a pole nothing is wired to reports 0,
-    which is a measurement rather than a missing value -- it is in the geometry table and in
-    no edge, and 2 of this world's 701 are exactly that.
+    ``connections`` is never null: a pole nothing is wired to reports 0, which is a
+    measurement rather than a missing value -- it is in the geometry table and in no edge.
     """
 
     cls: str | None
@@ -65,32 +54,19 @@ class PoleRow(TypedDict):
 
 #: One power wire, as the straight line between the two connectors it is strung between.
 #:
-#: FUNCTIONAL SYNTAX, and only for that reason: ``from`` is a Python keyword, so the field
-#: cannot be spelled in a class body at all. The key is the wire's own, it is what the page
-#: already reads, and renaming it to please the language would be changing the payload to
-#: suit the declaration.
+#: FUNCTIONAL SYNTAX because ``from`` is a Python keyword and so cannot be spelled in a
+#: class body at all. The key is the wire's own and is what the page already reads.
 #:
-#: ``a_m`` and ``b_m`` are TUPLES, which is the only way a schema says "exactly three":
-#: pydantic emits ``prefixItems`` and typegen turns it into a ``[number, number, number]``
-#: the page indexes without a length guard. ``iter_wires`` drops a row that is not six
-#: readable numbers, so each end is three floats or the wire is not here -- the same bar
-#: ``RegionExtent`` and the route splines are declared at.
+#: ``a_m`` and ``b_m`` are TUPLES, the only way a schema says "exactly three": typegen turns
+#: them into a ``[number, number, number]`` the page indexes without a length guard.
+#: ``iter_wires`` drops a row that is not six readable numbers, so each end is three floats
+#: or the wire is not here.
 #:
-#: ``from`` and ``to`` are null where the projection carries no record naming that actor: 40
-#: of the reference world's 2,594 endpoints land on a hypertube entrance, a drop pod or the
-#: AWESOME Sink, and a name guessed for those would arrive looking like a reading.
-#:
-#: ``a_pole`` and ``b_pole`` are the wire-to-pole JOIN: the index into this same response's
-#: ``poles`` list of the pole or tower that endpoint terminates at, or null for an endpoint
-#: that lands on anything else -- a machine, or one of the 40 unnamed actors above. It exists
-#: for one measured reason: ``a_m``/``b_m`` are CONNECTOR positions, ~7 m above a Mk1 pole's
-#: base and ~24 m above a tower's, so a client placing a wire on a storey by its endpoint
-#: heights misfiles cables around 1-2 m mezzanine half-bands. The pole's own base height is
-#: the storey the wire actually serves, and this is the projection's existing knowledge --
-#: ``graph["power"][i]`` has named both endpoint actors since schema 11 and ``wires[i]`` is
-#: its positional twin -- put back together here, which is this module's whole job. An INDEX
-#: rather than a name, because a ``PoleRow`` deliberately carries no instance id and inventing
-#: one for the join would widen that row for nothing a reader looks at.
+#: ``from`` and ``to`` are null where the projection carries no record naming that actor --
+#: a hypertube entrance, a drop pod, the AWESOME Sink -- because a name guessed for those
+#: would arrive looking like a reading. ``a_pole`` and ``b_pole`` are the index into this
+#: response's own ``poles`` list of the pole that end terminates at, and null for an end
+#: that lands on anything else; an INDEX because a ``PoleRow`` carries no instance id.
 WireRow = TypedDict(
     "WireRow",
     {
@@ -106,12 +82,12 @@ WireRow = TypedDict(
 
 
 class PowerResponse(TypedDict):
-    """The two lists and the three counts, in emission order.
+    """The two lists and the three counts.
 
     ``edge_count`` is the one number here that is not the length of a list beside it: it is
     how many power EDGES the projection holds, and ``wire_count`` how many of those published
-    a span. They are equal on every save cut by a sidecar new enough to read the geometry, so
-    the pair is what tells "there is nothing to draw" from "there is nothing here".
+    a span. A save too old to carry the geometry answers a non-zero ``edge_count`` with a
+    ``wire_count`` of 0, which is what tells "nothing to draw" from "nothing here".
     """
 
     poles: list[PoleRow]
@@ -124,20 +100,16 @@ class PowerResponse(TypedDict):
 def _power_names(st: WorldState) -> dict[str, str]:
     """Actor short name -> display name, for every actor this projection can name.
 
-    What lets a wire say what is at each end of it. The projection carries a short name per
-    actor in ``graph["actors"]`` -- ``Build_SmelterMk1_C_2147380350`` -- and that is an
-    IDENTITY, not a name: it is the class with a serial glued on, so printing it is printing
-    an engine id at a reader. The class is on the record lists, and this joins the two.
+    ``graph["actors"]`` carries an IDENTITY per actor -- ``Build_SmelterMk1_C_2147380350``,
+    the class with a serial glued on -- and this joins it to the class on the record lists,
+    so a wire can say what is at each end without printing an engine id at a reader.
 
-    Built once per request rather than per wire: 2,594 endpoints over 1,297 wires, and a
-    per-endpoint scan of six lists would be six thousand list walks for one payload.
+    Built once per request rather than per wire: a per-endpoint scan of six lists would be
+    thousands of list walks for one payload.
 
-    A pole is in here through its ``actor_index`` column, which is the whole reason schema 17
-    gave it one. Everything else comes off the five record lists, which is not all of the
-    world -- a wire ending on a hypertube entrance, a drop pod or a resource sink lands on an
-    actor no list carries, 40 of the 2,594 on the reference save -- and those ends come out
-    ``null``. That is the same refusal the rest of this module makes: an actor this projection
-    does not name is not an actor with a name to be guessed at.
+    A pole gets in through its ``actor_index`` column. Everything else comes off the five
+    record lists, which are not all of the world, so an end that lands on an actor no list
+    carries comes out ``null`` rather than guessed at.
     """
     actors = st.projection.get("graph", {}).get("actors") or []
     out: dict[str, str] = {}
@@ -160,50 +132,24 @@ def _power_names(st: WorldState) -> dict[str, str]:
 def power(request: Request, save: str | None = None, world: str | None = None) -> Any:
     """Every power pole and tower, and the span of every wire between them.
 
-    New in schema 17, and the half of the power network that was never drawable. The
-    CONNECTIVITY has been in the projection since schema 11 -- ``graph["power"]``, 1,297
-    interned actor pairs on the reference world, which is what ``/api/summary``'s draw and
-    generation figures are computed over -- and it says who is joined to whom and nothing
-    about where. This endpoint is the geometry beside it, joined by position: the projection
-    writes both lists in one pass so that ``wires[i]`` is the span of ``graph["power"][i]``,
-    and this is the one place the two are put back together.
+    The geometry beside ``graph["power"]``, which says who is joined to whom and nothing
+    about where. The two are joined by position -- ``wires[i]`` is the span of
+    ``graph["power"][i]`` -- and this is the one place they are put back together.
 
-    **The endpoints are the game's own, not a line between two buildings.** A wire ends at a
-    CONNECTOR, and a connector sits at a fixed offset on its owner -- 7 m above a Mk1 pole,
-    2.1 m forward and 4.7 m to one side of a constructor's centre -- so origin-to-origin would
-    draw every wire through the middle of the machine it feeds. ``Build_PowerLine_C`` stores
-    both endpoints in world coordinates and the projection reads them; verified against the
-    game's own ``mCachedLength`` to a median of 0.000031 cm over 1,162 lines, and against two
-    pole origins with no free parameter at all. See ``extract._wire_span``.
+    **A wire's ends are CONNECTOR positions, not building origins.** A connector sits at a
+    fixed offset on its owner -- 7 m above a Mk1 pole, 2.1 m forward and 4.7 m to one side of
+    a constructor's centre -- so origin-to-origin would draw every wire through the middle of
+    the machine it feeds, and a client that files a wire on a storey by endpoint height puts
+    it a storey high wherever the storeys are shorter than that offset. ``a_pole``/``b_pole``
+    are there for exactly that: the pole a wire actually serves, at the height it stands.
 
-    **``span_m`` is the CHORD and says so.** A wire hangs as a catenary and this is the
-    straight line between its ends, which is shorter -- ``mCachedLength`` is the same chord, so
-    the sag is not a number the save carries either. Three-dimensional, because a tower span
-    climbs 24 m and that is real cable. It is what a top-down map draws and what a "how far is
-    that run" question wants; it is not the length of hanging wire.
+    **``span_m`` is the CHORD.** A wire hangs as a catenary and this is the straight line
+    between its ends, which is shorter -- and the save carries no sag either, since
+    ``mCachedLength`` is the same chord. Three-dimensional, because a tower span climbs 24 m
+    and that is real cable.
 
-    **``from`` and ``to`` are named where the projection can name them.** 40 of the reference
-    world's 2,594 endpoints land on an actor no record list carries -- a hypertube entrance, a
-    drop pod, the AWESOME Sink -- and those come out ``null`` rather than as the engine id the
-    graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
-    it only about half the time, so the projection measures which end is which.
-
-    **``a_pole`` and ``b_pole`` join each end to its pole, where its pole is in ``poles``.**
-    The endpoints above are connector positions -- 7 m over a Mk1's base, 24 m over a tower's
-    -- so a client that files a wire on a storey by endpoint height puts it a storey high
-    wherever the storeys are shorter than the connector offset, which the reference world's
-    1-2 m mezzanine half-bands are. The join needs no new projection field: it is
-    ``graph["power"]``'s own endpoint actors, carried since schema 11, met with the pole
-    table's ``actor_index`` column, and it is nullable because most machine-fed ends and all
-    40 unnamed ones terminate at no pole at all.
-
-    **A pole carries its connection count**, off the edge list rather than out of a second copy
-    of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
-    Tower platforms -- and 2 of them are strung to nothing at all, which is a real answer and
-    not a torn row.
-
-    Small beside its neighbours: 1,297 spans and 701 poles against the 3,085 pieces of
-    ``/api/belts``, and 78 KB of projection against that layer's 562 KB.
+    ``from`` and ``to`` are in the EDGE's order, which the projection measured: the save's
+    own endpoint order agrees with it only about half the time.
     """
     try:
         st = _state(request, save, world)
@@ -215,9 +161,8 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
     edges = projection.get("graph", {}).get("power") or []
     named = _power_names(st)
 
-    # Degree per actor, counted once over the edge list. A pole's own row cannot carry it --
-    # ``power["poles"]`` is geometry and holds no connectivity on purpose -- and counting it
-    # per pole would be 701 scans of a 1,297-row list.
+    # Counted once over the edge list: ``power["poles"]`` is geometry and holds no
+    # connectivity, and counting per pole would be one scan of the edge list per pole.
     degree: dict[int, int] = {}
     for edge in edges:
         if isinstance(edge, (list, tuple)) and len(edge) >= 2:
@@ -225,9 +170,9 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
                 if isinstance(end, int):
                     degree[end] = degree.get(end, 0) + 1
 
-    # One decode of the pole table for both jobs below: the rows the payload sends, and the
-    # actor-index lookup the wire join reads. Two iterator passes would be two chances for
-    # the emitted list and the joined indices to be counted off different rows.
+    # One decode of the pole table for both jobs below -- the rows the payload sends and the
+    # actor-index lookup the wire join reads. Two passes would be two chances for the emitted
+    # list and the joined indices to be counted off different rows.
     pole_rows = list(saverows.iter_power_poles(projection))
     poles = [
         {
@@ -237,14 +182,12 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
             "y_m": _m(pole.y),
             "z_m": _m(pole.z),
             "yaw": _yaw(pole.yaw),
-            # 0 for a pole no wire names, which is a count and not a missing value: the two
-            # on this world are tower platforms somebody built and never strung.
             "connections": degree.get(pole.actor_index, 0) if pole.actor_index >= 0 else 0,
         }
         for pole in pole_rows
     ]
-    # Actor index -> position in ``poles`` above. -1 is "no wire names this pole" and must
-    # not become a key: it would join every unindexed pole to whichever one enumerated last.
+    # -1 is "this pole has no actor index" and must not become a key: it would join every
+    # unindexed pole to whichever one enumerated last.
     pole_at = {pole.actor_index: i for i, pole in enumerate(pole_rows) if pole.actor_index >= 0}
 
     wires = []
@@ -263,15 +206,12 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
                 "b_m": b,
                 "from": ends[0],
                 "to": ends[1],
-                # The join the WireRow declaration argues for: this end's pole, as an index
-                # into ``poles``, or null for an end that terminates on anything else. Read
-                # off the same edge as ``from``/``to``, so the four fields cannot disagree
-                # about which actor an end belongs to.
+                # Read off the same edge as ``from``/``to``, so the four fields cannot
+                # disagree about which actor an end belongs to.
                 "a_pole": pole_at.get(pair[0]) if isinstance(pair[0], int) else None,
                 "b_pole": pole_at.get(pair[1]) if isinstance(pair[1], int) else None,
-                # Three-dimensional, through ``geo`` like every other distance that leaves
-                # this module: a wire's climb is real cable, exactly as a pipe's is real pipe,
-                # and it is 24 m of it on a tower span. ``distance_m`` would drop it.
+                # Three-dimensional: a wire's climb is real cable, and ``distance_m`` would
+                # drop the 24 m of it on a tower span.
                 "span_m": round(geo.distance_3d_m(wire.a, wire.b), 1),
             }
         )
@@ -281,8 +221,5 @@ def power(request: Request, save: str | None = None, world: str | None = None) -
         "pole_count": len(poles),
         "wires": wires,
         "wire_count": len(wires),
-        # What the layer control's header wants, and the one number that says whether the
-        # geometry is there at all: a save older than schema 17's property answers every edge
-        # with a null span, so this comes out 0 against a non-zero edge count.
         "edge_count": len(edges),
     }

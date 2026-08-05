@@ -92,25 +92,17 @@ export interface paths {
          * Nodes
          * @description The resource node table, joined to what this save has built on it.
          *
-         *     The join is deliberately partial and says so: ``occupancy`` resolves only the
-         *     extractors whose target is a node key, so ``occupied`` false means "no extractor
-         *     known here", never "free". The map draws it as unknown-or-free and the popup
-         *     carries the node id, which doubles as a ``node:`` selector for the MCP tools.
+         *     The join is partial and says so: ``occupancy`` resolves only the extractors whose target
+         *     is a node key, so ``occupied`` false means "no extractor known here", never "free". The
+         *     popup carries the node id, which doubles as a ``node:`` selector for the MCP tools.
          *
-         *     The region name is joined here rather than in the browser because the raster lives on
-         *     this side: sending 608 rows and then a 30x30 grid for the page to index into would put
-         *     the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node``, which is a
-         *     position lookup and nothing more: there used to be an override table of nodes someone
-         *     had checked against a wiki image by eye, reported as ``verified``, and the region
-         *     geometry is the game's own now so there is nothing for it to correct. ``null`` for a
-         *     node the raster calls void, which is the honest answer for the handful that sit on
-         *     islands off the grid.
+         *     The region name is joined on this side because the raster is: sending 608 rows and then
+         *     the grid for the page to index into would put the orientation trap (row 0 is the north
+         *     edge) in two places. It is ``null`` for a node the raster calls void.
          *
-         *     **A failed save is not a failed answer** -- the same rule ``/api/inspect`` already
-         *     follows, because the two used to disagree: the node table is static and needs no
-         *     ``.sav``, so a world whose save will not load still gets its geography. What it loses
-         *     is the occupancy join, and ``save_error`` says so out loud (with ``occupied`` null at
-         *     the top, since "0 of them occupied" would be a claim no one measured).
+         *     **A failed save is not a failed answer.** The node table is static and needs no ``.sav``,
+         *     so a world whose save will not load still gets its geography; what it loses is the
+         *     occupancy join, and ``save_error`` says so with ``occupied`` null beside it.
          */
         get: operations["nodes_api_nodes_get"];
         put?: never;
@@ -132,28 +124,23 @@ export interface paths {
          * Inspect
          * @description What is at a coordinate: the region, the measured ground, and the nearest nodes.
          *
-         *     The three answers a site starts with, and none of them was on the map before. Every
-         *     one comes straight out of ``domain.spatial`` -- this endpoint converts metres to the
-         *     save's centimetres, calls three functions, and rounds.
+         *     Every answer comes straight out of ``domain.spatial``; this endpoint converts metres to
+         *     the save's centimetres, calls three functions, and rounds.
          *
-         *     **A failed save is not a failed answer.** The node table is static, covers the whole
-         *     map and needs no ``.sav`` at all, so a world whose save will not load still gets its
-         *     region, its ground elevation and its nearest nodes; what it loses is the built
-         *     population and the occupancy join, and ``save_error`` says so out loud rather than
-         *     letting "no extractor here" quietly mean "no save here".
+         *     **A failed save is not a failed answer.** The node table is static, covers the whole map
+         *     and needs no ``.sav`` at all, so a world whose save will not load still gets its region,
+         *     its ground elevation and its nearest nodes; what it loses is the built population and
+         *     the occupancy join, and ``save_error`` says so rather than letting "no extractor here"
+         *     quietly mean "no save here".
          *
-         *     **And it prefers the extracted terrain when there is any.** On a machine where
-         *     ``tools/gen_world_heightmap.py`` has been run, the 1 m field answers "how high is it
-         *     here" for unexplored ground with one number at the coordinate asked about, instead of a
-         *     population of things standing near it -- and it says which layer of itself answered, so
-         *     a 0.2 m landscape reading and a 3.9 m fill reading are told apart. Where there is no
-         *     field, or the field has no data there, this is exactly the endpoint it was before.
+         *     **It prefers the extracted terrain where there is any.** On a machine that has run
+         *     ``tools/gen_world_heightmap.py``, the 1 m field answers "how high is it here" with one
+         *     number at the coordinate asked about instead of a population of things standing near it.
+         *     Where there is no field, or the field has no data there, the population answers.
          *
-         *     Not cached, deliberately and by measurement: ``sample_points`` over the 320-hour
-         *     reference world builds 9,525 samples in 2.0 ms and ``probe`` scans them in 0.8 ms, so
-         *     a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click. The
-         *     field is cached, because it is 0.45 s of zlib and 170 MB either way -- but by the
-         *     loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
+         *     Not cached: the probe is a few milliseconds over the whole reference world, so a
+         *     per-(world, save) cache would buy an invalidation bug. The heightfield itself is cached
+         *     by its loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
          */
         get: operations["inspect_api_inspect_get"];
         put?: never;
@@ -176,27 +163,15 @@ export interface paths {
          * @description The biome raster: a 30x30 character grid, its legend, and each region's extent.
          *
          *     No ``?save``/``?world``: this is the world's own geography, identical for every save,
-         *     which is why it is cacheable and fetched once per page load.
+         *     which is why it is cacheable and fetched once per page load. The grid served is the
+         *     coarse one, 768 rectangles rather than the twelve thousand of the 64 m grid ``label_for``
+         *     answers from.
          *
-         *     The raster comes through ``domain.spatial.regions``, which reads
-         *     ``data/region_names.json`` -- a majority downsample of the game's own ``FGMapAreaTexture``
-         *     at 1.83 m. Every per-region bounding box in it is derived from this same 30x30 grid, so
-         *     every cell provably lies inside the box of the region it names, which is what the
-         *     drawing client is checked against.
-         *
-         *     The 30x30 grid is what is SERVED and it is not the finest thing in that file: a 64 m
-         *     grid rides along beside it and is what ``label_for`` answers from. This payload keeps
-         *     the coarse one -- 768 rectangles rather than twelve thousand -- so a label anchor below
-         *     is placed against ``rmap.grid`` rather than by asking ``label_for``, or the page would
-         *     print a name on a cell it paints as somebody else's.
-         *
-         *     The one thing a drawing client gets wrong is orientation, so it is stated here rather
-         *     than left to be inferred. Game +X is east and game **+Y is south**; ``y0_m`` is the
-         *     smallest y, so **grid row 0 is the northern edge** and column 0 the western one. Cell
-         *     ``(i, j)`` spans x ``[x0_m + i*cell_m, x0_m + (i+1)*cell_m]`` and y ``[y0_m + j*cell_m,
-         *     ...]``, and a page that plots ``[-y, x]`` has to flip those y bounds to draw it. The
-         *     ``.`` cells are ocean or off-map and carry no name: left unpainted they are the
-         *     coastline.
+         *     **Orientation is what a drawing client gets wrong.** Game +X is east and game **+Y is
+         *     south**; ``y0_m`` is the smallest y, so **grid row 0 is the northern edge** and column 0
+         *     the western one. Cell ``(i, j)`` spans x ``[x0_m + i*cell_m, x0_m + (i+1)*cell_m]`` and y
+         *     ``[y0_m + j*cell_m, ...]``, so a page that plots ``[-y, x]`` has to flip those y bounds.
+         *     The ``.`` cells are ocean or off-map and carry no name.
          */
         get: operations["regions_api_regions_get"];
         put?: never;
@@ -218,14 +193,13 @@ export interface paths {
          * Mapimage
          * @description A map render the *user* dropped in, if they dropped one in. Never shipped.
          *
-         *     HEAD is routed alongside GET on purpose: the page probes with HEAD before it builds
-         *     an ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a
-         *     GET route by itself, so a probe would come back 405 and read as "no image".
+         *     HEAD is routed alongside GET because the page probes with HEAD before it builds an
+         *     ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a GET
+         *     route by itself, so a probe would come back 405 and read as "no image".
          *
-         *     An absent file is the *expected* state, so the HEAD probe answers **204**, not 404:
-         *     a 404 is logged red in every devtools console on every clean page load, which trains
-         *     the reader to ignore console errors on this page. The GET keeps its 404 with the
-         *     where-to-put-it message -- anything actually fetching the bytes deserves the reason.
+         *     An absent file is the *expected* state, so the HEAD probe answers **204**, not 404: a 404
+         *     on every clean page load trains the reader to ignore console errors. The GET keeps its
+         *     404 with the where-to-put-it message.
          *
          *     The corners travel with the file in ``X-Map-Bounds-M`` (``x_min,y_min,x_max,y_max``,
          *     metres, game axes) so the one probe the page already makes answers both questions.
@@ -239,14 +213,13 @@ export interface paths {
          * Mapimage
          * @description A map render the *user* dropped in, if they dropped one in. Never shipped.
          *
-         *     HEAD is routed alongside GET on purpose: the page probes with HEAD before it builds
-         *     an ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a
-         *     GET route by itself, so a probe would come back 405 and read as "no image".
+         *     HEAD is routed alongside GET because the page probes with HEAD before it builds an
+         *     ``imageOverlay``, and FastAPI -- unlike bare Starlette -- does not add HEAD to a GET
+         *     route by itself, so a probe would come back 405 and read as "no image".
          *
-         *     An absent file is the *expected* state, so the HEAD probe answers **204**, not 404:
-         *     a 404 is logged red in every devtools console on every clean page load, which trains
-         *     the reader to ignore console errors on this page. The GET keeps its 404 with the
-         *     where-to-put-it message -- anything actually fetching the bytes deserves the reason.
+         *     An absent file is the *expected* state, so the HEAD probe answers **204**, not 404: a 404
+         *     on every clean page load trains the reader to ignore console errors. The GET keeps its
+         *     404 with the where-to-put-it message.
          *
          *     The corners travel with the file in ``X-Map-Bounds-M`` (``x_min,y_min,x_max,y_max``,
          *     metres, game axes) so the one probe the page already makes answers both questions.
@@ -266,11 +239,8 @@ export interface paths {
          * Maptiles
          * @description The artwork pyramid, at the URL it has always had. An alias for ``map``.
          *
-         *     Kept because it is live: every cached tile, every bookmark and the page as it stands
-         *     all address the base map here, and a route that moved would break all three to say the
-         *     same thing one segment longer. So this is not a redirect and not a deprecation -- it is
-         *     the default layer's name being optional, and it answers byte for byte and header for
-         *     header what ``/api/maptiles/map/{z}/{x}/{y}`` answers.
+         *     Not a redirect and not a deprecation: the default layer's name is optional, and this
+         *     answers byte for byte and header for header what ``/api/maptiles/map/{z}/{x}/{y}`` does.
          */
         get: operations["maptiles"];
         put?: never;
@@ -281,11 +251,8 @@ export interface paths {
          * Maptiles
          * @description The artwork pyramid, at the URL it has always had. An alias for ``map``.
          *
-         *     Kept because it is live: every cached tile, every bookmark and the page as it stands
-         *     all address the base map here, and a route that moved would break all three to say the
-         *     same thing one segment longer. So this is not a redirect and not a deprecation -- it is
-         *     the default layer's name being optional, and it answers byte for byte and header for
-         *     header what ``/api/maptiles/map/{z}/{x}/{y}`` answers.
+         *     Not a redirect and not a deprecation: the default layer's name is optional, and this
+         *     answers byte for byte and header for header what ``/api/maptiles/map/{z}/{x}/{y}`` does.
          */
         head: operations["maptiles"];
         patch?: never;
@@ -302,14 +269,12 @@ export interface paths {
          * Maptiles Layer
          * @description One tile of a named base layer: ``map``, ``terrain`` or ``satellite``.
          *
-         *     Four segments where the alias above has three, so the two routes cannot collide: a
-         *     three-segment path has no layer to name and is the artwork by definition.
+         *     Four segments where the alias above has three, so the two routes cannot collide.
          *
          *     An unknown layer is a 404 that lists the ones there are, rather than a 422 about a path
-         *     parameter. The distinction is the reader's: asking for a layer this build does not have
-         *     is asking for a picture that is not there, which is the same answer as asking for a tile
-         *     of one that has not been generated -- and a page that probes for layers it might find
-         *     deserves to be told which names exist rather than which types were expected.
+         *     parameter: asking for a layer this build does not have is asking for a picture that is
+         *     not there, and a page probing for layers it might find deserves to be told which names
+         *     exist rather than which types were expected.
          */
         get: operations["maptiles_layer"];
         put?: never;
@@ -320,14 +285,12 @@ export interface paths {
          * Maptiles Layer
          * @description One tile of a named base layer: ``map``, ``terrain`` or ``satellite``.
          *
-         *     Four segments where the alias above has three, so the two routes cannot collide: a
-         *     three-segment path has no layer to name and is the artwork by definition.
+         *     Four segments where the alias above has three, so the two routes cannot collide.
          *
          *     An unknown layer is a 404 that lists the ones there are, rather than a 422 about a path
-         *     parameter. The distinction is the reader's: asking for a layer this build does not have
-         *     is asking for a picture that is not there, which is the same answer as asking for a tile
-         *     of one that has not been generated -- and a page that probes for layers it might find
-         *     deserves to be told which names exist rather than which types were expected.
+         *     parameter: asking for a layer this build does not have is asking for a picture that is
+         *     not there, and a page probing for layers it might find deserves to be told which names
+         *     exist rather than which types were expected.
          */
         head: operations["maptiles_layer"];
         patch?: never;
@@ -413,52 +376,31 @@ export interface paths {
          * Belts
          * @description Every conveyor belt and lift, as the polyline it was actually built along.
          *
-         *     New in schema 12, and the reason the map drew no belts at all until now: the splines
-         *     were decoded by the parser and thrown away at the projection. They arrive interned the
-         *     way the structures next door are -- ``{"classes": [...], "segments": [[chain_index,
-         *     class_index, [[x, y, z], ...]], ...]}``, world centimetres -- and, like that endpoint,
-         *     the legend is resolved here so the page does not have to carry it, and the row is
-         *     decoded by ``core.saveio.rows`` so that a malformed segment costs that segment rather
-         *     than the network.
+         *     The pieces arrive interned the way the structures next door are, in world centimetres;
+         *     the legend is resolved here so the page does not have to carry it, and the row is decoded
+         *     by ``core.saveio.rows`` so a malformed segment costs that segment rather than the network.
          *
          *     **Points are in travel order, input to output.** The save stores them output-first and
-         *     the projection reverses them, so a client can draw direction along a run without
-         *     knowing that. ``chain`` is the belt chain a piece belongs to -- 1,909 chains over 3,085
-         *     pieces on the reference world -- so "the whole run" is a group-by rather than a
-         *     geometry problem.
+         *     the projection reverses them, so a client can draw direction along a run without knowing
+         *     that. ``chain`` is the belt chain a piece belongs to, so "the whole run" is a group-by
+         *     rather than a geometry problem.
          *
-         *     **``curve_m`` is new in schema 15, and it is what makes a curved belt curved.** The points
-         *     are the spline's control points and were never the whole spline: the chain trailer stores
-         *     two tangents beside each one, the projection dropped them, and a bend therefore arrived as
-         *     the chords between its corners -- out by up to 16.4 m of arc on a single piece, measured
-         *     against the length the save states for it. One entry per span here, ``null`` where that
-         *     span is straight and ``[leave, arrive]`` metres where it is not, so a client draws a cubic
-         *     Hermite where there is one and the same two-point line as before where there is not.
-         *     ``null`` for the whole field on the 2,119 pieces with no bend anywhere in them.
+         *     **``curve_m`` is what makes a curved belt curved.** ``points_m`` are the spline's control
+         *     points and were never the whole spline -- the chain trailer stores two tangents beside
+         *     each one -- so a bend drawn from the points alone is the chords between its corners, out
+         *     by up to 16.4 m of arc on a single piece.
          *
-         *     **A lift is a belt whose top-down polyline is a single point.** All 302 lifts on the
-         *     reference save have exactly zero horizontal extent (measured: median *and* maximum
-         *     horizontal span 0.0 cm, median rise 4 m), so a map that draws them as lines draws
-         *     nothing at all where they are. ``lift`` says which ones, and the client owes them a
-         *     glyph instead.
+         *     **A lift is a belt whose top-down polyline is a single point.** Every lift on the
+         *     reference save has exactly zero horizontal extent, so a map that draws them as lines
+         *     draws nothing at all where they are and the client owes them a glyph instead.
          *
-         *     Sent one row per piece, ungrouped, the same posture ``/api/structures`` takes and for
-         *     the same reason: the per-piece class is what a popup reads. Measured on the reference
-         *     world -- 3,085 pieces, 8,292 points, 562 KB -- which is the same order as the floor
-         *     plan beside it (8,347 pieces, 708 KB). The geometry is already only the bends: 2,237 of
-         *     the 3,085 pieces are two-point straight lines, 2.7 points per piece overall.
+         *     **``attachments`` rides along rather than travelling with the machines**, because a
+         *     splitter runs no recipe, draws no power and is meaningless without the runs either side
+         *     of it. That is also what keeps it from being drawn twice: it is in no other payload, so a
+         *     map with the machines layer on and the belts layer off shows no splitters at all.
          *
-         *     **``attachments`` rides along, and belongs here rather than with the machines.** A
-         *     splitter or a merger is a piece of the belt network -- it runs no recipe, draws no power
-         *     and is meaningless without the runs either side of it -- so it travels with the runs and
-         *     is drawn by the layer that draws them. That is also what keeps it from being drawn twice:
-         *     it is in no other payload, so a map with the machines layer on and the belts layer off
-         *     shows no splitters at all, which is the honest picture of "these are belt parts".
-         *
-         *     They carry no spline -- a splitter is a point with a facing, not a route -- so they are a
-         *     row shape of their own: where it stands, which way it faces, and what it is. 848 of them
-         *     on the reference world -- 481 splitters, 364 mergers, 3 smart splitters -- 170 KB against
-         *     the 562 KB of runs they join.
+         *     Sent one row per piece, ungrouped, the same posture ``/api/structures`` takes: the
+         *     per-piece class is what a popup reads.
          */
         get: operations["belts_api_belts_get"];
         put?: never;
@@ -480,30 +422,20 @@ export interface paths {
          * Pipes
          * @description Every fluid pipe, as the polyline it was actually built along, and what it carries.
          *
-         *     New in schema 13, and the belts' other half. The geometry was never hidden the way the
-         *     belts' was -- a pipe's spline is an ordinary ``mSplineData`` PROPERTY on the pipeline
-         *     actor, stored in the actor's own frame and translated back at the projection -- so this
-         *     is the same shape one layer down: ``{"classes": [...], "networks": [...], "segments":
-         *     [[network_index, class_index, [[x, y, z], ...]], ...]}`` in world centimetres, resolved
-         *     here so the page carries no legend, the row decoded by ``core.saveio.rows`` so a
-         *     malformed segment costs that segment.
+         *     The belts' other half, and the same shape one layer down.
          *
          *     **Each pipe says which fluid it carries**, which is the thing a belt cannot say: the game
          *     keeps an ``FGPipeNetwork`` per connected plumbing system with the fluid on it and its
          *     members listed, so ``fluid`` is the world's own answer rather than an inference from what
-         *     the pipe is plugged into. All 503 pipes on the reference world are claimed by one of its
-         *     19 networks -- 215 crude oil, 198 water, 55 fuel, 31 heavy oil residue, 4 alumina
-         *     solution. ``null`` for a pipe no network claims, which happens on none of them here but
-         *     is what an empty or half-built network would give.
+         *     the pipe is plugged into.
          *
          *     **``direction`` is INFERRED, and ``basis`` says from what.** Nothing on a pipe records
-         *     which way the fluid goes -- that much of the old refusal stands, and the points are still
-         *     in the order the file stores them. But the plumbing AROUND it records a great deal: the
-         *     save serialises every fluid coupling, and names a machine's port ``PipeInputFactory`` or
-         *     ``PipeOutputFactory``. ``domain/world/flow.py`` reads that graph and declines wherever
-         *     more than one answer is consistent. So ``direction`` is ``forward`` along ``points_m``,
-         *     ``reverse`` against it, or ``unknown`` -- 365, and 138 unknown, on the reference world --
-         *     and ``basis`` is one of:
+         *     which way the fluid goes, and the points are in the order the file stores them. But the
+         *     plumbing AROUND it records a great deal: the save serialises every fluid coupling and
+         *     names a machine's port ``PipeInputFactory`` or ``PipeOutputFactory``.
+         *     ``domain/world/flow.py`` reads that graph and declines wherever more than one answer is
+         *     consistent. So ``direction`` is ``forward`` along ``points_m``, ``reverse`` against it,
+         *     or ``unknown``, and ``basis`` is one of:
          *
          *     * ``machine port`` -- this very pipe ends at a port the save TYPES. Barely an inference.
          *     * ``pump`` -- a pump or valve at one end, one-way by construction.
@@ -513,22 +445,13 @@ export interface paths {
          *
          *     A client may draw an arrow on the first three and must not on the fourth.
          *
-         *     **``curve_m`` rides here too, on exactly the belts' terms.** A pipe's ``mSplineData`` has
-         *     carried an ``ArriveTangent`` and a ``LeaveTangent`` beside every ``Location`` the whole
-         *     time, and schema 13 dropped them on the grounds that pipes are straight runs and elbows.
-         *     They are -- and the six points of an elbow are its corners, not its curve: 166 of this
-         *     world's 1,484 spans leave their chord by more than 10 cm and one by 6.6 m, so an elbow drew
-         *     as the polygon cutting the corner it was built to round. One entry per span, ``null`` where
-         *     the span is straight, ``null`` for all 207 pipes with no bend in them at all.
+         *     **``curve_m`` rides here too, on exactly the belts' terms.** Pipes are straight runs and
+         *     elbows, and the six points of an elbow are its corners rather than its curve: an elbow
+         *     drawn from the points alone is the polygon cutting the corner it was built to round.
          *
-         *     Sent one row per piece, ungrouped, the posture ``/api/belts`` and ``/api/structures`` both
-         *     take. Measured on the reference world -- 503 pipes, 1,987 points, 48 KB -- an order
-         *     smaller than the 562 KB of belts beside it, because there are six times fewer of them.
-         *     Nothing to thin: 3.9 points a pipe, and they are already only the corners.
-         *
-         *     Not in here: pumps, junctions, valves and fluid buffers. They carry no spline at all, only
-         *     a header position, so they are a different row shape and a different question -- the same
-         *     question the belts key leaves open about splitters and mergers.
+         *     Not in here: pumps, junctions, valves and fluid buffers. They carry no spline at all,
+         *     only a header position, so they are a different row shape -- the same question the belts
+         *     key leaves open about splitters and mergers.
          */
         get: operations["pipes_api_pipes_get"];
         put?: never;
@@ -550,40 +473,26 @@ export interface paths {
          * Storage
          * @description Every storage container and fluid buffer, and what is inside each one.
          *
-         *     New in schema 15, and the gap it fills is a specific one. The projection has been able to
-         *     say what the player OWNS since schema 11 -- ``inventories["storage"]``, every stack in
-         *     every container summed -- and has never been able to say where any of it is. That answers
-         *     "have I got enough steel to build that" and is exactly the wrong shape for "where did I
-         *     put the steel", which is the question a base with 105 containers spread over 7 km actually
-         *     raises. Nothing else carried a container at all: they run no recipe so they were never
-         *     machines, draw no power so they are not in the power graph, and are ordinary actors so they
-         *     are not lightweight buildables either.
-         *
-         *     **Which classes, and the one that had to be excluded.** 151 rows on the reference world:
-         *     61 Storage Containers and 44 Industrial ones, 6 Personal Storage Boxes, 33 Dimensional
-         *     Depot uploaders, the HUB's built-in container and the Blueprint Designer's, and 5 fluid
-         *     buffers. NOT the splitters and mergers -- every one of the world's 848 owns a component
-         *     literally named ``StorageInventory``, holding the one to three items physically inside the
-         *     junction, and a payload built by matching that name would report 848 phantom containers,
-         *     draw them a second time over the belt layer that already has them, and count items in
-         *     transit as stock. Machine input and output buffers are excluded on the same principle and
-         *     are not lost: they are on their own machine's row under ``buffers``, where they mean "this
-         *     smelter is starved" rather than "the player owns this".
+         *     The containers the player built: Storage Containers and Industrial ones, Personal Storage
+         *     Boxes, Dimensional Depot uploaders, the HUB's built-in container and the Blueprint
+         *     Designer's, and the fluid buffers. **NOT the splitters and mergers** -- every one of them
+         *     owns a component literally named ``StorageInventory``, holding the one to three items
+         *     physically inside the junction, so a payload built by matching that name would report
+         *     hundreds of phantom containers, draw them a second time over the belt layer that already
+         *     has them, and count items in transit as stock. Machine input and output buffers are
+         *     excluded on the same principle, and are on their own machine's row under ``buffers``,
+         *     where they mean "this smelter is starved" rather than "the player owns this".
          *
          *     **Two record shapes, told apart by ``kind``.** A solid container reports ``items``
-         *     (biggest first, resolved to display names, the whole box -- ``more`` is 0 on every row),
-         *     ``slots`` and ``total``; a fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3``
-         *     and ``fill``.
+         *     (biggest first, resolved to display names, and the whole box), ``slots`` and ``total``; a
+         *     fluid buffer reports ``fluid``, ``stored_m3``, ``capacity_m3`` and ``fill``.
          *
-         *     **The fluid's identity comes off the plumbing, not off the buffer.** A buffer stores a bare
-         *     ``mFluidBox`` float and never names its contents, so the name is taken from the
-         *     ``FGPipeNetwork`` that claims it -- the same join, and the same source, ``/api/pipes`` uses
-         *     for a pipe's ``fluid``. ``null`` for a buffer no network claims, which happens on none of
-         *     the five here.
+         *     **The fluid's identity comes off the plumbing, not off the buffer.** A buffer stores a
+         *     bare ``mFluidBox`` float and never names its contents, so the name is taken from the
+         *     ``FGPipeNetwork`` that claims it -- the same join ``/api/pipes`` uses -- and is ``null``
+         *     for a buffer no network claims.
          *
-         *     Small: 151 rows against the 3,085 of ``/api/belts``, and the whole key is 26 KB of
-         *     projection. Sent in one payload, ungrouped, the posture every placement endpoint here
-         *     takes.
+         *     Sent in one payload, ungrouped, the posture every placement endpoint here takes.
          */
         get: operations["storage_api_storage_get"];
         put?: never;
@@ -605,50 +514,24 @@ export interface paths {
          * Power
          * @description Every power pole and tower, and the span of every wire between them.
          *
-         *     New in schema 17, and the half of the power network that was never drawable. The
-         *     CONNECTIVITY has been in the projection since schema 11 -- ``graph["power"]``, 1,297
-         *     interned actor pairs on the reference world, which is what ``/api/summary``'s draw and
-         *     generation figures are computed over -- and it says who is joined to whom and nothing
-         *     about where. This endpoint is the geometry beside it, joined by position: the projection
-         *     writes both lists in one pass so that ``wires[i]`` is the span of ``graph["power"][i]``,
-         *     and this is the one place the two are put back together.
+         *     The geometry beside ``graph["power"]``, which says who is joined to whom and nothing
+         *     about where. The two are joined by position -- ``wires[i]`` is the span of
+         *     ``graph["power"][i]`` -- and this is the one place they are put back together.
          *
-         *     **The endpoints are the game's own, not a line between two buildings.** A wire ends at a
-         *     CONNECTOR, and a connector sits at a fixed offset on its owner -- 7 m above a Mk1 pole,
-         *     2.1 m forward and 4.7 m to one side of a constructor's centre -- so origin-to-origin would
-         *     draw every wire through the middle of the machine it feeds. ``Build_PowerLine_C`` stores
-         *     both endpoints in world coordinates and the projection reads them; verified against the
-         *     game's own ``mCachedLength`` to a median of 0.000031 cm over 1,162 lines, and against two
-         *     pole origins with no free parameter at all. See ``extract._wire_span``.
+         *     **A wire's ends are CONNECTOR positions, not building origins.** A connector sits at a
+         *     fixed offset on its owner -- 7 m above a Mk1 pole, 2.1 m forward and 4.7 m to one side of
+         *     a constructor's centre -- so origin-to-origin would draw every wire through the middle of
+         *     the machine it feeds, and a client that files a wire on a storey by endpoint height puts
+         *     it a storey high wherever the storeys are shorter than that offset. ``a_pole``/``b_pole``
+         *     are there for exactly that: the pole a wire actually serves, at the height it stands.
          *
-         *     **``span_m`` is the CHORD and says so.** A wire hangs as a catenary and this is the
-         *     straight line between its ends, which is shorter -- ``mCachedLength`` is the same chord, so
-         *     the sag is not a number the save carries either. Three-dimensional, because a tower span
-         *     climbs 24 m and that is real cable. It is what a top-down map draws and what a "how far is
-         *     that run" question wants; it is not the length of hanging wire.
+         *     **``span_m`` is the CHORD.** A wire hangs as a catenary and this is the straight line
+         *     between its ends, which is shorter -- and the save carries no sag either, since
+         *     ``mCachedLength`` is the same chord. Three-dimensional, because a tower span climbs 24 m
+         *     and that is real cable.
          *
-         *     **``from`` and ``to`` are named where the projection can name them.** 40 of the reference
-         *     world's 2,594 endpoints land on an actor no record list carries -- a hypertube entrance, a
-         *     drop pod, the AWESOME Sink -- and those come out ``null`` rather than as the engine id the
-         *     graph holds. The pair is in the edge's own order: the save's own endpoint order agrees with
-         *     it only about half the time, so the projection measures which end is which.
-         *
-         *     **``a_pole`` and ``b_pole`` join each end to its pole, where its pole is in ``poles``.**
-         *     The endpoints above are connector positions -- 7 m over a Mk1's base, 24 m over a tower's
-         *     -- so a client that files a wire on a storey by endpoint height puts it a storey high
-         *     wherever the storeys are shorter than the connector offset, which the reference world's
-         *     1-2 m mezzanine half-bands are. The join needs no new projection field: it is
-         *     ``graph["power"]``'s own endpoint actors, carried since schema 11, met with the pole
-         *     table's ``actor_index`` column, and it is nullable because most machine-fed ends and all
-         *     40 unnamed ones terminate at no pole at all.
-         *
-         *     **A pole carries its connection count**, off the edge list rather than out of a second copy
-         *     of it. 701 poles on this world -- 426 Mk1, 105 Mk2, 7 Mk3, 26 wall outlets and 137 Power
-         *     Tower platforms -- and 2 of them are strung to nothing at all, which is a real answer and
-         *     not a torn row.
-         *
-         *     Small beside its neighbours: 1,297 spans and 701 poles against the 3,085 pieces of
-         *     ``/api/belts``, and 78 KB of projection against that layer's 562 KB.
+         *     ``from`` and ``to`` are in the EDGE's order, which the projection measured: the save's
+         *     own endpoint order agrees with it only about half the time.
          */
         get: operations["power_api_power_get"];
         put?: never;
@@ -670,24 +553,14 @@ export interface paths {
          * Factories
          * @description Named factories and the coherence-scored proposals for the unnamed rest.
          *
-         *     Each row carries ``bbox_m`` -- ``[x_min, y_min, x_max, y_max]`` in metres, game axes
-         *     -- alongside its centroid, because a centroid alone cannot frame a viewport. The map
-         *     turns a label into a button that flies to its factory, and "fly to the mean of 50
-         *     machines" is not the same request as "show me all 50": the first picks a zoom out of
-         *     the air, the second is decided by the extent. Computed here rather than client-side
-         *     because the client is never sent the anchor machines, only their count.
+         *     Each row carries ``bbox_m`` -- ``[x_min, y_min, x_max, y_max]`` in metres, game axes --
+         *     alongside its centroid, because a centroid alone cannot frame a viewport. It is computed
+         *     here rather than client-side, since the client is sent the anchor machines' count and
+         *     not the machines, and it is ``null`` when nothing in the set is still standing.
          *
-         *     ``null`` when nothing in the set is still standing -- ``geo.bbox`` refuses to invent
-         *     a zero box at the world centre, and so does this. A label whose machines were all
-         *     demolished keeps its name and its remembered centroid; what it loses is the ability
-         *     to be flown to, which is the honest report.
-         *
-         *     A proposal whose machines the player has already named is not a proposal: the
-         *     clusterer runs over the whole world, so it re-discovers every named factory, and
-         *     sending those rows lets a machine-generated recipe string draw itself exactly on
-         *     top of the player's own label. Any proposal in which named anchors are the majority
-         *     is dropped here; ``index`` stays the position in the full proposal list, so a
-         *     ``proposal:N`` selector still resolves to the same cluster in the MCP tools.
+         *     A proposal whose machines the player has already named is not a proposal: the clusterer
+         *     runs over the whole world, so it rediscovers every named factory, and any proposal in
+         *     which named anchors are the majority is dropped here.
          */
         get: operations["factories_api_factories_get"];
         put?: never;
@@ -711,31 +584,26 @@ export interface paths {
          *
          *     Nothing in the save says "floor". ``domain.factories.floors`` recovers them from the
          *     geometry -- 4-connected platforms of 8 m foundation cells, then a per-platform cluster
-         *     of deck heights -- and every constant it uses was measured before it was written. This
-         *     endpoint parses the query, calls it once, and rounds.
+         *     of deck heights -- and this endpoint parses the query, calls it once, and rounds.
          *
-         *     **It ships ids, not geometry, and that is the design.** A client already has every
-         *     machine, splitter, belt and pipe from the four endpoints above; the one thing it cannot
-         *     derive is which floor each of them is on. So a band lists ``machines`` and
-         *     ``attachments`` as instance leaves, and a run is keyed by its belt ``chain`` or its pipe
-         *     row position -- the joins those payloads already carry. Sending the coordinates again
-         *     would double 1.3 MB so that a filter could be applied to the copy.
+         *     **It ships ids, not geometry.** A client already has every machine, splitter, belt and
+         *     pipe from ``/api/machines``, ``/api/structures``, ``/api/belts`` and ``/api/pipes``; the
+         *     one thing it cannot derive is which floor each of them is on. So a band lists
+         *     ``machines`` and ``attachments`` as instance leaves, and a run is keyed by its belt
+         *     ``chain`` or its pipe row position -- the joins those payloads already carry.
          *
          *     **The runs are grouped by what they do to a floor**, not listed flat:
          *
-         *     * ``same-deck`` -- both ends over one band. 84.8% of belt runs, and the set a floor
-         *       filter draws.
+         *     * ``same-deck`` -- both ends over one band, and the set a floor filter draws.
          *     * ``connector`` -- the ends are on two different bands. This is how you leave a floor,
          *       and it is where the lifts and risers are.
-         *     * ``terrain`` -- neither end is over a deck. 44.5% of pipes, because plumbing hugs the
-         *       ground.
+         *     * ``terrain`` -- neither end is over a deck.
          *     * ``mixed`` -- one end on a deck, one on the ground.
          *
-         *     **``placements`` is only what did NOT land on a floor.** Things that did are listed by
-         *     id inside their own band, so listing them here as well would be the same 1,252 rows
-         *     twice. What is here is the three honest ways of not being on a floor: ``exempt`` (a
-         *     miner stands on a resource node and a water extractor on water -- by native class, not
-         *     by a substring), ``terrain`` (measured against the heightfield) and ``off-deck``.
+         *     **``placements`` is only what did NOT land on a floor**, since what did is listed by id
+         *     inside its own band. The three ways of not being on one: ``exempt`` (a miner stands on a
+         *     resource node and a water extractor on water -- by native class, not by a substring),
+         *     ``terrain`` (measured against the heightfield) and ``off-deck``.
          *
          *     **``terrain_measured`` says whether the ground was consulted at all.** The 1 m
          *     heightfield is derived from the reader's own game install and most machines have none,
@@ -743,10 +611,9 @@ export interface paths {
          *     read as "nothing is on the ground here".
          *
          *     ``?factory=`` takes a label the player gave a factory, or any selector the MCP tools
-         *     take, and narrows the answer to the platforms that factory stands on. ``?platform=`` is
-         *     the index this endpoint hands out, which is stable across calls. Either narrows
-         *     placements and runs to that footprint -- including the ones underneath it, since "what
-         *     is under this deck" is part of the question.
+         *     take; ``?platform=`` takes the index this endpoint hands out, which is stable across
+         *     calls. Either narrows placements and runs to that footprint, including the ones
+         *     underneath it, since "what is under this deck" is part of the question.
          *
          *     A save too old to carry ``FGLightweightBuildableSubsystem`` is a **200 with a
          *     ``note``**, not an error and not an empty list: the world has floors, this file cannot
@@ -772,9 +639,9 @@ export interface paths {
          * Collectibles
          * @description Map placements, filtered exactly the way the MCP tool filters them.
          *
-         *     ``collect_view`` owns every refusal -- unknown mode, retired group, and the one
-         *     that matters here: ``mode=remaining`` needs the generated placement table, and
-         *     without it the honest answer is the refusal rather than a shorter list.
+         *     ``collect_view`` owns every refusal -- unknown mode, retired group, and the one that
+         *     matters here: ``mode=remaining`` needs the generated placement table, and without it the
+         *     honest answer is that refusal rather than a shorter list.
          */
         get: operations["collectibles_api_collectibles_get"];
         put?: never;
@@ -796,10 +663,9 @@ export interface paths {
          * Events
          * @description Server-sent events: one ``save`` event per observed write, plus keepalives.
          *
-         *     The stream carries the trigger, never the payload. A save event says which file
-         *     moved and when; the page decides what to refetch. That keeps this endpoint O(1) in
-         *     the size of the world and means a browser that missed an event is one refetch, not
-         *     one resync, behind.
+         *     The stream carries the trigger, never the payload. A save event says which file moved
+         *     and when; the page decides what to refetch, so a browser that missed one is a refetch
+         *     behind rather than a resync behind.
          */
         get: operations["events_api_events_get"];
         put?: never;
@@ -821,37 +687,9 @@ export interface paths {
          * Crates
          * @description Every crate lying on the ground, what kind it is, and what is inside it.
          *
-         *     New in schema 18, and the gap it fills is the last inventory in the world nothing could
-         *     show. A crate is not a buildable, so it was never in ``building_counts``; it runs no
-         *     recipe and draws no power, so it is not a machine; it is an ordinary actor, so it is not
-         *     a lightweight piece; and ``/api/storage`` joins a written-down list of container classes
-         *     that ``BP_Crate_C`` is not on, deliberately. Until schema 19 the only trace of one was
-         *     its contents summed anonymously into ``inventories["machine"]`` alongside the smelter
-         *     buffers, where they read as material that exists and cannot be spent; they are
-         *     recoverable stock, and they sum into their own ``inventories["crate"]`` bucket now.
-         *
-         *     **Three kinds, and the third is an answer.** ``death`` is where a pioneer died,
-         *     ``dismantle`` is what would not fit in a full inventory, and ``none`` is a crate that
-         *     predates the game's own distinction between the two -- ``mCrateType`` is a save property
-         *     the game added in build 433351, so a crate made before it carries no type and never
-         *     will. 125 of the 170 crates in this machine's 67 saves are in that state, and the
-         *     reference world holds exactly one of each. Reporting them as deaths would be inventing
-         *     the one fact the save withheld.
-         *
-         *     **Whose crate it is, the save does not say.** ``mCrateType`` is the actor's only saved
-         *     property -- no owning player, no timestamp, no cause. In a single-player world every
-         *     death crate is the player's by construction; in a co-op world nothing here can say
-         *     whose, and a field that guessed would arrive indistinguishable from a reading.
-         *
-         *     **Contents are the crate's own**, joined from the inventory component it owns, resolved
-         *     to display names and sent WHOLE -- the join ``/api/storage`` makes, and like it no longer
-         *     truncated: the popup is an inventory grid measured to hold the fullest crate this machine
-         *     has ever cut, 38 kinds in 55 slots, so a cap justified as "what a popup can show" had
-         *     nothing left to justify it. ``more`` is 0 on every row and says so.
-         *
-         *     Tiny: 2 rows on the reference world against ``/api/storage``'s 151, sorted by kind so a
-         *     client's first row is the interesting one. Sent in one payload, ungrouped, the posture
-         *     every placement endpoint here takes.
+         *     Whose crate it is, the save does not say: ``mCrateType`` is the actor's only saved
+         *     property, so there is no owning player, no timestamp and no cause to report. Rows are
+         *     sorted by kind, and contents are the whole crate.
          */
         get: operations["crates_api_crates_get"];
         put?: never;
@@ -874,29 +712,17 @@ export interface paths {
          * @description One item descriptor's icon as a PNG, from the reader's own install.
          *
          *     **Absent is the ordinary state, so HEAD answers 204 rather than 404.** A page decides
-         *     whether to draw icons at all by probing one, and a clean load that logs a red 404 in
-         *     every devtools console trains the reader to ignore console errors on this page --
-         *     ``/api/mapimage`` settled this and this follows it. The GET keeps its 404 and names the
-         *     generator, because anything actually fetching bytes deserves the reason.
+         *     whether to draw icons at all by probing one, and a 404 on every clean load trains the
+         *     reader to ignore console errors. The GET keeps its 404 and names the generator.
          *
-         *     **Two different absences, told apart, because they need different sentences.** A
-         *     directory that was never generated is answered with the command that would fill it. A
-         *     directory that exists without this particular class is a different fact: 3 of the game's
-         *     750 item classes genuinely have no picture anywhere -- their docs entries name no icon
-         *     at all, and the manifest marks each one ``no-icon-in-docs`` -- so "no icon for
-         *     ``Desc_PillarTop_C``" is a complete answer rather than a missing file, and it says so.
+         *     **Two different absences, told apart.** A directory that was never generated is answered
+         *     with the command that would fill it. A directory that exists without this class is a
+         *     different fact: a few item classes have no picture anywhere in the game's own docs, so
+         *     "no icon for this one" is a complete answer rather than a missing file.
          *
-         *     **Cached hard, and stamped with the build**, on the tile route's terms exactly: the icon
-         *     for a class is immutable for a given cut, so a client asks with ``?v=`` the tag this
-         *     endpoint hands out in ``X-Icons-Build``, and a tagged URL changes whenever the directory
-         *     is regenerated -- which is what earns ``immutable``. An UNTAGGED request revalidates
-         *     instead, which is the half that matters: caching those hard is how a regenerated
-         *     directory stayed invisible behind a year-old probe until somebody disabled the browser
-         *     cache by hand. The ETag makes a revalidation a 304 rather than 50 KB.
-         *
-         *     **The name is validated, never repaired.** ``desc`` is a descriptor class, so it is
-         *     ``[A-Za-z0-9_]`` and nothing else; anything else is refused before a path exists. There
-         *     is no traversal to defend against because there is no join for one to escape through.
+         *     **Cached hard, and stamped with the build.** An icon is immutable for a given cut, so a
+         *     client asks with ``?v=`` the tag handed out in ``X-Icons-Build``; an untagged request
+         *     revalidates instead, and the ETag makes that a 304 rather than the bytes.
          */
         get: operations["icon"];
         put?: never;
@@ -908,29 +734,17 @@ export interface paths {
          * @description One item descriptor's icon as a PNG, from the reader's own install.
          *
          *     **Absent is the ordinary state, so HEAD answers 204 rather than 404.** A page decides
-         *     whether to draw icons at all by probing one, and a clean load that logs a red 404 in
-         *     every devtools console trains the reader to ignore console errors on this page --
-         *     ``/api/mapimage`` settled this and this follows it. The GET keeps its 404 and names the
-         *     generator, because anything actually fetching bytes deserves the reason.
+         *     whether to draw icons at all by probing one, and a 404 on every clean load trains the
+         *     reader to ignore console errors. The GET keeps its 404 and names the generator.
          *
-         *     **Two different absences, told apart, because they need different sentences.** A
-         *     directory that was never generated is answered with the command that would fill it. A
-         *     directory that exists without this particular class is a different fact: 3 of the game's
-         *     750 item classes genuinely have no picture anywhere -- their docs entries name no icon
-         *     at all, and the manifest marks each one ``no-icon-in-docs`` -- so "no icon for
-         *     ``Desc_PillarTop_C``" is a complete answer rather than a missing file, and it says so.
+         *     **Two different absences, told apart.** A directory that was never generated is answered
+         *     with the command that would fill it. A directory that exists without this class is a
+         *     different fact: a few item classes have no picture anywhere in the game's own docs, so
+         *     "no icon for this one" is a complete answer rather than a missing file.
          *
-         *     **Cached hard, and stamped with the build**, on the tile route's terms exactly: the icon
-         *     for a class is immutable for a given cut, so a client asks with ``?v=`` the tag this
-         *     endpoint hands out in ``X-Icons-Build``, and a tagged URL changes whenever the directory
-         *     is regenerated -- which is what earns ``immutable``. An UNTAGGED request revalidates
-         *     instead, which is the half that matters: caching those hard is how a regenerated
-         *     directory stayed invisible behind a year-old probe until somebody disabled the browser
-         *     cache by hand. The ETag makes a revalidation a 304 rather than 50 KB.
-         *
-         *     **The name is validated, never repaired.** ``desc`` is a descriptor class, so it is
-         *     ``[A-Za-z0-9_]`` and nothing else; anything else is refused before a path exists. There
-         *     is no traversal to defend against because there is no join for one to escape through.
+         *     **Cached hard, and stamped with the build.** An icon is immutable for a given cut, so a
+         *     client asks with ``?v=`` the tag handed out in ``X-Icons-Build``; an untagged request
+         *     revalidates instead, and the ETag makes that a 304 rather than the bytes.
          */
         head: operations["icon"];
         patch?: never;
@@ -944,13 +758,11 @@ export interface components {
          * AttachmentRow
          * @description A splitter or a merger: a piece of the belt network, drawn by the belt layer.
          *
-         *     ``cls`` and ``name`` are NOT nullable, unlike the belt row above it, and the module
-         *     docstring says why: an attachment is an actor record and its class is written out.
-         *
-         *     ``x_m``/``y_m``/``z_m`` ARE nullable -- an actor whose transform did not decode has no
-         *     ``pos`` and ``_xyz`` answers with a triple of nulls. ``yaw`` is null where the
-         *     projection predates schema 12. ``w_m``/``l_m`` are null on all four of these classes
-         *     today, because the dump carries no clearance for any of them.
+         *     ``cls`` and ``name`` are NOT nullable, unlike the belt row above: an attachment is an
+         *     actor record. The coordinates ARE, because an actor whose transform did not decode has
+         *     no ``pos``, and ``yaw`` is null where the projection predates schema 12.
+         *     ``w_m``/``l_m`` are the dump's own soft clearance box, 4 x 4 m on all four of these
+         *     classes and null for a class the dump has no entry for.
          */
         AttachmentRow: {
             /** Instance Leaf */
@@ -976,19 +788,13 @@ export interface components {
          * BeltRow
          * @description One conveyor piece, as the polyline it was actually built along.
          *
-         *     ``chain`` first and then the four fields ``_belt_class`` resolves, because the handler
-         *     writes ``{"chain": ..., **resolved[...], "points_m": ..., "curve_m": ...}`` and
-         *     declaration order is wire order. ``BeltClass`` is spelled as its own TypedDict for the
-         *     same reason the helper is its own function -- it is resolved once per CLASS and shared
-         *     by every piece of it -- but its fields are restated here rather than inherited, because
-         *     inheritance would put them at the front and the wire has them in the middle.
+         *     ``BeltClass``'s four fields are restated here rather than inherited, because inheritance
+         *     would put them at the front and the handler spreads them into the MIDDLE.
          *
-         *     ``cls`` and ``name`` are nullable: this is the interned table, and see the module
-         *     docstring. ``lift`` is nullable and the third answer is not a false one -- it is read
-         *     off the docs dump's own native class and a class the dump has no entry for gets
-         *     ``null``, because "not a lift" would be a guess and the map draws a lift and a belt as
-         *     different things. ``items_per_min`` is a float (``Building.items_per_min`` is
-         *     ``float``), ``null`` where the dump is silent.
+         *     ``cls`` and ``name`` are nullable on the interned-table terms the module docstring gives.
+         *     ``lift`` is nullable and the third answer is not a false one: a class the dump has no
+         *     entry for gets ``null``, because "not a lift" would be a guess and the map draws a lift
+         *     and a belt as different things. ``items_per_min`` is ``null`` where the dump is silent.
          */
         BeltRow: {
             /** Chain */
@@ -1041,20 +847,13 @@ export interface components {
          * CollectibleRow
          * @description One map placement, and what this save says about it.
          *
-         *     The three coordinates are NOT nullable, and this is the one field group here that had to
-         *     be read back rather than copied: ``_xyz`` can answer three nulls, but its argument is
-         *     ``removed.placements``' own ``(row["x"], row["y"], row["z"])`` off the generated
-         *     placement table, where a row without all three does not exist. The same shape of claim
-         *     ``/api/nodes`` and ``/api/structures`` already make about their triples.
+         *     The three coordinates are not nullable: they come off the generated placement table,
+         *     where a row without all three does not exist.
          *
          *     ``observed`` is the placement table's scan of every save on disk rather than of the
-         *     loaded one, and it is null for two different reasons that mean the same thing here: a
-         *     row this save has COLLECTED gets no observed state at all, and a state this build does
-         *     not know is answered ``None`` rather than with a nearest guess.
-         *
-         *     ``distance_m`` is populated only by ``mode=nearest``, which is the one mode that
-         *     resolves an origin -- so it is null on every row of every other mode, and null is the
-         *     honest "not measured from anywhere" rather than a zero.
+         *     loaded one, and it is null both for a row this save has collected and for a state this
+         *     build does not know. ``distance_m`` is populated only by ``mode=nearest``, the one mode
+         *     that resolves an origin; elsewhere it is null rather than zero.
          */
         CollectibleRow: {
             /** Category */
@@ -1076,25 +875,17 @@ export interface components {
         };
         /**
          * CollectiblesResponse
-         * @description The view ``collect_view`` decided, in emission order.
+         * @description The view ``collect_view`` decided.
          *
-         *     ``mode`` is a CLOSED union and ``kind`` on ``/api/crates`` deliberately is not, which is
-         *     the same distinction read from two sides. This one is closed because the guard that
-         *     fills it is next door and exhaustive: ``collect_view`` refuses anything outside these
-         *     four before a view exists at all, so a fifth mode cannot reach the wire without
-         *     ``service.py`` changing -- and then it should be loud here. A crate's ``kind`` comes
-         *     from the PROJECTION, which is versioned and read from disk, so a fourth value must be
-         *     served whole rather than 500ed on.
+         *     ``mode`` is a closed union because ``collect_view`` refuses anything outside these four
+         *     before a view exists at all, so a fifth mode cannot reach the wire without the domain
+         *     service changing -- and then it should be loud here.
          *
-         *     ``rows`` is a list and never null. The view's own ``rows`` is ``None`` for
-         *     ``mode=census``, which counts off the removed list instead of listing anything, and the
-         *     handler spells that as the empty list it has always sent.
-         *
-         *     ``counts`` is an open map on purpose: its keys are observed STATES -- ``standing``,
-         *     ``never_streamed``, ``gone_in_a_later_save``, ``collected`` -- and a save whose rows are
-         *     all in one of them sends a one-key object. Declaring the four would make a missing key
-         *     look like a schema, when it is a tally. ``where`` is ``str`` and never null: it is
-         *     ``""`` for every mode that measures no distance, which is the same "" the view defaults.
+         *     ``rows`` is a list and never null: the view answers ``None`` for ``mode=census``, which
+         *     counts instead of listing, and the handler sends the empty list. ``counts`` is an open
+         *     map because its keys are observed states and a save whose rows are all in one of them
+         *     sends a one-key object -- a tally, not a schema. ``where`` is ``""`` for every mode that
+         *     measures no distance.
          */
         CollectiblesResponse: {
             /**
@@ -1120,17 +911,6 @@ export interface components {
         /**
          * CrateItem
          * @description One kind of thing in a crate, resolved to a display name by the server.
-         *
-         *     The same three fields as ``StoredItem`` in routers/storage.py, and deliberately NOT the
-         *     same type. Sharing it would mean moving it to ``serial.py`` -- a router may not import
-         *     another router, and rightly -- which would put a row shape into the module that holds
-         *     the unit conversions, on the strength of a coincidence: these two are alike because both
-         *     are a stack, and they are filled by two different expressions in two files. ``Region``
-         *     is in ``serial.py`` because ONE function builds it for two routers, which is the case
-         *     this is not.
-         *
-         *     ``count`` is an ``int``: a stack amount is a number of items, and declaring it ``float``
-         *     would validate 15 into 15.0 and rewrite every row.
          */
         CrateItem: {
             /** Cls */
@@ -1144,27 +924,10 @@ export interface components {
          * CrateRow
          * @description One crate: what kind it is, where it is, and what is inside it.
          *
-         *     ``cls`` is not nullable and the coordinates are, which is the actor-record line
-         *     routers/placements.py draws: a crate is an ordinary actor written out with its class, so
-         *     the class is there; its TRANSFORM is what can fail to decode, and ``_xyz`` answers three
-         *     nulls when it did. A container next door is declared on exactly these terms.
-         *
-         *     ``kind`` is a plain ``str`` and NOT a ``Literal``, which is the opposite call from
-         *     ``mode`` on ``/api/collectibles`` and for a stated reason: this value arrives from the
-         *     PROJECTION, which is versioned and read off disk, and ``_crate_row`` uses ``.get`` on
-         *     ``CRATE_KIND_TEXT`` precisely so that a projection cut by a later extractor that learned
-         *     a fourth ``EFGCrateType`` is still served -- with the word it used and no gloss. A closed
-         *     union here would turn that into a 500 on a key this build has not heard of.
-         *     ``kind_text`` is the null that says so.
-         *
-         *     ``slots`` is ``int | None`` on ``StorageSolid``'s terms: it is the inventory component's
-         *     own slot count forwarded whole, and a projection that wrote none sends null rather than
-         *     0. ``more``, ``item_kinds`` and ``total`` are counts and are ints. ``more`` is ALWAYS 0
-         *     from this server: the twelve-kind cap it once counted the remainder of is gone -- the
-         *     popup renders an inventory grid measured to hold the fullest crate ever seen on this
-         *     machine, 38 kinds, without overflow -- and the field stays because it is the row's own
-         *     statement that nothing was left off, and because the client's "+N more" tile keys on it
-         *     and must keep working against any server that still truncates.
+         *     ``kind`` is a plain ``str`` and not a ``Literal``. The value comes from the projection,
+         *     which is versioned and read off disk, so a projection cut by a later extractor that
+         *     learned a fourth ``EFGCrateType`` is still served -- with the word it used, and
+         *     ``kind_text`` null. A closed union would make that a 500 instead.
          */
         CrateRow: {
             /** Instance Leaf */
@@ -1196,12 +959,10 @@ export interface components {
         };
         /**
          * CratesResponse
-         * @description The list and the three numbers a header wants, in emission order.
+         * @description The list and the three numbers a header wants.
          *
-         *     ``deaths`` is the one a player cares about and is not a length of anything: it is how
-         *     many of these rows are somebody's death, which on a world of crates that all predate
-         *     ``mCrateType`` is 0 against a non-zero ``count`` -- the same "there is nothing to say"
-         *     against "there is nothing here" pair ``/api/power``'s ``edge_count`` makes.
+         *     ``deaths`` is not a length of anything: a world whose crates all predate ``mCrateType``
+         *     reports 0 deaths against a non-zero ``count``.
          */
         CratesResponse: {
             /** Crates */
@@ -1217,20 +978,12 @@ export interface components {
          * Elevation
          * @description One probe as JSON. The nullables here are the point of the endpoint, not slack in it.
          *
-         *     Named for the payload rather than for ``spatial_elevation.Elevation``, which is the
-         *     domain object this is built FROM: that one holds populations, this one holds the four
-         *     labelled answers plus the reason for every number it declines to give. See
-         *     ``_elevation_json`` below for what each field means and which of the two causes each
-         *     note names.
+         *     Named for the payload rather than for ``spatial_elevation.Elevation``, the domain object
+         *     this is built FROM: that one holds populations, this one holds the four labelled answers
+         *     plus the reason for every number it declines to give -- see ``_elevation_json``.
          *
-         *     **Declaration order is wire order**, so these are in the order ``_elevation_json``
-         *     emits; see routers/floors.py for the rule at length. **A response_model FILTERS**, which
-         *     is why ``counts`` is here even though nothing on the map page reads it -- leaving it out
-         *     would delete it from the wire rather than merely from the types.
-         *
-         *     ``radius_m``, ``ground_count`` and ``built_count`` are the three that cannot be null:
-         *     the radius is a module constant and the two counts are lengths of lists. Everything
-         *     else goes through ``_round``, which is ``None`` in, ``None`` out.
+         *     ``radius_m``, ``ground_count`` and ``built_count`` are the three that cannot be null;
+         *     everything else goes through ``_round``, which is ``None`` in, ``None`` out.
          */
         Elevation: {
             /** Radius M */
@@ -1279,16 +1032,12 @@ export interface components {
          * FactoryRow
          * @description A factory the player named, and the extent of the machines it is anchored to.
          *
-         *     ``centroid_m`` is never null: ``Label.centroid`` is a ``tuple[float, float]`` with a
-         *     default, so a label always remembers where it was even when nothing it named is still
-         *     standing. ``bbox_m`` IS null in exactly that case -- ``geo.bbox`` refuses to invent a
-         *     zero box at the world centre for an empty set, and this layer does not undo the refusal.
-         *     The pair is the honest report: a demolished factory keeps its name and its remembered
-         *     middle, and loses only the ability to be flown to.
+         *     ``centroid_m`` is never null: a label remembers where it was even when nothing it named
+         *     is still standing. ``bbox_m`` is null in exactly that case, because ``geo.bbox`` refuses
+         *     to invent a zero box at the world centre for an empty set -- so a demolished factory
+         *     keeps its name and its remembered middle and loses only the ability to be flown to.
          *
-         *     ``notes`` is not nullable either. ``Label.notes`` is ``str = ""`` in the label store, so
-         *     an unannotated factory sends the empty string, which popup() drops for the same reason
-         *     it drops a null.
+         *     ``notes`` is not nullable: an unannotated factory sends the empty string.
          */
         FactoryRow: {
             /** Name */
@@ -1479,9 +1228,6 @@ export interface components {
         /**
          * FloorsResponse
          * @description What ``/api/floors`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-         *
-         *     Field order matters here and is the emission order below, because a response_model
-         *     serialises in declaration order: reordering these reorders the bytes on the wire.
          */
         FloorsResponse: {
             /** Note */
@@ -1555,9 +1301,6 @@ export interface components {
         /**
          * MachinesResponse
          * @description What ``/api/machines`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-         *
-         *     Three keys and no counts, which is the payload's own shape: the handler is a dict
-         *     comprehension over the three projection keys and the page reads ``data[kind]``.
          */
         MachinesResponse: {
             /** Machines */
@@ -1571,9 +1314,8 @@ export interface components {
          * NearestNode
          * @description One of the five nodes nearest a right-clicked point.
          *
-         *     The same coordinates ``/api/nodes`` sends and non-nullable for the same reason -- the
-         *     static table's own three floats; routers/nodes.py's ``NodeRow`` states the evidence.
-         *     ``occupant_cls`` is null wherever the occupancy join found nothing, and is null for ALL
+         *     The coordinates are the static node table's own three floats and are not nullable.
+         *     ``occupant_cls`` is null wherever the occupancy join found nothing, and null for ALL
          *     five whenever the save could not be read, which ``save_error`` says out loud.
          */
         NearestNode: {
@@ -1604,25 +1346,13 @@ export interface components {
          * NodeRow
          * @description One resource node, joined to whatever this save has built on it.
          *
-         *     **Declaration order is wire order.** A ``response_model`` serialises in declaration
-         *     order, so these are in the order the loop below emits and reordering one reorders the
-         *     bytes -- and, through ``npm run typegen``, the committed ``api-schema.d.ts``. The same
-         *     rule ``FloorsResponse`` is written under; routers/floors.py says it at length.
+         *     ``x_m``/``y_m``/``z_m`` are not nullable even though ``_xyz`` can answer nulls: that
+         *     helper also serves placements, whose transforms can fail to decode, and a node has no
+         *     transform to fail -- the triple comes from the static table, three floats per node.
          *
-         *     **A response_model FILTERS**, so a field left out here is a field deleted from the wire.
-         *     Every key the loop writes is below.
-         *
-         *     ``x_m``/``y_m``/``z_m`` are NOT nullable, and that is a claim about this endpoint rather
-         *     than about ``_xyz``. The triple comes from the static node table, whose generator writes
-         *     three floats per node -- 608 of 608 on the committed table, no nulls in any of the three
-         *     -- and the page's own ``xy()`` takes two plain numbers. ``_xyz`` returns ``float | None``
-         *     because it also serves placements, whose transforms can fail to decode; a node has no
-         *     transform to fail. A ``| null`` nobody can produce is as wrong as a missing one: it makes
-         *     the drawing code carry an untestable branch.
-         *
-         *     ``occupant_cls`` and ``occupant_name`` ARE nullable, and both for one reason: the
-         *     occupancy join resolves only the extractors whose target is a node key, so an unoccupied
-         *     node has neither. ``region`` is null for the handful of nodes the raster calls void.
+         *     ``occupant_cls`` and ``occupant_name`` are nullable because the occupancy join resolves
+         *     only the extractors whose target is a node key. ``region`` is null for the handful of
+         *     nodes the raster calls void.
          */
         NodeRow: {
             /** Id */
@@ -1654,9 +1384,8 @@ export interface components {
          * @description What ``/api/nodes`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
          *
          *     ``resource`` echoes the query parameter and is ``null`` when none was given. ``occupied``
-         *     is ``null`` rather than 0 whenever ``save_error`` is set, because "0 of them occupied"
-         *     would be a claim nobody measured -- the two fields are one statement and are typed as
-         *     one.
+         *     is ``null`` rather than 0 whenever ``save_error`` is set: "0 of them occupied" would be a
+         *     claim nobody measured, so the two fields are one statement and are typed as one.
          */
         NodesResponse: {
             /** Nodes */
@@ -1673,19 +1402,16 @@ export interface components {
          * @description One fluid pipe, as the polyline it was built along, and what it carries.
          *
          *     The class fields sit in the MIDDLE, after the network join and before the geometry,
-         *     because that is where ``**resolved[seg.class_index]`` lands in the handler -- the same
-         *     arrangement ``BeltRow`` has and for the same reason. ``cls``/``name`` nullable: interned
-         *     table, see the module docstring. ``flow_m3_min`` is a float
-         *     (``Building.flow_m3_min`` is ``float``), null where the dump is silent.
+         *     because that is where ``**resolved[seg.class_index]`` lands in the handler.
+         *     ``cls``/``name`` are nullable on the interned-table terms the module docstring gives, and
+         *     ``flow_m3_min`` is null where the dump is silent.
          *
-         *     ``row`` is an ``int`` and is this pipe's position in the RAW segments table -- the join
-         *     ``/api/floors`` keys a pipe run by, sent rather than counted so that a torn row leaves a
-         *     gap here instead of silently renumbering everything after it.
+         *     ``row`` is this pipe's position in the RAW segments table -- the join ``/api/floors``
+         *     keys a pipe run by, sent rather than counted so that a torn row leaves a gap here instead
+         *     of silently renumbering everything after it.
          *
-         *     ``network`` is an ``int`` and NOT a float: it is the game's own ``FGPipeNetwork`` id
-         *     forwarded whole, so declaring it ``float`` would validate 40 into 40.0 and rewrite the
-         *     bytes. Null for a pipe no network claims, which is also what a network entry that is not
-         *     a dict gives.
+         *     ``network`` is the game's own ``FGPipeNetwork`` id forwarded whole, not the index into
+         *     this payload's own list, and is null for a pipe no network claims.
          */
         PipeRow: {
             /** Row */
@@ -1750,28 +1476,18 @@ export interface components {
          * PlacementRow
          * @description A machine, an extractor or a generator: one row shape, three layers.
          *
-         *     ``cls`` and ``name`` are NOT nullable, which is a claim about these three keys of the
-         *     projection rather than about ``_record_row``. They are actor records and every one of
-         *     them was written past ``cls.startswith("Build_")``, so the id is there and
-         *     ``building_name`` resolves it or renders it -- see the module docstring for the line
-         *     this draws against ``/api/structures`` next door.
+         *     ``cls`` and ``name`` are not nullable: these are actor records, on the line the module
+         *     docstring draws.
          *
-         *     Everything a coordinate helper touches IS nullable, and each for its own reason.
-         *     ``x_m``/``y_m``/``z_m``: an actor whose transform did not decode has no ``pos`` and
-         *     ``_xyz`` answers with a triple of nulls -- the page's ``drawPlacements`` skips on
-         *     exactly that. ``yaw``: ``null`` means the projection predates schema 12 and the facing
-         *     was never recorded, which is a different claim from a facing of zero.
-         *
-         *     ``clock`` is ``float | None`` and the float is load-bearing: ``mCurrentPotential``
-         *     reaches the projection through ``round(float(...), 6)``, so 250% is ``2.5`` and 200% is
-         *     ``2.0`` -- an ``int`` here would reject the first and a machine with no overclock
-         *     property at all sends no ``clock`` key, which is the null. ``recipe_name`` is null on
-         *     the same terms ``pretty_class`` is: no recipe in, no words out.
+         *     ``x_m``/``y_m``/``z_m`` are nullable because an actor whose transform did not decode has
+         *     no ``pos``. ``yaw`` null means the projection predates schema 12 and the facing was never
+         *     recorded, which is a different claim from a facing of zero. ``clock`` is null for a
+         *     machine with no overclock property, and a float because 250% is ``2.5``.
+         *     ``recipe_name`` is null wherever there is no recipe.
          *
          *     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
-         *     -- for the 470 of 539 buildings the docs dump carries no ``mClearanceData`` for. All
-         *     three are floats where they are anything: ``Footprint`` is metres already and this
-         *     layer only rounds.
+         *     -- for the buildings whose ``mClearanceData`` yields no box (belts, pipes, rails, poles)
+         *     and for any class the docs dump does not carry.
          */
         PlacementRow: {
             /** Instance Leaf */
@@ -1807,10 +1523,9 @@ export interface components {
          * PlayerPosition
          * @description Where the player last stood, or three nulls -- never a missing branch.
          *
-         *     ``_xyz`` answers ``{x_m: None, y_m: None, z_m: None}`` for a save with no pawn (a
-         *     dedicated-server world has none) rather than dropping out, and the page branches on
-         *     ``x_m === null`` to decide whether there is a you-are-here to draw at all. So all three
-         *     are nullable and all three go null together.
+         *     A save with no pawn, as a dedicated-server world has, sends three nulls rather than
+         *     dropping the key: the page branches on ``x_m === null`` to decide whether there is a
+         *     you-are-here to draw at all, and all three go null together.
          */
         PlayerPosition: {
             /** X M */
@@ -1824,14 +1539,11 @@ export interface components {
          * PoleRow
          * @description A power pole, wall outlet or tower platform: where it stands and how busy it is.
          *
-         *     ``cls`` and ``name`` are nullable on the interned-table terms above; the three
-         *     coordinates are not, because the iterator drops a row that has none. ``yaw`` is null on
-         *     ``_yaw``'s own terms -- a projection older than schema 12 carries no rotation, which is a
-         *     different claim from "this pole is axis-aligned".
+         *     ``cls`` and ``name`` are nullable on the interned-table terms above; the coordinates are
+         *     not, because the iterator drops a row that has none.
          *
-         *     ``connections`` is an ``int`` and is never null: a pole nothing is wired to reports 0,
-         *     which is a measurement rather than a missing value -- it is in the geometry table and in
-         *     no edge, and 2 of this world's 701 are exactly that.
+         *     ``connections`` is never null: a pole nothing is wired to reports 0, which is a
+         *     measurement rather than a missing value -- it is in the geometry table and in no edge.
          */
         PoleRow: {
             /** Cls */
@@ -1851,12 +1563,12 @@ export interface components {
         };
         /**
          * PowerResponse
-         * @description The two lists and the three counts, in emission order.
+         * @description The two lists and the three counts.
          *
          *     ``edge_count`` is the one number here that is not the length of a list beside it: it is
          *     how many power EDGES the projection holds, and ``wire_count`` how many of those published
-         *     a span. They are equal on every save cut by a sidecar new enough to read the geometry, so
-         *     the pair is what tells "there is nothing to draw" from "there is nothing here".
+         *     a span. A save too old to carry the geometry answers a non-zero ``edge_count`` with a
+         *     ``wire_count`` of 0, which is what tells "nothing to draw" from "nothing here".
          */
         PowerResponse: {
             /** Poles */
@@ -1872,15 +1584,10 @@ export interface components {
         };
         /**
          * PowerSummary
-         * @description ``WorldState.power_report()`` verbatim, because a response_model FILTERS.
+         * @description ``WorldState.power_report()`` verbatim: all eleven fields, though the page reads three.
          *
-         *     The page reads three of these eleven fields. The other eight are declared anyway --
-         *     leaving one out would DELETE it from the wire, which is a change to the body and not a
-         *     change to its types. That is the whole hazard of this work item, and this is the shape
-         *     it takes on the endpoint with the biggest payload nobody looks at.
-         *
-         *     Declaration order is the order ``domain/power/report.py`` returns them in; that literal
-         *     is the wire order and this is a transcription of it.
+         *     Declaration order is the order ``domain/power/report.py`` returns them in, and this is a
+         *     transcription of that literal.
          *
          *     ``utilisation`` is never null: it is ``measured / draw``, and ``1.0`` when nothing draws
          *     at all -- a factory with nothing built is fully utilised in the only sense the ratio has.
@@ -1916,13 +1623,11 @@ export interface components {
          * @description ``WorldState.progression()`` verbatim, on the same terms as ``PowerSummary``.
          *
          *     ``game_phase`` and ``target_phase`` are ``null`` on the pre-1.0 saves that carry no
-         *     phase at all, which is why the header omits the segment rather than printing a hole;
-         *     ``highest_complete_tier`` is ``null`` when not one tier is finished, which is different
-         *     from tier 0 and there is no tier 0.
+         *     phase at all; ``highest_complete_tier`` is ``null`` when not one tier is finished, which
+         *     is different from tier 0 and there is no tier 0.
          *
-         *     ``milestones_by_tier`` is keyed by the tier NUMBER, which JSON spells as a string. Left
-         *     as open maps rather than nine fields: the tiers are the game's and restating them here
-         *     would be a second place to update when a game update adds one.
+         *     ``milestones_by_tier`` is keyed by the tier NUMBER, which JSON spells as a string, and is
+         *     left an open map: the tiers are the game's, and a game update adds one.
          */
         ProgressionSummary: {
             /** Game Phase */
@@ -1951,13 +1656,7 @@ export interface components {
          * @description A cluster the coherence pass found that no label speaks for.
          *
          *     ``index`` is the position in the FULL proposal list rather than in this filtered one, so
-         *     a ``proposal:N`` selector resolves to the same cluster here and in the MCP tools; it is
-         *     an ``int`` because it is a list position.
-         *
-         *     ``score`` and ``spread_m`` are floats and had to be checked rather than assumed: they are
-         *     ``round(Proposal.cohesion, 3)`` and ``round(Candidate.spread_m, 1)``, both declared
-         *     ``float = 0.0`` in domain/factories -- and a proposal whose weakest internal link is
-         *     exactly 0.0 sends ``0.0``, which is what declaring them ``int`` would have truncated.
+         *     a ``proposal:N`` selector resolves to the same cluster here and in the MCP tools.
          */
         ProposalRow: {
             /** Index */
@@ -1987,18 +1686,11 @@ export interface components {
          * Region
          * @description What ``_label_json`` sends: a region lookup that never arrives without its doubt.
          *
-         *     Declared HERE rather than in a router because two routers publish it -- ``/api/nodes``
-         *     hangs one off every node row and ``/api/inspect`` answers with one for the clicked
-         *     point -- and they must publish the SAME schema. Two identical TypedDicts of this name in
-         *     two modules would be two components with a mangled name apiece, which is the generated
-         *     ``api-schema.d.ts`` inheriting a copy-paste.
+         *     Declared here rather than in a router because ``_label_json`` builds it for two of them,
+         *     ``/api/nodes`` and ``/api/inspect``, which must publish one schema and not two.
          *
          *     ``name`` is not nullable and the field is not optional: the whole dict is ``None`` for
-         *     ocean and off-map, which is ``_label_json``'s own refusal and the one thing this layer
-         *     must not soften. ``accuracy_m`` is an ``int`` because ``Label.accuracy_m`` is -- declaring
-         *     it ``float`` would validate 256 into 256.0 and rewrite the bytes on the wire.
-         *
-         *     Declaration order is wire order; see the note on ``FloorsResponse`` in routers/floors.py.
+         *     ocean and off-map, which is ``_label_json``'s refusal and this layer must not soften it.
          */
         Region: {
             /** Name */
@@ -2017,14 +1709,11 @@ export interface components {
          * @description Where one region is: its mean, its box, and where to print its name.
          *
          *     Three fixed-length lists, spelled as tuples because that is how a schema says "exactly
-         *     two" -- JSON has no pair, and ``prefixItems`` is what survives ``npm run typegen`` as a
-         *     ``[number, number]`` the page can index without a length guard.
+         *     two" -- JSON has no pair, and ``prefixItems`` survives typegen as a ``[number, number]``
+         *     the page can index without a length guard.
          *
-         *     ``label_m`` is never null and is often DIFFERENT from ``centroid_m``, which is the whole
-         *     reason it exists: ``_label_anchor`` below returns the centroid when the centroid's own
-         *     cell carries the region's letter, the centre of the nearest cell that does when it does
-         *     not, and the centroid again when the search finds nothing -- three branches, two floats
-         *     each.
+         *     ``label_m`` is never null and is often different from ``centroid_m``, which is the whole
+         *     reason it exists; see ``_label_anchor``.
          */
         RegionExtent: {
             /** Centroid M */
@@ -2049,16 +1738,10 @@ export interface components {
          * RegionsResponse
          * @description What ``/api/regions`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
          *
-         *     **DECLARED BUT NOT ENFORCED, and deliberately.** This handler returns a ``JSONResponse``
-         *     -- it has a ``Cache-Control`` to set, and this payload is the same for every save -- and
-         *     FastAPI skips response_model validation for a handler that returns a ``Response``
-         *     itself. So nothing below filters the wire or rejects a bad row; the model exists purely
-         *     so ``/openapi.json`` describes the body and ``api-schema.d.ts`` can be generated from
-         *     it, which is the same reason every other endpoint declares one. Read it as documentation
-         *     that a generator consumes, not as a guard.
-         *
-         *     Declaration order is wire order for the rest of the surface; here it is the order the
-         *     payload is built in below, kept the same so the two never have to be read apart.
+         *     **Declared but not enforced.** The handler returns a ``JSONResponse`` of its own, to set
+         *     a ``Cache-Control``, and FastAPI skips response_model validation for a handler that
+         *     returns a ``Response`` -- so nothing here filters the wire or rejects a bad row. Read it
+         *     as the description ``/openapi.json`` publishes, not as a guard.
          */
         RegionsResponse: {
             /** Grid */
@@ -2082,20 +1765,15 @@ export interface components {
          * SaveRow
          * @description One save file, cut to the five keys the picker reads -- of the header's thirteen.
          *
-         *     The eight deleted, by the filter that this model is: ``save_identifier`` (already
-         *     spent server-side -- it is how ``list_worlds`` grouped the rows, and ``world_id``
+         *     The handler forwards the sidecar's save headers whole and this model is what trims
+         *     them, so the eight it does not declare are DELETED from every row on the wire:
+         *     ``save_identifier`` (already spent server-side, grouping the rows -- ``world_id``
          *     carries it), ``save_header_version``, ``save_version``, ``build_version``,
-         *     ``save_datetime_ticks``, ``is_modded``, ``is_creative`` and ``size``. Nothing on the
-         *     page ever read any of them; a client that wants a save's full header asks
-         *     ``/api/summary``, which forwards it whole.
+         *     ``save_datetime_ticks``, ``is_modded``, ``is_creative`` and ``size``. A client that
+         *     wants a save's full header asks ``/api/summary``, which forwards it whole.
          *
-         *     ``path`` is the pin (``?save=`` takes it back verbatim), ``filename`` is what the pin
-         *     is spelled as in the URL fragment, ``mtime_ns`` orders the dropdown, and
-         *     ``play_duration_s`` is an ``int`` because ``pioneersav``'s ``SaveInfo`` declares it
-         *     one -- ``float`` here would rewrite the bytes on the wire.
-         *
-         *     Declaration order is wire order (see routers/floors.py), and it is the header's own
-         *     order with the deleted keys closed up.
+         *     ``path`` is the pin -- ``?save=`` takes it back verbatim -- ``filename`` is how the pin
+         *     is spelled in the URL fragment, and ``mtime_ns`` orders the dropdown.
          */
         SaveRow: {
             /** Path */
@@ -2113,20 +1791,15 @@ export interface components {
          * StorageFluid
          * @description A fluid buffer: what is in it, how much it holds, and the fraction those two make.
          *
-         *     The same nine-field prefix as ``StorageSolid`` and then the fluid tail. Declared whole
-         *     rather than sharing a base with it, for the reason the module docstring gives: these two
-         *     orders are the two payloads, and a shared prefix that decided them elsewhere is exactly
-         *     the re-keying this split exists to prevent.
+         *     The same nine-field prefix as ``StorageSolid`` and then the fluid tail, declared whole
+         *     for the reason the module docstring gives.
          *
          *     ``fluid`` comes off the ``FGPipeNetwork`` that claims the buffer rather than off the
-         *     buffer itself -- the same join ``/api/pipes`` uses -- so it is null for a buffer no
-         *     network claims, and ``fluid_name`` is null with it.
-         *
-         *     ``stored_m3`` is null where the ``mFluidBox`` float would not read: the projection
-         *     writes the null itself. ``capacity_m3`` is the docs dump's ``mStorageCapacity`` and is
-         *     null for a class the dump does not carry, on the same terms as every footprint here.
-         *     ``fill`` is the two divided and REFUSES rather than dividing by a missing capacity or a
-         *     missing level -- which is why all three are nullable independently.
+         *     buffer itself, so it is null for a buffer no network claims and ``fluid_name`` with it.
+         *     ``stored_m3`` is null where the ``mFluidBox`` float would not read; ``capacity_m3`` is
+         *     the docs dump's ``mStorageCapacity`` and null for a class the dump does not carry; and
+         *     ``fill`` is the two divided, REFUSING rather than dividing by a missing one of them --
+         *     which is why all three are nullable independently.
          */
         StorageFluid: {
             /** Instance Leaf */
@@ -2167,8 +1840,8 @@ export interface components {
          * StorageResponse
          * @description What ``/api/storage`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
          *
-         *     ``filled`` and ``items_total`` are about the SOLID rows only -- a fluid buffer has no
-         *     item count to add -- and both are ints for the reason ``StoredItem.count`` is.
+         *     ``filled`` and ``items_total`` are about the SOLID rows only: a fluid buffer has no item
+         *     count to add.
          */
         StorageResponse: {
             /** Storage */
@@ -2184,31 +1857,22 @@ export interface components {
          * StorageSolid
          * @description A storage container: what is in it, and how much of the box that is.
          *
-         *     The nine fields above ``kind`` are the common prefix ``_storage_row`` builds first, in
-         *     its order; the five below are its solid tail, in ``update``'s order. Both halves are
-         *     spelled out here rather than inherited from a shared base, because inheritance is how
-         *     the field order gets decided somewhere other than where the emission is, and the whole
-         *     reason this type is split in two is that the order is the payload.
+         *     The nine fields above ``kind`` are the prefix ``_storage_row`` builds first; the five
+         *     below are its solid tail. Both halves are spelled out here rather than inherited from a
+         *     shared base with ``StorageFluid``, because inheritance decides field order somewhere
+         *     other than where the emission is.
          *
          *     ``cls`` and ``name`` are not nullable: a container is an ACTOR record and its class is
-         *     written out past ``cls.startswith("Build_")`` -- the same line routers/placements.py
-         *     draws between an actor and an interned table row. The coordinates ARE nullable, because
-         *     an actor whose transform did not decode has no ``pos`` and ``_xyz`` says so with three
-         *     nulls; the reference world has one such row in the fixture's torn-projection test.
+         *     written out. The coordinates ARE nullable, because an actor whose transform did not
+         *     decode has no ``pos``. ``w_m``/``l_m`` are null for the classes the docs dump carries no
+         *     clearance for -- the HUB's built-in container, the Blueprint Designer's, the Dimensional
+         *     Depot uploader -- because a size invented here would arrive looking measured.
          *
-         *     ``w_m``/``l_m`` are null for the four classes the docs dump carries no clearance for --
-         *     the HUB's built-in container, the Blueprint Designer's, the Dimensional Depot uploader
-         *     -- exactly as a machine's are, and for the same reason: a size invented here would
-         *     arrive indistinguishable from a measured one.
-         *
-         *     ``slots`` is ``int | None``: it is the inventory component's own slot count forwarded
-         *     whole, and a row the projection wrote no ``slots`` for sends null rather than 0.
-         *     ``total`` and ``item_kinds`` are counts of what the row holds and are ints. ``more`` is
-         *     ALWAYS 0 from this server -- the six-kind cap it once counted the remainder of is gone,
-         *     because the popup renders an inventory grid measured to hold far fuller crates than any
-         *     box here, and a container's kinds are bounded by its own 24 or 48 slots anyway. The field
-         *     stays because it is the row's statement that nothing was left off, and because the
-         *     client's "+N more" tile keys on it and must keep working against a server that truncates.
+         *     ``slots`` is the inventory component's own slot count forwarded whole, and null rather
+         *     than 0 for a row the projection wrote none for. ``more`` is always 0 from this server,
+         *     which sends every box whole; the field stays because it is the row's own statement that
+         *     nothing was left off, and because a client's "+N more" tile must keep working against a
+         *     server that truncates.
          */
         StorageSolid: {
             /** Instance Leaf */
@@ -2248,11 +1912,6 @@ export interface components {
         /**
          * StoredItem
          * @description One kind of thing in a container, resolved to a display name by the server.
-         *
-         *     ``count`` is an ``int``, which is what the projection interns: a stack amount is a
-         *     number of items. Declaring it ``float`` would validate 4,800 into 4800.0 and rewrite
-         *     the bytes on every row. (The ``isinstance`` guard in ``total`` below is protecting the
-         *     SUM from a torn table, not evidence that a real amount is ever fractional.)
          */
         StoredItem: {
             /** Cls */
@@ -2266,17 +1925,11 @@ export interface components {
          * StructureRow
          * @description One lightweight buildable: a foundation, a ramp, a wall, a catwalk.
          *
-         *     ``cls`` is nullable HERE and not on ``PlacementRow``, and the module docstring says why:
-         *     this is the interned table, a class is an index into a legend, and a row whose index
-         *     points past the end is a real piece at a real place with no name. ``saveio.rows`` types
-         *     it that way and this endpoint passes ``piece.cls`` straight through.
+         *     ``cls`` is nullable here and not on ``PlacementRow``: this is the interned table, on the
+         *     line the module docstring draws.
          *
-         *     The three coordinates are NOT nullable, and that is ``iter_structures``' own refusal
-         *     rather than this layer's: a row whose x, y or z will not read as a number is DROPPED
-         *     there, so a piece that reaches ``_m`` here has all three and ``_m`` of a float is a
-         *     float. This is the same shape of claim ``/api/nodes`` makes about its own triple --
-         *     ``_xyz`` is broad because it also serves placements, whose transforms can fail, and
-         *     neither of those two endpoints has a transform to fail.
+         *     The three coordinates are NOT nullable, which is ``iter_structures``' refusal rather than
+         *     this layer's -- a row whose x, y or z will not read as a number is dropped there.
          *
          *     ``yaw`` is the one that survives being unreadable: ``null`` for a schema-11 row with no
          *     fifth column at all, and for the schema-16 rotation that will not decode.
@@ -2296,9 +1949,6 @@ export interface components {
         /**
          * StructuresResponse
          * @description What ``/api/structures`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-         *
-         *     ``tile_m`` is a float because ``FOUNDATION_M`` is ``8.0``: declaring it ``int`` would
-         *     validate 8.0 into 8 and rewrite the bytes on the wire.
          */
         StructuresResponse: {
             /** Structures */
@@ -2312,18 +1962,11 @@ export interface components {
          * SummaryResponse
          * @description What ``/api/summary`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
          *
-         *     ``header`` is the save header the sidecar read, forwarded whole and typed as the open
-         *     map it is. Thirteen keys today and it is the SIDECAR's contract rather than this
-         *     layer's: spelling them out here would put the save format's own field list in the web
-         *     adapter, and a response_model would then delete any fourteenth the parser learns to
-         *     read. The page uses one of them, ``session_name``, and reaches into an open map to get
-         *     it -- which is the honest cost of not restating somebody else's schema.
-         *
-         *     ``power`` and ``progression`` are the opposite case and are spelled out in full: both
-         *     are built by a literal ``return {...}`` in the domain with a fixed key set, so
-         *     transcribing them costs nothing and filters nothing.
-         *
-         *     Declaration order is wire order; see routers/floors.py.
+         *     ``header`` is the save header the sidecar read, forwarded whole and typed as the open map
+         *     it is: the key set is the SIDECAR's contract, and spelling it out here would delete any
+         *     fourteenth key the parser learns to read. ``power`` and ``progression`` are the opposite
+         *     case and are spelled out in full, because each is a literal ``return {...}`` in the
+         *     domain with a fixed key set.
          */
         SummaryResponse: {
             /** Header */
@@ -2340,9 +1983,8 @@ export interface components {
          * UnsupportedFile
          * @description A file the scan could not read: which one, and the parser's own reason.
          *
-         *     The sidecar says five things about such a file; the page prints these two in its
-         *     "no readable saves" diagnosis and nothing reads the rest, so ``path``, ``mtime_ns``
-         *     and ``size`` are filtered off the wire on the same terms as the save rows' eight.
+         *     The sidecar says five things about such a file; ``path``, ``mtime_ns`` and ``size`` are
+         *     filtered off the wire on the same terms as the save rows' eight.
          */
         UnsupportedFile: {
             /** Filename */
@@ -2392,11 +2034,9 @@ export interface components {
          * WorldRow
          * @description One world: ``asdict(World)``, plus the newest save's headline figures hoisted on.
          *
-         *     The three hoisted fields are built by the handler, not forwarded: ``mtime`` is the
-         *     newest save's ``mtime_ns`` in SECONDS (a float, and the one place this surface speaks
-         *     epoch seconds -- the picker's "newest first" is the server's sort, this is what it
-         *     sorted by), and ``play_duration_s`` is the maximum across the world's saves, an
-         *     ``int`` for the same reason the row's is.
+         *     ``mtime`` is the newest save's ``mtime_ns`` in SECONDS, and is the one place this
+         *     surface speaks epoch seconds: it is what the server's "newest first" sorted by.
+         *     ``play_duration_s`` is the maximum across the world's saves.
          */
         WorldRow: {
             /** World Id */

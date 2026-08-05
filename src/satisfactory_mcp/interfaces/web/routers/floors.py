@@ -1,44 +1,14 @@
 """``/api/floors``: the floor decomposition of a world, one storey at a time.
 
-**The one endpoint on this surface that declares its response body, and the reason is that
-nothing has been written against it yet.** Every other endpoint on it is annotated ``->
-Any``, so FastAPI publishes no response schema for it and ``/openapi.json`` types the rest
-of them ``unknown``; the map page fills that gap by hand in ``api-types.ts``, from observed
-payloads, which that file says at the top and which is honest about what it is -- an
-observation, and an observation can be wrong in one direction.
-
-Converting the lot is a change to the server's whole public surface and belongs in its own
-commit. Converting THIS one is a different act: the floor view has no client at all yet, so
-there is no hand-written block to reconcile with and no drawing code whose guards are the
-evidence for a nullable. The types below are read off the serialisers three screens down
-rather than off a payload, ``npm run typegen`` turns them into the page's own types, and
-the client that gets written next is written against a declared contract instead of a
-further hand-maintained interface.
-
-TypedDict rather than a pydantic model, for the same reason the serialisers are functions
-returning dicts: this layer decides nothing and holds no state, and a class hierarchy here
-would invite behaviour into a module whose whole claim is that it has none.
-
 **Nullability is not decoration.** ``_m``, ``_xyz`` and ``_yaw`` all return ``float |
-None``, so every field they produce is declared that way even where the reference world
-has never produced a null -- a response_model is a validator as well as a schema, and a
-field declared ``float`` that arrives null is a 500 rather than a null.
+None``, so every field they produce is declared that way even where the reference world has
+never produced a null: a response_model is a validator as well as a schema, and a field
+declared ``float`` that arrives null is a 500 rather than a null.
 
-**Declaration order is wire order.** A response_model serialises in declaration order, so
-the TypedDicts below are in the order the serialisers emit and reordering one reorders the
-bytes on the wire -- and, through ``npm run typegen``, the committed ``api-schema.d.ts``.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
+``floors_view``, not ``floors``, for exactly that reason.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it. ``floors_view``, not ``floors``, for exactly that reason.
-
-The HANDLER's docstring is frozen for the same reason and one step further: FastAPI
-publishes it as the operation's ``description``, so editing a word of it re-writes the
-committed schema. It still says "the four endpoints above" -- ``/api/machines``,
-``/api/structures``, ``/api/belts``, ``/api/pipes``, which were above it in ``api.py`` and
-are now four files away. Left standing deliberately: correcting the phrase is a schema
-regeneration, and it belongs in the commit that regenerates rather than in the one that
-moved the code. This paragraph is not published anywhere.
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -163,11 +133,7 @@ class FloorRules(TypedDict):
 
 
 class FloorsResponse(TypedDict):
-    """What ``/api/floors`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-
-    Field order matters here and is the emission order below, because a response_model
-    serialises in declaration order: reordering these reorders the bytes on the wire.
-    """
+    """What ``/api/floors`` sends on a 200. An error is a 4xx with ``{"error": ...}``."""
 
     note: str | None
     selection: str | None
@@ -185,29 +151,19 @@ class FloorsResponse(TypedDict):
 def _band_json(band: ffloors.Band) -> FloorBand:
     """One floor: where its deck is, how big it is, and what stands on it -- by id.
 
-    ``machines`` and ``attachments`` are **instance ids, not geometry**, and that is the
-    whole shape of this payload. The page already holds every machine, splitter, belt and
-    pipe in the world from ``/api/machines``, ``/api/belts`` and ``/api/pipes``; what it
-    cannot work out for itself is which floor each one is on. Re-serialising the positions
-    here would ship the same 700 KB a second time so that a filter could be applied to it.
-
-    ``deck_rows`` is the same idea for the concrete, by the only name a lightweight
-    buildable has. The subsystem stores no instance ids at all -- that is what makes it
-    lightweight -- so a deck is listed by its pieces' POSITIONS in ``/api/structures``,
-    which every reader of that payload already has and which both sides derive from one
-    ``saveio.rows`` walk in one order. Without it a client can only re-derive a deck from
-    heights, and this world's 1 m and 2 m half-steps are exactly where that goes wrong.
+    ``machines`` and ``attachments`` are instance ids. ``deck_rows`` is the same idea for
+    the concrete, by the only name a lightweight buildable has: the subsystem stores no
+    instance ids at all, so a deck is listed by its pieces' POSITIONS in ``/api/structures``,
+    which both sides derive from one ``saveio.rows`` walk in one order. Without it a client
+    can only re-derive a deck from heights, and this world's 1 m and 2 m half-steps are
+    exactly where that goes wrong.
 
     ``deck_rows`` is the pieces at the band's own LEVEL and ``pieces`` is the size of the
-    cluster it was found in. Those are different questions and could differ where a cluster
-    is wider than ``BAND_EPS_CM``; on the reference world they agree on all 93 bands, which
-    is the same "the bands are exact" the epsilon sweep measured. Both are reported rather
-    than reconciled, and a client that draws a deck wants ``deck_rows``.
+    cluster it was found in. Both are reported rather than reconciled, and a client that
+    draws a deck wants ``deck_rows``.
 
-    ``span_m`` is how much the band's own level is spread, which is 0.0 for every band on
-    the reference world -- a band is a level, not a cluster. It is not the storey height:
-    the distance to the floor above is the next band's ``top_m``, and a client that wants a
-    ceiling can subtract two numbers it already has.
+    ``span_m`` is how much the band's own level is spread, and it is not the storey height:
+    the distance to the floor above is the next band's ``top_m``.
     """
     return {
         "ordinal": band.ordinal,
@@ -218,9 +174,8 @@ def _band_json(band: ffloors.Band) -> FloorBand:
         "pieces": band.pieces,
         "cells": band.cells,
         "area_m2": round(band.area_m2, 1),
-        # What keeps a six-cell mezzanine from being read in the same voice as a 218-cell
-        # deck. The share is against the platform's own largest band, so it is a statement
-        # about this platform rather than about the world.
+        # Against the platform's own largest band, so it is a statement about this platform
+        # rather than about the world.
         "share": round(band.share, 3),
         "minor": band.minor,
         "machines": band.machines,
@@ -303,31 +258,26 @@ def floors_view(
 
     Nothing in the save says "floor". ``domain.factories.floors`` recovers them from the
     geometry -- 4-connected platforms of 8 m foundation cells, then a per-platform cluster
-    of deck heights -- and every constant it uses was measured before it was written. This
-    endpoint parses the query, calls it once, and rounds.
+    of deck heights -- and this endpoint parses the query, calls it once, and rounds.
 
-    **It ships ids, not geometry, and that is the design.** A client already has every
-    machine, splitter, belt and pipe from the four endpoints above; the one thing it cannot
-    derive is which floor each of them is on. So a band lists ``machines`` and
-    ``attachments`` as instance leaves, and a run is keyed by its belt ``chain`` or its pipe
-    row position -- the joins those payloads already carry. Sending the coordinates again
-    would double 1.3 MB so that a filter could be applied to the copy.
+    **It ships ids, not geometry.** A client already has every machine, splitter, belt and
+    pipe from ``/api/machines``, ``/api/structures``, ``/api/belts`` and ``/api/pipes``; the
+    one thing it cannot derive is which floor each of them is on. So a band lists
+    ``machines`` and ``attachments`` as instance leaves, and a run is keyed by its belt
+    ``chain`` or its pipe row position -- the joins those payloads already carry.
 
     **The runs are grouped by what they do to a floor**, not listed flat:
 
-    * ``same-deck`` -- both ends over one band. 84.8% of belt runs, and the set a floor
-      filter draws.
+    * ``same-deck`` -- both ends over one band, and the set a floor filter draws.
     * ``connector`` -- the ends are on two different bands. This is how you leave a floor,
       and it is where the lifts and risers are.
-    * ``terrain`` -- neither end is over a deck. 44.5% of pipes, because plumbing hugs the
-      ground.
+    * ``terrain`` -- neither end is over a deck.
     * ``mixed`` -- one end on a deck, one on the ground.
 
-    **``placements`` is only what did NOT land on a floor.** Things that did are listed by
-    id inside their own band, so listing them here as well would be the same 1,252 rows
-    twice. What is here is the three honest ways of not being on a floor: ``exempt`` (a
-    miner stands on a resource node and a water extractor on water -- by native class, not
-    by a substring), ``terrain`` (measured against the heightfield) and ``off-deck``.
+    **``placements`` is only what did NOT land on a floor**, since what did is listed by id
+    inside its own band. The three ways of not being on one: ``exempt`` (a miner stands on a
+    resource node and a water extractor on water -- by native class, not by a substring),
+    ``terrain`` (measured against the heightfield) and ``off-deck``.
 
     **``terrain_measured`` says whether the ground was consulted at all.** The 1 m
     heightfield is derived from the reader's own game install and most machines have none,
@@ -335,10 +285,9 @@ def floors_view(
     read as "nothing is on the ground here".
 
     ``?factory=`` takes a label the player gave a factory, or any selector the MCP tools
-    take, and narrows the answer to the platforms that factory stands on. ``?platform=`` is
-    the index this endpoint hands out, which is stable across calls. Either narrows
-    placements and runs to that footprint -- including the ones underneath it, since "what
-    is under this deck" is part of the question.
+    take; ``?platform=`` takes the index this endpoint hands out, which is stable across
+    calls. Either narrows placements and runs to that footprint, including the ones
+    underneath it, since "what is under this deck" is part of the question.
 
     A save too old to carry ``FGLightweightBuildableSubsystem`` is a **200 with a
     ``note``**, not an error and not an empty list: the world has floors, this file cannot
@@ -376,12 +325,9 @@ def floors_view(
             for group in ffloors.GROUPS
             if group != "band"
         },
-        # A riser that lands both ends on one band cannot happen -- 0 of 89 on the reference
-        # world, 0 of 75 on the oldest save that can carry the data -- so one here is a
-        # symptom of the decomposition drifting, and it is reported rather than swallowed.
+        # A riser that lands both ends on one band cannot happen, so one here is a symptom
+        # of the decomposition drifting and is reported rather than swallowed.
         "violations": [_run_json(r) for r in report.violations],
-        # The thresholds the answer was produced with, in the units the answer is in, so a
-        # reader never has to go and look up what "clean" was measured against.
         "rules": {
             "tile_m": _m(ffloors.CELL_CM),
             "cluster_tol_m": _m(ffloors.CLUSTER_TOL_CM),

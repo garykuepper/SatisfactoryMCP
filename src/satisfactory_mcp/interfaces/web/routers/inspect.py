@@ -1,13 +1,12 @@
 """The point inspector: what is at a coordinate, and how well each part of it is known.
 
-Named for its route rather than for the stdlib module it collides with -- the collision is
-only a name in this package, since every ``import inspect`` in Python 3 is absolute and
-still finds the standard library. Renaming the handler to dodge it would churn the
-operation id, which costs more than the shadow does.
+Named for its route rather than for the stdlib module it shadows: the shadow is only a name
+in this package, since every ``import inspect`` in Python 3 is absolute and still finds the
+standard library.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
+
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -55,20 +54,12 @@ class InspectAt(TypedDict):
 class Elevation(TypedDict):
     """One probe as JSON. The nullables here are the point of the endpoint, not slack in it.
 
-    Named for the payload rather than for ``spatial_elevation.Elevation``, which is the
-    domain object this is built FROM: that one holds populations, this one holds the four
-    labelled answers plus the reason for every number it declines to give. See
-    ``_elevation_json`` below for what each field means and which of the two causes each
-    note names.
+    Named for the payload rather than for ``spatial_elevation.Elevation``, the domain object
+    this is built FROM: that one holds populations, this one holds the four labelled answers
+    plus the reason for every number it declines to give -- see ``_elevation_json``.
 
-    **Declaration order is wire order**, so these are in the order ``_elevation_json``
-    emits; see routers/floors.py for the rule at length. **A response_model FILTERS**, which
-    is why ``counts`` is here even though nothing on the map page reads it -- leaving it out
-    would delete it from the wire rather than merely from the types.
-
-    ``radius_m``, ``ground_count`` and ``built_count`` are the three that cannot be null:
-    the radius is a module constant and the two counts are lengths of lists. Everything
-    else goes through ``_round``, which is ``None`` in, ``None`` out.
+    ``radius_m``, ``ground_count`` and ``built_count`` are the three that cannot be null;
+    everything else goes through ``_round``, which is ``None`` in, ``None`` out.
     """
 
     radius_m: float
@@ -92,9 +83,8 @@ class Elevation(TypedDict):
 class NearestNode(TypedDict):
     """One of the five nodes nearest a right-clicked point.
 
-    The same coordinates ``/api/nodes`` sends and non-nullable for the same reason -- the
-    static table's own three floats; routers/nodes.py's ``NodeRow`` states the evidence.
-    ``occupant_cls`` is null wherever the occupancy join found nothing, and is null for ALL
+    The coordinates are the static node table's own three floats and are not nullable.
+    ``occupant_cls`` is null wherever the occupancy join found nothing, and null for ALL
     five whenever the save could not be read, which ``save_error`` says out loud.
     """
 
@@ -129,33 +119,26 @@ class InspectResponse(TypedDict):
 def _elevation_json(near: spatial_elevation.Elevation) -> Elevation:
     """A probe as JSON, with the reason for every number it declines to give.
 
-    Four sources, and each is labelled as what it is. ``terrain_m`` is one texel of the
-    extracted heightfield read at exactly the coordinate asked about; ground and built are
-    populations of things standing nearby. They stay apart all the way out to the page,
-    because that is the whole point of the module they come from: a node rests on terrain,
-    a foundation is wherever the player put it, a texel is the game's own ground, and one
-    median over the three would be a number describing none of them.
+    Four sources, each labelled as what it is. ``terrain_m`` is one texel of the extracted
+    heightfield read at exactly the coordinate asked about; ground and built are populations
+    of things standing nearby. They stay apart all the way out to the page: a node rests on
+    terrain, a foundation is wherever the player put it, and one median over the three would
+    be a number describing none of them. ``terrain_source`` says which layer of the field
+    answered and ``terrain_accuracy_m`` what the generator measured for that layer, because
+    a 0.2 m landscape texel and a 3.9 m fill texel are not the same claim.
 
-    ``terrain_source`` says which layer of the field answered and ``terrain_accuracy_m``
-    carries what the generator measured for that layer, so a reading is never quoted
-    without the uncertainty that belongs to it -- a 0.2 m landscape texel and a 3.9 m fill
-    texel are both "the terrain" and are not the same claim.
+    ``fill_m`` is ``null`` more often than not, so ``fill_note`` names which of its two
+    causes applied -- too few nearby nodes, or nothing built nearby. It is never rendered as
+    0: zero fill is a real and different measurement. ``terrain_note`` does the same job for
+    the field, whose two causes are no field on this machine and a coordinate the field has
+    no data for.
 
-    ``fill_m`` is ``null`` more often than not, and a null with no reason next to it reads
-    as a bug. It has exactly two causes -- fewer than ``MIN_GROUND_SAMPLES`` nodes nearby,
-    or nothing built nearby -- and ``fill_note`` names whichever one applied. Neither is
-    ever rendered as 0: zero fill is a real, different measurement. ``terrain_note`` does
-    the same job for the field, and it too has exactly two causes: no field on this
-    machine, or a coordinate the field has no data for.
-
-    Water is two numbers for the same reason, and the second one is null far more often
-    than the first. ``terrain_water_m`` is the surface's own height, which the channel
-    takes from a cooked water volume's bounding box and knows to centimetres wherever
-    there is water at all. ``terrain_water_depth_m`` is that minus the ground, which only
-    exists where the ground under the water was itself measured at 1 m -- over the fill
-    layer, which is most of the ocean, subtracting a 3.9 m-quantised raster from a sea
-    surface produces a number nobody measured. So it is ``null`` there, with
-    ``terrain_water_note`` saying why, and never 0.0.
+    ``terrain_water_m`` is the water surface's own height, which the channel takes from a
+    cooked water volume's bounding box and knows to centimetres wherever there is water at
+    all. ``terrain_water_depth_m`` is that minus the ground, and only exists where the ground
+    under the water was itself measured at 1 m -- over the fill layer, which is most of the
+    ocean, subtracting a 3.9 m-quantised raster from a sea surface produces a number nobody
+    measured, so it is ``null`` with ``terrain_water_note`` saying why, and never 0.0.
     """
     ground, built = near.ground, near.built
     # Derived from the samples actually present rather than from a hardcoded list, so a
@@ -252,28 +235,23 @@ def inspect(
 ) -> Any:
     """What is at a coordinate: the region, the measured ground, and the nearest nodes.
 
-    The three answers a site starts with, and none of them was on the map before. Every
-    one comes straight out of ``domain.spatial`` -- this endpoint converts metres to the
-    save's centimetres, calls three functions, and rounds.
+    Every answer comes straight out of ``domain.spatial``; this endpoint converts metres to
+    the save's centimetres, calls three functions, and rounds.
 
-    **A failed save is not a failed answer.** The node table is static, covers the whole
-    map and needs no ``.sav`` at all, so a world whose save will not load still gets its
-    region, its ground elevation and its nearest nodes; what it loses is the built
-    population and the occupancy join, and ``save_error`` says so out loud rather than
-    letting "no extractor here" quietly mean "no save here".
+    **A failed save is not a failed answer.** The node table is static, covers the whole map
+    and needs no ``.sav`` at all, so a world whose save will not load still gets its region,
+    its ground elevation and its nearest nodes; what it loses is the built population and
+    the occupancy join, and ``save_error`` says so rather than letting "no extractor here"
+    quietly mean "no save here".
 
-    **And it prefers the extracted terrain when there is any.** On a machine where
-    ``tools/gen_world_heightmap.py`` has been run, the 1 m field answers "how high is it
-    here" for unexplored ground with one number at the coordinate asked about, instead of a
-    population of things standing near it -- and it says which layer of itself answered, so
-    a 0.2 m landscape reading and a 3.9 m fill reading are told apart. Where there is no
-    field, or the field has no data there, this is exactly the endpoint it was before.
+    **It prefers the extracted terrain where there is any.** On a machine that has run
+    ``tools/gen_world_heightmap.py``, the 1 m field answers "how high is it here" with one
+    number at the coordinate asked about instead of a population of things standing near it.
+    Where there is no field, or the field has no data there, the population answers.
 
-    Not cached, deliberately and by measurement: ``sample_points`` over the 320-hour
-    reference world builds 9,525 samples in 2.0 ms and ``probe`` scans them in 0.8 ms, so
-    a per-(world, save) cache would add an invalidation bug to save ~3 ms on a click. The
-    field is cached, because it is 0.45 s of zlib and 170 MB either way -- but by the
-    loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
+    Not cached: the probe is a few milliseconds over the whole reference world, so a
+    per-(world, save) cache would buy an invalidation bug. The heightfield itself is cached
+    by its loader, keyed on its own sidecar's mtime, so this endpoint stays a caller.
     """
     try:
         table = spatial_nodes.load_nodes()

@@ -1,12 +1,9 @@
 """``satisfactory-mcp-web`` -- serve the JSON API and the map on localhost.
 
-Bound to 127.0.0.1 on purpose. The API answers with the contents of the player's save
-directory and applies no authentication whatsoever, so it is a local tool; making it
-reachable from the network has to be a deliberate act with an argument behind it, not
-the default that shipped.
-
-Uvicorn is handed the import string rather than the object so ``--reload`` semantics and
-the worker model work the way its documentation says they do.
+Bound to 127.0.0.1: the API serves the contents of the player's save directory and applies
+no authentication at all, so reaching it from the network must stay a deliberate act.
+Uvicorn is handed the import string rather than the object, which is what ``--reload`` and
+the worker model need.
 """
 
 from __future__ import annotations

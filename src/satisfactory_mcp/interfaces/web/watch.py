@@ -1,14 +1,12 @@
 """Notice that the game wrote a save, and tell every connected browser.
 
-Polling, not a filesystem watch. Satisfactory rewrites an autosave in place every few
-minutes and the write is not atomic, so an inotify-style event fires mid-write and a
-reader gets a torn file. A 3 s poll of the modification times costs one directory walk
-and cannot observe anything but the mtime the write already finished stamping.
-
-Fan-out is one ``asyncio.Queue`` per subscriber rather than a shared one, because a
-shared queue means the first browser to read an event is the only one that sees it. The
-queues are bounded and drop rather than block: a browser that has stopped reading is a
-browser that has gone away, and the newest save is the only one worth telling it about.
+Polling, not a filesystem watch: Satisfactory rewrites an autosave in place and the write is
+not atomic, so an inotify-style event fires mid-write and a reader gets a torn file, whereas
+a poll of the modification times can only observe the mtime the finished write stamped.
+Fan-out is one ``asyncio.Queue`` per subscriber, because a shared queue means the first
+browser to read an event is the only one that sees it. The queues are bounded and drop
+rather than block: a browser that has stopped reading has gone away, and these are edge
+triggers.
 """
 
 from __future__ import annotations
@@ -28,8 +26,8 @@ log = logging.getLogger(__name__)
 #: has alt-tabbed back to the browser.
 POLL_SECONDS = 3.0
 
-#: Per-subscriber backlog. One is enough: the events are edge triggers telling the page
-#: to refetch, and two pending triggers ask for the same refetch twice.
+#: Per-subscriber backlog. Deep enough not to matter: two pending triggers ask the page for
+#: the same refetch twice.
 QUEUE_MAX = 4
 
 
@@ -55,8 +53,8 @@ class SaveWatcher:
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
         self.latest: SaveEvent | None = None
-        #: Polls that raised in a row. Zeroed by any poll that gets through, so this is
-        #: "the watcher is broken now" and never "the watcher hiccuped once in March".
+        #: Polls that raised in a row, zeroed by any poll that gets through: "the watcher is
+        #: broken now", never "the watcher hiccuped once in March".
         self.consecutive_failures = 0
 
     # ---- subscription ---------------------------------------------------
@@ -74,8 +72,6 @@ class SaveWatcher:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                # See the module docstring: a full queue is a reader that stopped
-                # reading, and dropping is the correct answer for an edge trigger.
                 pass
 
     # ---- the poll -------------------------------------------------------
@@ -86,9 +82,8 @@ class SaveWatcher:
     def scan(self) -> SaveEvent | None:
         """The newest ``.sav`` under the save root, or ``None`` when there is none.
 
-        Blocking, and called through ``asyncio.to_thread``: the reference save tree is
-        a few hundred files across several account folders, which is nothing, but it is
-        still a disk walk and the event loop is also serving requests.
+        Blocking, so it is called through ``asyncio.to_thread``: a disk walk on the event
+        loop stalls the requests it is serving.
         """
         try:
             newest: tuple[float, str] | None = None
@@ -115,20 +110,15 @@ class SaveWatcher:
         return event
 
     async def _run(self) -> None:
-        # The first scan establishes the baseline. It publishes too, which is what
-        # gives a browser that connected before the first poll something to draw.
+        # The first scan establishes the baseline and publishes, which is what gives a
+        # browser that connected before the first poll something to draw.
         #
-        # The catch-all stays -- a save directory that vanished mid-poll is not a reason
-        # to stop watching, and the next scan will find it or keep finding nothing -- but
-        # it no longer swallows the OTHER thing that can raise here. `poll_once` also
-        # calls `_publish`, and a bug in the fan-out raises on every single poll: this
-        # loop then span for the lifetime of the server, three seconds at a time, telling
-        # nobody, while every connected browser sat on a page that never updated again.
-        # Silence and "no save has changed" looked exactly alike.
-        #
-        # So: the first failure is logged with its traceback, and every twentieth after
-        # that. Logged once rather than each time because the failure mode this exists for
-        # is the one that repeats forever, and a line every 3 s is a log nobody can read.
+        # The catch-all must stay: a save directory that vanished mid-poll is no reason to
+        # stop watching. It must also stay LOUD -- ``poll_once`` fans out as well as scans,
+        # and a bug in the fan-out raises on every poll, which without a log is a server
+        # that spins for its whole life while every browser sits on a page that never
+        # updates again. Throttled to the first failure and every twentieth after it,
+        # because a line every 3 s is a log nobody can read.
         while True:
             try:
                 await self.poll_once()

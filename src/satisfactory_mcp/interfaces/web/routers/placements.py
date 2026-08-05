@@ -1,27 +1,20 @@
 """``/api/machines`` and ``/api/structures``: everything the player physically placed.
 
-Two endpoints and one row builder, in one file because they answer one question in two
-resolutions. A machine is an ACTOR -- it has an instance id, a recipe, a clock -- and a
-foundation is a lightweight buildable with none of those, interned into a positional table
-because a record per piece would be megabytes. What they share is that both are things
-standing somewhere with a size and a facing, which is the whole of what a map draws.
+Two endpoints and one row builder, because they answer one question in two resolutions. A
+machine is an ACTOR -- it has an instance id, a recipe, a clock -- and a foundation is a
+lightweight buildable with none of those, interned into a positional table because a record
+per piece would be megabytes.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+**THE LINE THIS FILE DRAWS, which its neighbours cite:** an ACTOR record always carries a
+class, and an INTERNED table row may not. ``machines``/``extractors``/``generators`` are
+actor records, written behind ``cls.startswith("Build_")``, so ``cls`` is a non-empty string
+and ``building_name`` never falls through to ``None``. ``structures`` is the interned table,
+where a class is an INDEX into a legend and the row whose index points past the end is a real
+piece at a real place with no name.
 
-**Declaration order is wire order** for the TypedDicts below, and a ``response_model``
-FILTERS -- both rules are written out at length on ``FloorsResponse`` in routers/floors.py
-and are not restated per file.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
 
-THE ONE THING THIS FILE DECIDES that its neighbours do not: an ACTOR record always carries
-a class, and an INTERNED table row may not. ``machines``/``extractors``/``generators`` are
-actor records, written by ``saveio.extract`` behind ``if not cls.startswith("Build_")``, so
-``cls`` is a non-empty string on every one of them and ``building_name`` therefore never
-falls through to a ``None``. ``structures`` is the interned table, where a class is an INDEX
-into a legend and ``saveio.rows`` types ``Structure.cls`` as ``str | None`` for the row whose
-index points past the end -- a real piece at a real place with no name. So the two row shapes
-below differ on ``cls``/``name`` for a reason, and it is not an oversight.
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -47,29 +40,18 @@ router = APIRouter(prefix="/api")
 class PlacementRow(TypedDict):
     """A machine, an extractor or a generator: one row shape, three layers.
 
-    ``cls`` and ``name`` are NOT nullable, which is a claim about these three keys of the
-    projection rather than about ``_record_row``. They are actor records and every one of
-    them was written past ``cls.startswith("Build_")``, so the id is there and
-    ``building_name`` resolves it or renders it -- see the module docstring for the line
-    this draws against ``/api/structures`` next door.
+    ``cls`` and ``name`` are not nullable: these are actor records, on the line the module
+    docstring draws.
 
-    Everything a coordinate helper touches IS nullable, and each for its own reason.
-    ``x_m``/``y_m``/``z_m``: an actor whose transform did not decode has no ``pos`` and
-    ``_xyz`` answers with a triple of nulls -- the page's ``drawPlacements`` skips on
-    exactly that. ``yaw``: ``null`` means the projection predates schema 12 and the facing
-    was never recorded, which is a different claim from a facing of zero.
-
-    ``clock`` is ``float | None`` and the float is load-bearing: ``mCurrentPotential``
-    reaches the projection through ``round(float(...), 6)``, so 250% is ``2.5`` and 200% is
-    ``2.0`` -- an ``int`` here would reject the first and a machine with no overclock
-    property at all sends no ``clock`` key, which is the null. ``recipe_name`` is null on
-    the same terms ``pretty_class`` is: no recipe in, no words out.
+    ``x_m``/``y_m``/``z_m`` are nullable because an actor whose transform did not decode has
+    no ``pos``. ``yaw`` null means the projection predates schema 12 and the facing was never
+    recorded, which is a different claim from a facing of zero. ``clock`` is null for a
+    machine with no overclock property, and a float because 250% is ``2.5``.
+    ``recipe_name`` is null wherever there is no recipe.
 
     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
-    -- for the 54 of 539 buildings whose ``mClearanceData`` yields no box (belts, pipes,
-    rails, poles and the like), and for any class the dump does not carry. All
-    three are floats where they are anything: ``Footprint`` is metres already and this
-    layer only rounds.
+    -- for the buildings whose ``mClearanceData`` yields no box (belts, pipes, rails, poles)
+    and for any class the docs dump does not carry.
     """
 
     instance_leaf: str
@@ -89,11 +71,7 @@ class PlacementRow(TypedDict):
 
 
 class MachinesResponse(TypedDict):
-    """What ``/api/machines`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-
-    Three keys and no counts, which is the payload's own shape: the handler is a dict
-    comprehension over the three projection keys and the page reads ``data[kind]``.
-    """
+    """What ``/api/machines`` sends on a 200. An error is a 4xx with ``{"error": ...}``."""
 
     machines: list[PlacementRow]
     extractors: list[PlacementRow]
@@ -103,17 +81,11 @@ class MachinesResponse(TypedDict):
 class StructureRow(TypedDict):
     """One lightweight buildable: a foundation, a ramp, a wall, a catwalk.
 
-    ``cls`` is nullable HERE and not on ``PlacementRow``, and the module docstring says why:
-    this is the interned table, a class is an index into a legend, and a row whose index
-    points past the end is a real piece at a real place with no name. ``saveio.rows`` types
-    it that way and this endpoint passes ``piece.cls`` straight through.
+    ``cls`` is nullable here and not on ``PlacementRow``: this is the interned table, on the
+    line the module docstring draws.
 
-    The three coordinates are NOT nullable, and that is ``iter_structures``' own refusal
-    rather than this layer's: a row whose x, y or z will not read as a number is DROPPED
-    there, so a piece that reaches ``_m`` here has all three and ``_m`` of a float is a
-    float. This is the same shape of claim ``/api/nodes`` makes about its own triple --
-    ``_xyz`` is broad because it also serves placements, whose transforms can fail, and
-    neither of those two endpoints has a transform to fail.
+    The three coordinates are NOT nullable, which is ``iter_structures``' refusal rather than
+    this layer's -- a row whose x, y or z will not read as a number is dropped there.
 
     ``yaw`` is the one that survives being unreadable: ``null`` for a schema-11 row with no
     fifth column at all, and for the schema-16 rotation that will not decode.
@@ -127,11 +99,7 @@ class StructureRow(TypedDict):
 
 
 class StructuresResponse(TypedDict):
-    """What ``/api/structures`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
-
-    ``tile_m`` is a float because ``FOUNDATION_M`` is ``8.0``: declaring it ``int`` would
-    validate 8.0 into 8 and rewrite the bytes on the wire.
-    """
+    """What ``/api/structures`` sends on a 200. An error is a 4xx with ``{"error": ...}``."""
 
     structures: list[StructureRow]
     count: int
@@ -141,29 +109,15 @@ class StructuresResponse(TypedDict):
 def _record_row(st: WorldState, row: dict) -> PlacementRow:
     """One machine/extractor/generator, flattened for the map.
 
-    ``clock`` and ``paused`` are read with ``get``: the projection only carries them
-    for the records that have them, and an extractor at 250% and a constructor with no
-    overclock property must both come out of here without a KeyError.
+    ``w_m``/``l_m`` are the X and Y extent of the union of the building's clearance boxes,
+    which is what makes a Manufacturer draw bigger than a Constructor; ``h_m`` is the third
+    side, and it is here because a floor view needs it -- a Refinery is 15 m tall on a 12 m
+    storey, so it comes through the deck above and is in the way of anything built there.
+    Null rather than guessed for a class the docs dump does not describe: the client picks
+    the fallback, because a fallback drawn here would be indistinguishable from a measurement.
 
-    ``w_m``/``l_m`` are the building's own footprint -- the X and Y extent of the union
-    of its clearance boxes, which is what makes a Manufacturer draw bigger than a
-    Constructor instead of both being the same nominal square. 485 of 539 buildings
-    yield one (hard boxes preferred, a soft-only buildable's soft box counted since the
-    footprint union learned to read it); the rest -- and any class the dump does not
-    carry, the reference save's two biomass burner classes among them -- are **null** rather
-    than a guessed number: the client picks the fallback, because a fallback drawn here
-    would be indistinguishable from a measurement.
-
-    ``yaw`` is which way the building faces, and it is what turns ``w_m``/``l_m`` from an
-    axis-aligned box into the rectangle the player actually placed -- the two are one
-    answer and are read together or not at all.
-
-    ``h_m`` is the third side of the same box, and it is the one dimension a top-down map
-    cannot show: it is here because a FLOOR view needs it. A Refinery is 15 m tall standing
-    on a 12 m storey, so it comes three metres through the deck above and is physically in
-    the way of anything built there -- a fact about the floor above that can only be read
-    off the floor below. Null on exactly the same terms as ``w_m``/``l_m``, from the same
-    ``mClearanceData``, and a client that has no height draws no such claim.
+    ``yaw`` is what turns those extents from an axis-aligned box into the rectangle the
+    player actually placed, so the two are read together or not at all.
     """
     cls = row.get("cls") or ""
     building = st.game.buildings.get(cls)
@@ -173,13 +127,11 @@ def _record_row(st: WorldState, row: dict) -> PlacementRow:
     return {
         "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
         "cls": row.get("cls"),
-        # The docs name where the dump has one; readable words either way. The raw class
-        # stays in ``cls`` for anything that needs the exact id.
+        # Readable words either way; the raw class stays in ``cls`` for anything that needs
+        # the exact id, and the same holds for the recipe below.
         "name": st.game.building_name(cls),
         **_xyz(row.get("pos")),
         "recipe": recipe_id,
-        # Same rule for the recipe: the row a player most wants to read must not be the
-        # one row still speaking engine ids.
         "recipe_name": recipe.name if recipe else pretty_class(recipe_id),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),

@@ -1,8 +1,8 @@
-"""The resource node table, joined to what this save has built on it.
+"""``/api/nodes``: the resource node table, joined to what this save has built on it.
 
-WARNING: the function name is the operation_id -- rename it and the committed schema
-churns. FastAPI's default id is ``{function_name}_{path}_{method}`` and ``api-schema.d.ts``
-is generated off it.
+WARNING: the function name is the operation_id -- renaming it churns the committed schema.
+
+Wire rules: docs/web-wire.md.
 """
 
 from __future__ import annotations
@@ -26,25 +26,13 @@ router = APIRouter(prefix="/api")
 class NodeRow(TypedDict):
     """One resource node, joined to whatever this save has built on it.
 
-    **Declaration order is wire order.** A ``response_model`` serialises in declaration
-    order, so these are in the order the loop below emits and reordering one reorders the
-    bytes -- and, through ``npm run typegen``, the committed ``api-schema.d.ts``. The same
-    rule ``FloorsResponse`` is written under; routers/floors.py says it at length.
+    ``x_m``/``y_m``/``z_m`` are not nullable even though ``_xyz`` can answer nulls: that
+    helper also serves placements, whose transforms can fail to decode, and a node has no
+    transform to fail -- the triple comes from the static table, three floats per node.
 
-    **A response_model FILTERS**, so a field left out here is a field deleted from the wire.
-    Every key the loop writes is below.
-
-    ``x_m``/``y_m``/``z_m`` are NOT nullable, and that is a claim about this endpoint rather
-    than about ``_xyz``. The triple comes from the static node table, whose generator writes
-    three floats per node -- 608 of 608 on the committed table, no nulls in any of the three
-    -- and the page's own ``xy()`` takes two plain numbers. ``_xyz`` returns ``float | None``
-    because it also serves placements, whose transforms can fail to decode; a node has no
-    transform to fail. A ``| null`` nobody can produce is as wrong as a missing one: it makes
-    the drawing code carry an untestable branch.
-
-    ``occupant_cls`` and ``occupant_name`` ARE nullable, and both for one reason: the
-    occupancy join resolves only the extractors whose target is a node key, so an unoccupied
-    node has neither. ``region`` is null for the handful of nodes the raster calls void.
+    ``occupant_cls`` and ``occupant_name`` are nullable because the occupancy join resolves
+    only the extractors whose target is a node key. ``region`` is null for the handful of
+    nodes the raster calls void.
     """
 
     id: str
@@ -65,9 +53,8 @@ class NodesResponse(TypedDict):
     """What ``/api/nodes`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
 
     ``resource`` echoes the query parameter and is ``null`` when none was given. ``occupied``
-    is ``null`` rather than 0 whenever ``save_error`` is set, because "0 of them occupied"
-    would be a claim nobody measured -- the two fields are one statement and are typed as
-    one.
+    is ``null`` rather than 0 whenever ``save_error`` is set: "0 of them occupied" would be a
+    claim nobody measured, so the two fields are one statement and are typed as one.
     """
 
     nodes: list[NodeRow]
@@ -85,25 +72,17 @@ def nodes(
 ) -> Any:
     """The resource node table, joined to what this save has built on it.
 
-    The join is deliberately partial and says so: ``occupancy`` resolves only the
-    extractors whose target is a node key, so ``occupied`` false means "no extractor
-    known here", never "free". The map draws it as unknown-or-free and the popup
-    carries the node id, which doubles as a ``node:`` selector for the MCP tools.
+    The join is partial and says so: ``occupancy`` resolves only the extractors whose target
+    is a node key, so ``occupied`` false means "no extractor known here", never "free". The
+    popup carries the node id, which doubles as a ``node:`` selector for the MCP tools.
 
-    The region name is joined here rather than in the browser because the raster lives on
-    this side: sending 608 rows and then a 30x30 grid for the page to index into would put
-    the orientation trap (row 0 is the NORTH edge) in two places. ``label_for_node``, which is a
-    position lookup and nothing more: there used to be an override table of nodes someone
-    had checked against a wiki image by eye, reported as ``verified``, and the region
-    geometry is the game's own now so there is nothing for it to correct. ``null`` for a
-    node the raster calls void, which is the honest answer for the handful that sit on
-    islands off the grid.
+    The region name is joined on this side because the raster is: sending 608 rows and then
+    the grid for the page to index into would put the orientation trap (row 0 is the north
+    edge) in two places. It is ``null`` for a node the raster calls void.
 
-    **A failed save is not a failed answer** -- the same rule ``/api/inspect`` already
-    follows, because the two used to disagree: the node table is static and needs no
-    ``.sav``, so a world whose save will not load still gets its geography. What it loses
-    is the occupancy join, and ``save_error`` says so out loud (with ``occupied`` null at
-    the top, since "0 of them occupied" would be a claim no one measured).
+    **A failed save is not a failed answer.** The node table is static and needs no ``.sav``,
+    so a world whose save will not load still gets its geography; what it loses is the
+    occupancy join, and ``save_error`` says so with ``occupied`` null beside it.
     """
     try:
         table = spatial_nodes.load_nodes()

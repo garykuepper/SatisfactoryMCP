@@ -1,14 +1,10 @@
 """The FastAPI application, and the two loaders every endpoint reads the world through.
 
 ``create_app`` takes them as arguments so the test suite can run the whole HTTP surface
-against the committed fixture projection with no game install and no ``.sav`` on disk.
-That is the only reason the seam exists, and it is worth the two parameters: without it
-every endpoint test would be an integration test.
-
-The default game loader is duplicated from ``interfaces.mcp.app`` rather than imported.
-Two lines of ``lru_cache`` are cheaper than the coupling: the MCP surface and the web
-surface are siblings over one domain, and a web request that reached in through the MCP
-app would make the stdio server a dependency of the HTTP server for no gain.
+against the committed fixture projection with no game install and no ``.sav`` on disk. The
+default game loader is a copy of ``interfaces.mcp.app``'s rather than an import of it: the
+two surfaces are siblings over one domain, and importing would make the stdio server a
+dependency of the HTTP server.
 """
 
 from __future__ import annotations
@@ -34,12 +30,10 @@ __all__ = ["STATIC_DIR", "app", "create_app"]
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-#: What ``/`` says when the frontend has not been built. ``static/`` is generated output
-#: and deliberately not committed (see ``.gitignore``), so this is the normal state of a
-#: fresh clone, and it deserves an instruction rather than a bare 404. The path is spelled
-#: out for the human reading it; the server itself never touches ``frontend/`` -- see
-#: ``test_the_frontend_sources_are_not_reachable_from_python`` for the rule and its one
-#: allowance for this string.
+#: What ``/`` says when the frontend has not been built, which is the state of a fresh
+#: clone: ``static/`` is generated output and is not committed. This string is the only
+#: mention of ``frontend/`` Python is allowed -- see
+#: ``test_the_frontend_sources_are_not_reachable_from_python``.
 _NOT_BUILT = (
     "frontend not built: run `npm ci && npm run build` in "
     "src/satisfactory_mcp/interfaces/web/frontend/ and reload.\n"
@@ -62,8 +56,7 @@ def create_app(
 
     ``state_loader(save, world)`` returns the world a request asked for; ``game_loader()``
     returns the normalized docs. Both default to the real thing and are replaced wholesale
-    in tests -- there is no half-injected state, which is what keeps the endpoints from
-    growing a test-only branch.
+    in tests, never half-injected.
     """
     load_game = game_loader or _game
     load = state_loader or (lambda save=None, world=None: load_state(load_game(), save, world))
@@ -84,21 +77,16 @@ def create_app(
     instance.state.load_state = load
     instance.state.game = load_game
     instance.state.watcher = SaveWatcher()
-    # Order is load-bearing. ``/openapi.json`` emits ``paths`` in registration order and
-    # the committed ``api-schema.d.ts`` inherits it, so the JSON surface is mounted in one
-    # loop over one append-only tuple -- ``routers.ALL_ROUTERS``, which says why it may
-    # never be reordered. This loop is the whole API; there is no second include.
+    # The whole JSON surface, in one loop over one tuple: there is no second include, so
+    # ``ALL_ROUTERS`` alone decides registration order. See its declaration.
     for extracted in ALL_ROUTERS:
         instance.include_router(extracted)
 
-    # Mounted at the root and therefore LAST: a mount at "/" swallows every path that
-    # did not already match, so the API router has to be registered above it. The gate is
-    # on index.html, not just the directory: `static/` is untracked build output, so a
-    # fresh clone has neither, and a directory that exists but holds no page (a build
-    # interrupted, a stray file) is the same situation as far as a browser is concerned.
-    # In that state `/` answers with the build instruction instead -- 503, because the
-    # page is a capability this process does not currently have, not a path that does not
-    # exist -- and the JSON API above is entirely unaffected.
+    # Mounted at the root and therefore LAST: a mount at "/" swallows every path that did
+    # not already match, so the API routers have to be registered above it. The gate is on
+    # index.html rather than on the directory, because a directory left half-written by an
+    # interrupted build is the same situation as no directory at all; either way ``/``
+    # answers 503 -- the page is a capability this process has not got, not a missing path.
     if (STATIC_DIR / "index.html").is_file():
         instance.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     else:
@@ -110,6 +98,6 @@ def create_app(
     return instance
 
 
-#: The module-level instance ``uvicorn`` is pointed at. Built on import, which is what
-#: an ASGI server expects; nothing here reads a save until a request arrives.
+#: The instance ``uvicorn`` is pointed at. Built on import; nothing here reads a save until
+#: a request arrives.
 app = create_app()
