@@ -259,6 +259,29 @@ def test_the_tool_pages_the_offset_its_truncation_line_promises(game, monkeypatc
     assert "chain:2" in second and "chain:4" not in second
 
 
+def test_a_pipes_arrow_carries_the_evidence_behind_it(game, projection):
+    """``flow.py`` labels every inferred direction with the evidence for it and
+    ``/api/pipes`` has published that all along; the text side printed -> or -- and could
+    never say on what grounds. A belt carries none: its order is the pieces' own."""
+    from satisfactory_mcp.domain.world import flow as world_flow
+
+    runs = conduits.build_runs(projection, game, world_flow.pipe_flow(projection))
+    pipes = [r for r in runs if r.kind == "pipe"]
+    assert pipes
+    assert all(r.basis is None for r in runs if r.kind != "pipe")
+    assert {r.basis for r in pipes} <= {
+        world_flow.BASIS_PORT,
+        world_flow.BASIS_DEVICE,
+        world_flow.BASIS_NETWORK,
+        world_flow.BASIS_NONE,
+    }
+    # The two halves of one fact: an arrow exists exactly where the basis is not the refusal.
+    assert all(r.directed is (r.basis != world_flow.BASIS_NONE) for r in pipes)
+    # And with no flow passed at all, nothing is claimed rather than something assumed.
+    bare = conduits.build_runs(projection, game)
+    assert {r.basis for r in bare if r.kind == "pipe"} == {world_flow.BASIS_NONE}
+
+
 def test_a_run_ident_centres_on_that_runs_midpoint(game):
     """The tool printed 'connects: pipe:333 -> pipe:335' and told the reader to follow
     it, while taking no run id -- so following a 20-piece route meant 20 coordinate

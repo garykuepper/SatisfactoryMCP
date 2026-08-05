@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 
 from ...core.saveio import rows as saverows
 from ..spatial import geo
+from .flow import BASIS_NONE
 
 __all__ = ["JOINT_M", "PORT_REACH_M", "End", "Run", "build_runs", "near_counts"]
 
@@ -104,6 +105,10 @@ class Run:
     directed: bool
     rate: float | None  # slowest tier's items_per_min, or the pipe class's flow_m3_min
     fluid: str | None = None  # item id, pipes only
+    #: What ``directed`` was inferred FROM, pipes only -- ``domain.world.flow``'s basis, the
+    #: same evidence ``/api/pipes`` publishes. ``None`` on a belt, whose order is the
+    #: pieces' own and is not inferred at all.
+    basis: str | None = None
     #: The game's own FGPipeNetwork id, pipes only. The fact that matters for "is there
     #: a pipe from A to B": every piece of one network is one connected plumbing system,
     #: so two areas touching the same network ARE joined even when no single piece
@@ -432,6 +437,7 @@ def build_runs(projection: dict, game, pipe_flow: list[dict] | None = None) -> l
                 directed=direction in ("forward", "reverse"),
                 rate=(building.flow_m3_min or None) if building else None,
                 fluid=fluid,
+                basis=flow.get("basis", BASIS_NONE),
                 network=entry.get("id") if isinstance(entry, dict) else None,
                 via=via,
                 _lines=[seg.points],

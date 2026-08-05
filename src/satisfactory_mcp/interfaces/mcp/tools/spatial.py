@@ -375,6 +375,7 @@ def search_conduits(
                 (g.item_name(run.fluid) if run.fluid else "?")
                 if run.kind == "pipe"
                 else render.rate(run.rate, "/min"),
+                run.basis or "-",
                 connects,
             )
         )
@@ -388,6 +389,12 @@ def search_conduits(
             "tool takes straight back as near= to walk the route"
         ),
         (
+            "nothing in the save records which way a pipe flows, so 'basis' is the "
+            "evidence the arrow was INFERRED from: a typed machine port, a pump or valve, "
+            "or propagated from the rest of the network. '-' is a belt, whose order is "
+            "the pieces' own and is not inferred"
+        ),
+        (
             "length is the drawn line: a bend whose tangents the save records is "
             "integrated along its spline, so this is the number the map measures too"
         ),
@@ -397,7 +404,7 @@ def search_conduits(
     return render.envelope(
         summary,
         render.table(
-            ("id", "kind", "len", "a(m)", "b(m)", "z(m)", "carries", "connects"),
+            ("id", "kind", "len", "a(m)", "b(m)", "z(m)", "carries", "basis", "connects"),
             rows,
             total=len(hits),
             offset=start,
