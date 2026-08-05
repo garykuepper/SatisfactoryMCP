@@ -136,6 +136,21 @@ def test_measured_draw_weights_each_machine_by_its_own_window(game):
     assert view.measured_draw_mw < view.draw_mw
 
 
+def test_the_machines_aspect_says_where_each_machine_stands(game, monkeypatch):
+    """MachineRow has carried a 3-D position since it was written and no aspect printed
+    it, so the one table that names individual machines could not place any of them."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-pos", "session_name": "t"}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{ROD_A}", of="machines")
+    assert "x,y,z(m)" in out
+    assert "10,0,0" in out, "1000 cm east of the origin, in metres, with its elevation"
+
+
 def test_the_power_aspect_prints_both_figures(game, monkeypatch):
     from satisfactory_mcp.domain.world.state import WorldState
     from satisfactory_mcp.interfaces.mcp.tools import factories as ftools

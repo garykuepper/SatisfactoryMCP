@@ -510,6 +510,39 @@ def test_factory_map_lists_bare_platforms_and_summarises_pads_by_a_stated_thresh
     assert "-500,-500" not in out
 
 
+def test_an_occupied_slab_reports_the_shape_a_bare_one_does(game, monkeypatch):
+    """The half of the table you can already build against was the half with no
+    footprint: bare platforms got a bounding box, a z span and a storey count, and a
+    platform carrying machines got a mean and a width. Both are places on a map."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    deck = [[0, x * 800, 0, 0] for x in range(4)]
+    upper = [[0, x * 800, 0, 400] for x in range(4)]
+    projection = {
+        "header": {"save_identifier": "TEST-occupied-slab", "session_name": "t"},
+        "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [*deck, *upper]},
+        "machines": [
+            {
+                "instance": "L:P.Build_SmelterMk1_C_1",
+                "cls": "Build_SmelterMk1_C",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [800, 0, 100],
+            }
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+
+    out = ftools.factory_map(show="slabs")
+    assert "extent\tbbox(m)\tz(m)\tfloors\tlabels" in out
+    # One 8-tile pour over two decks: 24 m of box, 4 m of climb, two storeys.
+    assert "0,0..24,0\t0..4\t2" in out
+    assert "8 tiles" in out, "the census on the heading comes from Structures.summary()"
+
+
 def test_slab_selector_uses_the_index_factory_map_prints():
     """Slabs are numbered by tile count; groups() is ordered by machine count. Indexing
     into the wrong one silently returns a different platform -- it once re-anchored the

@@ -39,6 +39,21 @@ def _z_range(slab) -> str:
     return f"{lo:.0f}" if round(lo) == round(hi) else f"{lo:.0f}..{hi:.0f}"
 
 
+def _slab_shape(slab) -> tuple:
+    """Bounding box, elevation and storeys -- what a build plan needs past the centre.
+
+    The same three columns for a slab carrying machines as for a bare one. They were only
+    ever printed for bare platforms, so the ones you could actually build against were the
+    ones that reported a footprint.
+    """
+    return (
+        f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
+        f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}",
+        _z_range(slab),
+        slab.storeys,
+    )
+
+
 def _cand_row(c, store, labelled: set[str]) -> tuple:
     named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
     covered = sum(1 for m in c.machines if m in labelled)
@@ -156,18 +171,30 @@ def factory_map(
                     slab.tiles,
                     f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
                     f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
+                    *_slab_shape(slab),
                     ", ".join(names)[:34] or "-",
                     cand.name_hint()[:38],
                 )
             )
-        total = len(sx.groups())
+        census = sx.summary()
         chunks.append(
-            f"## foundation slabs ({len(sx.slabs)} platforms, "
-            f"{len(sx.slab_of)} machines on one)\n"
+            f"## foundation slabs ({census['slabs']} platforms, {census['tiles']} tiles, "
+            f"{census['machines_on_slabs']} machines on one)\n"
             + render.table(
-                ("slab", "machines", "tiles", "x,y(m)", "extent", "labels", "makes"),
+                (
+                    "slab",
+                    "machines",
+                    "tiles",
+                    "x,y(m)",
+                    "extent",
+                    "bbox(m)",
+                    "z(m)",
+                    "floors",
+                    "labels",
+                    "makes",
+                ),
                 rows,
-                total=total,
+                total=len(sx.groups()),
                 limit=n,
             )
         )
@@ -189,12 +216,7 @@ def factory_map(
                     slab.tiles,
                     f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
                     f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
-                    (
-                        f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
-                        f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}"
-                    ),
-                    _z_range(slab),
-                    slab.storeys,
+                    *_slab_shape(slab),
                 )
                 for slab in listed[:n]
             ]
@@ -214,18 +236,20 @@ def factory_map(
                     "by that threshold"
                 )
             chunks.append(f"{header}\n{body}")
-            notes.append(
-                "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
-                "about half a tile past the box quoted"
-            )
-            if any(slab.storeys > 1 for slab in listed[:n]):
-                notes.append(
-                    "floors is the z span counted in 4 m storeys, so a slab poured UP A "
-                    "HILLSIDE counts its climb as decks -- read it beside z(m) rather "
-                    "than as a tower"
-                )
         else:
             chunks.append("## bare platforms (no machines): none")
+
+        notes.append(
+            "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
+            "about half a tile past the box quoted"
+        )
+        shown = [sx.slabs[sx.slab_of[g[0]]] for g in sx.groups()[:n]] + listed[:n]
+        if any(slab.storeys > 1 for slab in shown):
+            notes.append(
+                "floors is the z span counted in 4 m storeys, so a slab poured UP A "
+                "HILLSIDE counts its climb as decks -- read it beside z(m) rather "
+                "than as a tower"
+            )
 
         ground = len(machines) - len(sx.slab_of)
         if ground:
@@ -376,6 +400,7 @@ def factory_query(
                     bname(m.building),
                     m.recipe or "-",
                     f"{m.clock:.0%}",
+                    f"{m.pos[0] / 100:.0f},{m.pos[1] / 100:.0f},{m.pos[2] / 100:.0f}",
                     "paused" if m.paused else "",
                 )
                 for m in sorted(view.machines, key=lambda x: (x.building, x.recipe))
@@ -383,7 +408,7 @@ def factory_query(
             chunks.append(
                 "## machines\n"
                 + render.table(
-                    ("instance", "building", "recipe", "clock", ""),
+                    ("instance", "building", "recipe", "clock", "x,y,z(m)", ""),
                     rows[:n],
                     total=len(rows),
                     limit=n,
