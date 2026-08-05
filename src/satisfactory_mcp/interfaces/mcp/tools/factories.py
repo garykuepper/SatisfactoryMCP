@@ -970,7 +970,9 @@ def trace_upstream(
                 name, machines = resolve_factory(st, what)
             except SelectorError as exc:
                 return f"! {exc}"
-            seeds = [m["instance"].rsplit(".", 1)[-1] for m in machines]
+            # resolve_factory hands back machine ids, already shortened. Indexing them as
+            # records raised TypeError for every label and every selector.
+            seeds = list(machines)
             subject = f"factory {name!r} ({len(seeds)} machines)"
     if not seeds:
         return f"! nothing matches {seed!r} -- give a machine instance, a building name, or a factory label"
