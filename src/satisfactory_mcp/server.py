@@ -52,6 +52,7 @@ from .interfaces.mcp.tools.gamedata import (
     search_recipes,
 )
 from .interfaces.mcp.tools.harddrives import advise_hard_drive_pick, list_pending_hard_drive_choices
+from .interfaces.mcp.tools.inventory import crates, stock, storage
 from .interfaces.mcp.tools.planning import (
     PLAN_DEFAULTS,
     _plan_kwargs,
@@ -104,6 +105,7 @@ __all__ = [
     "collected_from_world",
     "commission_plan",
     "compare_recipe_options",
+    "crates",
     "current_save",
     "describe_location",
     "design_factory",
@@ -148,6 +150,8 @@ __all__ = [
     "show_on_map",
     "site_plan",
     "somersloops",
+    "stock",
+    "storage",
     "trace_upstream",
     "unlocked_recipes",
     "whereami",
