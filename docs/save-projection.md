@@ -572,7 +572,8 @@ would be noise.
 `mam_research` exposes the whole tree: status (DONE / READY / short / BLOCKED), cost,
 what you are short of, prerequisites, and a `LOCKS <capability>` marker on the rows that
 gate a feature rather than merely adding a recipe. Costs are checked against spendable
-stock only — carried, crates and the Depot — never machine buffers, per § 6.
+stock only — carried, storage containers and the Depot — never machine buffers and never
+the crates on the ground, per § 6.
 
 ### 6.10 Pushing back on "not modelled"
 

@@ -295,8 +295,8 @@ def test_slugs_in_the_depot_count_as_craftable_not_free(game):
 
 
 def test_slugs_are_found_wherever_stock_looks(game):
-    """Carried, in a crate, or in the Depot -- all three are spendable, so all three
-    count."""
+    """Carried, in a storage container, or in the Depot -- all three are spendable, so
+    all three count."""
     for place in ("player", "storage"):
         budget = _budget(game, _proj(**{place: {"Desc_Crystal_mk3_C": 4}}))
         assert budget["craftable"] == 20, place

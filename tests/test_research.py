@@ -292,3 +292,113 @@ def test_search_filters_by_name(game):
     rows = [x for x in out.splitlines() if "\t" in x][1:]
     assert rows
     assert all("mplifier" in r for r in rows)
+
+
+def test_the_cost_note_names_the_buckets_the_check_actually_reads(game):
+    """It used to say costs were checked against crates, which is the one bucket schema 19
+    deliberately took OUT of spendable stock. A note that contradicts the arithmetic under
+    it is worse than no note: it invites the reader to count a death crate's contents as
+    money in hand."""
+    out = srv.mam_research()
+    note = next(x for x in out.splitlines() if x.startswith("! cost is checked"))
+    assert "carried, storage containers and the Dimensional Depot" in note
+    assert "neither do the crates on the ground" in note
+
+
+# ------------------------------------------------- which tree, and what is already running
+
+
+@pytest.fixture
+def constructed(game, projection, monkeypatch):
+    """A copy of the committed projection the caller may edit, wired into the tool.
+
+    The reference world has every MAM tree open and nothing under research, which is
+    exactly the state in which the two filters below cannot be observed -- so the states
+    they are about are built rather than waited for.
+    """
+
+    def build(**research) -> WorldState:
+        copy = deepcopy(projection)
+        copy.setdefault("research", {}).update(research)
+        st = WorldState(projection=copy, game=game)
+        monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, _st=st: _st)
+        return st
+
+    return build
+
+
+def _rows(out: str) -> list[list[str]]:
+    return [line.split("\t") for line in out.splitlines() if "\t" in line][1:]
+
+
+def test_every_mam_node_is_placed_in_a_tree(game, state):
+    """The register is a prefix table over class ids, because Docs.json ships no research
+    trees. A game patch that adds a MAM node under a new prefix must fail here: unplaced
+    nodes are silently exempt from the tree filter, which is the failure that reads as
+    'available' for research the player cannot start."""
+    mam = [cls for cls, s in game.schematics.items() if s.type == "EST_MAM"]
+    assert mam
+    unplaced = [cls for cls in mam if state.research.tree_of(cls) is None]
+    assert unplaced == []
+
+
+def test_the_saves_own_tree_list_holds_no_tree_this_register_cannot_name(state):
+    """The other direction, and the reason the hard-drive tree is absent from the register
+    rather than forgotten: it is the one unlocked tree whose nodes are EST_Alternate
+    schematics won from drives, which no MAM view lists."""
+    named = set(state.research.TREE_PREFIXES) | {"BPD_ResearchTree_HardDrive_C"}
+    assert state.research.unlocked_trees <= named
+
+
+def test_a_node_in_an_unopened_tree_is_not_called_ready(constructed, state):
+    """The P0 this closes: with the tree shut, the game offers no way to start the node,
+    and the tool said READY on the strength of the bill alone."""
+    open_trees = sorted(state.research.unlocked_trees)
+    shut = [t for t in open_trees if t != "BPD_ResearchTree_XMas_C"]
+    constructed(unlocked_trees=shut)
+    # status=todo, so the FICSMAS nodes this world already finished are out of it: a
+    # finished node is finished whatever its tree says now.
+    out = srv.mam_research(status="todo", search="FICSMAS", limit=25)
+    statuses = {row[0] for row in _rows(out)}
+    assert statuses == {"TREE SHUT"}, statuses
+    assert "TREE SHUT means" in out
+
+    # And with the tree open again, the same rows go back to being ordinary work.
+    constructed(unlocked_trees=open_trees)
+    reopened = {row[0] for row in _rows(srv.mam_research(status="todo", search="FICSMAS"))}
+    assert reopened and "TREE SHUT" not in reopened
+
+
+def test_a_shut_tree_is_never_offered_as_affordable(constructed, state):
+    """status=affordable answers 'what can I do right now', so a node behind a closed tree
+    belongs out of it however cheap it is."""
+    constructed(unlocked_trees=[])
+    out = srv.mam_research(status="affordable", limit=25)
+    assert _rows(out) == []
+
+
+def test_research_already_under_way_says_so_and_says_how_long(constructed, game):
+    """`ongoing` carries seconds remaining and nothing read it, so a node the player had
+    already paid for and started read as outstanding work to plan around."""
+    running = "Research_Sulfur_RocketFuel_C"
+    constructed(ongoing=[{"schematic": running, "seconds_left": 420.0}])
+    name = game.schematics[running].name
+    out = srv.mam_research(status="all", search=name)
+    (row,) = _rows(out)
+    assert row[0] == "RUNNING 420s"
+    assert "RUNNING is research already under way" in out
+    # Paid for and started: not something the player can go and do now.
+    assert name not in srv.mam_research(status="affordable", limit=25)
+
+
+def test_an_older_projection_says_it_cannot_judge_the_trees(game, projection, monkeypatch):
+    """Absent is not empty. A projection cut before the key existed cannot tell a shut tree
+    from an open one, and guessing either way would be an invented answer -- so it reports
+    every node as before and says why."""
+    copy = deepcopy(projection)
+    copy["research"].pop("unlocked_trees", None)
+    st = WorldState(projection=copy, game=game)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: st)
+    assert not st.research.knows_trees
+    assert not st.research.tree_locked("Research_XMas_1_C")
+    assert "predates the unlocked-tree list" in srv.mam_research()

@@ -29,9 +29,87 @@ class ResearchGates:
         "production_boost": "mIsBuildingProductionBoostUnlocked",
     }
 
+    #: MAM tree -> the class-id prefixes its nodes carry. The trees themselves are not in
+    #: Docs.json (the BPD_ResearchTree_* assets do not ship) and the save names only which
+    #: trees are open, so membership is read off the schematic's class id. Nine trees pair
+    #: 1:1 with a prefix of their own name; [UNVERIFIED] the four alien-organism prefixes
+    #: are grouped by elimination -- they are the MAM nodes left once the other nine trees
+    #: have theirs, and no other tree remains for them.
+    #: BPD_ResearchTree_HardDrive_C is deliberately absent: its nodes are EST_Alternate
+    #: schematics won from drives, not EST_MAM rows, and no MAM view lists them.
+    TREE_PREFIXES: ClassVar[dict[str, tuple[str, ...]]] = {
+        "BPD_ResearchTree_AlienOrganisms_C": (
+            "Research_ACarapace_",
+            "Research_AO_",
+            "Research_AOrganisms_",
+            "Research_AOrgans_",
+        ),
+        "BPD_ResearchTree_AlienTech_C": ("Research_Alien_",),
+        "BPD_ResearchTree_Caterium_C": ("Research_Caterium_",),
+        "BPD_ResearchTree_Mycelia_C": ("Research_Mycelia_",),
+        "BPD_ResearchTree_Nutrients_C": ("Research_Nutrients_",),
+        "BPD_ResearchTree_PowerSlugs_C": ("Research_PowerSlugs_",),
+        "BPD_ResearchTree_Quartz_C": ("Research_Quartz_",),
+        "BPD_ResearchTree_Sulfur_C": ("Research_Sulfur_",),
+        "BPD_ResearchTree_XMas_C": ("Research_XMas_",),
+    }
+
     @property
     def _unlock_flags(self) -> dict:
         return self.projection.get("unlock_flags", {}) or {}
+
+    @property
+    def _research(self) -> dict:
+        return self.projection.get("research", {}) or {}
+
+    @property
+    def knows_trees(self) -> bool:
+        """Whether the projection carries the unlocked-tree list at all.
+
+        False on a projection written before the key was extracted, where an empty list
+        and a world with no tree open look identical -- and nothing may be called locked
+        on that evidence.
+        """
+        return "unlocked_trees" in self._research
+
+    @property
+    def unlocked_trees(self) -> set[str]:
+        """The MAM trees the player has opened. Empty is a real answer when
+        ``knows_trees``."""
+        return set(self._research.get("unlocked_trees") or ())
+
+    @property
+    def ongoing(self) -> dict[str, float]:
+        """Schematic -> seconds of research left on it, as of the moment of the save.
+
+        A node in here has been paid for and is running; it is neither outstanding work
+        nor finished. The clock is stored, not a timestamp, so it does not tick down
+        while the game is closed.
+        """
+        out: dict[str, float] = {}
+        for row in self._research.get("ongoing") or ():
+            cls = row.get("schematic")
+            left = row.get("seconds_left")
+            if cls:
+                out[cls] = float(left) if isinstance(left, (int, float)) else 0.0
+        return out
+
+    def tree_of(self, schematic_id: str) -> str | None:
+        """The MAM tree a node lives in, or ``None`` for a class no prefix claims."""
+        for tree, prefixes in self.TREE_PREFIXES.items():
+            if any(schematic_id.startswith(p) for p in prefixes):
+                return tree
+        return None
+
+    def tree_locked(self, schematic_id: str) -> bool:
+        """Whether this node sits in a tree the player has not opened yet.
+
+        False whenever the answer is not known -- an old projection, or a class this
+        register does not place -- since an unplaceable node reported as locked is a
+        worse answer than one reported as available.
+        """
+        tree = self.tree_of(schematic_id)
+        return bool(tree) and self.knows_trees and tree not in self.unlocked_trees
 
     def has_capability(self, name: str) -> bool:
         """Whether a MAM-gated capability is researched.

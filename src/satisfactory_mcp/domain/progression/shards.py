@@ -38,8 +38,9 @@ class OverclockBudget:
         Committed shards are READ off each buildable's ``InventoryPotential`` component and
         never derived from its clock: a shard raises the maximum clock rather than setting
         it, so a building may hold more shards than its clock needs. ``free`` excludes
-        machine inventories (see ``stock``), because slotted shards live inside machines and
-        counting the raw machine total as shards on hand overstates the spendable pool.
+        machine inventories and the ground crates (see ``stock``), because slotted shards
+        live inside machines and counting the raw machine total as shards on hand
+        overstates the spendable pool.
         """
         from ...core.gamedata.constants import POTENTIAL_SHARD_SLOTS, shards_for_clock
 
@@ -51,12 +52,14 @@ class OverclockBudget:
         # Uncrafted slugs are latent shards and are counted separately: on the reference
         # save the Depot alone holds slugs worth 404 shards against 22 already crafted.
         # ``by_place`` splits where they physically are, since ``free`` pools carried,
-        # crates and Depot together and so cannot answer "is that in the Depot?".
+        # stored and Depot together and so cannot answer "is that in the Depot?".
         wanted = set(shard_items) | set(self.game.slug_yields())
         by_place: dict[str, dict[str, float]] = {}
         for place, source in (
             ("carried", self.inventory.sources.get("player", {})),
-            ("crates", self.inventory.sources.get("storage", {})),
+            #: The storage-container bucket, which is what ``stock`` spends. NOT the
+            #: ``crate`` bucket -- the crates on the ground are excluded from both.
+            ("storage", self.inventory.sources.get("storage", {})),
             ("depot", self.projection.get("depot", {})),
         ):
             held = {self.game.item_name(k): v for k, v in source.items() if k in wanted and v}
@@ -126,8 +129,8 @@ class OverclockBudget:
     def sloop_budget(self) -> dict:
         """Somersloops on hand and in machines.
 
-        Free ones come from ``stock`` -- carried, crates and the Dimensional Depot -- which
-        is exactly the set that can be spent. Committed ones are read from
+        Free ones come from ``stock`` -- carried, storage containers and the Dimensional
+        Depot -- which is exactly the set that can be spent. Committed ones are read from
         ``InventoryPotential``, the same component that holds Power Shards, the two being
         distinguished only by item class; the count is the slot contents and never derived
         from ``mPendingProductionBoost``, since inverting that multiplier needs the
@@ -139,7 +142,7 @@ class OverclockBudget:
         by_place: dict[str, float] = {}
         for place, source in (
             ("carried", self.inventory.sources.get("player", {})),
-            ("crates", self.inventory.sources.get("storage", {})),
+            ("storage", self.inventory.sources.get("storage", {})),
             ("depot", self.projection.get("depot", {})),
         ):
             held = float(source.get(self.SLOOP_ITEM, 0.0))

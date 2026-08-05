@@ -140,8 +140,8 @@ def power_shards(
             f"{render.num(s['held'])} {s['name']} x{s['each']:g}" for s in budget["slugs"]
         )
         notes.append(
-            f"craftable = uncrafted slugs carried, in crates or in the Dimensional "
-            f"Depot: {held}. The 1/2/5 ratios come from the Power Shard (1)/(2)/(5) "
+            f"craftable = uncrafted slugs carried, in storage containers or in the "
+            f"Dimensional Depot: {held}. The 1/2/5 ratios come from the Power Shard (1)/(2)/(5) "
             "recipes, not from game knowledge. Craftable is POTENTIAL, not free -- "
             "crafting is a manual step"
         )
@@ -246,27 +246,44 @@ def mam_research(
         return f"! unknown status {status!r}. Choose from: all, todo, affordable"
 
     gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
+    ongoing = st.research.ongoing
     rows = []
     n_todo = 0
+    n_running = 0
+    n_shut = 0
     for cls, s in sorted(g.schematics.items(), key=lambda kv: kv[1].name):
         if s.type != "EST_MAM":
             continue
         finished = cls in done
+        running = ongoing.get(cls)
+        shut = st.research.tree_locked(cls)
         if not finished:
             n_todo += 1
+            n_running += running is not None
+            n_shut += shut
         if wanted != "all" and finished:
             continue
         if search and search.strip().casefold() not in (s.name or "").casefold():
             continue
         short = [(f, stock.get(f.item, 0.0)) for f in s.cost if stock.get(f.item, 0.0) < f.amount]
-        if wanted == "affordable" and (short or finished):
+        # Neither an in-flight node nor one in a shut tree can be started now, whatever
+        # the bill says, so affordable does not offer them.
+        if wanted == "affordable" and (short or finished or running is not None or shut):
             continue
         blocked = [
             g.schematics[d].name for d in s.dependencies if d in g.schematics and d not in done
         ]
+        if finished:
+            state = "DONE"
+        elif running is not None:
+            state = f"RUNNING {running:.0f}s"
+        elif shut:
+            state = "TREE SHUT"
+        else:
+            state = "BLOCKED" if blocked else ("short" if short else "READY")
         rows.append(
             (
-                "DONE" if finished else ("BLOCKED" if blocked else ("short" if short else "READY")),
+                state,
                 s.name[:30],
                 "LOCKS " + gates[cls] if cls in gates else "",
                 ", ".join(f"{f.amount:g} {g.item_name(f.item)}" for f in s.cost)[:52] or "-",
@@ -281,10 +298,29 @@ def mam_research(
             "one that gates a feature of this MCP rather than adding a recipe"
         ),
         (
-            "cost is checked against spendable stock only: carried, crates and the "
-            "Dimensional Depot, never machine buffers"
+            "cost is checked against spendable stock only: carried, storage containers "
+            "and the Dimensional Depot. Machine buffers do not count, and neither do the "
+            "crates on the ground -- a crate deletes itself once emptied"
         ),
     ]
+    if n_running:
+        notes.append(
+            "RUNNING is research already under way: it is paid for and cannot be started "
+            "again. The seconds are what the save recorded and do not run down while the "
+            "game is closed"
+        )
+    if n_shut:
+        notes.append(
+            "TREE SHUT means the MAM tree that node lives in has not been opened yet, so "
+            "the node cannot be researched however affordable it is. Which tree a node "
+            "belongs to is read off its class id: Docs.json does not ship the research "
+            "trees, and the save names only which trees are open"
+        )
+    if not st.research.knows_trees:
+        notes.append(
+            "this projection predates the unlocked-tree list, so a node in an unopened "
+            "tree is listed here as if it were available -- re-read the save"
+        )
     for name in CAPABILITY_SCHEMATICS:
         gate = st.research_gate(name)
         if gate is None:
@@ -301,7 +337,10 @@ def mam_research(
         )
 
     return render.envelope(
-        f"# {st.age_note}\n# {n_todo} MAM research node(s) outstanding, showing status={wanted}",
+        f"# {st.age_note}\n# {n_todo} MAM research node(s) outstanding"
+        + (f", {n_running} under way" if n_running else "")
+        + (f", {n_shut} in an unopened tree" if n_shut else "")
+        + f", showing status={wanted}",
         render.table(
             ("status", "research", "capability", "cost", "short by", "blocked by"),
             rows[: render.clamp(limit, default=25)],
@@ -352,8 +391,8 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
         "is something to pull out, not added to what is spendable"
     )
     notes.append(
-        "free pools carried, crates and the Dimensional Depot -- the same set as "
-        "power_shards, and never machine buffers"
+        "free pools carried, storage containers and the Dimensional Depot -- the same set "
+        "as power_shards, and never machine buffers or the crates on the ground"
     )
     if not budget["committed_measured"]:
         notes.append(
