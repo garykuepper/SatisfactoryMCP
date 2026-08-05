@@ -56,13 +56,13 @@ These produce a false belief in the reader. Nothing else outranks them.
 | 16 | The map says `OreIron`, the assistant says `Iron Ore` — `/api/nodes` is the only payload that does not resolve a display name, though the same handler resolves the occupant's two lines later. | `routers/nodes.py:38`, `:117`; `frontend/src/format.ts:11` | Add `resource_name` to `NodeRow` |
 | 17 | The map has no `LOCKED` state: a node the text surface excludes as unreachable is drawn as an ordinary free dot a player may plan around. | `routers/nodes.py`; cf. `tools/spatial.py:463` | Carry `reachable` on `NodeRow`, grey the dot |
 | 18 | `name_factory` and `site_plan` write to the labels/plans directories; the live watcher globs `*.sav` only, so the one collaborative moment — name it, then look at the map — is the one the map misses. | `interfaces/web/watch.py:90`; `frontend/src/sse.ts:36` | Watch those directories, emit a second event type |
+| 19 | Every popup prints an MCP selector and nothing on the page can copy one: `grep clipboard` across the frontend returns nothing, so the last step is retyping `BP_ResourceNode26_99` by hand. (A generated "ask about this" sentence is NOT wanted — the selectors are already the interchange format.) | `frontend/src/dom.ts:44` | Click-to-copy in `code()`; ~15 lines, upgrades every popup at once |
 | 20 | **No tool can name an item you own or where it is.** 151 container rows (130 non-empty), crate contents, and four inventory buckets are read by the web routers and by zero MCP tools; `stock()` is computed on every plan and consumed only as a pass/fail affordability test, so "short by 40 Circuit Board" never prints the numbers behind it. `machine_buffers()` has no consumer at all. | `extract.py:853`, `:854`; `domain/world/inventory.py:28`, `:58` | One `stock(item=None, where=False)` tool; `where=True` joins storage/crate rows to `regions.label_for` for a place name |
 | 21 | **The only measured numbers in the project survive as two scalars.** Every machine's rated draw is weighted by its own 300 s productivity monitor (408 of 438 carry one) and each per-machine figure is destroyed at the moment it is computed; three scalars come out. `factory_query(of="power")` re-iterates the same records, reads `clock` and `recipe`, and never reads `uptime` — so "which factory is actually burning the grid" is unanswerable. | `domain/power/report.py:79`; loop at `domain/factories/query.py:139` | Accumulate `rated * produce_s/window_s` in the loop already running; one column |
 | 22 | `phase_requirements` prints what a phase still needs and stops; `mam_research` does the stock join 150 lines away in the same file. "Can I deliver Phase 4 now, and what am I short of" is one `stock.get()` per row from being answered. | `tools/progression.py:20` vs `:243` | Add `have` / `short by` columns using the existing expression |
 | 23 | `tapped_by` and `tapped_clock` are computed for every node on every call and rendered as the bare word "tapped" — so "which miner is on that node, at what clock, is it worth reclaiming" is thrown away each time. `occupancy()` also drops `paused` and `pos` before the presenter sees them. | computed `domain/spatial/nodes.py:556`, rendered `tools/spatial.py:507` | One column |
 | 24 | Truncation without an envelope: `somersloops` slices to 20 holders and calls `render.table` **without** `total`, so no count, no hint, no "N more" — the reader cannot tell the list was cut. Same in `diff_vs_save`'s cost table and `factory_health`'s `blocked_on`/`starved_of`. | `tools/progression.py:341`, `:378`; `presenters/text/diff.py:370`; `tools/factories.py:594` | Pass `total` |
 | 25 | 3-D positions rendered as 2-D throughout: `MachineRow.pos` never printed, `factory_sites` drops centroid z, and occupied slabs lose the bbox/z-span/storeys that bare slabs now get. | `domain/factories/query.py:57`; `tools/world.py:221`; `tools/factories.py:150` vs `:186` | Print what is already carried |
-| 19 | Every popup prints an MCP selector and nothing on the page can copy one: `grep clipboard` across the frontend returns nothing, so the last step is retyping `BP_ResourceNode26_99` by hand. (A generated "ask about this" sentence is NOT wanted — the selectors are already the interchange format.) | `frontend/src/dom.ts:44` | Click-to-copy in `code()`; ~15 lines, upgrades every popup at once |
 
 ## P3 — convention drift
 
@@ -86,27 +86,26 @@ Cheap individually, worth one pass together. Each costs a client a retry.
 - `factory_sites` rows carry no identifier at all, so a "site" cannot be named to any other tool.
 - `maplink.COLLECTIBLES` is dead code: "where are the hard drives" gets no map link from either map.
 
-## P5 — dead code and unused capability, worth one deletion-or-wiring pass
+## P5 — capability already built, not yet reachable: WIRE IT UP
 
-Each of these was built deliberately and reaches nothing. Either wire it up or delete it; both
-are cheap, and leaving it is how the next reader learns to distrust the tree.
+Lukas's decision, 2026-08-02: **wire these up, do not delete them.** Each was built
+deliberately and reaches nothing today; every one has a destination that already exists, so
+none of these is a design question. Ordered by what the wiring buys a player. Two of them are
+the missing half of items above and are cross-referenced rather than repeated.
 
-- `research["ongoing"]` (seconds remaining) — no consumer anywhere in `src/`.
-- `FactoryView.internal()` — "the mark of a self-contained line", rendered by no aspect.
-- `UnlockDelta.unlocked_by` / `.ok` — `rank_unlocks` says an alternate is worth 14,540 MW and
-  never says which schematic grants it; an infeasible solve reports `gain=0`, which reads
-  identical to worthless.
-- `Structures.machines_on()` / `.summary()`, `progression["last_active_schematic"]`,
-  `research["last_used_hard_drive_id"]`, top-level `pipe_networks` (19 rows) — no consumers.
-- `load_collectibles(strict=True)` and `CollectiblesUnreadable` exist to tell "you never ran
-  the generator" from "what it wrote is broken"; zero callers pass `strict=True`.
-- `_solve(drop_actor=, cuts=, one_way=)` ablation knobs in the flow inference — never passed.
-- `flow.py`'s `basis` (`BASIS_PORT`/`DEVICE`/`NETWORK`) — the *why* the module is built around
-  — reaches `/api/pipes` only; `search_conduits` prints `->` vs `--` and can never say why.
-- `list_pending_hard_drive_choices` holds each option's granted recipe list and uses it only to
-  decide whether to append "(nothing new)".
-- `somersloops` reads `boost_in_save` specifically so a caller can cross-check it, and never
-  prints it.
+| # | Capability, where it dies | Where it should land |
+|---|---|---|
+| 26 | `UnlockDelta.unlocked_by` and `.ok` (`domain/planning/sensitivity.py:40`, `:45`) — `rank_unlocks` says an alternate is worth 14,540 MW and never says which schematic grants it, and an infeasible solve reports `gain=0`, indistinguishable from worthless. | A `granted by` column in `rank_unlocks`, and an explicit `infeasible` marker instead of a zero. The highest-value wiring on this list: the tool's whole purpose is deciding what to research next, and it currently withholds the name of the thing to research. |
+| 27 | `flow.py`'s `basis` — `BASIS_PORT` / `BASIS_DEVICE` / `BASIS_NETWORK` (`domain/world/flow.py:63`), the *why* behind every inferred pipe direction — reaches `/api/pipes` and nothing else. `search_conduits` prints `->` vs `--` and can never say on what evidence. | A `basis` column on `search_conduits`, matching what the map already knows. Pairs with item 11. |
+| 28 | `Structures.machines_on()` and `.summary()` (`domain/factories/structure.py:83`, `:94`) — no consumer in `src/`. | "What stands on this platform", answered by `factory_map show=slabs` and by a `slab:<n>` selector — which is exactly the dead end item 13 describes. Wire these two together and both close. |
+| 29 | `FactoryView.internal()` (`domain/factories/query.py:103`) — "the mark of a self-contained line", per its own docstring; rendered by no `factory_query` aspect. | An `internal` aspect, or a column in `summary`: what a factory makes and consumes entirely within itself is the difference between a finished line and one still on someone else's belts. |
+| 30 | Top-level `pipe_networks` (19 rows, `extract.py:693`) — no consumer outside one test. | A network-level view in `search_conduits`: "these 19 fluid networks, what is on each, where each ends" is the summary that makes the run list navigable. |
+| 31 | `list_pending_hard_drive_choices` holds each option's granted recipe list and uses it only to decide whether to append "(nothing new)" (`tools/harddrives.py:46`). | Print the recipes. A player choosing between drives is choosing between those lists, and today has to run `recipe_detail` per option to see them. |
+| 32 | `progression["last_active_schematic"]` and `research["last_used_hard_drive_id"]` (`extract.py:634`, `:656`) — no consumers. | "What you were last working on" in `world_summary`, and the last drive spent as context in the hard-drive tools. Cheap continuity for an assistant resuming a session. |
+| 33 | `somersloops` reads `boost_in_save` specifically so a caller can cross-check the computed boost, then never prints it (`domain/progression/shards.py:164`). | One cross-check line: what the save says the multiplier is, beside what we computed it should be. Disagreement is a finding. |
+| 34 | `research["ongoing"]` (seconds remaining, `extract.py:661`). | Covered by item 9d — `mam_research` must mark in-flight research rather than calling it `todo`. Listed here only so the key is not audited as orphaned twice. |
+| 35 | `load_collectibles(strict=True)` and `CollectiblesUnreadable` (`domain/collectibles/table.py:151`, `:160`) exist to tell "you never ran the generator" from "what it wrote is broken"; `state.py:313` calls it bare and zero callers pass `strict=True`. | The collectibles tools' error path: a player who never generated the table deserves the command to run, and a corrupt table deserves to say so rather than answering with silence. |
+| 36 | `_solve(drop_actor=, cuts=, one_way=)` ablation knobs in the flow inference (`domain/world/flow.py:213`) — never passed by anything. | **Not a surface feature.** These are the levers that prove the inference is doing work; their honest home is a test that ablates each and asserts the riser-violation count degrades. Wire them there, not into a tool. |
 
 ## Not doing, and why
 
