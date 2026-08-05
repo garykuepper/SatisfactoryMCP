@@ -47,8 +47,10 @@ def _slab_shape(slab) -> tuple:
     ones that reported a footprint.
     """
     return (
-        f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
-        f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}",
+        (
+            f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
+            f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}"
+        ),
         _z_range(slab),
         slab.storeys,
     )
@@ -598,9 +600,7 @@ def factory_health(
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
             standing = [m for m in label.anchors if m in alive]
             report = assess(label.name, standing, st.game, st.projection)
-            view = build_view(
-                label.name, standing, st.graph, st.game, st.projection, st.labels
-            )
+            view = build_view(label.name, standing, st.graph, st.game, st.projection, st.labels)
             mean = report.mean_uptime
             actionable = sum(
                 report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
