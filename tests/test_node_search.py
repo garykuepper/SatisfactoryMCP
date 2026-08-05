@@ -81,6 +81,33 @@ def test_me_needs_a_player_pawn(game):
         srv._origin_for(st, "me")
 
 
+def test_a_bare_platform_resolves_by_the_index_that_names_it(game):
+    """factory_map lists bare platforms by an index that used to lead nowhere: `slab:N`
+    is refused by the machine selector precisely because there are no machines on it,
+    which is the case a reader asks about. A location grammar has no such problem."""
+    projection = {
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            # 3x3 tiles of 8 m, so the tile mean is the middle tile's own centre.
+            "instances": [[0, gx * 800, gy * 800, 0] for gx in range(3) for gy in range(3)],
+        },
+        "machines": [],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    origin, where = srv._origin_for(st, "slab:0")
+    assert origin == (800.0, 800.0)
+    assert where.startswith("slab:0 (9 tiles,")
+
+    with pytest.raises(ValueError, match=r"out of range \(0\.\.0\)"):
+        srv._origin_for(st, "slab:7")
+    with pytest.raises(ValueError, match="integer index"):
+        srv._origin_for(st, "slab:middle")
+    with pytest.raises(ValueError, match="needs a readable save"):
+        srv._origin_for(None, "slab:0")
+
+
 def _rows(out: str) -> list[dict]:
     """Parse the tab table by HEADER, not by column position.
 

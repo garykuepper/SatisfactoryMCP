@@ -248,6 +248,24 @@ def test_the_radius_is_the_callers_to_widen(game):
     assert "ground_elevation_m=" in wide
 
 
+def test_a_place_can_be_given_instead_of_two_floats(game):
+    """Every other tool on this surface takes a place; this one took two numbers, and it
+    is the tool the "something is wrong here" journey ends on."""
+    out = srv.describe_location(at=f"{IN_THE_FIELD[0]},{IN_THE_FIELD[1]}")
+    assert "at=2000,-2400" in out
+    assert "region=Spire Coast" in out
+    assert srv.describe_location().startswith("! describe_location needs")
+
+
+def test_a_bare_platform_is_a_place_this_tool_accepts(game, live):
+    """The dead end item 13 names: factory_map lists bare platforms by an index no tool
+    would take, so the table added to retire the nine-probe workflow led straight back
+    into it. The resolved point is echoed, because `at=` lands somewhere nobody typed."""
+    out = srv.describe_location(at="slab:0")
+    assert out.startswith("at=") and "(slab:0 (" in out
+    assert "! slab:99999 out of range" in srv.describe_location(at="slab:99999")
+
+
 def test_region_naming_still_works_exactly_as_before(game):
     """Elevation is an addition. The region answer that callers already depend on must be
     untouched, including its confidence word."""

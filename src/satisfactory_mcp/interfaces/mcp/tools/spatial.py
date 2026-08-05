@@ -80,15 +80,26 @@ def list_regions(with_resource: str | None = None) -> str:
 
 @mcp.tool(structured_output=False)
 def describe_location(
-    x_m: float,
-    y_m: float,
+    x_m: float | None = None,
+    y_m: float | None = None,
+    at: Annotated[
+        str | None,
+        Field(
+            description="a place instead of x_m/y_m: 'x,y' in metres, 'me', a named "
+            "factory, 'slab:<n>', or a run id like 'chain:7'"
+        ),
+    ] = None,
     radius_m: Annotated[
         float, Field(description="how far to look for known elevations, metres")
     ] = 200.0,
     save: str | None = None,
     world: str | None = None,
 ) -> str:
-    """Name the region at a coordinate, sample its elevation, and count what runs through.
+    """Name the region at a place, sample its elevation, and count what runs through.
+
+    Give it `x_m`/`y_m` in metres, or `at=` for anything else this project prints an id
+    for: a named factory, `slab:<n>` from `factory_map show=slabs` -- including the bare
+    platforms nothing else would take -- or a `chain:`/`pipe:` run from `search_conduits`.
 
     Returns 'off-map or ocean' rather than guessing the nearest land region.
 
@@ -106,22 +117,35 @@ def describe_location(
     a zero here means nothing runs through -- absence in this output is absence in the
     world. `search_conduits` lists the runs themselves.
     """
-    rm = regions_mod.load_regions()
-    x, y = x_m * 100, y_m * 100
-    label = rm.label_for(x, y)
-
     # The node table alone covers the whole map and needs no save, so an unexplored
-    # coordinate still gets an answer. A readable save adds the dense sources.
+    # coordinate still gets an answer. A readable save adds the dense sources -- and is
+    # what every `at=` form but a bare coordinate is resolved against.
     st = None
     try:
         st = _state(save, world)
     except Exception:
         pass
+
+    if at is not None:
+        try:
+            (x, y), where = resolve_origin(st, at)
+        except ValueError as exc:
+            return f"! {exc}"
+    elif x_m is None or y_m is None:
+        return "! describe_location needs x_m and y_m in metres, or at=<place>"
+    else:
+        x, y, where = x_m * 100, y_m * 100, ""
+
+    rm = regions_mod.load_regions()
+    label = rm.label_for(x, y)
     table = nodes_mod.load_nodes()
     field = heightfield.load_field()
     near = elevation.probe(x, y, elevation.sample_points(table, st), radius_m, terrain_field=field)
 
     fields = [
+        # Echoed because `at=` can resolve to somewhere the caller never typed, and every
+        # number below is about THAT point.
+        ("at", f"{x / 100:.0f},{y / 100:.0f}" + (f" ({where})" if where else "")),
         ("region", label.describe()),
         ("confidence", label.confidence),
         ("grid", geo.grid_cell(x, y)),
@@ -752,8 +776,9 @@ def show_on_map(
     target: Annotated[
         str,
         Field(
-            description="'x,y' in metres, 'me', a factory label, a node id, a "
-            "resource name like 'Crude Oil', or 'plan:<name>' for a sited plan's origin"
+            description="'x,y' in metres, 'me', a factory label, a node id, a resource "
+            "name like 'Crude Oil', 'slab:<n>', 'chain:<n>'/'pipe:<n>', or "
+            "'plan:<name>' for a sited plan's origin"
         ),
     ],
     layers: Annotated[
@@ -773,8 +798,9 @@ def show_on_map(
 
     `target` accepts a coordinate in metres, `me`, one of your named factories, a node
     id from `search_resource_nodes`, a resource name — the last centres on that
-    resource's nodes and switches its overlays on — or `plan:<name>` for a plan that
-    has a recorded siting (see site_plan).
+    resource's nodes and switches its overlays on — `slab:<n>` for a platform from
+    `factory_map show=slabs`, `chain:<n>`/`pipe:<n>` for a run from `search_conduits`,
+    or `plan:<name>` for a plan that has a recorded siting (see site_plan).
 
     Only the Crude Oil layer tokens are confirmed; the rest follow the same pattern and
     are flagged. A wrong token still opens the map in the right place, just without that
