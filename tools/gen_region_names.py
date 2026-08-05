@@ -3,126 +3,17 @@
     uv run --extra gen python tools/gen_region_names.py
 
 This is layer 2 of the spatial design. Layer 1 (grid cells, cones, radii, clustering) is exact
-and derived, and every calculation uses it. This layer only puts human names on coordinates.
-A name must never feed a computation.
+and derived, and every calculation uses it. This layer only puts human names on coordinates,
+and a name must never feed a computation.
 
-What changed, and why the file is worth re-reading
---------------------------------------------------
-This artifact used to be a raster of ``data/satisfactory_regions.json``, whose region geometry
-was hand-traced off the wiki's Biome Map image. That made the boundaries somebody's reading of
-a picture, good to about one 256 m cell, and it put a CC BY-SA obligation on a derived table in
-a repository whose whole licence posture is that no copyleft reaches it. It also carried a
-claim that was simply false: *"the game ships no biome geometry"*.
-
-The game ships biome geometry. ``FGMapAreaTexture`` at
-``/Game/FactoryGame/Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel``
-is a 4096x4096 raster of palette indices at 1.83 m to the texel, and ``mColorToArea`` resolves
-each index to a ``UFGMapArea`` object -- which carries the game's own name for the place. That
-is what this file reads now, through ``core.gameassets.maparea``, which
-``tools/gen_map_renders.py`` reads the same asset through.
-
-So the boundaries are the game's own polygon edges rather than a trace of them, the names come
-out of the assets rather than off a wiki page, and nothing here is licensed by anyone but Coffee
-Stain -- the same posture as every other derived table in ``data/``: coordinates and identifiers
-read out of the reader's own install, no artwork shipped.
-
-The names are the game's, including the surprising ones
---------------------------------------------------------
-Each ``Area_*`` asset states ``mDisplayName`` as a string-table reference, ``World_Data`` /
-``Locations/<Something>``. :data:`DISPLAY_NAMES` maps those nineteen keys to the labels this
-file emits, and the mapping is nearly the identity -- the familiar names ARE the game's names.
-Three facts only the assets could have supplied:
-
-* ``Area_Savanna_1`` and ``Area_Savanna_2`` both announce ``Locations/RockyDesert``. The game
-  has a Savanna asset and no Savanna region; those two areas are Rocky Desert.
-* ``Area_RedJungle_1`` is ``Locations/RedJungle`` and ``Area_RedJungle_2`` is
-  ``Locations/JungleSpires``. Two regions, one asset name.
-* ``Area_crater_1`` is ``Locations/BlueCrater`` and ``Area_crater_2`` is
-  ``Locations/CraterLakes``. Likewise.
-
-Two of the nineteen labels are not the key verbatim: ``Locations/DesertCanyon`` and
-``Locations/MazeCanyon`` are emitted as the plurals every player and every tool in this
-repository already uses. That is a spelling, recorded in ``_meta.naming_rules``, and it is the
-only place a familiar name is preferred to the key.
-
-Two names the retired trace carried are gone, because the game does not name them:
-**Western Beaches** and **Snaketree Forest**. **Eastern Dune Forest** is a third case and a
-different one -- the game HAS an ``Area_EasternDuneForest_1`` asset with that display name, and
-the raster never references it, so there is no ground to put the label on.
-
-No-man's-land, and what "void" now means
-----------------------------------------
-43% of the raster is ``Area_NoMansLand``, which is the ocean and the outer coast. It is not
-"unknown": the game has an object for it with its own display name, so this file labels it
-**No Man's Land** rather than blanking it. That is the honest answer for a player standing on
-the outer coast, where the retired trace answered with a wiki region name and a raster with no
-no-man's-land class would have answered "off-map or ocean".
-
-Void is now the narrower thing it always should have been: **the game names no area here AND no
-known static object stands within 1 km**. Ocean, and off-map. The land mask decides only that
-last clause -- it no longer decides what anything is called, because the raster does.
-
-Grid resolution: two, and the measurement that chose them
-----------------------------------------------------------
-``region_grid`` stays 30x30 at 256 m. That is the payload ``/api/regions`` serves and the
-rectangles the map paints, and keeping it is what makes this re-derivation cost the frontend
-nothing but a legend.
-
-A majority downsample is lossy, and how lossy was measured rather than guessed -- 5,054 known
-static world objects looked up in the grid versus in the raster itself:
-
-===========  ============  ===============  ===================
-cell         grid          characters       mislabelled probes
-===========  ============  ===============  ===================
-256 m        30x30                 900      714 (14.13%)
-128 m        60x60               3,600      421 (8.33%)
-**64 m**     **120x120**    **14,400**      **268 (5.30%)**
-32 m         240x240            57,600      132 (2.61%)
-===========  ============  ===============  ===================
-
-So a second grid is carried at 64 m, ``fine_grid``, and ``domain.spatial.regions`` reads names
-out of it. It is NOT served: the payload contract is unchanged, and 14 kB in a committed table
-buys a lookup that is wrong a third as often. 32 m was refused -- four times the bytes for
-twice the accuracy, and past the size where this stays a table a person can open. Neither is
-exact, and the confidence word says so; exactness at a point needs the 4096x4096 raster, which
-is 16 MB and belongs in the game rather than in ``data/``.
-
-Each grid has a confidence of its own shape -- ``confidence_grid`` beside ``region_grid`` at
-256 m, ``fine_confidence`` beside ``fine_grid`` at 64 m -- rather than one confidence shared
-between two resolutions, which would be an index that reads fine and answers wrong.
-
-The confidence grid changed meaning, and the letters kept their names
-----------------------------------------------------------------------
-It used to be neighbour agreement standing in for "the trace might be off here". The boundaries
-are exact now, so each 256 m cell's flag is a MEASUREMENT of that cell:
-
-* ``l`` interior -- one area covers the whole cell.
-* ``b`` boundary -- an exact area boundary runs through this cell.
-* ``u`` unnamed -- the cell is No Man's Land: labelled, but with the game's name for ground it
-  does not otherwise name.
-* ``.`` void -- no name at all.
-
-Staleness
----------
-``_meta.game_version_pinned`` is the installed build, and the map areas move when the map does.
-The run refuses to write over a table cut from a different build unless ``--force`` says so,
-and it re-measures the calibration every time rather than trusting the last one.
-
-What is NOT here any more
--------------------------
-``node_region_overrides``, and with it the ``verified`` confidence. It held 48 oil nodes whose
-region had been read off the wiki's image by eye and was trusted over the raster; the raster is
-first-party now and the overrides' basis is gone. Keying a correction by instance name would be
-the wrong repair in any case -- this repository already knows a map update renames instances,
-which is what the node skew gate exists for. A node is labelled by where it stands, like every
-other coordinate.
-
-Licence
--------
-Everything here is derived from Coffee Stain's cooked assets, read out of the reader's own
-installed copy of the game: palette indices, area identifiers and localisation keys. No
-artwork is decoded, none is committed, and no third-party table contributes. The land mask
-reads two committed tables, both non-copyleft, and contributes no names.
+The geometry is the game's own. ``FGMapAreaTexture`` is a 4096x4096 raster of palette indices
+at 1.83 m to the texel, and ``mColorToArea`` resolves each index to a ``UFGMapArea`` carrying
+the game's display name for the place; ``core.gameassets.maparea`` reads it, and
+``tools/gen_map_renders.py`` reads the same asset. Two grids come out: the 30x30 at 256 m
+``/api/regions`` serves, and a 120x120 at 64 m ``domain.spatial.regions`` looks names up in,
+each with a confidence grid of its own shape. The emitted ``_meta`` carries the rest -- the
+naming rules, the measurement that chose 64 m, the licence, and the record of the retired
+wiki trace.
 """
 
 from __future__ import annotations
@@ -155,13 +46,8 @@ from satisfactory_mcp.core.gameassets.provenance import (
 from satisfactory_mcp.domain.spatial import geo
 from tools._common import base_parser, require_gen
 
-# The frame, the artwork sheet and the calibration all come from the two generators that
-# MEASURED them, rather than being typed again here. ``gen_map_image`` owns the corners of the
-# in-game map square; ``gen_map_renders`` owns the edge-ratio statistic that placed the area
-# raster on those corners, and re-running it here is how this file re-checks the pin instead of
-# inheriting it. Sibling-generator imports, the same arrangement ``gen_map_renders`` already has
-# with ``gen_map_image`` and for the same reason: one implementation, so three artifacts cannot
-# drift into three opinions about where the world is.
+# The corners and the edge-ratio statistic come from the generators that measured them, so
+# three artifacts cannot drift into three opinions about where the world is.
 from tools.gen_map_image import BOUNDS_M
 from tools.gen_map_renders import calibrate_biome, read_artwork_sheet
 
@@ -169,23 +55,17 @@ DEST = ROOT / "data" / "region_names.json"
 
 VOID = "."
 
-#: The 256 m grid this artifact has always published, and the one ``/api/regions`` serves.
-#: Unchanged so that the payload, the drawing client and every consumer's arithmetic are
-#: exactly what they were.
+#: The grid ``/api/regions`` serves and the client's arithmetic is written against.
 GRID_X0, GRID_Y0 = -336_000.0, -380_000.0
 GRID_CELL = 25_600.0
 GRID_NX = GRID_NY = 30
 
-#: And the finer grid names are looked up in. See the module docstring for the measurement
-#: that chose 64 m; it divides the 256 m cell exactly, which is what keeps the coarse grid a
-#: majority of this one rather than a second independent downsample.
+#: 64 m divides the 256 m cell exactly, which keeps the coarse grid a majority of this one
+#: rather than a second independent downsample. ``_meta.grids.why_64_m`` is the measurement.
 FINE_CELL = 6_400.0
 
 #: The game's own name for each place, keyed by the localisation key its ``Area_*`` asset
-#: states. Nineteen keys, nineteen labels, and the mapping is the identity apart from the two
-#: plurals noted in the module docstring. A key that is not in here stops the run: an
-#: unnamed region is a region this file would have to invent a label for, and inventing one
-#: is the failure the whole re-derivation exists to end.
+#: states. A key that is not in here stops the run rather than being labelled by guesswork.
 DISPLAY_NAMES = {
     "Locations/AbyssCliffs": "Abyss Cliffs",
     "Locations/BlueCrater": "Blue Crater",
@@ -216,9 +96,8 @@ PLURALISED = {"Locations/DesertCanyon": "Desert Canyons", "Locations/MazeCanyon"
 #: What the game calls ground it does not otherwise name. Labelled rather than blanked.
 UNNAMED_LABEL = DISPLAY_NAMES["Locations/NoMansLand"]
 
-#: Collectible categories that stand on land and so mark it. Unchanged from the mask this
-#: file has always used, and it no longer decides what anything is CALLED -- only whether an
-#: unnamed cell is coast or ocean.
+#: Collectible categories that stand on land and so mark it. They decide only whether an
+#: unnamed cell is coast or ocean, never what anything is called.
 LAND_MASK_CATEGORIES = (
     "crashed_drop_pod",
     "mercer_shrine",
@@ -229,14 +108,12 @@ LAND_MASK_CATEGORIES = (
     "somersloop",
 )
 
-#: A cell the game leaves unnamed and that has no known static object within this far is
-#: ocean or off-map. The distribution behind the number is unchanged -- cell-to-nearest
-#: distances are strongly bimodal, median 123 m on land against p90 1212 m -- and so is the
-#: number, so that the void class this artifact has always published does not move for a
-#: reason unrelated to the re-derivation.
+#: A cell the game leaves unnamed with no known static object within this far is ocean or
+#: off-map. Cell-to-nearest distances are strongly bimodal -- median 123 m on land against
+#: p90 1212 m -- so the cut sits in the gap rather than on a slope.
 VOID_DISTANCE_M = 1000.0
 
-#: The confidence letters, and what each one now MEASURES. See the module docstring.
+#: The confidence letters, and what each one measures about its own cell.
 CONFIDENCE_LEGEND = {
     "l": "interior cell: one area covers the whole 256 m cell",
     "b": "boundary cell: an exact area boundary runs through it",
@@ -245,9 +122,8 @@ CONFIDENCE_LEGEND = {
 }
 
 #: Measured once, on 2026-07-30, against the committed wiki trace at the commit before it was
-#: retired -- and it cannot be measured again, because the source it compares against is
-#: deleted. Carried as history because it is the size of the change: what the two sources
-#: disagreed about is the reason this re-derivation was worth doing.
+#: retired. It cannot be measured again -- the source it compares against is deleted -- so
+#: these figures are transcribed and no run gates on them.
 RETIRED_TRACE_COMPARISON = {
     "what": (
         "data/satisfactory_regions.json, a hand trace of satisfactory.wiki.gg's Biome Map "
@@ -286,9 +162,8 @@ def load(name: str, key: str) -> list[dict]:
 def reference_points() -> tuple[np.ndarray, dict[str, int]]:
     """Static world objects, used purely to tell coast from ocean.
 
-    Positions only, and now with a much smaller job than they used to have: the raster names
-    every cell, so this decides one thing, which is whether an UNNAMED cell is ground a
-    player can stand on or open water.
+    Positions only: the raster names every cell, so these decide one thing, which is whether
+    an unnamed cell is ground a player can stand on or open water.
     """
     pts: list[tuple[float, float]] = []
     counts: dict[str, int] = {}
@@ -319,10 +194,9 @@ def rasterise(
 ) -> tuple[list[list[str | None]], list[list[bool]]]:
     """Majority display name per grid cell, and whether that cell is one area throughout.
 
-    Two answers from one pass because they are one fact about the cell: the name is what most
-    of it is, and the purity flag is whether "most" was "all". Cells whose box falls outside
-    the raster come back as ``None`` -- the grid is 7,680 m square and the map is 7,500 m, so
-    a margin of it is off the texture entirely.
+    The name is what most of the cell is, and the purity flag is whether "most" was "all".
+    Cells whose box falls outside the raster come back as ``None``: the grid is 7,680 m
+    square and the map is 7,500 m, so a margin of it is off the texture entirely.
     """
     width = area.shape[0]
     x_span = (BOUNDS_M["x_min_m"] * 100, BOUNDS_M["x_max_m"] * 100)
@@ -364,8 +238,7 @@ def classify(
 
     Mutates ``grid``: a cell the game leaves unnamed and that the mask calls land is written
     back as the No Man's Land label, so the grid that comes out has no ``None`` in it that is
-    not also void. Four outcomes and each is a different KIND of answer -- see
-    :data:`CONFIDENCE_LEGEND` -- rather than four grades of one.
+    not also void.
 
     ``inherit`` is how the fine grid gets the coarse grid's sea: ``(void cells, ratio)``, and
     a fine cell is void exactly when the coarse cell over it is. Without it the mask is asked
@@ -403,9 +276,9 @@ def classify(
 def letters_for(names: list[str]) -> dict[str, str]:
     """One character per region, assigned in name order.
 
-    Alphabetical rather than by area or by size, because the letters are what the frontend's
-    colour table is keyed by and a stable, obvious rule is what lets a person check that
-    table by eye. 26 letters against 19 regions; the run stops rather than wrapping.
+    Alphabetical: the letters key the frontend's colour table, so the rule has to be one a
+    person can check by eye. 26 letters against 19 regions, and the run stops rather than
+    wrapping.
     """
     if len(names) > 26:
         raise SystemExit(
@@ -529,10 +402,8 @@ def main() -> int:
     points, mask_counts = reference_points()
     print(f"land mask from {len(points)} static world objects (coast or ocean, nothing else)")
 
-    # The mask is asked once, at 256 m, and the fine grid inherits the answer. Asking it
-    # twice at two resolutions is how one grid comes to think the sea starts somewhere the
-    # other does not, and a coastline that moves between two views of one file is worse than
-    # either version of it.
+    # The mask is asked once, at 256 m, and the fine grid inherits the answer: asking it at
+    # both resolutions gives the two grids two coastlines.
     void_coarse, coarse_conf, counts = classify(coarse, coarse_pure, points, GRID_CELL, None)
     per_fine = int(GRID_CELL / FINE_CELL)
     void_fine, fine_conf, fine_counts = classify(
@@ -632,10 +503,8 @@ def main() -> int:
             "fine_ny": fine_ny,
         },
         "legend": {letter: name for name, letter in sorted(letters.items(), key=lambda kv: kv[1])},
-        # Four grids in two PAIRS, and the pairing is the whole readability of this file:
-        # region_grid/confidence_grid are 30x30 at 256 m, fine_grid/fine_confidence are
-        # 120x120 at 64 m, and each confidence is indexed exactly like the grid it is named
-        # after. One confidence shared between two shapes would be a trap that reads fine.
+        # Four grids in two pairs: each confidence is indexed exactly like the grid it is
+        # named after, and the two pairs are different shapes.
         "region_grid": region_rows,
         "confidence_grid": coarse_conf,
         "fine_grid": fine_rows,
@@ -643,11 +512,8 @@ def main() -> int:
         "regions": dict(sorted(regions.items())),
     }
 
-    # The trailing newline is not cosmetic: without it this generator rewrote the committed
-    # blob one byte SHORTER than the blob it was meant to reproduce, so "run the generator and
-    # check the diff is empty" reported a change on every run and therefore said nothing on
-    # any of them. ``write_text`` keeps translating it to the platform's line ending, which is
-    # what the committed file already carries.
+    # The trailing newline is load-bearing: the committed blob carries one, and without it
+    # every regeneration reports a diff and so says nothing on any run.
     dest.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {dest.relative_to(ROOT)}  {dest.stat().st_size} B  {len(regions)} regions")
     return 0
@@ -656,10 +522,9 @@ def main() -> int:
 def _unreferenced_assets(store, areas) -> set[str]:
     """Area assets that exist beside the texture and that no palette index reaches.
 
-    Recorded because one of them is a NAME a reader will look for and not find:
-    ``Area_EasternDuneForest_1`` states the display name Eastern Dune Forest, the retired trace
-    carried that name, and the raster puts no ground under it. "The game has the name and no
-    geometry for it" is a different answer from "the name is gone", and only this says which.
+    ``Area_EasternDuneForest_1`` states the display name Eastern Dune Forest and the raster
+    puts no ground under it, so recording these is what separates "the game has the name and
+    no geometry for it" from "the name is gone".
     """
     from satisfactory_mcp.core.gameassets.maparea import MAP_AREA_DIR
 

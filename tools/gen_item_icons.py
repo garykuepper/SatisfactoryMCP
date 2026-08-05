@@ -1,102 +1,20 @@
 """Cut data/local/icons/ -- one PNG per item -- out of the installed game.
 
-Every popup this project draws names its items in words: "Iron Plate, 4,800". The game
-names them in pictures, and a reader who plays Satisfactory recognises the icon before they
-have finished reading the word. Nothing in this repository could draw one, because an icon
-is artwork in the game's own container and the licence posture here is that we ship none of
-it -- so this is a LOADER, like ``tools/gen_map_image.py``: it reads the reader's own
-install and writes into ``data/local/``, which is gitignored and stays that way.
-
-**Where the pictures are.** ``Docs/en-US.json`` gives every item descriptor an
-``mSmallIcon`` and an ``mPersistentBigIcon``, and on all 747 classes that have one the two
-are the SAME asset path -- there is one texture per item, at whichever resolution it was
-authored, not a pair of variants to choose between. The path resolves to a
-``Texture2D`` package in ``FactoryGame-Windows.utoc``, e.g.::
-
-    Texture2D /Game/FactoryGame/Resource/Parts/IronPlate/UI/IconDesc_IronPlates_256...
-    -> ../../../FactoryGame/Content/FactoryGame/Resource/Parts/IronPlate/UI/
-       IconDesc_IronPlates_256.uasset  (+ .ubulk)
-
-**Case-insensitively**, and that is not defensiveness: five items name a directory the
-container spells differently -- ``Mam`` for ``MAM``, ``Medkit`` for ``MedKit``,
-``Cyberwagon`` for ``CyberWagon``, ``Golfcart`` twice -- so an exact lookup silently loses
-the MAM, the Cyberwagon, the Medkit and both Golf Carts and calls it 742 of 747.
-
-**Two pixel formats, both measured rather than assumed.** 634 of the 747 are ``PF_DXT5``
-(BC3, 16 bytes per 4x4 block: an icon is a cut-out and needs interpolated alpha, which BC1
-has not got) and 113 are ``PF_B8G8R8A8``, four bytes a texel and no decompression at all.
-The format is read off the package's own name table, where the ``PF_`` constant appears
-verbatim, and is recorded per icon in the manifest. **No BC7 anywhere**, which is worth
-writing down because it is the format one expects of UI art and would have been the reason
-to reach for ``texture2ddecoder``'s BC7 path.
-
-Both decoders hand back **BGRA**, and that is the one mistake here that produces a picture
-rather than an error: read as ``"RGBA"`` a copper ingot comes out cyan and a candy cane
-comes out blue, which looks like a deliberate palette. Verified on both paths after the
-first run -- the copper is copper and the candy cane is red.
-
-**The ``.ubulk`` length is the integrity check**, exactly as it is for the map slices. The
-bulk chunk holds the mip chain from the texture's own size down to 128 px inclusive -- the
-smaller levels are cooked inline and are not here -- so the total is arithmetic over the
-format's block size, and exactly one (format, side) pair produces any given length. Four
-lengths cover every icon in the game::
-
-    PF_DXT5      256 px -> 81,920 B      512 px -> 344,064 B
-    PF_B8G8R8A8  256 px -> 327,680 B     512 px -> 1,376,256 B
-
-A length not in the derived table means the texture was re-cooked at another size or with
-another mip tail, i.e. *the game changed*, and that icon is skipped and counted rather than
-decoded on a guess.
-
-**Written at 256 px square by default, and the choice is stated because there was one to
-make.** The source art is 256 or 512 depending on the item -- 195 classes at 256, 551 at
-512, and one 8 px swatch -- so "native" would mean a directory of mixed sizes and a client
-that has to ask which. 256 is the smaller of the two real sizes, which makes it the only
-choice that never invents a pixel: every source at or under 256 px is written at its own
-resolution with no resampling at all, and every 512 px one is halved, which is an exact
-2:1 reduction. Nothing is ever upscaled.
-
-**And the size costs real bytes, so the alternatives are measured rather than argued.** On
-this build, over a 40-icon sample scaled to the whole set: **256 px is 41.1 MB**, 128 px is
-13.8 MB, 96 px is 8.5 MB and 64 px is 4.3 MB. The default stays at 256 because these are
-served one file per item, cached immutable behind a build tag, and a popup fetches only the
-dozen it is showing -- and because it is the one setting under which a third of the art is
-byte-for-byte what the game authored. ``--px`` takes any of the others for a reader who
-would rather have the directory small; the manifest records which was used, so a client
-never has to guess.
-
-**A texture with no ``.ubulk`` is not a texture with no picture.** Three of the 747
-(Liquid Biofuel's pipe glyph, the Explorer's path marker, and an 8 px shared white swatch)
-cook their WHOLE mip chain inline in the ``.uasset``, and an earlier cut of this file
-skipped them behind "needs the ``FTexturePlatformData`` walk this file deliberately does
-not do". The walk turned out to be unnecessary: the Zen header's ``BulkDataMap`` names
-every inline level's offset and length outright -- ``packages.bulk_data_entries``, the
-same table the Nanite reader streams its pages through -- so mip 0 is a slice of the
-package blob at an offset the header states, under the same length check transposed
-(see :func:`decode_inline_icon`).
-
-**What it costs, measured on build 495413**: of 750 classes carrying ``mForm``, 747 name
-an icon and all 747 decode -- **41.1 MB of PNG in 12 s** -- 195 from 256 px sources, 551
-from 512 px ones, and the 8 px swatch as itself; the three inline ones are one of each. The
-three that got no picture are named in the manifest under ``unresolved``, each with a
-machine-readable ``kind`` -- all three are ``no-icon-in-docs``, the class whose docs entry
-names no texture at all, for which the frontend's text tile is the correct rendering
-rather than a fallback.
-
-**Staleness is announced, never overwritten.** The manifest records the build it was cut
-from, and a run against a different install refuses rather than mixing two builds' art in
-one directory -- the rule every generated artifact under ``data/`` follows. ``--force``
-replaces it anyway.
-
-Run it::
-
     uv run --extra gen python tools/gen_item_icons.py
 
-``--extra gen`` is what puts ``ooz`` (container blocks), ``texture2ddecoder`` (BC3) and
-Pillow (the PNGs) on the path. None of the three is imported at module scope anywhere in
-this repository, here included: they are imported inside ``main`` and handed on to
-``core.gameassets.textures``, which is the seam that keeps the server importable without
-them.
+An icon is Coffee Stain's artwork, so this is a loader like ``tools/gen_map_image.py``: it
+reads the reader's own install into gitignored ``data/local/`` and commits none of it.
+
+``Docs/en-US.json`` gives every item descriptor an ``mSmallIcon`` naming a ``Texture2D``
+package in ``FactoryGame-Windows.utoc``, looked up case-insensitively because five items
+spell a directory differently from the container -- ``Mam``, ``Medkit``, ``Cyberwagon``
+and ``Golfcart`` twice. Two pixel formats are in play, ``PF_DXT5`` on 634 of the 747 and
+``PF_B8G8R8A8`` on 113, with no BC7 anywhere; both decoders hand back BGRA, which read as
+``"RGBA"`` turns a copper ingot cyan instead of raising.
+
+Measured on build 495413: of 750 classes carrying ``mForm``, 747 name an icon and all 747
+decode, 41.1 MB of PNG in 12 s. The three with no picture name no texture in the dump at
+all, so the frontend's text tile is their correct rendering rather than a fallback.
 """
 
 from __future__ import annotations
@@ -132,85 +50,63 @@ from satisfactory_mcp.core.gameassets.textures import (
 from satisfactory_mcp.core.gamedata.loader import load_docs
 from tools._common import base_parser, require_gen
 
-#: Where the docs dump lives inside an install. Derived from ``--game`` rather than found
-#: through ``satisfactory_mcp.config``, and not only because a generator may not import that
-#: module: the icons and the class names that point at them MUST come from one install, and
-#: a ``SATISFACTORY_DOCS`` pointing at a second one would silently mix two builds' art.
+#: Derived from ``--game``: the icons and the class names that point at them must come
+#: from ONE install, and a ``SATISFACTORY_DOCS`` pointing elsewhere would mix two builds.
 DOCS_SUFFIX = Path("CommunityResources") / "Docs" / "en-US.json"
 
-#: The container the artwork is in, and the prefix its paths carry. Both are
-#: ``gen_map_image.py``'s, which reads the map sheet out of the same file.
 CONTAINER = "FactoryGame-Windows"
 MOUNT = "../../../FactoryGame/Content/"
 
-#: ``Texture2D /Game/Foo/Bar/Icon_256.Icon_256`` -> ``/Game/Foo/Bar/Icon_256``. The asset
-#: path is everything up to the first dot after the mount-relative part; what follows it is
-#: the object name inside the package and is always the same word again.
+#: ``Texture2D /Game/Foo/Bar/Icon_256.Icon_256`` -> ``/Game/Foo/Bar/Icon_256``: what
+#: follows the first dot is the object name inside the package, always the same word again.
 ICON_PATH_RE = re.compile(r"Texture2D\s+(/Game/\S+?)\.")
 
-#: The property the icon is read from, and the one that is deliberately not read.
-#:
-#: ``mSmallIcon`` and ``mPersistentBigIcon`` hold the IDENTICAL string on all 747 classes
-#: that have either -- measured, not assumed -- so there is nothing to choose between and
-#: reading both would only invite a future reader to wonder which one won.
+#: ``mSmallIcon`` and ``mPersistentBigIcon`` hold the identical string on all 747 classes
+#: that have either, so there is one texture per item and nothing to choose between.
 ICON_FIELD = "mSmallIcon"
 
-#: What makes a docs class an ITEM here: it has a physical form. The same test
-#: ``gamedata.normalize._build_items`` applies, and for its reason -- 13 native classes carry
-#: ``mForm`` and restricting to ``FGItemDescriptor`` would miss the biomass and the nuclear
-#: fuel rods. Building descriptors come through it too, which is wanted: a plan that lists
-#: 40 Constructors deserves the Constructor's picture as much as a crate deserves the rod's.
+#: Having a physical form is what makes a docs class an item, the same test
+#: ``gamedata.normalize._build_items`` applies: 13 native classes carry ``mForm``, and
+#: restricting to ``FGItemDescriptor`` would miss the biomass and the nuclear fuel rods.
 FORM_FIELD = "mForm"
 
-#: The formats the container actually holds for these assets, and the mip arithmetic each
-#: one's ``.ubulk`` length is checked against. Measured over all 742 resolvable icons on
-#: build 495413: there is no third format, and in particular no BC7.
+#: Measured over all 742 resolvable icons on build 495413: there is no third format, and
+#: in particular no BC7.
 PIXEL_FORMATS = ("PF_DXT5", "PF_B8G8R8A8")
 
-#: Where the bulk chain STOPS. A cooked ``Texture2D`` keeps its smallest levels inline in
-#: the package and streams the rest, and the boundary here is 128 px: every one of the four
-#: observed lengths is exactly the chain from the texture's own side down to this one.
-#: Stated as the tail rather than as a mip count because the count differs per size.
+#: Where the bulk chain stops. A cooked ``Texture2D`` keeps its smallest levels inline and
+#: streams the rest; stated as the tail because the mip count differs per size.
 MIP_TAIL_PX = 128
 
 #: The sides a cooked icon is allowed to be, largest first. Wider than what the game ships
-#: (256 and 512) so that a re-cook at another size is READ rather than refused -- the check
-#: that matters is that the length is exactly one of these chains, not that it is one of
-#: today's two.
+#: so a re-cook at another size is read rather than refused.
 CANDIDATE_PX = (2048, 1024, 512, 256, 128)
 
-#: What every icon is written at unless ``--px`` says otherwise. See the module docstring
-#: for the measured trade: 256 writes the 196 sources at or under it untouched and halves
-#: the 551 larger ones, and is 41.1 MB; 128 is 13.8 MB and resamples everything but the
-#: swatch.
+#: 256 is the smaller of the two sizes the game authors, so it is the only default that
+#: invents no pixel: sources at or under it are untouched and 512 px ones halve exactly.
 ICON_PX = 256
 
-#: The three ways a class ends up under ``unresolved``, as machine-readable kinds. Named
-#: because the first cut of this manifest carried six undifferentiated sentences, and "the
-#: game genuinely ships no picture for this class" (:data:`KIND_NO_ICON` -- the frontend's
-#: text tile is the CORRECT rendering, forever) kept being read in the same breath as the
-#: two kinds that mean a picture exists and this reader missed it.
+#: The three ways a class ends up under ``unresolved``. Machine-readable, because
+#: :data:`KIND_NO_ICON` means the frontend's text tile is correct forever while the other
+#: two mean a picture exists and this reader missed it.
 KIND_NO_ICON = "no-icon-in-docs"
 KIND_NOT_IN_CONTAINER = "asset-not-in-container"
 KIND_UNDECODED = "undecoded"
 
-#: Where they go, and what the sidecar beside them is called. Gitignored, like every other
-#: thing cut out of somebody's install.
 LOCAL_DIR = ROOT / "data" / "local"
 ICONS_DIR_NAME = "icons"
 MANIFEST_NAME = "manifest.json"
 
-#: Where the build this directory was cut from is recorded, and therefore where the
-#: staleness guard looks. One path, used by the writer and the reader, so the two cannot
-#: drift into disagreeing about where the pin lives.
+#: One path, used by the writer and by the staleness guard, so the two cannot disagree
+#: about where the pin lives.
 BUILD_PIN_PATH = ("_meta", "source", "game_version_pinned")
 
 
 def chain_length(px: int, block: bool) -> int:
     """Total bytes of the ``.ubulk`` chain for one square side, in one of the two formats.
 
-    ``block`` picks BC3's 4x4 blocks over raw BGRA's texels; both run from ``px`` down to
-    :data:`MIP_TAIL_PX` inclusive, which is what makes this a derivation rather than a table.
+    ``block`` picks BC3's 4x4 blocks over raw BGRA's texels; both chains run from ``px``
+    down to :data:`MIP_TAIL_PX` inclusive.
     """
     count = max(px, MIP_TAIL_PX).bit_length() - MIP_TAIL_PX.bit_length() + 1
     sizes = bc3_mip_sizes(px, count) if block else raw_mip_sizes(px, count, 4)
@@ -220,10 +116,9 @@ def chain_length(px: int, block: bool) -> int:
 def bulk_layouts() -> dict[tuple[str, int], int]:
     """``{(pixel format, ubulk length): side}`` -- every chain this reader can name.
 
-    The whole integrity check, derived rather than typed: a length that is not in here is a
-    texture cooked at a size or a mip tail this file does not know how to read, and the
-    honest answer to one is to skip that icon and say so rather than to decode mip 0 out of
-    a layout that is no longer what the reader thinks it is.
+    The whole integrity check, and exactly one (format, side) pair produces any given
+    length. A length that is not in here is a texture cooked at a size or a mip tail this
+    file cannot read, so that icon is skipped and counted rather than decoded on a guess.
     """
     return {
         (fmt, chain_length(px, fmt == "PF_DXT5")): px
@@ -236,8 +131,8 @@ def container_stem(icon: str) -> str | None:
     """``Texture2D /Game/Foo/Icon_256.Icon_256`` -> the mount-relative stem, or ``None``.
 
     ``None`` for the three classes whose ``mSmallIcon`` is literally ``"None"`` and for any
-    value this pattern does not recognise -- both are "the dump names no picture", which is
-    a coverage number rather than an error.
+    value this pattern does not recognise: both mean the dump names no picture, which is a
+    coverage number rather than an error.
     """
     match = ICON_PATH_RE.search(icon or "")
     if match is None:
@@ -246,10 +141,9 @@ def container_stem(icon: str) -> str | None:
 
 
 def icon_classes(docs_path: Path) -> list[tuple[str, str]]:
-    """``[(class name, icon asset path), ...]`` for every item the dump gives a picture.
+    """``[(class name, icon asset path), ...]``, sorted so a manifest diff is readable.
 
-    Sorted by class name so a run is reproducible and a manifest diff is readable. Classes
-    with no icon at all are dropped here and counted by the caller against the total.
+    Classes with no icon at all keep an empty path here and are counted by the caller.
     """
     dump = load_docs(docs_path)
     out = []
@@ -264,9 +158,9 @@ def icon_classes(docs_path: Path) -> list[tuple[str, str]]:
 def path_index(store: IoStore) -> dict[str, str]:
     """Lowercased container path -> the path as the container spells it.
 
-    The five items whose docs path differs from the container's only in the case of a
-    directory -- the MAM, the Cyberwagon, the Medkit and both Golf Carts -- are exactly why
-    this exists, and skipping them would have looked like five items with no artwork.
+    Five items -- the MAM, the Cyberwagon, the Medkit and both Golf Carts -- differ from
+    the container's spelling only in a directory's case, and an exact lookup loses them
+    while looking like five items with no artwork.
     """
     return {path.lower(): path for path in store.paths.values()}
 
@@ -274,9 +168,8 @@ def path_index(store: IoStore) -> dict[str, str]:
 def pixel_format(package_names) -> str | None:
     """The ``PF_`` constant in a package's name table, or ``None`` if it holds none of ours.
 
-    A cooked ``Texture2D`` names its pixel format in the package's own strings, so this is
-    the format the asset states rather than one inferred from its length -- which is what
-    makes the length an independent check instead of a circular one.
+    The format the asset states, never one inferred from a length, which is what keeps the
+    length check independent instead of circular.
     """
     found = [name for name in package_names if name in PIXEL_FORMATS]
     return found[0] if len(found) == 1 else None
@@ -285,11 +178,8 @@ def pixel_format(package_names) -> str | None:
 def decode_icon(package_mod, decoder, image_mod, blob: bytes, bulk: bytes, layouts: dict):
     """``((image, source side, pixel format), None)`` for one icon, or ``(None, reason)``.
 
-    Three refusals, and each one is a different thing having gone wrong: the package names
-    no format this reader knows, the bulk chain is a length no (format, side) pair produces,
-    or the chain is shorter than the level it claims to start with. All three are counted
-    and named in the manifest rather than raising, because one re-cooked icon must not cost
-    the other 746 -- the posture every guard in the projection extractor takes.
+    The three refusals are counted and named in the manifest rather than raised, because
+    one re-cooked icon must not cost the other 746.
     """
     fmt = pixel_format(package_mod.Package(blob).names)
     if fmt is None:
@@ -313,20 +203,16 @@ def decode_icon(package_mod, decoder, image_mod, blob: bytes, bulk: bytes, layou
 def decode_inline_icon(package_mod, decoder, image_mod, blob: bytes):
     """The same contract as :func:`decode_icon`, for a texture with no ``.ubulk`` at all.
 
-    Three of the 747 icons cook their WHOLE mip chain inline in the ``.uasset`` -- Liquid
-    Biofuel's pipe glyph, the Explorer's path marker, and an 8 px shared white swatch --
-    and the first cut of this file skipped them behind "needs the ``FTexturePlatformData``
-    walk this file deliberately does not do". The walk turned out to be unnecessary: the
-    Zen header's ``BulkDataMap`` names every level's offset and length outright, one entry
-    per mip, with the offset relative to the export-data segment. So mip 0 is
-    ``blob[header_size + offset :][: size]`` of the FIRST entry, and no property tail is
-    ever parsed.
+    Three of the 747 icons cook their whole mip chain inline in the ``.uasset``. The Zen
+    header's ``BulkDataMap`` names every level's offset and length, one entry per mip, with
+    the offset relative to the export-data segment, so mip 0 is
+    ``blob[header_size + offset :][: size]`` of the first entry and no property tail is
+    parsed.
 
-    The integrity check transposes rather than disappears: with no file length to test,
-    the whole entry list must be exactly the chain :func:`~textures.inline_chain_side`
-    re-derives from its largest level -- and every entry must actually SAY it is inline,
-    because an entry pointing into a ``.ubulk`` that is not in the container is a cook
-    this reader does not know, not a texture with its mips at hand.
+    The length check transposes rather than disappears: the entry list must be exactly the
+    chain :func:`~textures.inline_chain_side` re-derives from its largest level, and every
+    entry must say it is inline -- one pointing into a ``.ubulk`` that is not in the
+    container is a cook this reader does not know.
     """
     pkg = package_mod.Package(blob)
     fmt = pixel_format(pkg.names)
@@ -360,14 +246,10 @@ def decode_inline_icon(package_mod, decoder, image_mod, blob: bytes):
 def to_png(image_mod, image, px: int, want: int) -> bytes:
     """One decoded level as PNG bytes at ``want`` px, resampled only when it has to be.
 
-    ``LANCZOS`` for a reduction of drawn artwork with hard edges and a cut-out alpha; a level
-    that is already the wanted size is returned untouched rather than round-tripped through a
-    resize that would be the identity with a filter's rounding on top -- which at the default
-    is 196 of the 747 icons written exactly as the game authored them.
-
-    Never enlarges. An 8 px source asked for at 256 stays 8 -- which the shared white
-    swatch actually is -- because an upscale is a picture this file invented and it would
-    sit in the directory looking like the rest.
+    A level already at the wanted size is returned untouched rather than round-tripped
+    through a resize that would be the identity with a filter's rounding on top. Nothing is
+    ever enlarged: an 8 px source asked for at 256 stays 8, because an upscale is a picture
+    this file invented sitting in the directory looking like the rest.
     """
     import io
 
@@ -390,15 +272,9 @@ def pinned_build(out_dir: Path) -> str | None:
 def build_manifest(*, pin: str, branch: str | None, docs, entries: dict, unresolved: dict, stats):
     """The sidecar: what a reader needs to know before trusting a directory of pictures.
 
-    Three claims, and the first is the one the staleness guard reads. ``source`` says which
-    install these came out of, down to the docs dump's own sha256 -- because the class names
-    that key this manifest come from that file and the pixels come from the container beside
-    it, and a manifest whose two halves came from two installs is the failure mode worth
-    making impossible to reach silently. ``icons`` is the map a client actually uses.
-    ``unresolved`` is what did not make it, per class, as ``{"kind", "detail"}`` -- the
-    kind machine-readable so "the game ships no picture" and "a picture exists and this
-    reader missed it" can never again be conflated, the detail a sentence, because a
-    coverage number with no list behind it is a claim rather than a measurement.
+    ``source`` says which install these came out of, down to the docs dump's sha256, and is
+    what the staleness guard reads. ``icons`` is the map a client uses. ``unresolved`` is
+    what did not make it, per class, as ``{"kind", "detail"}``.
     """
     return {
         "_meta": {
@@ -548,8 +424,7 @@ def main() -> int:
                 layouts,
             )
         else:
-            # No .ubulk is not a missing picture: the whole mip chain is cooked inline in
-            # the .uasset, which is how three of the 747 are cut. See decode_inline_icon.
+            # No .ubulk is not a missing picture: three of the 747 cook the chain inline.
             decoded, why = decode_inline_icon(
                 package_mod, decoder, image_mod, store.read_path(asset)
             )

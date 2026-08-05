@@ -9,57 +9,11 @@ projects from: ``tools/gen_resource_nodes.py`` cuts the served table out of it, 
 layer's land mask and the map sheet's calibration project its positions, and the
 heightmap's validation gate reads its ``z``.
 
-**What this file replaced, and why the record is in the artifact.** The node set used to be
-``data/world_resource_nodes.mit.json``: 626 rows vendored from rockfactory's
-satisfactory-logistics repository (MIT, Copyright (c) 2024 Leonardo Ascione), itself an
-FModel dump of the same ``Persistent_Level.umap`` this file reads. Vendoring it meant the
-repository USED third-party data where first-party data was sitting in the installed
-container, already reachable by ``core.gameassets``. The table is deleted and nothing reads
-it any more -- but deletion is not the record, ``_meta.retired_mit_table`` is: what the
-table was, when parity was measured, and every row on which the two disagreed. The same
-shape as ``_meta.retired_wiki_trace`` in ``data/region_names.json``, and for the same
-reason -- the retirement stays on the record rather than being tidied away, because the
-record is the proof the old source is gone. The parity itself was three-way: this
-extraction against the MIT rows (composition identical, purity equal on all 625 shared
-ids, resource equal on all 594 comparable), and both against the save actors that
-``tools/gen_resource_nodes.py`` had already measured -- the 25 moved rows and the one
-renamed row below are byte-for-byte the skew that table disclosed under
-``_meta.cross_validation.positions`` while the MIT set was current.
-
-**One package, and that this is the whole world is measured, not assumed.** All four
-emitted classes are placed exclusively by ``Persistent_Level.umap``; the 4,520 streamed
-world-partition cell packages place none of them. That is a fact about this build, not a
-property of the format -- a map update could move a node into a cell -- so every run
-sweeps the full ``GameLevel01`` package list, counts these classes per package, and
-REFUSES TO WRITE if any placement sits outside the persistent level, because the
-one-package read would from that build on be silently incomplete. The other ``.umap`` in
-the container are swept with the same rule and recorded: the developer test map places
-resource nodes too, which is why the guard is a measurement and not an eyeball.
-
-**How each field is read.** An actor is an export whose Outer is the package's
-``/Script/Engine.Level`` export. ``resource`` is the ``mResourceClass`` ObjectProperty
-resolved through the import map (geysers carry none -- the resource is a placement target,
-not an item -- so theirs is ``null`` and consumers label it synthetically). ``purity`` is
-the ``mPurity`` ByteProperty, an FName: ``RP_Inpure`` and ``RP_Pure`` are written,
-``normal`` is the class default and therefore ABSENT -- UE omits a property equal to its
-default -- which is why absence decodes to ``normal`` rather than to unknown. ``core`` is
-the satellite's ``mCore`` ObjectProperty, an export reference inside the same package: a
-statement in the shipped data, not an inference, and it is total -- every satellite
-carries one, every core is referenced, and every satellite names its core's resource,
-all three re-checked every run. Positions are the composed root-component world transform,
-the same ``world_transform`` the collectibles table banked its shrine-position bugs into.
-
-**What is deliberately not a row.** ``BP_ResourceDeposit_C`` is hand-mineable only -- no
-extractor can ever be placed on one -- so a deposit row would advertise capacity that
-cannot be built. The persistent level happens to place exactly one (the world's other
-2,661 sit in the streamed cells, all counted every run into ``_meta.deposits``), and that
-one deposit was the MIT table's 626th row: an artifact of its persistent-level-only parse,
-carried by nothing downstream, and not carried here. The MIT rows' ``rotation`` is not
-carried either -- no consumer ever read it.
-
-**Licence.** The identifiers, classes, purities and coordinates here are facts about
-Coffee Stain's map, read from the reader's own installed copy of the game. No third-party
-table contributed to this file, in any form.
+Only ``Persistent_Level.umap`` places these four classes in this build -- a fact about the
+build, not about the format -- so every run sweeps the whole ``GameLevel01`` package list
+and refuses to write if a placement turns up in a streamed cell. The emitted ``_meta``
+carries the rest: how each field is read, the deposit exclusion, the licence, and the
+record of the retired third-party table under ``retired_mit_table``.
 """
 
 from __future__ import annotations
@@ -89,13 +43,11 @@ sys.path.insert(0, str(ROOT))
 
 from tools._common import base_parser, require_gen
 
-#: The one world, and the one package inside it that places every emitted class -- the
-#: second half of that sentence is re-measured every run, see the module docstring.
 WORLD_PREFIX = "Map/GameLevel01"
 PERSISTENT_LEAF = "Persistent_Level.umap"
 
-#: The four classes this table emits. A deposit is deliberately not here -- see the module
-#: docstring -- but it IS counted, so its exclusion stays a decision and never a blind spot.
+#: A deposit is counted every run but never emitted, so its exclusion stays a decision
+#: rather than a blind spot.
 EMITTED = (
     "BP_ResourceNode_C",
     "BP_FrackingSatellite_C",
@@ -104,21 +56,19 @@ EMITTED = (
 )
 DEPOSIT = "BP_ResourceDeposit_C"
 
-#: ``mPurity`` FName -> the vocabulary every consumer speaks. Absence means the class
-#: default: UE omits a property equal to it, and the default is ``RP_Normal`` -- which is
-#: also why ``RP_Normal`` itself never appears on a placed instance. Any OTHER value is a
-#: hard error rather than a guess: a renamed enum constant is a build change worth a human.
+#: ``mPurity`` FName -> the vocabulary every consumer speaks. UE omits a property equal to
+#: its class default and the default is ``RP_Normal``, so absence decodes to ``normal``
+#: and ``RP_Normal`` itself never appears on a placed instance.
 PURITY = {None: "normal", "RP_Normal": "normal", "RP_Inpure": "impure", "RP_Pure": "pure"}
 
-#: Emitted coordinate precision, decimal places of a centimetre. The composed float32
-#: transforms are not meaningful past this, and a fixed rounding keeps regeneration diffs
-#: readable.
+#: Decimal places of a centimetre. The composed float32 transforms are not meaningful past
+#: this, and a fixed rounding keeps regeneration diffs readable.
 ROUND = 4
 
 #: The retirement record for ``data/world_resource_nodes.mit.json``, deleted in the same
 #: commit that first generated this file. Transcribed, not recomputed -- the file it was
-#: measured against is gone, which is the point -- so this block is HISTORY and no future
-#: run gates on it. Same pattern as ``retired_wiki_trace`` in ``data/region_names.json``.
+#: measured against is gone -- so no run gates on it. ``tests/test_nodes_provenance.py``
+#: pins these figures.
 RETIRED_MIT_TABLE = {
     "what": (
         "data/world_resource_nodes.mit.json: 626 resource-node rows vendored from "
@@ -197,9 +147,9 @@ def sweep(store: IoStore, scripts: ScriptObjects) -> tuple[dict, dict, PackageVi
     """Count the emitted classes over every world package; hand back the persistent level.
 
     Returns ``(per-package counts for packages placing any counted class, the world-wide
-    class census, the persistent level's view, its container path)``. The persistent
-    level's view comes out of the same walk that proves it is the only package that
-    matters, so the proof and the read cannot diverge.
+    class census, the persistent level's view, its container path)``. The view comes out
+    of the same walk that proves it is the only package that matters, so the proof and the
+    read cannot diverge.
     """
     counted = set(EMITTED) | {DEPOSIT}
     per_package: dict[str, collections.Counter] = {}
@@ -253,9 +203,8 @@ def sweep(store: IoStore, scripts: ScriptObjects) -> tuple[dict, dict, PackageVi
 def other_levels(store: IoStore, scripts: ScriptObjects) -> list[dict]:
     """The container's non-world levels, swept with the identical rule.
 
-    The developer test map places resource nodes, which is why "GameLevel01 is the world"
-    has to be paired with "and here is what the other levels place" -- otherwise a
-    collectible class appearing in a menu backdrop would be indistinguishable from a bug.
+    The developer test map places resource nodes too, so a count from outside GameLevel01
+    is recorded rather than treated as a contradiction.
     """
     counted = set(EMITTED) | {DEPOSIT}
     out: list[dict] = []
@@ -349,8 +298,8 @@ def read_rows(view: PackageView, classes: ClassFacts) -> list[dict]:
             row["core"] = core
         rows.append(row)
 
-    # The well link has to be total on both sides, and resource-consistent: a core and its
-    # satellites tap one deposit, so a disagreement is a misread, never a curiosity.
+    # A core and its satellites tap one deposit, so a resource disagreement across the
+    # link is a misread rather than a curiosity.
     referenced = {row["core"] for row in rows if "core" in row}
     for row in rows:
         if row["class"] == "BP_FrackingCore_C" and row["id"] not in referenced:

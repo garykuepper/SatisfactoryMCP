@@ -2,157 +2,64 @@
 
     uv run --extra gen python tools/gen_world_collectibles.py <saves dir>
 
-Power slugs, somersloops, Mercer spheres, crashed drop pods and the loot caches strewn
-around the crash sites are placed by the map, not by the player, so a save cannot record
-them by listing what exists -- it records the **negative**: which map-placed actors are
-gone. "250 slugs collected" therefore has no denominator in a save, and cannot become
-"these remain, nearest at X".
+Power slugs, somersloops, Mercer spheres, crashed drop pods and the loot caches strewn round
+the crash sites are placed by the map, not by the player, so a save cannot record them by
+listing what exists -- it records the **negative**: which map-placed actors are gone. "250
+slugs collected" has no denominator in a save. The denominator comes out of the cooked
+world instead -- 4,521 packages under ``Map/GameLevel01``, one per world-partition cell plus
+the persistent level -- and the saves are asked only for status.
 
-**The denominator comes out of the map, not out of the saves.** The cooked world lives in
-``FactoryGame-Windows.utoc``/``.ucas``: 4,521 packages under ``Map/GameLevel01``, one per
-world-partition cell plus the persistent level. Every collectible the map places has an
-export there with a name, a class and a transform, so ``placed`` is a fact about the game
-and not a count of what the player happens to have seen. The saves are then asked only for
-**status**.
-
-**How an actor is recognised, and the bug the old rule hid.** An earlier pass asked whether
-the export's class path starts with ``/Game/``. A native class is not a path: it is an
-``FPackageObjectIndex`` *script import*, a 62-bit hash of the object path, so no ``/Game/``
-test can ever match one and every natively-classed actor was invisible -- 46 classes and
-49,478 actors, including all 703 ``FGItemPickup_Spawnable`` loot caches. Actors are now
-recognised structurally: **an export whose Outer is the package's ``/Script/Engine.Level``
-export**. That reproduces the old rule's count exactly -- see
-``_meta.identity.map_actors_with_a_blueprint_class`` against
-``map_actors_in_gamelevel01`` -- so the widening is additive and not a redefinition. The
-script hashes themselves are resolved through ``global.utoc``'s ScriptObjects chunk, which
-is what turns a hash back into ``/Script/FactoryGame.FGItemPickup_Spawnable``.
-
-Because that bug was a missing *class* rather than a missing row, ``_meta.class_census``
-re-derives the whole list of map-placed classes whose name looks like a pickup and says of
-each whether this file emits it. A class going missing again is then a visible number
-rather than a silent absence.
-
-**One level, and that is measured too.** The walk reads the 4,521 packages under
-``Map/GameLevel01``. That this level is the whole world used to be a sentence in a comment,
-and the row set rests on it, so the other five ``.umap`` in the container are now read with
-the identical rule and reported in
-``_meta.source.placements.other_levels_in_the_container`` with their actor counts and how
-many actors of an emitted class each places. They are a HUB audio sub-level, the
-dedicated-server entry, two main-menu backdrops and a developer test map; the test map does
-place resource nodes, which is why the check is against emitted classes and not eyeballed.
+An actor is any export whose Outer is the package's ``/Script/Engine.Level`` export. That
+structural rule is what reaches the natively classed actors: a native class is not a path
+but an ``FPackageObjectIndex`` script import, a 62-bit hash of the object path resolved
+through ``global.utoc``'s ScriptObjects chunk, so no ``/Game/`` test can match one.
 
 **Three states, because two would lie.**
 
 * ``collected`` -- the newest save's destroyed-actor list names this (cell, instance).
-* ``present``   -- the newest save has a live actor header at this (cell, instance) whose
-  position agrees with the map's to within ``POSITION_TOLERANCE_CM``.
+* ``present``   -- the newest save has a live actor header at this key whose position agrees
+  with the map's to within ``POSITION_TOLERANCE_CM``.
 * ``unknown``   -- neither. The game has never had that actor loaded while saving, so
-  nothing on disk says whether it is still standing. A row we have never observed is not
-  "present": ``collected``, ``present`` and ``unknown`` are all printed per category so
-  that no two of them can be added up into the third.
+  nothing on disk says whether it is still standing. All three are printed per category, so
+  no two of them can be added up into the third.
 
-**Why the newest save alone decides state, with the others as the check.** A save's live
-set and destroyed list are cumulative, and the run measures it: the union over every save
-of the same session resolves no row the newest save cannot -- reported as
-``rows_only_older_saves_could_state``. Older saves are still read, because they are the
-evidence for the two paragraphs below.
+The newest save alone decides, and that it can is measured rather than assumed: the union
+over every save of the session resolves no row it cannot, reported as
+``rows_only_older_saves_could_state``. The older saves are read as evidence for
+``_meta.respawn``, which re-tests the premise underneath the whole file -- that a collected
+thing stays gone -- by asking whether a key ever leaves a destroyed list, and whether a save
+calls a key destroyed while a later one holds a live actor at it.
 
-**"Collected" is only a fact if collectibles stay gone, so that is tested.** ``_meta.respawn``
-asks it of the saves in two ways: whether a key ever leaves a destroyed list, and whether a
-save calls a key destroyed and a later save has a live actor at it. Both need care, and both
-guards are measured rather than argued. Reversals are only counted between saves of the *same
-build*, because a build that re-issues names makes a key vanish with nothing coming back. And
-a save can list one key as destroyed *and* hold a live actor at it whose position matches the
-map: before the world was partitioned the bare name ``BP_Crystal1`` belonged to two different
-slugs in two different levels, and the migration keyed one of them into the other's cell. That
-is the game's own code hitting the identity problem this file refuses to ignore. How often it
-happens, broken down by save version and for the newest save on its own, is in
-``_meta.respawn.durability`` rather than quoted here, along with the precedence rule for when
-the two records disagree.
-
-**The harvestable plants split two ways, and the file follows the measurement.** Berry and
-nut bushes carry ``mNumRespawns`` and ``mUpdatedOnDayNr``; the counter rises and never falls,
-and it is not capped where this world happens to have stopped. They regrow, so they get no
-row: a harvested bush is not destroyed at all -- it stays live with ``mUpdatedOnDayNr`` set
-and its fruit comes back -- so ``present`` would mean "a bush is here" while a consumer read
-it as "there is fruit here". The mushroom carries neither property on any save record on disk,
-so it has no respawn machinery at all, and it *is* a row. ``mSavedNumItems`` is the trap in all
-three: it is the plant's fixed yield and never a remaining count, which every nut bush proves by
-writing the same number. The per-class counts are in ``_meta.respawn.flora``.
-
-**A game patch re-issued instance names.** Between saveVersion 52 and 60 the level was
-edited: actors were renamed, moved between cells and nudged by whole centimetres. The game
-migrates a cell's saved records when the cell is next streamed -- so a cell not revisited
-since the patch still holds pre-patch records, whose ``(cell, instance)`` now belongs to a
-*different* map actor. Keyed blindly, such a record puts one collectible's position under
-another's name. Here a live record is accepted only if its position agrees with the map's,
-and the rejects are counted in ``_meta.status_evidence.live_records_displaced``.
-
-**The key is (cell, instance).** It is unique over every map-placed actor in
-``GameLevel01``. The bare instance name is *not*: widening the walk to native classes
-brought in one ``FGWorldSettings`` and one ``Model`` per cell, both of which reuse a name
-across cells. Neither is ever a collectible, and the numbers that matter -- key
-uniqueness, and uniqueness of the ``_UAID_`` names the map's own placement counter issues
--- are re-measured every run into ``_meta.identity``.
+**The key is (cell, instance)**, unique over every map-placed actor in ``GameLevel01``; the
+bare instance name is not. Between saveVersion 52 and 60 the level was edited -- actors
+renamed, moved between cells, nudged by centimetres -- and the game migrates a cell's saved
+records only when that cell is next streamed, so a stale record's key can now belong to a
+different map actor. A live record is therefore accepted only if its position agrees with
+the map's, and the rejects are counted in ``_meta.status_evidence.live_records_displaced``.
 
 **Two things a naive read of the assets gets wrong**, both of which move a shrine 73 cm:
 
-* A shrine's root ``SceneComponent`` is attached to the *sphere's* root, i.e. across an
-  actor boundary, so its own ``RelativeLocation`` is not a world position. The chain has to
-  be composed -- rotator to quaternion, parent scale applied.
-* A component's transform is only serialised on the placed instance when it differs from
-  its class template. ``BP_WAT2``'s root carries ``RelativeScale3D = 2.7`` in the class and
-  instances almost never override it, so composing with a default of 1.0 puts every shrine
-  73.1 cm too high. The template is read out of the class ``.uasset``'s
-  ``<Name>_GEN_VARIABLE`` export. ``_meta.position_agreement`` re-measures the result
-  against the save's own live actors every run, so this cannot silently regress.
+* A shrine's root ``SceneComponent`` is attached to the SPHERE's root, across an actor
+  boundary, so its ``RelativeLocation`` is not a world position and the chain has to be
+  composed -- rotator to quaternion, parent scale applied.
+* A component's transform is serialised on the placed instance only where it differs from
+  its class template, and ``BP_WAT2``'s root carries ``RelativeScale3D = 2.7`` in the class,
+  so the template has to be read out of the class ``.uasset``'s ``<Name>_GEN_VARIABLE``
+  export. ``_meta.position_agreement`` re-measures the result against the save's own live
+  actors every run.
 
-**Hazard context is inference, and it is kept apart from the placements.** Each row may
-carry a ``hazard`` object. Nothing in it is a map placement: it is geometry computed
-between this collectible and other map actors, plus the radii those actors' own classes
-declare. Where the game states a radius -- a spore flower's damage sphere, a spawner's
-``mSpawnRadius``, a crab hatcher's detection radius -- the containment test uses that
-number and is a fact. Where it does not, this file emits the **distance** and no verdict,
-because a threshold would be this generator's opinion dressed as data. Those radii are
-reported per class in ``_meta.hazard_context.sources.class_declared_radius_cm`` and never as
-one number per hazard kind: a single ``hatcher_detection_radius_cm`` here spoke for two
-classes at once, and it spoke for the wrong one, because ``Char_BigCrabHatcher_C`` declares
-no detection radius at all. Since each source is tested against its own radius, a per-class
-list is the only shape in which the reported number describes what the test did.
+**Hazard context is inference, and it is kept apart from the placements.** Where the game
+states a radius -- a spore flower's damage sphere, a spawner's ``mSpawnRadius`` -- the
+containment test uses that number and is a fact; where it does not, the row carries the
+distance and no verdict, because a threshold would be this generator's opinion dressed as
+data. "Is it in a cave" and "can you reach it without a jetpack" are properties of no actor
+and are not derived at all (``_meta.not_derived``).
 
-**What is deliberately not here.** "Is it in a cave" and "can you reach it without a
-jetpack" are not properties of any actor. The nearest thing the assets hold is the
-``FGAmbientVolume`` sound zones, some of which name a cave ambient setting -- but they are
-placed for sound design, so they neither cover every cave nor stop at its mouth. Nothing in
-the cooked packages models reachability at all: no navmesh, no equipment gate. Both are
-human judgement, and a derived ``"flight recommended"`` would be a guess with a data-shaped
-face. ``z`` is in every row; height above local ground is not, because it inverts (see
-``_meta.not_derived``).
-
-**Licence.** The coordinates here are facts about Coffee Stain's map, read from the
-installed game. No third-party world table contributed to this file, in any form.
-
-**What opens the container.** Oodle-compressed blocks are opened by ``ooz``, from ``pyooz``,
-which is the project's ``gen`` extra: an optional dependency, pinned exactly because it
-decides the bytes this file writes, and asked for on the command line -- ``uv run --extra
-gen python tools/gen_world_collectibles.py``. Optional means optional **at import time**:
-the one ``import ooz`` in the repository sits inside
-``core.gameassets.iostore.oodle_decompress``, so a machine with the extra absent still
-imports every module and runs the whole test suite; it just cannot generate. This script
-proves the import before it starts, and with no ``ooz`` importable it says which line
-installs it and exits.
-
-**Where the reader lives.** ``satisfactory_mcp.core.gameassets.iostore`` opens the ``.utoc``
-and ``...gameassets.packages`` decodes a cooked package's exports, names and property tags.
-Both were the first 800 lines of this file, which is how three other generators came to
-import a 3,700-line script by file path to get at them; what is left here is the
-collectibles question asked of that reader.
-
-**Excluded on purpose**, each for a measured reason and each with the map's own count so a
-reader can see the whole accounting -- see ``_meta.excluded``. Every actor class the map
-places lands in exactly one of three places: a category, ``_meta.excluded``, or
-``_meta.not_classified``; the three counts sum to ``map_actors_in_gamelevel01``, which the
-run prints so a class cannot go missing without the total saying so.
+Nothing above is asserted where it can be counted: ``_meta`` carries the class census, the
+respawn probe that decides which harvestable plants earn rows, the identity checks, and the
+accounting that puts every map-placed class in exactly one of a category, ``_meta.excluded``
+or ``_meta.not_classified``. The coordinates are facts about Coffee Stain's map read from
+the installed game, with no third-party world table involved in any form.
 """
 
 from __future__ import annotations
@@ -199,22 +106,19 @@ sys.path.insert(0, str(ROOT))
 from tools._common import base_parser, require_gen
 
 #: Cooked map packages live under this prefix inside the container. That this prefix is the
-#: whole world used to be asserted here; it is now measured instead. Every other ``.umap``
-#: in the container is read with the same walk and reported, with its actor count and how
-#: many actors of an emitted class it places, in
-#: ``_meta.source.placements.other_levels_in_the_container``.
+#: whole world is measured rather than asserted: every other ``.umap`` in the container is
+#: read with the same walk and reported, with its actor count and how many actors of an
+#: emitted class it places, in ``_meta.source.placements.other_levels_in_the_container``.
 MAP_PREFIX = "Map/GameLevel01"
 
 #: The save's actor instanceName is this plus the map export's name, byte for byte, which
 #: is what makes ``join_key`` exact rather than approximate.
 INSTANCE_PREFIX = "Persistent_Level:PersistentLevel."
 
-#: Map actor class -> the category this table reports. Every one is a one-shot pickup or
-#: the pedestal of one: taking it removes the actor for good, so ``collected`` is a durable
-#: fact about it. That premise is not taken on trust -- ``_meta.respawn`` re-tests it every
-#: run by asking whether any of these keys ever LEAVES a save's destroyed list. Classes the
-#: map places that are NOT this are in ``EXCLUDED`` or, with their counts, in
-#: ``_meta.not_classified``.
+#: Map actor class -> the category this table reports. Every one is a one-shot pickup or the
+#: pedestal of one: taking it removes the actor for good, so ``collected`` is a durable fact
+#: about it, which ``_meta.respawn`` re-tests every run. Map-placed classes that are not here
+#: are in ``EXCLUDED`` or, with their counts, in ``_meta.not_classified``.
 CATEGORIES = {
     "BP_Crystal_C": "power_slug_blue",
     "BP_Crystal_mk2_C": "power_slug_yellow",
@@ -232,14 +136,13 @@ CATEGORIES = {
 
 #: The three harvestable plants, probed every run for the respawn machinery -- whether the
 #: class carries ``mNumRespawns`` and ``mUpdatedOnDayNr`` at all, and whether any instance's
-#: counter ever moves. Two of them regrow and are in ``EXCLUDED`` for that reason; the third
-#: is a ``CATEGORIES`` row, and this is the measurement that decides which is which instead
-#: of a sentence asserting it. See ``_meta.respawn``.
+#: counter moves. That probe is what decides which of them earn rows, rather than a sentence
+#: asserting it: two regrow and are in ``EXCLUDED``, the third is a ``CATEGORIES`` row.
 RESPAWN_PROBE = {"BP_BerryBush_C", "BP_NutBush_C", "BP_Shroom_01_C"}
 
-#: The properties the probe looks for, and what each one means. ``mSavedNumItems`` is in the
-#: list because it is the field most easily misread as a remaining count: it is the plant's
-#: fixed yield -- every nut bush writes 5 -- and never a countdown.
+#: The properties the probe looks for. ``mSavedNumItems`` is in the list because it is the
+#: field most easily misread as a remaining count: it is the plant's fixed yield -- every nut
+#: bush writes 5 -- and never a countdown.
 RESPAWN_PROPERTIES = ("mNumRespawns", "mUpdatedOnDayNr", "mSavedNumItems")
 
 #: Per-category notes worth carrying into the artifact, keyed by category.
@@ -300,10 +203,10 @@ CATEGORY_NOTES = {
     ),
 }
 
-#: Map-placed classes deliberately left out, and the measurement behind each. The map's own
-#: placement count is filled in per run, so "not a collectible" can never be confused with
-#: "we missed it", and an entry whose count comes back 0 is printed as a stale exclusion.
-#: Classes not named here are still counted, in ``_meta.not_classified``.
+#: Map-placed classes left out, and the measurement behind each. The map's own placement
+#: count is filled in per run, so "not a collectible" cannot be confused with "we missed
+#: it", and an entry whose count comes back 0 is printed as a stale exclusion. Classes not
+#: named here are still counted, in ``_meta.not_classified``.
 EXCLUDED = {
     "BP_Ship_C": (
         "crash-site scenery. Its only saved property is mDismantleRefundsIndex -- there "
@@ -409,21 +312,18 @@ HAZARD_CLASSES = {
 }
 
 #: How far a save's live position may sit from the map's before the record is treated as
-#: describing a different actor. 1 m, chosen because it falls in a gap between the two
-#: populations rather than inside either: almost every accepted record agrees to a small
-#: fraction of a centimetre, a handful sit at tens of centimetres because the game has not
-#: re-migrated their cell, and the rejects run from just over a metre out to kilometres.
-#: Both ends are re-measured every run and both are printed -- ``_meta.position_agreement``
-#: for the accepted records and ``_meta.status_evidence.displaced_gap_cm`` for the rejects
-#: -- so the size of that gap is a number in the artifact and not a claim here.
+#: describing a different actor. 1 m falls in the gap between two populations rather than
+#: inside either: accepted records agree to a fraction of a centimetre, or to tens of them
+#: where the game has not re-migrated the cell, while the rejects run from just over a metre
+#: to kilometres. Both ends are re-measured into ``_meta.position_agreement`` and
+#: ``_meta.status_evidence.displaced_gap_cm``.
 POSITION_TOLERANCE_CM = 100.0
 
-#: How far the hazard block looks, for all three of its channels. THIS FILE'S choice of a
-#: reporting horizon, not anything the game declares, which is why what it gates is a
-#: distance or a species list and never a verdict. 50 m is the order of magnitude the map
-#: itself works at: a gas field's ``mProximityPillarWorldLocations`` names its own pillars
-#: out to a median of about that far, re-measured every run into
-#: ``_meta.hazard_context.sources.gas_field_own_span_cm``.
+#: How far the hazard block looks, for all three of its channels. THIS FILE'S reporting
+#: horizon rather than anything the game declares, which is why what it gates is a distance
+#: or a species list and never a verdict. 50 m is the order of magnitude the map works at: a
+#: gas field's ``mProximityPillarWorldLocations`` names its own pillars out to about that
+#: far, re-measured into ``_meta.hazard_context.sources.gas_field_own_span_cm``.
 HAZARD_RADIUS_CM = 5000.0
 
 #: Whether a drop pod has been looted. Kept as a truthiness test rather than an equality
@@ -491,19 +391,17 @@ class MapWorld:
     hazards: list[Hazard]
     #: class name -> how many the map places, over EVERY actor class in GameLevel01.
     class_counts: collections.Counter
-    #: the same, restricted to blueprint (``/Game/``) classes. Equal to what the old
-    #: prefix-matching walk saw, which is what makes the widening additive.
+    #: the same, restricted to blueprint (``/Game/``) classes, which is what a prefix-matching
+    #: walk can see.
     game_class_counts: collections.Counter
-    #: (cell, instance) -> class, for every map-placed actor in every class and not only
-    #: the emitted ones. What makes "a partition cell streams in pieces" and "here is what
-    #: the destroyed entries that are not rows actually are" measurable rather than asserted.
+    #: (cell, instance) -> class, over every map-placed actor and not only the emitted ones.
+    #: What makes the destroyed entries that are not rows identifiable rather than a mystery.
     class_by_key: dict[tuple[str, str], str]
     #: instance names carrying the map's own _UAID_ placement id, and how many are distinct.
     uaid_names: int
     uaid_names_distinct: int
-    #: class -> how many of its actors reuse an instance name another actor already has.
-    #: What makes "the bare name is not unique, and here is exactly who is to blame"
-    #: a measurement rather than a claim in a comment.
+    #: class -> how many of its actors reuse an instance name another actor already has, so
+    #: that "the bare name is not unique" names its own culprits.
     name_repeats_by_class: collections.Counter
     actor_count: int
     distinct_keys: int
@@ -547,11 +445,10 @@ def _pickup_contents(view: PackageView, actor: int) -> dict | None:
 def _pod_unlock_cost(view: PackageView, actor: int) -> dict | None:
     """``mUnlockCost`` -> ``FGDropPodUnlockCost {CostType, ItemCost, PowerConsumption}``.
 
-    ``cost_type`` is deliberately null where the pod does not serialise it. UE writes a
-    property only when it differs from the class default, and both ``Item`` and ``Power``
-    are explicitly written by other pods -- so neither can be the default and a third,
-    never-written value must exist. Its name is nowhere in the cooked assets, so guessing
-    which of "free" or "unreachable" it means would be invention.
+    ``cost_type`` is null where the pod does not serialise it. UE writes a property only
+    where it differs from the class default, and both ``Item`` and ``Power`` are written
+    explicitly by other pods, so a third never-written value must exist -- and its name is
+    nowhere in the cooked assets.
     """
     payload = view.props(actor).get("mUnlockCost")
     if payload is None:
@@ -594,9 +491,8 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
     started = time.time()
 
     def unreadable(_path: str, exc: Exception) -> None:
-        # A package we cannot parse must not lose the other 4,520 -- and the exception TYPE
-        # is what says whether the container format moved or one asset is bad, so it is
-        # bucketed by type rather than merely counted.
+        # A package we cannot parse must not lose the other 4,520. Bucketed by exception
+        # TYPE, which is what says whether the container format moved or one asset is bad.
         unresolved[f"package failed to parse: {type(exc).__name__}"] += 1
 
     packages = level_paths(store, contains=MAP_PREFIX)
@@ -648,11 +544,9 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
                     else:
                         detail["contents"] = contents
                 if cls == "BP_Shroom_01_C":
-                    # Same field, no warning if it is absent: a loot cache must say what it
-                    # holds or the row is half an answer, whereas a mushroom's yield is on
-                    # its class rather than on the placement. Asked anyway, so that
-                    # "the map does not say" is a count in the artifact and not an
-                    # assumption here.
+                    # Same field, no warning if it is absent: a mushroom's yield lives on its
+                    # class rather than on the placement. Asked anyway, so "the map does not
+                    # say" is a count in the artifact.
                     contents = _pickup_contents(view, slot)
                     if contents is not None:
                         detail["contents"] = contents
@@ -708,11 +602,10 @@ def read_map(store: IoStore, scripts: ScriptObjects, progress: bool = True) -> M
 def read_other_levels(store: IoStore, scripts: ScriptObjects) -> list[dict]:
     """Every ``.umap`` in the container that is NOT part of ``GameLevel01``, walked the same way.
 
-    This exists to turn one sentence into a number. "GameLevel01 is the world" was an
-    assertion in a comment, and the row set rests on it: a collectible placed by some other
+    The row set rests on "GameLevel01 is the world", and a collectible placed by another
     level would be missing from this file with nothing in it to show. So the other levels are
-    read with the identical actor rule and reported with their class histogram and, the point
-    of the exercise, how many actors of an emitted class each one places.
+    read with the identical actor rule and reported with their class histogram and -- the
+    point of the exercise -- how many actors of an emitted class each one places.
     """
     out: list[dict] = []
     for path in sorted(p for p in store.by_path if p.endswith(".umap") and MAP_PREFIX not in p):
@@ -779,9 +672,8 @@ def _read_hazard(
             radius=classes.component_float(class_package, "DamageSphere", "SphereRadius"),
         )
     if cls == "BP_VolumeGas_01_C":
-        # The volume names the pillars belonging to its own field, in world space. That is
-        # the only statement the assets make about how far a gas field reaches, and it is
-        # what the hazard block's reporting radius is sized against.
+        # The volume names its own field's pillars in world space, which is the only
+        # statement the assets make about how far a gas field reaches.
         pillars = read_vector_array(props.get("mProximityPillarWorldLocations"))
         return Hazard(
             kind="gas_field",
@@ -796,9 +688,8 @@ def _read_hazard(
         resource = view.import_path(payload) if payload else None
         return Hazard(kind="resource", cls=cls, position=position, label=resource)
     if cls == "FGDamageOverTimeVolume":
-        # Read for one reason: this class looks exactly like a gas source and is not one.
-        # Which damage it deals is on mDotClass, which sits on a child component rather than
-        # on the volume, so the children have to be walked to find it.
+        # Read because this class looks exactly like a gas source and is not one. Which
+        # damage it deals is ``mDotClass``, on a child component rather than on the volume.
         dot = None
         for child in view.children.get(slot, []):
             payload = view.props(child).get("mDotClass")
@@ -811,13 +702,11 @@ def _read_hazard(
 class CreatureNames:
     """``Char_*`` class -> the ``Desc_*`` descriptor the game labels it with, and passivity.
 
-    Both are read from the assets, neither is a list kept here. The descriptor mapping is
-    the inverse of every ``CreatureDescriptors/Desc_*.mCreatureClass``, which is the game's
-    own Char -> Desc edge. Passivity is ``mIsPassiveCreature`` on the creature's own class
-    default object -- a bool, so its value is the byte in the tag rather than a payload.
-
-    Passivity matters because a lizard doll and a hog are both creature spawns and only one
-    of them is a hazard.
+    Both are read from the assets rather than listed here. The descriptor mapping is the
+    inverse of every ``CreatureDescriptors/Desc_*.mCreatureClass``, the game's own Char ->
+    Desc edge. Passivity is ``mIsPassiveCreature`` on the creature's class default object --
+    a bool, so its value is the byte in the tag rather than a payload -- and it matters
+    because a lizard doll and a hog are both creature spawns.
     """
 
     FOLDER = "/CreatureDescriptors/"
@@ -874,11 +763,10 @@ class CreatureNames:
 class Radioactivity:
     """Which resource classes are radioactive, over the ones the ground actually holds.
 
-    ``mRadioactiveDecay`` on an item descriptor is the whole model. The set is closed by
-    construction rather than by assertion: anything radioactive in the *world* has to be a
-    resource some node or deposit carries, so checking every distinct resource class the
-    map references is checking all of them. The manufactured radioactive parts -- plutonium,
-    ficsonium, waste -- do not exist until a player makes them and are not in the ground.
+    ``mRadioactiveDecay`` on an item descriptor is the whole model, and the set is closed by
+    construction: anything radioactive in the WORLD has to be a resource some node or deposit
+    carries, so checking every resource class the map references checks all of them. The
+    manufactured radioactive parts do not exist until a player makes them.
     """
 
     def __init__(self, classes: ClassFacts, index: AssetIndex, resources: set[str]) -> None:
@@ -906,11 +794,10 @@ class Radioactivity:
 class SpatialIndex:
     """A uniform grid over hazard sources, so the context pass is linear rather than N*M.
 
-    ``near`` looks at the 27 cells around a point, which finds everything within one cell
-    edge of it and nothing is guaranteed beyond that -- so the cell must be at least the
-    largest radius any query uses. That is not only this file's reporting horizon: a
-    spawner's own ``mSpawnRadius`` goes further, and sizing the grid to the horizon alone
-    silently loses the widest spawners' containment tests.
+    ``near`` looks at the 27 cells around a point, so it finds everything within one cell
+    edge and nothing is guaranteed beyond that: the cell must be at least the largest radius
+    any query uses. That is wider than this file's reporting horizon, because a spawner's own
+    ``mSpawnRadius`` goes further.
     """
 
     def __init__(self, cell_cm: float) -> None:
@@ -950,14 +837,13 @@ class HazardWorld:
     gas_clouds: int
     gas_fields: int
     #: class -> every distinct radius that class's placements declare, with how many
-    #: placements there are. A single number per hazard kind was wrong twice over: the
-    #: hatchers are TWO classes, Char_CrabHatcher_C and Char_BigCrabHatcher_C, and taking
-    #: whichever placement was read first spoke for both of them. Since ``spawns_here``
-    #: tests each source against its OWN radius, a per-class list is also the only form in
-    #: which the reported number describes what the test actually did.
+    #: placements there are. Per class rather than per hazard kind, because ``spawns_here``
+    #: tests each source against its OWN radius -- and because a kind can be two classes:
+    #: ``Char_CrabHatcher_C`` declares a detection radius and ``Char_BigCrabHatcher_C`` does
+    #: not.
     class_declared_radius_cm: dict[str, dict]
-    #: The spread of the per-placement mSpawnRadius, for the same reason: 1,137 spawners
-    #: "declaring a radius" says nothing about how far those radii reach.
+    #: The spread of the per-placement mSpawnRadius: 1,137 spawners "declaring a radius" says
+    #: nothing about how far those radii reach.
     spawner_radius_cm: dict[str, float | int | None]
     #: The widest radius any source declares, which is what the lookup grid is sized to.
     widest_declared_radius_cm: float
@@ -1141,15 +1027,14 @@ class SaveFacts:
     #: flora class -> how many live records of it this save holds.
     flora_records: collections.Counter = field(default_factory=collections.Counter)
     #: (flora class, property) -> how many of those records carry that property at all.
-    #: Presence, not value: a class that does not carry mNumRespawns has no respawn
-    #: machinery, which is the whole discriminator.
+    #: Presence, not value: a class that does not carry mNumRespawns has no respawn machinery.
     flora_property_records: collections.Counter = field(default_factory=collections.Counter)
     #: (flora class, property, value) -> count, for the three properties in
     #: RESPAWN_PROPERTIES. Small: the values are single digits and day numbers.
     flora_values: collections.Counter = field(default_factory=collections.Counter)
-    #: (cell, instance leaf) -> (class, mNumRespawns), where the record carries it. This is
-    #: the series whose monotonicity is the test. The class travels with the value because a
-    #: pre-partition key is one the current map has no entry for, so it cannot be looked up.
+    #: (cell, instance leaf) -> (class, mNumRespawns), where the record carries it: the series
+    #: whose monotonicity is the test. The class travels with the value because a
+    #: pre-partition key is one the current map has no entry for.
     flora_counter: dict[tuple[str, str], tuple[str, int]] = field(default_factory=dict)
     #: How many flora records' property block could not be decoded, so a missing property is
     #: never confused with an unreadable one.
@@ -1163,10 +1048,10 @@ class SaveFacts:
 def find_saves(root: Path) -> list[Path]:
     """Every ``.sav`` in *root* AND in the per-account subdirectory Steam uses.
 
-    Both, not one-or-the-other. The game keeps the actual saves in the account directory and
-    drops a 105-byte ``ServerManager_V2.sav`` in the root beside it, so a rule that stops at
-    the root as soon as it finds anything finds only that file and reports no saves at all.
-    It is not a save game and is skipped by the reader like any other unreadable file.
+    Both, not one-or-the-other: the game keeps the saves in the account directory and drops a
+    105-byte ``ServerManager_V2.sav`` in the root beside it, so a rule that stops at the root
+    as soon as it finds anything finds only that file. It is not a save game and the reader
+    skips it like any other unreadable file.
     """
     return sorted(set(root.glob("*.sav")) | set(root.glob("*/*.sav")))
 
@@ -1176,15 +1061,13 @@ def read_save_facts(path: Path, map_classes: set[str], keep_all_classes: bool) -
 
     Everything below the header is version-gated on the header's own ``save_version``: a
     pre-1.0 body has a 48-byte chunk preamble and a flat level list, and reading it with the
-    modern layout fails on the first chunk tag. That gate is the difference between reading
-    31 of these 66 saves and reading all of them.
+    modern layout fails on the first chunk tag.
 
-    Only the level walk is eager. It is 0.23 s against 1.99 s for a full parse because the
-    property blocks are 86% of the cost, so only the blocks with a question attached are
-    decoded, by offset, during the walk: ``mHasBeenLooted`` on at most 118 drop pods, and
-    the respawn properties on the ``RESPAWN_PROBE`` plants. The plants are the expensive
-    half -- there are thousands of them per save rather than hundreds -- and they are paid
-    for because they are the evidence that ``collected`` means anything at all.
+    Only the level walk is eager, which is 0.23 s against 1.99 s for a full parse because the
+    property blocks are 86% of the cost. The blocks with a question attached are decoded by
+    offset during the walk: ``mHasBeenLooted`` on at most 118 drop pods, and the respawn
+    properties on the ``RESPAWN_PROBE`` plants -- thousands per save, and paid for because
+    they are the evidence that ``collected`` means anything.
     """
     try:
         data = path.read_bytes()
@@ -1436,17 +1319,16 @@ def _measure_status(ctx: BuildContext) -> None:
             displaced.append((key, gap))
 
     collected = {key for key in ctx.newest.destroyed if key in ctx.by_key}
-    # What the rest of the destroyed list is, by the map's own class for that key. Derived,
-    # because "the remainder is scenery" is exactly the sort of sentence that quietly stops
-    # being true; a key the map does not place at all gets its own bucket.
+    # What the rest of the destroyed list is, by the map's own class for that key, so that
+    # "the remainder is scenery" is derived. A key the map does not place gets its own
+    # bucket.
     destroyed_others: collections.Counter = collections.Counter()
     for key in ctx.newest.destroyed:
         if key not in ctx.by_key:
             destroyed_others[ctx.world.class_by_key.get(key, "not a map-placed actor at all")] += 1
 
-    # Could a displaced record be re-attached by position alone? Reported, not applied:
-    # state has one derivation, and a heuristic that quietly overrides it is worse than a
-    # row honestly labelled unknown.
+    # Could a displaced record be re-attached by position alone? Reported, never applied:
+    # state has one derivation, and a row labelled unknown beats a heuristic overriding it.
     by_class: dict[str, list[Placement]] = collections.defaultdict(list)
     for placement in ctx.rows_in:
         by_class[placement.cls].append(placement)
@@ -1626,10 +1508,9 @@ def _measure_orphans(ctx: BuildContext) -> None:
     """What the orphans are, which is the closest thing to a proof that no row is missing.
 
     An orphan is a save's live record of an emitted class that this table has no row for,
-    and there are only three things it can be: a record from the pre-partition world
-    layout, a pre-patch record whose name the map now places in a DIFFERENT cell, or a
-    collectible the map read failed to find. The third is the one that would be a bug, so
-    it is counted rather than argued about.
+    and it can only be a record from the pre-partition world layout, a pre-patch record
+    whose name the map now places in a DIFFERENT cell, or a collectible the map read failed
+    to find. The third would be a bug, so it is counted rather than argued about.
     """
     row_names = {p.instance for p in ctx.rows_in}
     orphan_old_layout = orphan_renamed = orphan_unexplained = 0
@@ -1707,9 +1588,8 @@ def _measure_naming(ctx: BuildContext) -> None:
     )
 
     # Whether the game serialises a class at all: a row whose key ANY save mentions, live or
-    # gone, however displaced. 0 means the class is not save-relevant and can only ever be
-    # located -- BP_SomerSloopShrine_C is such a class, and this is the number that says so
-    # rather than a comment that could quietly stop being true.
+    # gone, however displaced. 0 means the class can only ever be located, never
+    # state-tracked, which is what BP_SomerSloopShrine_C measures at.
     mentioned: set[tuple[str, str]] = set()
     for save in ctx.facts:
         mentioned |= save.live.keys() & ctx.by_key.keys()
@@ -1735,20 +1615,15 @@ def _measure_naming(ctx: BuildContext) -> None:
 def _measure_respawn(ctx: BuildContext) -> None:
     """The premise every state here rests on -- a taken collectible stays gone -- tested.
 
-    The whole file rests on that one premise: taking a collectible removes it for good,
-    so "collected" is durable and the three states mean something. It is tested here
-    rather than asserted, in the two ways it can fail.
+    Two ways it can fail:
 
-    (1) A key leaves a save's destroyed list. Only consecutive saves of the SAME build
-        are compared: across a build that re-issued instance names, a key vanishing means
-        the name changed and not that the actor came back, so those pairs are counted and
-        skipped instead of being reported as reversals.
-    (2) A save names a key destroyed and a LATER save has a live record at that same key.
-        Here the position gate is not optional: an auto-numbered instance name is not
-        identity, so a player-dropped crate that happens to share a bare name with a map
-        cache looks exactly like a resurrection until its position is checked. Both the
-        accepted and the position-rejected counts are printed, because the rejected ones
-        are the measurement of how wrong the name-only test would have been.
+    (1) A key leaves a save's destroyed list. Only consecutive saves of the SAME build are
+        compared: across a build that re-issued instance names a key vanishing means the
+        name changed, so those pairs are counted and skipped rather than reported.
+    (2) A save names a key destroyed and a LATER save has a live record at that key. The
+        position gate is not optional here: a player-dropped crate sharing a bare name with
+        a map cache looks exactly like a resurrection until its position is checked. Both
+        the accepted and the position-rejected counts are printed.
     """
 
     def _class_of(key: tuple[str, str]) -> str:
@@ -1768,12 +1643,11 @@ def _measure_respawn(ctx: BuildContext) -> None:
         for key in save.destroyed:
             destroyed_observations[_class_of(key)] += 1
 
-    # A save can list one (cell, instance) as destroyed AND hold a live actor at it, with a
-    # position that agrees with the map. That is not a resurrection and it is not this file's
-    # error: pre-partition the bare name BP_Crystal1 belonged to two different slugs in two
-    # different levels, and the migration keyed one slug's destroyed record into the other's
-    # cell. So a "destroyed then live" observation splits three ways, and only the middle one
-    # would falsify the premise.
+    # A save can list one (cell, instance) as destroyed AND hold a live actor at it whose
+    # position agrees with the map. That is the game's own migration, not a resurrection:
+    # pre-partition the bare name BP_Crystal1 belonged to two slugs in two levels, and one
+    # slug's destroyed record was keyed into the other's cell. So a "destroyed then live"
+    # observation splits three ways and only the middle one would falsify the premise.
     first_destroyed: dict[tuple[str, str], int] = {}
     revived: collections.Counter = collections.Counter()
     revived_displaced: collections.Counter = collections.Counter()
@@ -2857,11 +2731,10 @@ def build(
 ) -> tuple[list[dict], dict]:
     """Turn map placements plus save facts into rows and ``_meta``.
 
-    Rows and ``_meta`` are built together because every number in ``_meta`` is a
-    by-product of one merge: a total computed separately is a total that can drift from
-    the rows it claims to describe. The merge is nine measurements over one shared
-    ``BuildContext``, in a fixed order because each may read what the earlier ones
-    measured; ``_assemble_meta`` at the end only reshapes what they left behind.
+    Rows and ``_meta`` are built together because every number in ``_meta`` is a by-product
+    of one merge, and a total computed separately can drift from the rows it describes. The
+    merge is nine measurements over one shared ``BuildContext``, in a fixed order because
+    each may read what the earlier ones measured; ``_assemble_meta`` only reshapes.
     """
     facts = sorted(facts, key=lambda f: (f.ticks, f.play_seconds))
     rows_in = [p for p in world.placements if p.cls in CATEGORIES]

@@ -2,14 +2,14 @@
 
     uv run --extra gen python tools/check_terrain_geometry.py
 
-``tools/gen_world_heightmap.py`` writes one field from one geometry source. This asks the
-question that generator cannot: **would a different source be better, and by how much.**
-It is the gate the terrain layer is allowed through, and it is deliberately a separate
-program, because a generator that measures its own alternatives is a generator that can be
-argued into shipping them.
+``tools/gen_world_heightmap.py`` writes one field from one geometry source; this asks
+whether a different source would be better, and by how much. It imports that generator and
+calls its rasteriser, its transforms and its cull rules, so the geometry dict is the only
+thing that differs between a candidate and the field that ships. Nothing here writes to
+``data/local``.
 
-Three rungs, one variable between them
---------------------------------------
+Three rungs, one variable between them:
+
 =========  ==============================================================================
 rung        geometry
 =========  ==============================================================================
@@ -18,39 +18,16 @@ rung        geometry
 ``best``    the Nanite leaf level where a mesh has one, LOD 0 where it does not.
 =========  ==============================================================================
 
-**The fallback in ``best`` is not a nicety.** 25 of this build's rock meshes carry no
-Nanite resource at all -- sea rocks, corals, part of the cave interior set -- and a
-Nanite-only layer silently loses about 365,000 texels against the hull layer. That is an
-invisible regression: the field still looks like a field. Measured, not inspected.
+25 of this build's rock meshes carry no Nanite resource at all -- sea rocks, corals, part
+of the cave interior set -- so ``best`` falls back to LOD 0 for them; a Nanite-only layer
+loses about 365,000 texels against the hull layer while still looking like a field.
 
-What makes this a measuring stick rather than a second opinion
---------------------------------------------------------------
-It **imports the shipping generator** and calls its ``MaxZRaster``, ``rotation_matrix``,
-``winding_sign`` and every one of its cull rules directly. A re-implementation would make
-each comparison a comparison of two rasterisers as much as of two geometries; importing
-means the geometry dict is the *only* thing that differs between a candidate and the field
-that ships. Nothing here writes to ``data/local``.
-
-The mesh set does not move either. Only meshes that decode a collision hull are scored --
-the hull-equivalent set -- because coverage and resolution are different questions and
-mixing them is how a real improvement gets buried. Adding the meshes that ship no hull is
-worth 1.7 points of accuracy in the wrong direction under a max-Z sampler: they are cave
-pillars, cave holes and merged cave floors, which is to say roofs, and a field that starts
-drawing roofs gets worse at "where is the ground" no matter how fine its triangles are.
-
-Two probe sets, two conventions
--------------------------------
-The 626 static resource nodes are in the repository and are always scored. A **foliage**
-set -- ground-snapped instance positions harvested from the world -- is 1,000x larger and
-is the only set with enough of them on the cliff province to separate rungs that differ by
-half a point; pass it with ``--foliage``. Both are scored raw and median-detrended, and the
-two are **not interchangeable**: on the cliff province the datum is -0.14 m, so quoting one
-number in the other convention moves the median 3 mm and the p90 13 cm. Every table here
-says which it is.
-
-Licence: the same posture as every generator here. Everything read is the reader's own
-installed game, nothing is written outside a scratch JSON the caller names, and no decoded
-geometry is committed.
+Only meshes that decode a collision hull are scored, on every rung, because coverage and
+resolution are different questions. The 626 static resource nodes are always scored; a
+foliage set passed with ``--foliage`` is 1,000x larger and the only one dense enough on
+the cliff province to separate rungs half a point apart. Every table says whether it is
+raw or median-detrended: on the cliff province the datum is -0.14 m, which moves the
+median 3 mm and the p90 13 cm.
 """
 
 from __future__ import annotations
@@ -87,16 +64,14 @@ RUNGS = ("hull", "lod0", "best")
 TRIM = 0.90
 
 
-# --------------------------------------------------------------------------------------
-# Reading all three sources out of one open of each mesh.
-# --------------------------------------------------------------------------------------
+# --- Reading all three sources out of one open of each mesh. --------------------------
 
 
 def read_rungs(store, scripts, index, meshes: list[str], progress: bool = True) -> dict:
     """Every rock mesh's hull, LOD0 and Nanite leaf, from one read of each package.
 
-    One read, three answers: opening 130 packages three times costs three times as much and
-    buys a chance for the three rungs to disagree about which asset they were looking at.
+    One read, three answers, so the three rungs cannot disagree about which asset they
+    were looking at.
     """
     wanted = [m for m in meshes if any(d in m for d in gen.ROCK_DIRS)]
     out: dict[str, dict] = {}
@@ -154,7 +129,7 @@ def read_rungs(store, scripts, index, meshes: list[str], progress: bool = True) 
 def geometry_for(rung: str, read: dict) -> dict:
     """``{mesh: (verts, tris, low, high)}`` for one rung, over the hull-equivalent set only.
 
-    A mesh with no hull is absent from every rung, not just from ``hull``. That is what
+    A mesh with no hull is absent from every rung, not just from ``hull``, which is what
     keeps the three rows a comparison of resolution rather than of coverage.
     """
     out: dict[str, tuple] = {}
@@ -183,9 +158,7 @@ def geometry_for(rung: str, read: dict) -> dict:
     return out
 
 
-# --------------------------------------------------------------------------------------
-# The score vocabulary. One definition, used by every table this prints.
-# --------------------------------------------------------------------------------------
+# --- The score vocabulary. One definition, used by every table this prints. -----------
 
 
 def _metrics(sorted_abs: np.ndarray) -> dict:
@@ -202,10 +175,8 @@ def _metrics(sorted_abs: np.ndarray) -> dict:
 def score(truth_m: np.ndarray, field_m: np.ndarray, n_total: int | None = None) -> dict:
     """The five numbers, raw at the top level and median-detrended underneath.
 
-    Both, because both conventions are live in this project and neither is wrong: the
-    assessment's cliff baseline is raw, and ``meta.json`` validates its node set detrended.
-    Returning one and hoping the reader guesses is how a 13 cm difference becomes an
-    argument.
+    Both conventions are live in this project: the cliff baseline is raw, and ``meta.json``
+    validates its node set detrended.
     """
     total = len(truth_m) if n_total is None else n_total
     ok = np.isfinite(field_m) & np.isfinite(truth_m)
@@ -241,18 +212,16 @@ def sample(grid_cm: np.ndarray, x_cm, y_cm) -> np.ndarray:
     return np.where(on & np.isfinite(value), value / 100.0, np.nan)
 
 
-# --------------------------------------------------------------------------------------
-# Density, which is the claim this whole exercise can actually make.
-# --------------------------------------------------------------------------------------
+# --- Density, which is the claim this whole exercise can actually make. ---------------
 
 
-#: The two candidate zoom levels, as metres of world per output pixel over the 7,500 m box.
-#: 16384 px and 32768 px. Written as arithmetic so they cannot drift from the renders.
+#: Metres of world per output pixel over the 7,500 m box, at 16384 px and 32768 px.
+#: Written as arithmetic so they cannot drift from the renders.
 Z6_TEXEL_M = 7500.0 / 16384
 Z7_TEXEL_M = 7500.0 / 32768
 
-#: The grain histogram: 100 geometric bins per decade from 1 mm to 1 km. Geometric on
-#: purpose -- see :func:`world_grain` for what that buys.
+#: 100 geometric bins per decade, 1 mm to 1 km. Geometric is load-bearing: see
+#: :func:`world_grain`.
 GRAIN_DECADES = (-3, 3)
 GRAIN_PER_DECADE = 100
 
@@ -260,21 +229,16 @@ GRAIN_PER_DECADE = 100
 def world_grain(geometry: dict, placements: np.ndarray, meshes: list[str]) -> dict:
     """Placement-weighted world-space triangle edge length: percentiles and the z6 share.
 
-    **After the placement transform, never before.** Placement scale runs from a median of
-    1.07 to a p90 of 2.50 on this world, and per-mesh grain spans three orders of magnitude
-    -- so the same mesh is fine enough for a 0.458 m texel in one placement and not in
-    another. Pooling mesh-local edges answers a question nobody asked; this was the single
-    most-flagged missing measurement of the programme that produced this file.
+    Measured after the placement transform, never before: placement scale runs from a
+    median of 1.07 to a p90 of 2.50 on this world, so the same mesh is fine enough for a
+    0.458 m texel in one placement and not in another.
 
-    Accumulated in float64 as a weighted histogram, and that is a repair rather than a
-    preference: pooling 1.2e9 edge lengths through a float32 cumulative sum saturates at
-    2**24 and returns quantiles about ten times too small, **silently**, which would have
-    inverted the headline before anyone noticed.
+    The weights are float64. A float32 cumulative sum over 1.2e9 edge lengths saturates at
+    2**24 and returns quantiles about ten times too small, silently.
 
     The bins are geometric, which is what makes 20,000 placements affordable: scaling every
-    edge of a mesh by a placement's factor is a *shift* along a geometric axis, so each
-    mesh's edges are histogrammed once and each placement costs one fractional shift of 600
-    bins instead of a fresh pass over two million edges. The fractional part is split
+    edge of a mesh is a *shift* along a geometric axis, so each mesh is histogrammed once
+    and each placement costs one fractional shift of 600 bins. The fractional part is split
     linearly between neighbouring bins, so the answer is not quantised to the bin ratio.
     """
     lo, hi = GRAIN_DECADES
@@ -301,8 +265,7 @@ def world_grain(geometry: dict, placements: np.ndarray, meshes: list[str]) -> di
         base, _edges = np.histogram(local / 100.0, bins=bins)  # unit scale, metres
         base = base.astype(np.float64)
         # An anisotropic scale stretches edges by direction; the mean of |scale| is the
-        # scalar a pooled percentile can honestly use, and is what the two independent
-        # measurements of this number both used.
+        # scalar a pooled percentile can honestly use.
         for placement in rows:
             shift = np.log10(max(float(np.abs(placement[8:11]).mean()), 1e-9)) / per_bin
             whole, frac = int(np.floor(shift)), shift - np.floor(shift)
@@ -412,9 +375,8 @@ def main() -> int:
     for name, pts in probes.items():
         col = np.clip(np.round((pts[:, 0] - gen.ORIGIN_X_CM) / 100.0).astype(int), 0, 7499)
         row_i = np.clip(np.round((pts[:, 1] - gen.ORIGIN_Y_CM) / 100.0).astype(int), 0, 7499)
-        # Both cliff values, so this selects the same province on a field written before
-        # the split and on one written after it. Testing ``== PROV_CLIFF`` would silently
-        # score a v3 field on a quarter of the probes and call it the same measurement.
+        # Both cliff values: testing ``== PROV_CLIFF`` scores a v3 field on a quarter of
+        # the probes and calls it the same measurement.
         province[name] = np.isin(field._prov[row_i, col], hf.PROV_CLIFF_VALUES)
         print(f"  {name}: {len(pts)} probes, {int(province[name].sum())} on the cliff province")
 

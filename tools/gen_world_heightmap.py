@@ -2,167 +2,17 @@
 
     uv run --extra gen python tools/gen_world_heightmap.py
 
-``src/satisfactory_mcp/domain/spatial/elevation.py`` used to open with "there is no
-heightmap", and for as long as the project's only terrain evidence was scattered resource
-nodes and the player's own foundations that was true. It is not true any more. The cooked
-game ships two independent, exact descriptions of its own ground, and this file decodes
-both, fuses them, measures the result against the static resource-node table, and writes it
-to ``data/local/heightmap/`` -- which is gitignored, because every byte of it is derived
-from Coffee Stain's cooked assets and read out of the reader's own install. The generator
-is committed; its output never is. Same posture, and the same precedent line for line, as
-``tools/gen_map_image.py``.
+Five stages fuse into one field: the cooked UE Landscape heightfield (a
+``LandscapeComponent``'s ``GrassData`` blob opens with 128x128 uint16 height samples, one
+per 1 m quad), the rock meshes' own cooked geometry rasterised as a max-Z overlay, the
+2048 px ``HeightData_Test`` interface raster as fill outside the landscape frame, and the
+game's own water actors for where the water is and how high it stands. The landscape is the
+sculpted terrain and nothing else -- every cliff, mesa and boulder is a placed static mesh
+-- so the overlay is what makes the tail of the error distribution bearable, and the run
+proves that per build by sampling the finished field at every static resource node and
+refusing to write if the trimmed RMS misses ``VALIDATION_TRIM_RMS_MAX_M``.
 
-The field this writes is **2.9x better** than the only heightmap the project had before it
--- ``HeightData_Test``, the 2048 px interface raster -- on trimmed RMS against those nodes,
-**4.1x** on the median, at 3.66x the horizontal sampling and a 499x finer vertical step.
-The comparison is conservative: the baseline's scale and offset were fitted on those very
-nodes, so its score is optimistic, and the two new layers were never fitted to anything.
-
-What the world actually ships
------------------------------
-**A cooked UE Landscape heightfield.** ``LandscapeComponent`` exports carry, past their
-property tags, a ``GrassData`` blob whose first ``128*128`` uint16 are the component's
-own height samples -- one per 1 m quad, 7.8 mm apart vertically. 2,289 components tile a
-7113 x 6097 m frame, 85% of it covered. ``world_z_cm = (h - 32768)/128 * scale_z + origin_z``
-with both taken from the ``LandscapeStreamingProxy``'s root transform rather than assumed,
-and this run refuses if they are not the 100 cm / 100 cm it was measured against.
-
-That heightfield is the sculpted terrain and **nothing else**, which is why it is excellent
-in the middle of the map and catastrophic in the tail: the cliffs, mesas and boulders are
-placed static meshes, and the landscape underneath them is whatever the artist left there.
-Landscape alone scores *worse* than the interface raster on trimmed RMS.
-
-**And the cliffs ship their own geometry, three times over.** Every rock ``StaticMesh``
-carries a ``BodySetup`` whose trailing bytes are a cooked Chaos
-``FTriangleMeshImplicitObject`` -- after a ``267`` (``0x10B``) marker, ``NumVerts`` float32
-triples then ``NumTris`` index triples -- and, in the same export's tail, the render
-chain's LOD 0 and an ``FNaniteResources`` whose pages hold the leaf level of the mesh the
-game actually draws. Rasterising any of them as a max-Z overlay over the landscape is what
-removes the tail: on 600,000 foliage ground samples -- an independent set 1,000x larger
-than the nodes -- P90 error falls from 14.75 m to 3.13 m.
-
-**Which of the three, and what that does and does not buy.** The layer takes the finest
-description each mesh ships: the Nanite leaf where there is one, LOD 0 where there is not,
-the hull where neither parses. Measured at the placement transform, that takes the median
-world-space triangle edge from **2.43 m to 0.48 m** and the share of edges at or under a
-z6 texel from 2.9% to 48.9%.
-
-It does **not** make the field more accurate, and saying so would be false. Across a 12x
-triangle range the cliff province's median moves 5 mm, its ``frac_lt_0.25m`` half a point,
-and its p90 **not at all** -- 58.45 m on the hull, 58.45 m on the Nanite leaf. The error
-that p90 measures is topological: max-Z answers with a cave roof or an overhang while the
-probe stands on the floor beneath, and a denser triangle makes that answer sharper rather
-than righter. What the finer geometry buys is DENSITY, which is a different and still
-useful claim -- see ``density.u8.z`` below.
-
-The MESH SET is still decided by the collision hull, and every placement cull is
-unchanged, so a field before and after differs in triangles and nothing else. Extending
-the layer to the 120 meshes that ship no hull was measured and refused: it costs 1.66
-points and 10.9 m of p90, because they are cave pillars, cave holes and merged cave floors
--- roofs.
-
-Five stages, and what each one is guarded by
---------------------------------------------
-**1. Landscape.** One sweep of the 4,521 ``*.umap`` under ``Map/GameLevel01`` reads both
-the landscape components and the placements, because two passes over the same packages is
-twice the price of one. The georeference is measured, not assumed: the frame's world origin
-comes out of the proxies, and the offset from it to this file's output origin is asserted to
-be a whole number of texels. It is (199, 702), so the landscape drops into the output grid
-index-aligned with **zero resampling** -- and if a future build moves the landscape half a
-metre, the assert says so instead of a bilinear smear appearing silently.
-
-**2. Placements.** ``StaticMeshComponent`` exports that are their own actor's
-``RootComponent``, with the mesh path and ``RelativeLocation``/``Rotation``/``Scale3D``.
-Three exclusions, each for a stated reason. ``NodeMeshActor_C`` is dropped because the
-validation set is the resource-node table and predicting a node's Z from the mesh drawn
-under that node would be circular. Foliage and trees are dropped because canopy is not
-ground -- that is precisely the mistake the interface raster makes. And a mesh whose scaled
-local extent exceeds ``OVERSIZE_CM`` is dropped: those are the sky dome and ocean shells,
-which are not terrain and would tile the whole map at one height.
-
-**3. Cliff collision.** The ``267`` marker is found **by search** inside a bounded window,
-never at a fixed offset, and three independent checks have to pass before a mesh is
-believed: every vertex finite, 90% of them inside the mesh's own ``ExtendedBounds``, and
-``max(index) < NumVerts``. That last one is what picks uint16 from uint32 -- meshes at or
-past 65,536 vertices use the wider index -- and it is also what makes a misaligned read
-fail loudly rather than produce plausible noise, since a random offset blows it instantly.
-103 of the 124 rock meshes decode; the closed ones satisfy the Euler relation
-``NumTris == 2*NumVerts - 4`` exactly, and the ones that do not are exactly the open shells
-(cave walls, floors, ceilings, merged arch pieces).
-
-**Arch meshes are dropped from the max-Z layer**, and that is a measurement rather than a
-choice: a max-Z field puts an arch *roof* over the ground beneath it, and masking them
-improved every metric on all three validation sets (nodes P90 1.46 -> 1.23 m, trim95
-9.25 -> 6.57 m, foliage P90 3.58 -> 3.30 m). They are dropped **before** the raster here
-rather than masked out of it afterwards, which is the one place this file's arithmetic
-differs from the workflow's: masking after the fold blanks a texel an arch happened to win
-even when a real rock stood second in it, and skipping before the fold lets the rock win.
-
-Each triangle is also clamped to its own mesh's padded ``ExtendedBounds``, against the
-stray far vertices that drew thin "spider" streaks across the western canyon in the
-prototype previews. On build 495413 it drops **zero** triangles -- the decode's own
-90%-inside gate already turns those meshes away -- and ``triangles_outside_bounds`` in the
-sidecar is what says so, run by run, rather than this paragraph.
-
-**4. Fill.** Outside the landscape frame there is no landscape, so ``HeightData_Test`` --
-2048 px of float16 over the same 7500 m box, ``z_cm = a*raw + b`` with the fit below --
-carries the ocean shelf and the map's edge. Its no-data test is the one number in this file
-most likely to be got wrong: the blank value is ``raw == 0``, which **decodes to -522 m**,
-not to zero. Testing ``raw > 0`` instead of ``decoded > FILL_FLOOR_CM`` leaks 138,481 texels
-of blank into the field as a false sea floor.
-
-**5. Water.** The game's own water, from the two places the game states it. This stage was
-rebuilt: it used to be a flatness detector over the interface raster, and that detector
-found **20.4%** of the sheet as water against the artwork's 39.0% -- 46% recall, 35.8% over
-Spire Coast -- while inventing plateau lakes where a mesa happened to be flat. The failures
-were structural rather than tunable. The raster's own quantisation step is 3.9 m and the
-water it was asked to find is 2.1 m deep; a river is a metre of water in a groove the
-raster cannot resolve at all; and over the fill province the "terrain" the detector
-compared against **is** the water surface, so the depth it needed was identically zero.
-
-What replaced it uses each source for the thing that source actually knows:
-
-* **The artwork says WHERE.** The four ``SlicedMap`` BC1 slices -- the same ones
-  ``tools/gen_map_image.py`` decodes, imported from it rather than re-listed -- are the
-  game's own drawing of its own world, and its water is drawn blue. ``B - R >= 25``
-  separates it: the histogram is bimodal with nothing in the middle, and of the static
-  resource nodes, every one of which stands on dry ground, it called **3** of the table's
-  626 rows water (0.48%) when the threshold was chosen; the same check re-runs per run.
-  Registration was measured rather than assumed -- a +/-2 px sweep puts the best agreement
-  at exactly (0, 0), which it should, since the sheet's box and this grid's are the same
-  7500 m square.
-* **The water volumes say HOW HIGH.** 837 of the world's 849 water actors carry a
-  world-space AABB, from four sources tried in order: a ``BoxComponent``'s ``BoxExtent``,
-  a cooked ``BrushBodySetup.AggGeom``'s convex-element boxes, an instanced component's
-  ``CachedBounds``, and -- for the plane-backed blueprints, whose cooked instance names no
-  mesh because a construction script assigns it -- ``WaterPlane``'s own ``ExtendedBounds``.
-  Every box goes to world space through the composed ``AttachParent`` chain, eight corners
-  at a time, so a rotated volume yields the AABB of the rotated box rather than of the
-  unrotated one. **A box's top is the water surface**, and that is measured: the save's 23
-  water extractors all sit inside a volume, and every one of them stands on its box's top
-  to within **0.005 cm**.
-
-The level is taken per texel as the **highest** box top standing over it, because a box top
-is a surface and where several water bodies overlap in plan the highest is the one you can
-see. A single median per drawn body was tried and rejected by measurement: the ocean and
-the rivers that run into it are one connected shape in the artwork spanning 141 m of box
-top, and one median over that invents up to 157 m of depth over 0.06 km2. The per-texel
-maximum is nonetheless flat -- 0.017% of neighbouring wet texel pairs step past 0.5 m, and
-those are river mouths, where a step is what is really there.
-
-**Where the ground is the fill layer, the DEPTH is not knowable and the channel says so.**
-That is what ``waterq.u8.z`` carries. The level is good to centimetres everywhere; the
-depth is the level minus the ground, and over the 3.9 m fill raster -- which is most of the
-ocean -- that subtraction has no meaning. Nothing may gate on ``water > terrain`` there,
-which is exactly the test that would read the open ocean as dry. Where the ground *is*
-1 m terrain, the same test is applied in the other direction and does real work: a rock
-standing out of a lake is dry, and 0.041 km2 of the artwork's water is exactly that.
-
-Still **information only**: nothing downstream moves ground because of this channel.
-
-What it writes
---------------
-``data/local/heightmap/``, six files, about 18 MB::
+It writes ``data/local/heightmap/``, six files, about 18 MB::
 
     height.i16.z  7500x7500 int16 decimetres, row-delta + zlib, -32768 = no data
     prov.u8.z     0 no-data, 1 landscape, 3 fill, 4 cliff interpolated, 5 cliff direct
@@ -171,78 +21,18 @@ What it writes
     waterq.u8.z   0 dry, 1 water with a measured depth, 2 water whose depth is unknowable
     meta.json     georeference, game build, generator version, coverage, measured accuracy
 
-**The two cliff provenance values are one layer, split by how the texel was answered.**
-5 means at least one source vertex landed in that texel; 4 means the rasteriser reached it
-by interpolating the plane of a triangle wider than the texel. At 1 m they are equally
-accurate and the split says nothing about that. It exists for the renderer: anything
-drawing finer than 1 m has to decide whether it is resampling a measurement or an
-interpolant, and ``density.u8.z`` -- the count behind the same rule -- is the only plane
-that can tell it. The split is **additive**: a reader that knows only 4 sees 5 as "not
-landscape, not fill, not no-data", which is exactly what 4 meant before.
+The georeference is ``x_cm = -324700 + col*100``, ``y_cm = -375000 + row*100``, and it is
+**vertex-aligned**: a texel's height belongs to that point exactly, not to a cell around it.
+The two cliff provenance values are one layer split by how the texel was answered, so a
+reader that knows only 4 sees 5 as "not landscape, not fill, not no-data" and is right. The
+codec lives in ``satisfactory_mcp.domain.spatial.heightfield`` and the container reader in
+``satisfactory_mcp.core.gameassets``; both are imported rather than reimplemented, and
+``ooz`` is imported inside the latter so a machine without the ``gen`` extra still imports
+every module and runs the tests.
 
-The georeference is fixed and recorded: ``x_cm = -324700 + col*100``,
-``y_cm = -375000 + row*100``, **vertex-aligned** -- a texel's height belongs to that point
-exactly, not to a cell around it. The codec itself lives in
-``satisfactory_mcp.domain.spatial.heightfield`` and is imported from there rather than
-copied, because a byte format with two implementations is a byte format with two opinions.
-
-**The run validates itself and refuses to write if it fails.** The built field is sampled
-at every static resource node and the trimmed RMS about the median offset has to come in
-under ``VALIDATION_TRIM_RMS_MAX_M``. The workflow that proved this pipeline measured
-0.368 m; the gate is 0.5 m, which is comfortably clear of that and nowhere near the
-baseline's 1.08 m. A decode regression -- a moved marker, a changed component size, an index
-width guessed wrong -- has to fail loudly rather than ship a plausible-looking field that is
-quietly two metres out. The same pass measures per-layer accuracy and puts it in
-``meta.json``, so a reading can carry the uncertainty of the layer that answered it instead
-of one number quoted for the whole map.
-
-**The water channel has four gates of its own**, and each one is aimed at a specific way
-the recipe could come apart without looking wrong. Dry-node false positives over
-``WATER_FP_MAX`` mean the colour classifier drifted or the sheet moved. Spire Coast recall
-under ``WATER_SPIRE_RECALL_MIN`` -- measured against the artwork over the ``Spire Coast``
-cells of ``data/region_names.json``, which is the game's own map areas and therefore not
-this file marking its own homework -- means the region that exposed the old detector is
-being missed again. Those cells moved when that table was re-derived: the game's Spire Coast
-is a 1.6 km2 strip where the wiki trace drew a ring across the whole north, so the stencil
-is smaller and sharper than the one the recorded 99.85% was measured over. An ocean level more than ``WATER_OCEAN_TOLERANCE_M``
-from the median top of the ocean-spline boxes means the level is coming from the wrong
-boxes. And artwork water not standing over any box at all, past ``WATER_UNCOVERED_MAX``,
-means the mask and the volumes have stopped describing the same world -- which is what a
-misregistration by more than a few texels looks like from here.
-
-**Staleness.** The project's standing rule is that a pinned map artifact announces drift
-rather than answering silently wrong, and this one is pinned twice over: ``meta.json``
-records the installed build in the same shape ``data/resource_nodes.json`` uses, and a run
-**refuses to overwrite** an existing field unless that sidecar names the build now
-installed. ``--force`` says it anyway. The whole directory is written to
-``heightmap.incoming`` and **renamed** into place, so a reader can never meet three files
-from one build and one from another; an interrupted run leaves a staging directory nothing
-loads.
-
-**What opens the container.** Oodle-compressed container blocks are opened by ``ooz``, from
-``pyooz``, which is the project's ``gen`` extra: an optional dependency, pinned exactly
-because it decides the bytes this file writes, and asked for on the command line -- the
-same posture as ``tools/gen_map_image.py`` and ``tools/gen_world_collectibles.py``::
-
-    uv run --extra gen python tools/gen_world_heightmap.py
-
-Optional means optional **at import time**: nothing imports it at module scope, the one
-``import ooz`` in the repository sits inside ``core.gameassets.iostore.oodle_decompress``,
-and a machine with none of the extra installed still imports every module, runs the whole
-test suite and serves the map -- it just cannot generate. numpy and scipy, unlike ``ooz``,
-are dependencies of this project outright and are imported at the top of this file.
-
-**Where the reader lives.** None of the reading is reimplemented here, and none of it is
-imported by file path any more: the container is
-``satisfactory_mcp.core.gameassets.iostore``, a cooked package's exports, names and
-property tags are ``.packages``, the mip arithmetic is ``.textures``, and the build pin and
-the staged rename that keeps this directory from saying two things at once are
-``.provenance``. Each takes its decoder as an argument rather than importing one, which is
-what keeps the extra optional everywhere but at the point of use.
-
-**Licence.** Everything this writes is derived from Coffee Stain's cooked assets, read out
-of the reader's own installed copy of the game and left in a gitignored directory. Nothing
-here is committed, uploaded or redistributed, and the server serves it to localhost only.
+Everything written here is derived from Coffee Stain's cooked assets, read out of the
+reader's own install into a gitignored directory: the generator is committed and its output
+never is.
 """
 
 from __future__ import annotations
@@ -287,25 +77,23 @@ from satisfactory_mcp.core.gameassets.textures import decode_bc1_rgba, raw_mip_s
 from satisfactory_mcp.domain.spatial import heightfield as hf
 from tools._common import base_parser, require_gen
 
-# The map sheet's four slices are one asset with one layout, so they are imported from the
-# generator that owns them rather than described twice. Same posture as
-# tools/gen_map_renders.py, and for the same reason: two descriptions of one texture are
-# two chances to be describing different textures.
+# The map sheet's four slices are one asset with one layout, imported from the generator
+# that owns them: two descriptions of one texture are two chances to describe different
+# textures.
 from tools.gen_map_image import SHEET_PX, SLICES, TILE_PX, read_slice
 
 #: Which packages are swept. Everything terrain lives under one world.
 LEVEL_DIR = "/GameLevel01/"
 LEVEL_SUFFIX = ".umap"
 
-#: The interface raster that used to be the project's only heightmap, and is now the fill.
+#: The interface raster the fill layer is cut from.
 BASELINE_PATH = (
     "../../../FactoryGame/Content/FactoryGame/Interface/UI/Assets/MapTest/HeightData_Test.ubulk"
 )
 BASELINE_PX = 2048
 
-#: The mip chain of that raster, largest-first, at two bytes per texel: 2048 down to 128.
-#: Derived so the length check below is arithmetic rather than a number typed in. A file of
-#: another length means the raster was re-cooked, i.e. the game changed, and the run stops.
+#: The mip chain of that raster, largest-first, at two bytes per texel: 2048 down to 128. A
+#: file of another length means the raster was re-cooked, i.e. the game changed.
 BASELINE_MIPS = raw_mip_sizes(BASELINE_PX, 5, 2)
 BASELINE_BYTES = sum(size for _px, size in BASELINE_MIPS)
 
@@ -314,16 +102,14 @@ BASELINE_BOX_CM = (-324700.0, 425300.0, -375000.0, 375000.0)
 
 #: ``z_cm = scale*raw + offset``, from a robust three-pass fit of the float16 values against
 #: the 626 static nodes: 569 inliers, 1.07 m RMS, 3.897 m per quantisation step. Recorded
-#: here rather than re-fitted per run because a fit is a calibration and a calibration that
-#: moves silently is not one -- and because this layer is only the fill, whose whole claim
-#: is that it is the old baseline unchanged.
+#: rather than re-fitted per run, because a calibration that moves silently is not one.
 BASELINE_SCALE_CM_PER_RAW = 99364.40751843198
 BASELINE_OFFSET_CM = -52282.12831764497
 
 #: The fill's no-data test, and the trap in it. ``raw == 0`` is the blank value and decodes
-#: to -522.8 m; the world's own floor is -255 m (landscape ``raw == 0``). Anything below
-#: this is the raster's blank tail, not sea bed. Testing ``raw > 0`` instead leaks 138,481
-#: texels. Stated as a decoded height precisely so it cannot be confused for a raw one.
+#: to -522.8 m; the world's own floor is -255 m. Anything below this is the raster's blank
+#: tail, not sea bed, and testing ``raw > 0`` instead leaks 138,481 texels of it into the
+#: field as a false sea floor. A decoded height, so it cannot be read as a raw one.
 FILL_FLOOR_CM = -26000.0
 
 #: The interface raster's own resolution, for the accuracy the fill layer inherits.
@@ -333,9 +119,9 @@ FILL_VERTICAL_M = BASELINE_SCALE_CM_PER_RAW / 255.0 / 100.0
 #: ``ComponentSizeQuads`` is 127, so a landscape component is 128x128 height samples.
 LANDSCAPE_N = 128
 
-#: What the height encoding is, and what this run refuses to proceed without. The proxies
-#: state their own scale and origin; these are what those statements were measured to be,
-#: and a build that disagrees gets an error rather than a field a metre out.
+#: The height encoding, and what this run refuses to proceed without: the proxies state
+#: their own scale and origin, and a build that disagrees with these gets an error rather
+#: than a field wrong by a factor.
 LANDSCAPE_SCALE_CM = 100.0
 LANDSCAPE_ORIGIN_Z_CM = 100.0
 LANDSCAPE_ZERO = 32768.0
@@ -359,8 +145,9 @@ ROCK_DIRS = ("/World/Environment/Rock/", "/World/Environment/Caves/")
 #: and the reason is circularity: the field is validated against the node table.
 EXCLUDED_OWNERS = frozenset({"NodeMeshActor_C"})
 
-#: A mesh basename containing this is an arch, and an arch is a roof. Dropped from the
-#: max-Z layer -- see the module docstring for the three validation sets that measured it.
+#: A mesh basename containing this is an arch, and an arch is a roof: a max-Z fold would put
+#: it over the ground beneath it, so it is dropped before the fold rather than masked after.
+#: Masking after blanks a texel an arch won even where a real rock stood second in it.
 ARCH_MARK = "Arc"
 
 #: Scaled local extent past which a placement is scenery rather than terrain: the sky dome
@@ -372,24 +159,20 @@ OVERSIZE_CM = 60000.0
 #: descriptions of itself gets rasterised.
 CLIFF_SOURCES = ("nanite", "lod0", "hull")
 
-#: How far past its own ``ExtendedBounds`` a vertex may sit. Both a decode check -- 99% of
+#: How far past its own ``ExtendedBounds`` a vertex may sit. Both a decode check -- most of
 #: a candidate's vertices must be inside, which a misread stream cannot manage -- and, per
-#: triangle, the clamp guarding against the stray far vertices that drew spider streaks in
-#: the prototypes. On build 495413 the clamp fires zero times; the sidecar records the
-#: count. The pad itself is ``core.gameassets.staticmesh``'s, imported rather than retyped.
+#: triangle, a clamp against stray far vertices. The sidecar records how often it fires.
 BOUNDS_PAD_CM = staticmesh.BOUNDS_PAD_CM
 BOUNDS_PAD_FRACTION = staticmesh.BOUNDS_PAD_FRACTION
 BOUNDS_INSIDE_MIN = staticmesh.BOUNDS_INSIDE_MIN
 
-#: Metres of world per output pixel at the two candidate zoom levels, over the 7,500 m box:
-#: 16384 px and 32768 px. Here because the density plane's whole job is to say which side
-#: of the first of these a texel is on, and a number typed twice is a number that drifts.
+#: Metres of world per output pixel at the two candidate zoom levels, over the 7,500 m box.
 Z6_TEXEL_M = 7500.0 / 16384
 Z7_TEXEL_M = 7500.0 / 32768
 
 #: How many source vertices a texel needs before its height is a measurement rather than an
-#: interpolation across a triangle wider than itself. One. That is the operative rule, and
-#: the two texel sizes above are only where it is evaluated.
+#: interpolation across a triangle wider than itself. ``tools/gen_map_renders.py`` imports
+#: this rule and evaluates it at its own texel size, so it is stated here only once.
 DIRECT_SAMPLES_MIN = 1
 
 #: The rasteriser's scatter buffer, in candidate texels. Bounded so a 21,000-placement run
@@ -430,18 +213,22 @@ WATER_BOX_COMPONENTS = frozenset(
 
 #: The plane the water blueprints draw themselves with. Their cooked instances name no
 #: ``StaticMesh`` -- the construction script assigns it -- so this asset's own
-#: ``ExtendedBounds`` stands in, and the assumption was checked: of 215 such planes, the
-#: 187 whose centre falls inside an ``FGWaterVolume`` sit on that volume's top to a median
-#: of 1.3 cm. Read from the container rather than hard-coded, so a resized plane moves it.
+#: ``ExtendedBounds`` stands in: of 215 such planes, the 187 whose centre falls inside an
+#: ``FGWaterVolume`` sit on that volume's top to a median of 1.3 cm. Read from the container
+#: rather than hard-coded, so a resized plane moves it.
 WATER_PLANE_MESH = "/Game/FactoryGame/World/Environment/Water/Mesh/WaterPlane"
 
-#: The artwork classifier. Blue minus red on the game's own map sheet, one threshold,
-#: measured: the histogram is bimodal with nothing between the modes, and it called 3 of
-#: the node table's then-626 rows -- all of which stand on dry ground -- water.
+#: The artwork classifier: blue minus red on the game's own map sheet, one threshold. The
+#: histogram is bimodal with nothing between the modes, and at this value it called 3 of the
+#: node table's 626 rows -- all of which stand on dry ground -- water.
 WATER_ARTWORK_BLUE_OVER_RED = 25
 
-#: The four gates the water stage refuses to write past. See the module docstring for what
-#: each one is aimed at.
+#: The four gates the water stage refuses to write past, each aimed at one way the recipe
+#: can come apart without looking wrong: dry nodes read as water means the colour classifier
+#: drifted or the sheet moved; Spire Coast recall is the region that exposed the flatness
+#: detector this stage replaced; an ocean level far from the median top of the ocean-spline
+#: boxes means the level is coming from the wrong boxes; and artwork water standing over no
+#: box at all is what a misregistration of more than a few texels looks like from here.
 WATER_FP_MAX = 0.01
 WATER_SPIRE_RECALL_MIN = 0.95
 WATER_OCEAN_TOLERANCE_M = 0.5
@@ -453,9 +240,9 @@ WATER_OCEAN_CLASS = "BPW_OceanSplineTool_02_C"
 WATER_GATE_REGION = "Spire Coast"
 REGION_TABLE = ROOT / "data" / "region_names.json"
 
-#: The node table the run validates against, and the gate it has to clear. The workflow
-#: that proved this pipeline measured 0.368 m trimmed RMS; 0.5 m is clear of that and well
-#: under the interface raster's own 1.08 m, so a decode regression cannot pass as a refresh.
+#: The node table the run validates against, and the gate it has to clear. This pipeline
+#: measures 0.368 m trimmed RMS and the interface raster alone manages 1.08 m, so 0.5 m is
+#: the band in which a decode regression cannot pass as a refresh.
 NODE_TABLE = ROOT / "data" / "world_resource_nodes.json"
 VALIDATION_TRIM = 0.90
 VALIDATION_TRIM_RMS_MAX_M = 0.5
@@ -465,13 +252,10 @@ VALIDATION_TRIM_RMS_MAX_M = 0.5
 #: layer in particular is mostly ocean where nothing stands.
 ACCURACY_MIN_SAMPLES = 30
 
-#: Where it all goes. The staging directory it is renamed from is
-#: ``core.gameassets.provenance.install_directory``'s business, not this file's.
 LOCAL_DIR = ROOT / "data" / "local"
 
-#: Bumped when the pipeline changes what it writes, so a sidecar dates its own field.
-#: 2 is the rebuilt water stage and the ``waterq.u8.z`` raster that came with it; 3 is the
-#: cliff layer moving from the collision hull to the Nanite leaf, the ``density.u8.z``
+#: Bumped when the pipeline changes what it writes, so a sidecar dates its own field. 3 is
+#: the cliff layer taking the Nanite leaf over the collision hull, the ``density.u8.z``
 #: plane, and the provenance value that says which side of one sample per texel a cliff
 #: texel is on.
 GENERATOR_VERSION = 3
@@ -488,9 +272,8 @@ PIN_PATH = ("sources", "game", "game_version_pinned")
 def rotation_matrix(pitch: float, yaw: float, roll: float) -> np.ndarray:
     """UE's ``FRotationMatrix``: rows are the local X, Y, Z axes in world space.
 
-    Written out rather than composed from three rotations because UE's order and sign
-    conventions are its own, and a matrix that is right for 21,000 placements is worth
-    stating once in the form the engine states it.
+    Written out rather than composed from three rotations, because UE's order and sign
+    conventions are its own.
     """
     p, y, r = np.radians([pitch, yaw, roll])
     sp, cp = np.sin(p), np.cos(p)
@@ -510,9 +293,9 @@ def _grass_data_heights(tail: bytes) -> np.ndarray | None:
 
     Past the property tags the export carries a bool, a GUID and a float, then the
     ``GrassData`` map: an element count, a ``TMap`` of that many 8-byte entries, and the
-    ``TArray<uint8>`` whose first ``2*NumElements`` bytes are the heights. Everything is
-    read from lengths in the blob; the only constant is that a component is 128 samples
-    square, and a component that says otherwise is skipped rather than reinterpreted.
+    ``TArray<uint8>`` whose first ``2*NumElements`` bytes are the heights. Every offset is
+    read from a length in the blob; a component that is not 128 samples square is skipped
+    rather than reinterpreted.
     """
     try:
         num = struct.unpack_from("<I", tail, 24)[0]
@@ -532,9 +315,8 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
     """One pass over every ``*.umap`` of the world: landscape, placements, water actors.
 
     All three harvests need the same ``PackageView`` of the same 4,521 packages, and
-    building that view is the whole cost of the pass, so they share it. Returns the raw
-    material for stages 1 to 5 and nothing interpreted: the arithmetic that turns it into a
-    field lives in the functions below, where it can be read next to the constants it uses.
+    building that view is the whole cost of the pass, so they share it. Returns raw material
+    and nothing interpreted.
     """
     components: list[tuple[int, int, np.ndarray]] = []
     proxies: list[tuple[float, float, float, float, float, float]] = []
@@ -562,12 +344,6 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
         # An actor names its own root; a StaticMeshComponent that is not one is a
         # decoration hanging off something else, and its transform is relative to a parent
         # this sweep does not walk. Built first so the placement loop can just look up.
-        #
-        # Through ``packages.root_component``, which this module already imported for the
-        # water stage, rather than the copy of its first branch that used to live here.
-        # Measured equivalent before the swap: over all 4,521 packages the two produce the
-        # same 60,296 (root, owner class) pairs, none added, none dropped, none disagreeing
-        # -- which is what makes this a deletion and not a change to what gets rasterised.
         root_owner: dict[int, str] = {}
         for slot, class_path in view.class_of.items():
             root = root_component(view, slot)
@@ -665,9 +441,9 @@ def sweep_levels(store, scripts, classes, meshes, progress: bool = True) -> dict
 def landscape_frame(sweep: dict) -> dict:
     """Stitch the components into one raster and pin it to the world. Nothing resampled.
 
-    The proxies all state the same origin, scale and Z offset; that they do is checked here
-    rather than assumed, because a build that split the landscape into frames with different
-    transforms would otherwise stitch into a plausible, wrong field.
+    That the proxies all state the same origin, scale and Z offset is checked rather than
+    assumed: a build that split the landscape into frames with different transforms would
+    otherwise stitch into a plausible, wrong field.
     """
     components = sweep["components"]
     proxies = sweep["proxies"]
@@ -747,10 +523,9 @@ def landscape_frame(sweep: dict) -> dict:
 def drop_offsets(frame: dict) -> tuple[int, int]:
     """Where the landscape frame lands in the output grid, in whole texels.
 
-    Asserted rather than rounded into. The landscape is a 1 m grid and so is the output, so
-    an origin offset that is not a whole number of texels means one of the two moved, and
-    the honest response is to stop -- a resample would smooth a real heightfield to hide an
-    arithmetic problem, and it would do it silently.
+    Asserted rather than rounded into: the landscape is a 1 m grid and so is the output, so
+    a fractional offset means one of the two moved, and resampling would smooth a real
+    heightfield to cover it.
     """
     dx = (frame["x0_cm"] - ORIGIN_X_CM) / SPACING_CM
     dy = (frame["y0_cm"] - ORIGIN_Y_CM) / SPACING_CM
@@ -773,20 +548,14 @@ def drop_offsets(frame: dict) -> tuple[int, int]:
 def finer_source(store, package: str, view, export, low, high) -> tuple[str, tuple] | None:
     """The finest geometry this mesh ships, and which one that was -- or ``None``.
 
-    Nanite first, LOD 0 second, and the reason for the order is measured: at the placement
-    transform the Nanite leaf's median world edge is **0.48 m**, LOD 0's is 1.33 m and the
-    collision hull's is 2.43 m, so the leaf is the only one of the three that is finer than
-    a z6 texel more often than not.
+    Nanite first, LOD 0 second: at the placement transform their median world edges are
+    0.48 m and 1.33 m against the collision hull's 2.43 m. 25 of this build's rock meshes
+    carry no Nanite resource at all -- sea rocks, corals, part of the cave interior set --
+    so a Nanite-only layer loses about 365,000 texels and still looks like a field.
 
-    **The LOD 0 fallback is not a nicety.** 25 of this build's rock meshes carry no Nanite
-    resource at all -- sea rocks, corals, part of the cave interior set -- and a
-    Nanite-only layer silently loses about 365,000 texels against the hull layer. It looks
-    like a field either way, which is what makes it worth a branch.
-
-    A finer source is only accepted if it clears the same bounds check the hull does. A
-    decoder that produced plausible garbage would otherwise ship it, and the mesh's own
-    serialised ``ExtendedBounds`` is the one statement available that does not come from
-    the same reader.
+    A finer source is accepted only if it clears the same bounds check the hull does: the
+    mesh's own serialised ``ExtendedBounds`` is the one statement available that does not
+    come from this reader, so it is what stops plausible garbage from shipping.
     """
     tail = staticmesh.render_tail(view, export)
     try:
@@ -824,17 +593,11 @@ def read_mesh_geometry(store, scripts, index, meshes: list[str], progress: bool 
     Only ``ROCK_DIRS`` are opened: a tree's collision is a tree, and the point of this layer
     is the geometry the landscape does not contain.
 
-    **The cooked collision hull still decides the SET.** A mesh with no hull is skipped
-    exactly as it always was -- 21 of the 130 use ``CTF_UseSimpleAndComplex`` and ship only
-    convex hulls -- and the hull's padded ``ExtendedBounds`` remain the per-triangle clamp
-    downstream. What changed in v3 is only which triangles are rasterised inside that same
-    set of meshes and that same set of placements, which is what makes the field's before
-    and after comparable at all.
-
-    That restraint is a measurement, not caution. Extending the layer to the 120 meshes
-    that ship no hull costs 1.66 points of ``frac_lt_0.25m`` and 10.9 m of p90 under a max-Z
-    sampler: they are cave pillars, cave holes and merged cave floors -- roofs -- and two of
-    them contribute zero up-facing triangles under this file's own facing rule.
+    **The cooked collision hull decides the SET**, and a mesh with no hull is skipped -- 21
+    of the 130 use ``CTF_UseSimpleAndComplex`` and ship only convex hulls. Extending the
+    layer to the 120 hull-less meshes costs 1.66 points of ``frac_lt_0.25m`` and 10.9 m of
+    p90 under a max-Z sampler, because they are cave pillars, cave holes and merged cave
+    floors: roofs.
     """
     wanted = [m for m in meshes if any(d in m for d in ROCK_DIRS)]
     geometry: dict[str, tuple] = {}
@@ -871,9 +634,8 @@ def read_mesh_geometry(store, scripts, index, meshes: list[str], progress: bool 
         hull_verts, hull_tris_array, pad = hull
         hull_tris += hull_tris_array.shape[0]
         # The closed-manifold Euler relation on the hull. Not a gate -- cave walls, floors
-        # and merged arch pieces are open shells and are meant to be -- but counting it is
-        # the cheapest evidence that this is geometry and not pattern-matched noise, since
-        # noise satisfies it essentially never.
+        # and merged arch pieces are open shells and are meant to be -- but noise satisfies
+        # it essentially never, so the count is evidence that this is geometry.
         if hull_tris_array.shape[0] == 2 * hull_verts.shape[0] - 4:
             closed += 1
 
@@ -914,9 +676,8 @@ class MaxZRaster:
     """Scatter-max rasteriser over the landscape frame: the highest triangle wins a texel.
 
     Triangles arrive faster than they can be reduced -- 120 M of them across the placements
-    -- so candidates are buffered and folded in batches. The fold is a lexsort by (texel,
-    z) and a take-last, which is one pass over the batch rather than a Python loop over
-    21,000 placements' worth of overlapping bounding boxes.
+    -- so candidates are buffered and folded in batches by a lexsort on (texel, z) and a
+    take-last.
     """
 
     def __init__(self, width: int, height: int, x0_cm: float, y0_cm: float, scale: float) -> None:
@@ -935,17 +696,13 @@ class MaxZRaster:
     def count_samples(self, points: np.ndarray) -> None:
         """Record which texel each SOURCE VERTEX landed in. The density plane, accumulated.
 
-        Not the same question as the fold above, and the difference is the whole point of
-        the plane: the fold answers every texel a triangle covers, however large that
-        triangle is, while this counts only the texels the geometry actually sampled. A
-        texel with no samples has a height, and that height is the rasteriser's plane
-        interpolation -- honest, but an interpolation, and a renderer drawing finer than 1 m
-        needs to know which it is looking at.
+        Not the fold's question: the fold answers every texel a triangle covers, however
+        large the triangle, while this counts only the texels the geometry sampled. A texel
+        with no samples still has a height, and that height is a plane interpolation.
 
-        Floored, not rounded, to match ``add``: the barycentric test above samples at
-        ``col + 0.5`` in grid units and writes to ``col``, so a vertex at fraction
-        ``[col, col+1)`` belongs to that same texel. Two conventions here would put the
-        density plane half a texel away from the heights it describes.
+        Floored, not rounded, to match ``add``, which samples at ``col + 0.5`` and writes to
+        ``col``. Two conventions here would put the density plane half a texel away from the
+        heights it describes.
         """
         col = np.floor((points[:, 0] - self.x0) / self.scale).astype(np.int64)
         row = np.floor((points[:, 1] - self.y0) / self.scale).astype(np.int64)
@@ -960,10 +717,8 @@ class MaxZRaster:
     def flush_samples(self) -> None:
         """Reduce the buffered sample texels into the density plane.
 
-        Sorted and run-length counted rather than ``bincount``-ed, because a bincount over
-        the frame allocates a 43-million-element temporary on every flush and there are
-        dozens of flushes. The sort is over a few million and the add is over the unique
-        texels only.
+        Sorted and run-length counted rather than ``bincount``-ed: a bincount over the frame
+        allocates a 43-million-element temporary on every one of dozens of flushes.
         """
         if not self._samples:
             return
@@ -992,9 +747,9 @@ class MaxZRaster:
     def add(self, tri: np.ndarray, source_id: int) -> None:
         """Buffer every texel covered by ``tri`` (M, 3, 3) in world cm, with its plane Z.
 
-        Triangles are bucketed by bounding-box span so one vectorised barycentric test runs
-        over a whole bucket at a fixed candidate-grid size, instead of every triangle paying
-        for the largest one's box.
+        Bucketed by bounding-box span so one vectorised barycentric test runs over a whole
+        bucket at a fixed candidate-grid size, instead of every triangle paying for the
+        largest one's box.
         """
         fx = (tri[:, :, 0] - self.x0) / self.scale
         fy = (tri[:, :, 1] - self.y0) / self.scale
@@ -1056,10 +811,9 @@ def winding_sign(verts: np.ndarray, tris: np.ndarray) -> float:
     """+1 if this mesh's triangle normals point outward, -1 if inward, 0 if it cannot tell.
 
     A max-Z field wants only the up-facing half of a closed rock, and which half that is
-    depends on the winding the cooker emitted. Measured per mesh from the divergence of the
-    face normals about the centroid rather than assumed, and 0 -- an open shell where the
-    question is meaningless -- means every triangle is kept, which is the safe answer for a
-    max-Z fold.
+    depends on the winding the cooker emitted, so it is measured per mesh from the
+    divergence of the face normals about the centroid. 0 is an open shell, where the
+    question is meaningless and every triangle is therefore kept.
     """
     a, b, c = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
     normals = np.cross(b - a, c - a)
@@ -1075,9 +829,9 @@ def rasterise_cliffs(sweep: dict, geometry: dict, frame: dict, progress: bool = 
 
     Culling, in the order it costs least: an excluded owner, a mesh with no cooked geometry,
     an arch, an oversized shell, then the downward-facing half of the triangles, then the
-    triangles that fall outside the mesh's own padded bounds. That last one is per triangle
-    rather than per mesh, because the defect it removes is one stray vertex in an otherwise
-    good mesh, and dropping the mesh for it would cost a real rock.
+    triangles outside the mesh's own padded bounds. That last cull is per triangle rather
+    than per mesh, because the defect it removes is one stray vertex in an otherwise good
+    mesh.
     """
     placements = sweep["placements"]
     meshes, owners = sweep["meshes"], sweep["owners"]
@@ -1166,12 +920,9 @@ def rasterise_cliffs(sweep: dict, geometry: dict, frame: dict, progress: bool = 
 def decode_baseline(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """The interface raster's float16 texels to world centimetres, and where it says anything.
 
-    Split out from the read so the rule below is a pure function a test can hold, because it
-    is the single easiest thing in this file to get wrong. **The blank value is ``raw == 0``
-    and it decodes to about -522 m, not to zero.** So the no-data test is on the DECODED
-    height against ``FILL_FLOOR_CM``, which sits below the world's own floor of -255 m and
-    above the blank. Testing ``raw > 0`` instead looks equivalent, is not, and leaks 138,481
-    texels of blank into the field as a false sea floor at the bottom of the map.
+    Split out from the read so the rule is a pure function a test can hold. The no-data test
+    is on the DECODED height against ``FILL_FLOOR_CM``: ``raw > 0`` looks equivalent and is
+    not, because the blank value is ``raw == 0`` and it decodes to about -522 m.
     """
     z_cm = values.astype(np.float32) * BASELINE_SCALE_CM_PER_RAW + BASELINE_OFFSET_CM
     return z_cm, z_cm > FILL_FLOOR_CM
@@ -1180,9 +931,8 @@ def decode_baseline(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def read_baseline(store) -> tuple[np.ndarray, np.ndarray]:
     """``HeightData_Test`` as world centimetres, with the mask of where it says anything.
 
-    The length check is the integrity check, exactly as it is for the map slices next door:
-    2048 down to 128 at two bytes a texel is one number, and a file that is not that long
-    was re-cooked at another size or mip count, i.e. the game changed.
+    The length check is the integrity check: 2048 down to 128 at two bytes a texel is one
+    number, and a file that is not that long was re-cooked at another size or mip count.
     """
     if BASELINE_PATH not in store.by_path:
         raise SystemExit(
@@ -1207,9 +957,8 @@ def read_baseline(store) -> tuple[np.ndarray, np.ndarray]:
 def baseline_indices() -> tuple[np.ndarray, np.ndarray]:
     """Which baseline texel each output column and row falls in. Nearest, never blended.
 
-    The fill is 3.66 m data being read at 1 m, so an interpolation would draw a smooth
-    surface out of a raster that has none and hide the coarseness the provenance byte
-    exists to declare.
+    The fill is 3.66 m data read at 1 m, so an interpolation would draw a smooth surface out
+    of a raster that has none and hide the coarseness the provenance byte declares.
     """
     x0, x1, y0, y1 = BASELINE_BOX_CM
     columns = ORIGIN_X_CM + np.arange(GRID_PX) * SPACING_CM
@@ -1267,9 +1016,9 @@ def _agg_geom_box(payload: bytes, names) -> tuple[list[float], list[float]] | No
     """The union of every convex element's ``ElemBox`` in a cooked ``FKAggregateGeom``.
 
     This is where an ``FGWaterVolume`` keeps its shape. A cooked BSP brush holds its
-    vertices in WORLD space and its component transform is legitimately the identity, which
-    is why 270 of these decode correctly with no ``RelativeLocation`` anywhere on the actor.
-    An ``FBox`` is 3 doubles of min, 3 of max and a validity byte.
+    vertices in WORLD space and its component transform is legitimately the identity, so 270
+    of these decode with no ``RelativeLocation`` anywhere on the actor. An ``FBox`` is 3
+    doubles of min, 3 of max and a validity byte.
     """
     entries, _end = property_tags(payload, names, 0)
     low = [math.inf] * 3
@@ -1298,9 +1047,9 @@ def _agg_geom_box(payload: bytes, names) -> tuple[list[float], list[float]] | No
 def _corners_to_world(low, high, transform) -> tuple[list[float], list[float]]:
     """A local box through a world transform, eight corners at a time.
 
-    Corner by corner rather than centre-plus-extent because a rotated volume's world AABB
-    is the box AROUND the rotated box, not the unrotated box moved -- and 486 of the 837
-    water actors are rotated, so getting this wrong would be getting most of them wrong.
+    Corner by corner rather than centre-plus-extent, because a rotated volume's world AABB
+    is the box AROUND the rotated box, not the unrotated box moved. 486 of the 837 water
+    actors are rotated.
     """
     location, rotation, scale = transform
     out_low = [math.inf] * 3
@@ -1319,9 +1068,8 @@ def _corners_to_world(low, high, transform) -> tuple[list[float], list[float]]:
 class MeshBounds:
     """``ExtendedBounds`` per static mesh, read once each, plus the water plane's own.
 
-    A cache rather than a lookup because the plane-backed blueprints all name the same
-    mesh, and 215 of them asking the container 215 times would be 215 package reads for one
-    answer.
+    A cache because the plane-backed blueprints all name the same mesh: 215 of them asking
+    the container would be 215 package reads for one answer.
     """
 
     def __init__(self, store, scripts, index) -> None:
@@ -1350,12 +1098,11 @@ class MeshBounds:
 def _component_box(view: PackageView, slot: int, name: str, meshes: MeshBounds):
     """One component's LOCAL box and where it came from, or ``(None, None)``.
 
-    Four sources, tried in the order they are trustworthy. ``BoxExtent`` is the component
-    saying its own half-extents. ``BrushBodySetup.AggGeom`` is the cooked collision of a
-    BSP volume. ``CachedBounds`` is what an instanced component records for all of its
-    instances at once. And a ``StaticMeshComponent`` uses its mesh's ``ExtendedBounds`` --
-    falling back to the water plane's when the cooked instance names no mesh at all, which
-    is the normal case here and is flagged in the source name rather than hidden.
+    Four sources, tried in the order they are trustworthy: the component's own
+    ``BoxExtent``, a BSP volume's cooked ``BrushBodySetup.AggGeom``, an instanced
+    component's ``CachedBounds``, and a ``StaticMeshComponent``'s mesh ``ExtendedBounds``.
+    That last falls back to the water plane's when the cooked instance names no mesh, which
+    is the normal case here and is flagged in the returned source name rather than hidden.
     """
     props = view.props(slot)
     if len(props.get("BoxExtent", b"")) == 24:
@@ -1393,13 +1140,11 @@ def water_actor_box(view: PackageView, actor: int, classes, meshes: MeshBounds):
     The union over every box-like component in the actor's export subtree, each taken to
     world space through its own composed ``AttachParent`` chain.
 
-    The one refusal is the last block. A mesh's ``ExtendedBounds`` is centred on the mesh's
-    own origin and therefore carries no position at all, so an actor whose ONLY box is an
-    assumed plane and which states no transform anywhere would land its box at the world
-    origin -- a parse artefact, not a placement. A ``BrushComponent`` is the opposite case
-    and must not be caught by this: its vertices are already in world space and its
-    identity transform is correct, which is how 270 ``FGWaterVolume`` have a right box and
-    no ``RelativeLocation`` between them.
+    The last block is a refusal: a mesh's ``ExtendedBounds`` is centred on the mesh's own
+    origin, so an actor whose only box is an assumed plane and which states no transform
+    anywhere would land at the world origin -- a parse artefact, not a placement. It cannot
+    catch a ``BrushComponent``, whose vertices are already world-space and whose identity
+    transform is correct.
     """
     stack = [actor]
     seen: set[int] = set()
@@ -1444,17 +1189,13 @@ def water_actor_box(view: PackageView, actor: int, classes, meshes: MeshBounds):
 def artwork_water_mask(store, decoder, image_mod) -> np.ndarray:
     """The game's own map artwork, classified into water, on this file's 1 m grid.
 
-    One threshold on one difference, and both halves of that are the argument.
-    ``B - R`` because the artwork's water is the only blue thing on it -- terrain, cliffs,
-    biome tints and the grid are all warm -- so the statistic is bimodal with nothing in
-    the middle and the threshold's exact value barely matters. Nearest-neighbour down to
-    the 1 m grid because 8192 px over the same 7500 m box is 0.92 m to the pixel, i.e. the
-    two grids are within a texel of each other, and interpolating a hard-edged mask would
-    only invent a soft one.
+    ``B - R``, because the artwork's water is the only blue thing on it: terrain, cliffs,
+    biome tints and the grid are all warm. Nearest-neighbour down to the 1 m grid, because
+    8192 px over the same 7500 m box is 0.92 m to the pixel and interpolating a hard-edged
+    mask would only invent a soft one.
 
-    The slices are read through ``tools/gen_map_image.py``'s own reader, so the file-length
-    check that guards the mip layout is the same check in both places, and this stage does
-    NOT depend on that generator having been run: it decodes the container, not ``map.png``.
+    The slices come from the container through ``tools/gen_map_image.py``'s reader, not from
+    ``map.png``, so this stage does not depend on that generator having been run.
     """
     sheet = np.zeros((SHEET_PX, SHEET_PX), dtype=bool)
     for name in SLICES:
@@ -1472,11 +1213,9 @@ def artwork_water_mask(store, decoder, image_mod) -> np.ndarray:
 def water_box_tops(boxes: list[tuple[str, tuple[float, ...]]]) -> tuple[np.ndarray, int]:
     """The highest surface-class box top standing over each texel, in metres, or ``nan``.
 
-    The maximum, and that is measured rather than aesthetic. A box's top IS the surface of
-    the volume it bounds, so where several overlap in plan the highest is the one visible
-    from above -- and the alternative, one median per drawn body, was tried and rejected:
-    the ocean and its rivers are one connected shape in the artwork spanning 141 m of box
-    top, over which a single median invents up to 157 m of depth.
+    A box's top IS the surface of the volume it bounds, so where several overlap in plan the
+    highest is the one visible from above. The save's 23 water extractors all sit inside a
+    volume and every one of them stands on its box's top to within 0.005 cm.
     """
     tops = np.full((GRID_PX, GRID_PX), np.nan, np.float32)
     used = 0
@@ -1503,11 +1242,9 @@ def region_mask(name: str) -> np.ndarray | None:
     """One named region of ``data/region_names.json``, on this grid. Independent evidence.
 
     That table is derived from the game's own ``FGMapAreaTexture`` -- exact area boundaries
-    at 1.83 m, downsampled to 256 m -- so it is made without reference to anything in this
-    pipeline, which is the only reason a recall measured against it means something. It was
-    a hand trace of a wiki image when this gate was written; the independence argument is
-    unchanged and the stencil is sharper. ``None`` if the table or the name is missing,
-    because a gate that cannot find its own reference must say so rather than pass.
+    at 1.83 m, downsampled to 256 m -- and from nothing in this pipeline, which is the only
+    reason a recall measured against it means anything. ``None`` if the table or the name is
+    missing: a gate that cannot find its own reference must say so rather than pass.
     """
     if not REGION_TABLE.is_file():
         return None
@@ -1529,14 +1266,14 @@ def region_mask(name: str) -> np.ndarray | None:
 def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np.ndarray) -> dict:
     """The artwork's plan shape given the water volumes' level, and what is left unknown.
 
-    Three steps and one refusal. The level of a wet texel is the highest box top over it;
-    where nothing covers it -- 17 texels of 18.3 million on build 495413 -- the median of
-    its own drawn body's covered tops stands in, and a body with no box anywhere is dropped
-    rather than guessed at. Then the only gate: where the ground was measured at 1 m and
-    stands ABOVE that level, there is no water, which is a rock in a lake and takes 0.04
-    km2 off the mask. Where the ground is the fill layer or nothing at all, no such test is
-    possible in either direction, and the texel is water whose depth this file does not
-    know -- said in ``waterq.u8.z`` rather than implied by a subtraction.
+    The level of a wet texel is the highest box top over it; where nothing covers it -- 17
+    texels of 18.3 million on build 495413 -- the median of its own drawn body's covered
+    tops stands in, and a body with no box anywhere is dropped rather than guessed at. Then
+    the one gate: where the ground was measured at 1 m and stands above that level there is
+    no water, which is a rock in a lake and takes 0.04 km2 off the mask. Where the ground is
+    the fill layer or nothing at all no such test is possible in either direction, so the
+    texel is water whose depth this file does not know, and ``waterq.u8.z`` says that rather
+    than a subtraction implying it.
     """
     tops, used = water_box_tops(boxes)
     covered = np.isfinite(tops)
@@ -1554,10 +1291,10 @@ def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np
         level[orphan] = lookup[labelled[orphan]]
 
     terrain_m = np.where(height_dm == hf.NODATA, np.nan, height_dm / hf.DM_PER_M).astype(np.float32)
-    # Both cliff values. A depth is knowable wherever the ground under the water was
-    # measured at 1 m, and whether a source vertex happened to land in the texel has
-    # nothing to do with that -- listing only 4 here would call three quarters of the
-    # cliff province depth-unknown for a reason that is about rendering.
+    # Both cliff values: a depth is knowable wherever the ground under the water was
+    # measured at 1 m, and whether a source vertex landed in the texel has nothing to do
+    # with that. Listing only 4 would call three quarters of the cliff province
+    # depth-unknown over a distinction that exists for the renderer.
     measurable = ((prov == hf.PROV_LANDSCAPE) | np.isin(prov, hf.PROV_CLIFF_VALUES)) & np.isfinite(
         terrain_m
     )
@@ -1589,9 +1326,9 @@ def water_surface(mask: np.ndarray, boxes: list, height_dm: np.ndarray, prov: np
 def validate_water(surface: dict, mask: np.ndarray, boxes: list) -> dict:
     """The four gates, each measured against something this stage did not make.
 
-    Returns every number whether it passes or not; ``main`` decides what to do about it.
-    A gate that could not find its own reference reports ``None`` and is treated as a
-    failure, because "the check did not run" and "the check passed" are different things.
+    Returns every number whether it passes or not; ``main`` decides what to do about it. A
+    gate that could not find its own reference reports ``None`` and is treated as a failure:
+    "the check did not run" and "the check passed" are different things.
     """
     wet = surface["quality"] != hf.WATER_DRY
     nodes = json.loads(NODE_TABLE.read_text(encoding="utf-8"))["nodes"]
@@ -1720,11 +1457,11 @@ def water_gate_failures(checks: dict) -> list[str]:
 def compose(frame: dict, cliffs: dict, baseline_cm: np.ndarray, valid: np.ndarray) -> dict:
     """Fuse the layers into the output grid: fill, then landscape, then cliff over both.
 
-    The order is the argument. The fill is everywhere the interface raster says anything, so
-    it goes down first and is the answer only where nothing better arrives. The landscape
-    drops in index-aligned over its own frame. The cliff overlay then wins any texel where
-    real geometry stands above the sculpted ground -- and also any texel the landscape left
-    as a hole, because a cave mouth's rock is still a measurement.
+    The fill is everywhere the interface raster says anything, so it goes down first and is
+    the answer only where nothing better arrives. The landscape drops in index-aligned over
+    its own frame. The cliff overlay then wins any texel where real geometry stands above
+    the sculpted ground, and any texel the landscape left as a hole: a cave mouth's rock is
+    still a measurement.
     """
     dx, dy = drop_offsets(frame)
     bi, bj = baseline_indices()
@@ -1738,11 +1475,9 @@ def compose(frame: dict, cliffs: dict, baseline_cm: np.ndarray, valid: np.ndarra
     cliff_m = (cliffs["z_cm"] / 100.0).astype(np.float32)
     take = np.isfinite(cliff_m) & (~np.isfinite(land_m) | (cliff_m > land_m))
     sub_z = np.where(take, cliff_m, land_m)
-    # Two cliff values, one layer. 5 says a source vertex landed in this texel and its
-    # height is a sample; 4 says the rasteriser reached it by interpolating the plane of a
-    # triangle wider than the texel. Both are the cliff layer and both are as accurate as
-    # each other AT 1 m -- what differs is what a renderer drawing finer than 1 m is
-    # entitled to claim, which is the whole reason the distinction is recorded.
+    # Two cliff values, one layer, equally accurate at 1 m: 5 says a source vertex landed in
+    # this texel, 4 says the rasteriser reached it by interpolating the plane of a triangle
+    # wider than the texel. The split exists for renders drawing finer than 1 m.
     direct = take & (cliffs["density"] >= DIRECT_SAMPLES_MIN)
     sub_prov = np.where(take, hf.PROV_CLIFF, sub_prov)
     sub_prov = np.where(direct, hf.PROV_CLIFF_DIRECT, sub_prov).astype(np.uint8)
@@ -1785,9 +1520,8 @@ def compose(frame: dict, cliffs: dict, baseline_cm: np.ndarray, valid: np.ndarra
 def sample_grid(height_dm: np.ndarray, x_cm: np.ndarray, y_cm: np.ndarray) -> np.ndarray:
     """Read the field at world coordinates, in metres, ``nan`` where it knows nothing.
 
-    Deliberately the same rounding ``Field.texel`` does on the other side, so the number
-    this run validates on is the number the server will answer with -- a validation of a
-    slightly different sampler would be a validation of something nobody ships.
+    The same rounding ``Field.texel`` does on the other side, so the number this run
+    validates on is the number the server answers with.
     """
     col = np.round((x_cm - ORIGIN_X_CM) / SPACING_CM).astype(int)
     row = np.round((y_cm - ORIGIN_Y_CM) / SPACING_CM).astype(int)
@@ -1799,11 +1533,10 @@ def sample_grid(height_dm: np.ndarray, x_cm: np.ndarray, y_cm: np.ndarray) -> np
 def error_stats(errors: np.ndarray, total: int) -> dict:
     """Median offset, then the spread about it: median absolute, P90, and trimmed RMS.
 
-    The offset is removed because a constant bias would be a georeference question rather
-    than a decode one, and this pass is guarding the decode. The trim is what keeps the
-    verdict honest about caves: about 44 nodes sit *under* the surface -- cave mouths,
-    arches, overhangs -- and no single-valued heightmap can represent them, so an untrimmed
-    RMS measures the map's topology rather than this file's arithmetic.
+    The offset is removed because a constant bias is a georeference question and this pass
+    guards the decode. The trim is about caves: about 44 nodes sit UNDER the surface, in
+    cave mouths, arches and overhangs that no single-valued heightmap can represent, so an
+    untrimmed RMS measures the map's topology rather than this file's arithmetic.
     """
     finite = errors[~np.isnan(errors)]
     if finite.size == 0:
@@ -1825,9 +1558,9 @@ def error_stats(errors: np.ndarray, total: int) -> dict:
 def validate(height_dm: np.ndarray, prov: np.ndarray) -> dict:
     """Measure the built field against the static node table, whole and per layer.
 
-    The whole-field number is the gate; the per-layer ones are what the sidecar carries so a
-    reading can quote the accuracy of the layer that answered it rather than one number for
-    a field that is a fifth of a metre good in the middle and four metres good at the edge.
+    The whole-field number is the gate; the per-layer ones go in the sidecar so a reading can
+    quote the accuracy of the layer that answered it, this field being a fifth of a metre
+    good in the middle and four metres good at the edge.
     """
     nodes = json.loads(NODE_TABLE.read_text(encoding="utf-8"))["nodes"]
     x = np.array([n["x"] for n in nodes], float)
@@ -1843,9 +1576,8 @@ def validate(height_dm: np.ndarray, prov: np.ndarray) -> dict:
         per_layer[hf.PROV_NAMES[value]] = error_stats(
             np.where(pick, errors, np.nan), int(pick.sum())
         )
-    # The cliff province whole, as well as split. The split is what v3 added and the whole
-    # is what every previous field's number was measured over, so dropping it would make
-    # this run's cliff accuracy incomparable to the one it is supposed to not regress from.
+    # The cliff province whole as well as split: the whole is what a field before the split
+    # measured, so keeping it is what makes two runs' cliff accuracy comparable.
     cliff = np.isin(layers, hf.PROV_CLIFF_VALUES)
     per_layer["cliff, both"] = error_stats(np.where(cliff, errors, np.nan), int(cliff.sum()))
     return {
@@ -1873,8 +1605,8 @@ def accuracy_block(validation: dict) -> dict:
     """What each provenance value means, and how well it was measured to do.
 
     ``accuracy_m`` is the measured median absolute error where enough nodes fell on that
-    layer to mean anything, and the layer's own vertical step where they did not -- which
-    is honest in both directions, and says which it is.
+    layer to mean anything and the layer's own vertical step where they did not, and
+    ``accuracy_from`` says which of the two it is.
     """
     derived = {
         hf.PROV_LANDSCAPE: (1.0, LANDSCAPE_SCALE_CM / LANDSCAPE_PER_UNIT / 100.0),
@@ -1918,11 +1650,9 @@ def accuracy_block(validation: dict) -> dict:
         name = hf.PROV_NAMES[value]
         measured = validation["per_layer"].get(name, {})
         enough = measured.get("n", 0) >= ACCURACY_MIN_SAMPLES
-        # The two cliff values are one layer measured two ways, so a split too thin to
-        # believe on its own falls back to the province WHOLE rather than to a derived
-        # step. Quoting 0.1 m there -- the derived floor, because a rasterised triangle has
-        # no vertical quantisation -- would be a better number than the layer has ever
-        # measured, invented by splitting the node set in half.
+        # A cliff split too thin to believe falls back to the province WHOLE rather than to
+        # a derived step: a rasterised triangle has no vertical quantisation, so the derived
+        # floor of 0.1 m would be a better number than the layer has ever measured.
         fallback = validation["per_layer"].get("cliff, both", {})
         pooled = value in hf.PROV_CLIFF_VALUES and fallback.get("n", 0) >= ACCURACY_MIN_SAMPLES
         if enough:
@@ -2336,11 +2066,7 @@ def build_meta(
 
 
 def pinned_build(meta: dict) -> str | None:
-    """The build an existing sidecar names, or None if it names none.
-
-    ``PIN_PATH`` is this file's statement about its own sidecar; the walk that follows it
-    is everyone's, and lives in ``core.gameassets.provenance``.
-    """
+    """The build an existing sidecar names, or None if it names none."""
     return read_str_path(meta, PIN_PATH)
 
 
@@ -2364,8 +2090,8 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="no per-stage progress lines")
     args = parser.parse_args()
 
-    # Three of the extra now, not one: the water channel's plan shape is the map sheet's
-    # own BC1 slices, so this generator decodes textures as well as container blocks.
+    # Three of the extra: the water channel's plan shape is the map sheet's own BC1 slices,
+    # so this generator decodes textures as well as container blocks.
     decoders = require_gen("ooz", "texture2ddecoder", "PIL.Image")
     pyooz_version = decoders["pyooz"]
     import texture2ddecoder
