@@ -44,6 +44,10 @@ RANGE_CAVEAT = (
 #: gate on a build is at its head, so this is a headline and not the whole bill.
 COST_ROWS = 5
 
+#: Machine ids named per actionable row. Enough to walk to the first few and no more: a
+#: row can name 23 machines, and the footer is a starting point, not a work order.
+ACT_IDS = 3
+
 
 def _stage_state(stage) -> str:
     """One phrase per stage, saying only what the save supports."""
@@ -254,7 +258,16 @@ def render_diff(
 
     rows = []
     targets: list[str] = []
+    acts: list[str] = []
     for r in rep.rows[: render.clamp(limit, default=20)]:
+        if r.act_instances:
+            named = r.act_instances[:ACT_IDS]
+            more = len(r.act_instances) - len(named)
+            acts.append(
+                f"#   {r.verb} {r.process[:30]}: "
+                + " ".join(named)
+                + (f" (+{more} more)" if more > 0 else "")
+            )
         count = "" if r.verb == "OK" else render.num(r.count)
         if r.verb == "BUILD" and r.build_max is not None and r.build_max != r.build:
             count = f"{r.build}..{r.build_max}"
@@ -342,6 +355,12 @@ def render_diff(
             "# build targets, reusable as node: selectors -- "
             + " ".join(targets[:4])
             + (f" (+{len(targets) - 4} more)" if len(targets) > 4 else "")
+        )
+    if acts:
+        # Per row, not pooled like the build targets: which machines an action applies to
+        # is the whole point, and "unpause 3" over 23 pumps names three of them or nothing.
+        parts.append(
+            "# machines to act on, reusable as machine: selectors\n" + "\n".join(acts)
         )
     if rep.neighbours:
         near = ", ".join(f"{n}x {label}" for label, n in rep.neighbours[:3])

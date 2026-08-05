@@ -96,6 +96,10 @@ class DiffRow:
     #: instanceNames of the machines counted in ``have``, so a caller can ask the save
     #: what those machines are actually doing rather than only how many there are.
     have_instances: list[str] = field(default_factory=list)
+    #: instanceNames the VERB applies to: the paused machines for UNPAUSE, the idle ones
+    #: being re-recipe'd for SETRECIPE. Never ``have_instances[:count]`` -- the paused
+    #: three are anywhere in the matched set, and the idle ones are not in it at all.
+    act_instances: list[str] = field(default_factory=list)
     #: Distance in metres of each matched machine from the plan's ground anchor.
     have_distances: list[float] = field(default_factory=list)
     #: (node id, metres from the anchor) to build on. Ids paste back as node: selectors.
@@ -212,6 +216,11 @@ def _group_processes(sol: Solution) -> list[dict]:
 def _xy(record: dict) -> tuple[float, float] | None:
     pos = record.get("pos")
     return (pos[0], pos[1]) if pos else None
+
+
+def _short(record: dict) -> str:
+    """The leaf of an instanceName -- the spelling every selector and health check takes."""
+    return str(record.get("instance") or "").rsplit(".", 1)[-1]
 
 
 def _nearest_m(
@@ -422,7 +431,7 @@ def _row_for(
         )
         targets = [
             (
-                r["instance"].rsplit(".", 1)[-1],
+                _short(r),
                 geo.distance_m((r["x"], r["y"]), anchor) if anchor else 0.0,
             )
             for r in free[: max(0, need - len(records))]
@@ -496,7 +505,10 @@ def _row_for(
     return DiffRow(
         stage=stage,
         key=group["key"],
-        have_instances=[r["instance"].rsplit(".", 1)[-1] for r in records],
+        have_instances=[_short(r) for r in records],
+        act_instances=[_short(r) for r in (paused if verb == "UNPAUSE" else reused)]
+        if verb in ("UNPAUSE", "SETRECIPE")
+        else [],
         have_min=have_min,
         verb=verb,
         count=count,

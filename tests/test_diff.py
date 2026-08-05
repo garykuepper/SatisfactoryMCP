@@ -36,8 +36,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("game")]
 
 #: A diff answers a strictly larger question than plan_factory (1,669 chars measured)
 #: and replaces a plan_factory + world_summary + power_report + factory_sites sequence
-#: of ~3,500. It must still never grow into a machine dump.
-DIFF_BUDGET = 2600
+#: of ~3,500. It must still never grow into a machine dump: the ids it prints are the
+#: ones an ACTION applies to, three per row, and never the row's whole matched set.
+DIFF_BUDGET = 2900
 
 SPIRE = {
     "objective": "max_mw",
@@ -225,6 +226,43 @@ def test_paused_machines_count_as_built_and_are_unpaused_not_rebuilt(spire):
     assert row.count == 3
     assert row.have == 23  # paused machines are still built
     assert "then BUILD 8..27" in row.note
+
+
+def test_an_action_names_the_machines_it_applies_to(spire, state):
+    """"unpause 3 of 23 Water Extractors" named none of them, and the three are not the
+    first three matched -- rendering `have_instances[:3]` would have sent the player to
+    three pumps that are already running. SETRECIPE is worse: the idle machines it takes
+    are not in the matched set at all."""
+    _req, _sol, rep = spire
+    paused = {r["instance"].rsplit(".", 1)[-1] for r in state._all_records() if r.get("paused")}
+
+    water = _row(rep, "normal Water")
+    assert len(water.act_instances) == water.count == 3
+    assert set(water.act_instances) <= paused
+    assert set(water.act_instances) <= set(water.have_instances)
+    assert water.act_instances != water.have_instances[:3], "the paused ones are not the first"
+
+    coal = _row(rep, "Alternate: Compacted Coal")
+    assert len(coal.act_instances) == coal.reuse == 4
+    assert not set(coal.act_instances) & set(coal.have_instances)
+
+    assert all(not r.act_instances for r in rep.rows if r.verb in ("OK", "BUILD"))
+
+
+def test_the_ids_of_an_action_reach_the_reader(game, state):
+    """The same reusable-footer pattern the build targets already use, per row: an id in
+    a row would crowd every other column off it, and a pooled list would lose which verb
+    it belongs to."""
+    from satisfactory_mcp.domain.planning.diff_service import build_diff_report
+    from satisfactory_mcp.presenters.text.diff import render_diff
+
+    report = build_diff_report(game, state, dict(SPIRE), objective="max_mw")
+    out = render_diff(game, state, report, objective="max_mw", limit=20)
+    water = _row(report.rep, "normal Water")
+    assert "# machines to act on, reusable as machine: selectors" in out
+    assert f"#   UNPAUSE normal Water: {' '.join(water.act_instances)}" in out
+    # Four idle Assemblers, three named, and the fourth is counted rather than dropped.
+    assert "(+1 more)" in out
 
 
 def test_an_idle_machine_is_only_reused_once(game, state):
