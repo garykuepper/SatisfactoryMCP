@@ -1,4 +1,4 @@
-"""The save watcher's own mechanism: fan-out, unsubscribe, the bound, and the failure count.
+"""The watcher's own mechanism: fan-out, unsubscribe, the bound, the trees, the failures.
 
 ``test_web_events.py`` already covers what the watcher is FOR -- a written save becomes an
 ``event: save`` on the wire, and a stream that opens late still gets the replay. What it does
@@ -28,11 +28,17 @@ from __future__ import annotations
 import asyncio
 import time
 
-from satisfactory_mcp.interfaces.web.watch import QUEUE_MAX, SaveEvent, SaveWatcher
+from satisfactory_mcp.interfaces.web.watch import (
+    KIND_NOTES,
+    KIND_SAVE,
+    QUEUE_MAX,
+    SaveWatcher,
+    WatchEvent,
+)
 
 
-def _event(n: int) -> SaveEvent:
-    return SaveEvent(filename=f"save{n}.sav", mtime=float(1000 + n))
+def _event(n: int) -> WatchEvent:
+    return WatchEvent(kind=KIND_SAVE, filename=f"save{n}.sav", mtime=float(1000 + n))
 
 
 async def _until(predicate, timeout: float = 5.0) -> bool:
@@ -67,7 +73,7 @@ def test_every_subscriber_gets_every_event(tmp_path):
     """
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         first, second = watcher.subscribe(), watcher.subscribe()
         watcher._publish(_event(1))
         return _drain(first), _drain(second)
@@ -87,7 +93,7 @@ def test_unsubscribing_stops_the_publisher_writing_to_that_queue(tmp_path):
     """
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         staying, leaving = watcher.subscribe(), watcher.subscribe()
         watcher.unsubscribe(leaving)
         watcher._publish(_event(1))
@@ -105,7 +111,7 @@ def test_unsubscribing_twice_is_not_an_error(tmp_path):
     disconnection with a traceback in the server log."""
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         q = watcher.subscribe()
         watcher.unsubscribe(q)
         watcher.unsubscribe(q)
@@ -135,7 +141,7 @@ def test_a_full_queue_drops_instead_of_raising(tmp_path):
     """
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         q = watcher.subscribe()
         for n in range(QUEUE_MAX + 1):
             watcher._publish(_event(n))  # must not raise
@@ -150,7 +156,7 @@ def test_one_stalled_subscriber_does_not_starve_the_others(tmp_path):
     """The point of per-subscriber bounds: the drop is local to the browser that caused it."""
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         stalled, healthy = watcher.subscribe(), watcher.subscribe()
         for n in range(QUEUE_MAX + 1):
             watcher._publish(_event(n))
@@ -161,6 +167,36 @@ def test_one_stalled_subscriber_does_not_starve_the_others(tmp_path):
     stalled, healthy = asyncio.run(go())
     assert stalled == QUEUE_MAX, "the stalled subscriber did not fill"
     assert healthy == 0, "a reader that kept up was penalised for the one that did not"
+
+
+# ------------------------------------------------------------------ the two trees
+
+
+def test_each_tree_is_remembered_apart_from_the_other(tmp_path):
+    """Two trees, two baselines -- not one ``latest`` compared against both.
+
+    With a single baseline every poll would find the other tree's newest file where it left
+    its own, so nothing would ever equal the last thing seen and every quiet poll would
+    publish two events. A browser told to refetch every 3 s for the life of the session is
+    the one failure a poll-based watcher can produce that nobody sees in a log.
+    """
+    saves, notes = tmp_path / "saves", tmp_path / "notes"
+    saves.mkdir()
+    notes.mkdir()
+    (saves / "Han Solo_autosave_0.sav").write_bytes(b"not really a save")
+    (notes / "coal power.json").write_text("{}", encoding="utf-8")
+
+    async def go():
+        watcher = SaveWatcher(root=saves, notes=(notes,))
+        first = await watcher.poll_once()
+        second = await watcher.poll_once()
+        return first, second, watcher.latest
+
+    first, second, latest = asyncio.run(go())
+    assert {event.kind for event in first} == {KIND_SAVE, KIND_NOTES}
+    assert second == [], "a poll over an unchanged disk published something"
+    assert latest[KIND_SAVE].filename == "Han Solo_autosave_0.sav"
+    assert latest[KIND_NOTES].filename == "coal power.json"
 
 
 # ------------------------------------------------------------------ the failure count
@@ -181,13 +217,13 @@ def test_the_failure_count_says_the_watcher_is_broken_now_and_not_that_it_once_w
     """
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path, interval=0.01)
+        watcher = SaveWatcher(root=tmp_path, notes=(), interval=0.01)
         broken = {"now": True}
 
         def scan():
             if broken["now"]:
                 raise OSError("the save root went away mid-poll")
-            return _event(7)
+            return [_event(7)]
 
         watcher.scan = scan  # type: ignore[method-assign]
         await watcher.start()
@@ -195,7 +231,7 @@ def test_the_failure_count_says_the_watcher_is_broken_now_and_not_that_it_once_w
             climbed = await _until(lambda: watcher.consecutive_failures >= 3)
             peak = watcher.consecutive_failures
             broken["now"] = False
-            recovered = await _until(lambda: watcher.latest is not None)
+            recovered = await _until(lambda: watcher.latest)
             return climbed, peak, recovered, watcher.consecutive_failures, watcher.latest
         finally:
             await watcher.stop()
@@ -204,7 +240,7 @@ def test_the_failure_count_says_the_watcher_is_broken_now_and_not_that_it_once_w
     assert climbed, f"the failures were not counted (stuck at {peak})"
     assert recovered, "the loop stopped polling after the failures instead of carrying on"
     assert after == 0, f"the count is cumulative rather than consecutive ({after})"
-    assert latest == _event(7)
+    assert latest == {KIND_SAVE: _event(7)}
 
 
 def test_stopping_a_watcher_that_never_started_is_a_no_op(tmp_path):
@@ -212,7 +248,7 @@ def test_stopping_a_watcher_that_never_started_is_a_no_op(tmp_path):
     shutdown path has to tolerate a task that does not exist."""
 
     async def go():
-        watcher = SaveWatcher(root=tmp_path)
+        watcher = SaveWatcher(root=tmp_path, notes=())
         await watcher.stop()
         await watcher.start()
         await watcher.stop()

@@ -1,4 +1,8 @@
-"""Notice that the game wrote a save, and tell every connected browser.
+"""Notice that a save -- or a note written about one -- changed, and tell every browser.
+
+Two trees, because two things move under a player who is using both halves at once: the game
+writes ``.sav`` files, and this project writes factory labels and stored plans beside them.
+They are published as two SSE event names so the page can refetch the half that moved.
 
 Polling, not a filesystem watch: Satisfactory rewrites an autosave in place and the write is
 not atomic, so an inotify-style event fires mid-write and a reader gets a torn file, whereas
@@ -13,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from ... import config
 
-__all__ = ["POLL_SECONDS", "SaveEvent", "SaveWatcher"]
+__all__ = ["KINDS", "KIND_NOTES", "KIND_SAVE", "POLL_SECONDS", "SaveWatcher", "WatchEvent"]
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +35,26 @@ POLL_SECONDS = 3.0
 #: the same refetch twice.
 QUEUE_MAX = 4
 
+#: The game wrote a save.
+KIND_SAVE = "save"
+
+#: This project wrote a note about one -- a factory label, or a stored plan. The one
+#: collaborative moment (name it, then look at the map) writes here and never to a ``.sav``.
+KIND_NOTES = "notes"
+
+#: Every kind, in the order a newly connected browser is told about them.
+KINDS = (KIND_SAVE, KIND_NOTES)
+
 
 @dataclass(frozen=True)
-class SaveEvent:
-    """The newest save on disk, at the moment its mtime changed."""
+class WatchEvent:
+    """The newest file in one watched tree, at the moment its mtime changed.
 
+    ``kind`` is the SSE event NAME and is deliberately not in ``as_dict``: the wire carries
+    it as ``event:``, and a copy in the data would be two places to read one fact.
+    """
+
+    kind: str
     filename: str
     mtime: float
 
@@ -43,16 +63,24 @@ class SaveEvent:
 
 
 class SaveWatcher:
-    """Polls the save tree and fans changes out to per-subscriber queues."""
+    """Polls the watched trees and fans changes out to per-subscriber queues."""
 
-    def __init__(self, root: Path | None = None, interval: float = POLL_SECONDS) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        notes: Iterable[Path] | None = None,
+        interval: float = POLL_SECONDS,
+    ) -> None:
         #: ``None`` means "ask config every scan", so a test that repoints
         #: ``config.saves_root`` is obeyed without rebuilding the watcher.
         self._root = root
+        #: The same, for the label and plan directories.
+        self._notes = None if notes is None else tuple(notes)
         self.interval = interval
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
-        self.latest: SaveEvent | None = None
+        #: The newest event of each kind, replayed to every new subscriber.
+        self.latest: dict[str, WatchEvent] = {}
         #: Polls that raised in a row, zeroed by any poll that gets through: "the watcher is
         #: broken now", never "the watcher hiccuped once in March".
         self.consecutive_failures = 0
@@ -67,7 +95,7 @@ class SaveWatcher:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subscribers.discard(q)
 
-    def _publish(self, event: SaveEvent) -> None:
+    def _publish(self, event: WatchEvent) -> None:
         for q in self._subscribers:
             try:
                 q.put_nowait(event)
@@ -79,35 +107,54 @@ class SaveWatcher:
     def root(self) -> Path:
         return self._root if self._root is not None else config.saves_root()
 
-    def scan(self) -> SaveEvent | None:
-        """The newest ``.sav`` under the save root, or ``None`` when there is none.
+    def notes_roots(self) -> tuple[Path, ...]:
+        """Where this project writes about a save: factory labels, and stored plans."""
+        if self._notes is not None:
+            return self._notes
+        return (config.labels_dir(), config.plans_dir())
+
+    def _newest(self, kind: str, roots: Iterable[Path], pattern: str) -> WatchEvent | None:
+        newest: tuple[float, str] | None = None
+        for root in roots:
+            try:
+                for path in root.rglob(pattern):
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        continue
+                    if newest is None or mtime > newest[0]:
+                        newest = (mtime, path.name)
+            except OSError:
+                continue
+        if newest is None:
+            return None
+        return WatchEvent(kind=kind, filename=newest[1], mtime=newest[0])
+
+    def scan(self) -> list[WatchEvent]:
+        """The newest file in each watched tree, for the trees that have one.
 
         Blocking, so it is called through ``asyncio.to_thread``: a disk walk on the event
         loop stalls the requests it is serving.
-        """
-        try:
-            newest: tuple[float, str] | None = None
-            for path in self.root().rglob("*.sav"):
-                try:
-                    mtime = path.stat().st_mtime
-                except OSError:
-                    continue
-                if newest is None or mtime > newest[0]:
-                    newest = (mtime, path.name)
-        except OSError:
-            return None
-        if newest is None:
-            return None
-        return SaveEvent(filename=newest[1], mtime=newest[0])
 
-    async def poll_once(self) -> SaveEvent | None:
-        """One scan; publishes and returns the event only when the mtime moved."""
-        event = await asyncio.to_thread(self.scan)
-        if event is None or event == self.latest:
-            return None
-        self.latest = event
-        self._publish(event)
-        return event
+        Newest-mtime, which is what makes a rewritten label a change. A DELETED note is
+        noticed only when it was the newest file in its tree.
+        """
+        found = [
+            self._newest(KIND_SAVE, (self.root(),), "*.sav"),
+            self._newest(KIND_NOTES, self.notes_roots(), "*.json"),
+        ]
+        return [event for event in found if event is not None]
+
+    async def poll_once(self) -> list[WatchEvent]:
+        """One scan; publishes and returns the events whose tree actually moved."""
+        news: list[WatchEvent] = []
+        for event in await asyncio.to_thread(self.scan):
+            if event == self.latest.get(event.kind):
+                continue
+            self.latest[event.kind] = event
+            self._publish(event)
+            news.append(event)
+        return news
 
     async def _run(self) -> None:
         # The first scan establishes the baseline and publishes, which is what gives a

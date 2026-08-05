@@ -666,10 +666,14 @@ export interface paths {
         };
         /**
          * Events
-         * @description Server-sent events: one ``save`` event per observed write, plus keepalives.
+         * @description Server-sent events: one event per observed write, plus keepalives.
          *
-         *     The stream carries the trigger, never the payload. A save event says which file moved
-         *     and when; the page decides what to refetch, so a browser that missed one is a refetch
+         *     Two event names, because two trees move under a player using both halves at once.
+         *     ``save`` is the game writing a ``.sav``; ``notes`` is this project writing a factory
+         *     label or a stored plan. A browser listens for the one it can act on.
+         *
+         *     The stream carries the trigger, never the payload. An event says which file moved and
+         *     when; the page decides what to refetch, so a browser that missed one is a refetch
          *     behind rather than a resync behind.
          */
         get: operations["events_api_events_get"];
