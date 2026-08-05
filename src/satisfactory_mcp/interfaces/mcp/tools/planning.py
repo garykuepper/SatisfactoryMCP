@@ -23,6 +23,7 @@ from ....domain.planning.recall import recall_plan as _plan_kwargs
 from ....domain.planning.report import build_plan_report
 from ....domain.planning.scenario import build_scenario
 from ....domain.planning.sensitivity import sweep_unlocks
+from ....domain.planning.store import PLAN_ARGS
 from ....presenters.text import byproducts as byproducts_text
 from ....presenters.text import primitives as render
 from ....presenters.text.bom import render_bom
@@ -39,13 +40,106 @@ from ..app import Limit, _item_id, _state, game, mcp
 _ = (PLAN_DEFAULTS, ENERGISED_CAVEAT, RANGE_CAVEAT)
 
 
+def _arg_text(value) -> str:
+    """One stored argument as the reader typed it, never as the solver resolved it."""
+    if isinstance(value, dict):
+        return ", ".join(
+            f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}" for k, v in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def _cut(text: str, width: int) -> str:
+    """Truncate visibly: a silently clipped source list reads as the whole list."""
+    return text if len(text) <= width else text[: width - 1] + "~"
+
+
+def _plan_detail(st, stored) -> str:
+    """One stored plan in full, without solving it.
+
+    ``plan_factory plan=<name>`` answers a different question at LP cost: it prints what
+    the request RESOLVES to today. This prints the request.
+    """
+    sit = siting_mod.parse(stored)
+    head = [
+        f"# plan {stored.name!r}",
+        f"# {st.age_note}",
+        render.kv(
+            [
+                ("plan_id", stored.plan_id or "(none)"),
+                ("saved_against", stored.created),
+                ("for_factory", stored.factory),
+            ]
+        ),
+    ]
+    if stored.notes:
+        head.append(f"notes: {stored.notes}")
+    if sit is not None:
+        head.append(f"sited: {sit.describe()}")
+
+    stored_args = [(k, stored.args[k]) for k in PLAN_ARGS if k in stored.args]
+    parts = [
+        "# the stored REQUEST -- every argument not listed is at its default\n"
+        + render.table(("argument", "value"), [(k, _arg_text(v)) for k, v in stored_args])
+    ]
+    field = (stored.provenance or {}).get("selectors") or ()
+    if field:
+        parts.append(
+            "# what each source selector resolved to WHEN SAVED\n"
+            + render.table(
+                ("selector", "nodes", "box(m)"),
+                [
+                    (
+                        e.get("selector", ""),
+                        e.get("count", 0),
+                        ",".join(f"{v:g}" for v in e["bbox"]) if e.get("bbox") else "-",
+                    )
+                    for e in field
+                ],
+            )
+        )
+
+    notes = ["nothing was solved here: pass plan=<name> to plan_factory for today's answer"]
+    try:
+        if build_scenario(st.game, st, **stored.kwargs()).plan_id != stored.plan_id:
+            notes.append(
+                "the WORLD has moved since this was saved (an unlock, a freed node, a new "
+                "building), so re-solving it will not reproduce the plan_id above"
+            )
+        notes.extend(prov.notes(st.game, st, stored))
+    except Exception as exc:  # a stored plan can outlive the thing it referenced
+        notes.append(f"the staleness checks could not run: {type(exc).__name__}: {exc}")
+    return render.envelope("\n".join(head), "\n".join(parts), notes)
+
+
 @mcp.tool(structured_output=False)
-def list_plans(save: str | None = None, world: str | None = None) -> str:
-    """Plans saved for this world, and whether the world has moved under them."""
+def list_plans(
+    name: Annotated[
+        str | None,
+        Field(description="one plan's full stored request, siting and field, unsolved"),
+    ] = None,
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Plans saved for this world, and whether the world has moved under them.
+
+    ``name`` prints one plan in full instead: the arguments as they were stored, what its
+    source selectors resolved to when saved, and its whole siting. Nothing is solved, so
+    this answers "what did I ask for" -- ``plan_factory plan=<name>`` answers the other
+    question, what those arguments resolve to today, and pays an LP solve for it.
+    """
     try:
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
+    if name:
+        stored = st.plans.find(name)
+        if stored is None:
+            known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+            return f"! no saved plan named {name!r}. Saved: {known}"
+        return _plan_detail(st, stored)
     if not st.plans.plans:
         return render.envelope(
             f"# no plans saved for world {st.plans.world_id!r}",
@@ -73,23 +167,34 @@ def list_plans(save: str | None = None, world: str | None = None) -> str:
             status.append(f"broken: {type(exc).__name__}")
         args = stored.args
         sit = siting_mod.parse(stored)
+        sited = "-"
+        if sit is not None:
+            # Origin, orientation and box in one cell: yaw and footprint used to need a
+            # second call, and a plan's site is not a point.
+            sited = f"{sit.x_m:.0f},{sit.y_m:.0f}"
+            sited += f" y{sit.yaw_deg:g}" if sit.yaw_deg else ""
+            sited += f" {sit.width_m:g}x{sit.depth_m:g}" if sit.has_footprint else ""
         rows.append(
             (
                 stored.name,
                 args.get("objective", "max_mw"),
                 args.get("target_item") or "-",
-                ",".join(args.get("sources") or [])[:28] or "whole map",
+                _cut(",".join(args.get("sources") or []), 36) or "whole map",
                 stored.factory or "-",
-                f"{sit.x_m:.0f},{sit.y_m:.0f}" if sit else "-",
+                sited,
                 "; ".join(status),
-                stored.notes[:30],
+                _cut(stored.notes, 36),
             )
         )
     notes = [
         (
             "'world moved' means the plan is unchanged but the solve inputs are not "
             "-- an unlock, a freed node or a new building. Re-run it to see how"
-        )
+        ),
+        (
+            "pass name=<plan> for one plan's stored arguments, its recorded field and its "
+            "full siting, without solving anything. A '~' marks a cell that was cut"
+        ),
     ]
     if drifted:
         notes.append(
@@ -129,6 +234,52 @@ def forget_plan(name: str, save: str | None = None, world: str | None = None) ->
     st.plans.remove(stored.name)
     st.plans.save()
     return f"forgot plan {stored.name!r}"
+
+
+@mcp.tool(structured_output=False)
+def rename_plan(
+    name: str,
+    to: Annotated[str, Field(description="the new name")],
+    save: str | None = None,
+    world: str | None = None,
+) -> str:
+    """Rename a saved plan. Nothing is re-solved and nothing else about it changes.
+
+    The plan keeps its id, its recorded field, its siting and its notes -- a name is the
+    only thing here a player picked, and it was the only thing they could not correct
+    without saving the plan again under a second name and forgetting the first.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    stored = st.plans.find(name)
+    if stored is None:
+        known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+        return f"! no saved plan named {name!r}. Saved: {known}"
+    wanted = to.strip()
+    if not wanted:
+        return "! a plan name cannot be blank"
+    # Case-insensitively, because `find` matches that way: two plans differing only in
+    # case would make every later recall ambiguous.
+    taken = wanted.casefold()
+    if any(p is not stored and p.name.casefold() == taken for p in st.plans.plans):
+        return f"! this world already has a plan named {wanted!r}"
+    was = stored.name
+    if was == wanted:
+        return f"plan {was!r} already has that name"
+    stored.name = wanted
+    path = st.plans.save()
+    return render.envelope(
+        f"# renamed plan {was!r} to {wanted!r}\nstored in {path}",
+        "",
+        [
+            (
+                f"recall it as plan={wanted!r}; the plan id, field record, siting and "
+                "notes are untouched"
+            )
+        ],
+    )
 
 
 @mcp.tool(structured_output=False)

@@ -65,6 +65,7 @@ from .interfaces.mcp.tools.planning import (
     plan_factory,
     plan_layout,
     rank_unlocks,
+    rename_plan,
     site_plan,
 )
 from .interfaces.mcp.tools.progression import (
@@ -140,6 +141,7 @@ __all__ = [
     "rank_build_sites",
     "rank_unlocks",
     "recipe_detail",
+    "rename_plan",
     "search_conduits",
     "search_items",
     "search_recipes",
