@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from ....domain.planning import advisor
 from ....presenters.text import primitives as render
-from ..app import _state, mcp
+from ..app import Limit, _state, mcp
 
 #: Said on every hard-drive response, because it is the fact that decides how hard to
 #: think about the choice, and it is not visible anywhere in the game's own UI.
@@ -28,32 +28,59 @@ POOL_RULE = (
 )
 
 
+#: Character budget for one option's grant list. 25 drives x 2 options is most of this
+#: response, and the whole response has to stay inside a model's context.
+_GRANT_CHARS = 90
+
+
+def _grants(option: dict, game) -> str:
+    """What an option is actually offering: what its recipes make, and in what.
+
+    The name of an alternate schematic is the name of the recipe it grants, so listing
+    the recipes by name says nothing a reader cannot already see. What it makes and where
+    is the part that decides between two drives, and it is the part that used to cost a
+    ``recipe_detail`` call per option.
+    """
+    if option["slots"]:
+        return f"+{option['slots']} inventory slots"
+    if not option["recipes"]:
+        return "nothing new"
+    out = []
+    for r in option["recipes"]:
+        made = render.flows((game.item_name(f.item), f.per_min, False) for f in r.products)
+        machine = game.machine(r)
+        out.append(f"{made}{f' @{machine.name}' if machine else ''}")
+    # Whole entries or none of them: half a rate ("270 Silic") reads as a smaller number
+    # rather than as a truncation, which is the one thing this column must not do.
+    kept: list[str] = []
+    while out and len(", ".join([*kept, out[0]])) <= _GRANT_CHARS:
+        kept.append(out.pop(0))
+    return ", ".join(kept + ([f"+{len(out)} more"] if out else [])) or f"+{len(out)} recipes"
+
+
 @mcp.tool(structured_output=False)
-def list_pending_hard_drive_choices(save: str | None = None, world: str | None = None) -> str:
+def list_pending_hard_drive_choices(
+    save: str | None = None, world: str | None = None, limit: Limit = 25
+) -> str:
     """The pending hard-drive choices stored in the save, with rerolls left."""
     try:
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
+    g = st.game
     offers = st.hard_drive_offers
     rows = []
-    for o in offers:
-        opts = []
-        for opt in o.options:
-            tag = opt["name"]
-            if opt["slots"]:
-                tag += f" (+{opt['slots']} slots)"
-            elif not opt["recipes"]:
-                tag += " (nothing new)"
-            opts.append(tag)
+    for o in offers[: render.clamp(limit, default=25)]:
+        opts = [f"{opt['name']} ({_grants(opt, g)})" for opt in o.options]
         rows.append((o.hard_drive_id, o.rerolls_left, " | ".join(opts)))
     return render.envelope(
         f"# {st.age_note}\n"
         f"# {len(offers)} unclaimed hard drive(s), each a live choice; "
         f"{st.spare_hard_drives()} unanalysed drive(s) on hand",
-        render.table(("id", "rerolls", "options"), rows),
+        render.table(("id", "rerolls", "options"), rows, total=len(offers), limit=limit),
         [
             "use advise_hard_drive_pick(hard_drive_id=N) to rank one drive's options",
+            "an option shows what its recipes MAKE and where; recipe_detail has the inputs",
             POOL_RULE,
             # Measured across all 25 offers on the reference save: every drive shows
             # exactly 2 options and starts with exactly 1 reroll, which matches
