@@ -1,147 +1,90 @@
 """The only values in this project that are NOT read from game data.
 
-Every other rate, power figure and capacity is a cited Docs.json field. The values
-here are not present in Docs.json at all, so they are pinned here, justified, and
-unit-tested. Do not add to this list without the same treatment.
-
-``max_clock`` and ``shards_for_clock`` are not extra constants: they are the *only*
-places POTENTIAL_SHARD_SLOTS is combined with data, and they sit directly beneath it --
-not at the bottom of the file -- so the one game-knowledge number stays next to the
-arithmetic that depends on it. Adding a constant below them is fine; moving them away
-from POTENTIAL_SHARD_SLOTS is the thing this note asks you not to do.
+Every other rate, power figure and capacity is a cited Docs.json field; the values here are
+absent from the dump altogether, so they are pinned here and unit-tested. Do not add to this
+register without the same treatment.
 """
 
 from __future__ import annotations
 
 import math
 
-#: Extraction rate multiplier by node purity.
-#:
-#: Not in Docs.json, but proven by it: every extractor's ``mDescription`` states its
-#: base rate as the *normal*-node rate ("Default extraction rate is 60 resources per
-#: minute"), and ``mItemsPerCycle * 60 / mExtractCycleTime`` reproduces that exactly.
-#: Asserted against the descriptions at build time.
+#: Extraction rate multiplier by node purity. Not in Docs.json, but proven by it: every
+#: extractor's ``mDescription`` states its base rate as the *normal*-node rate, which
+#: ``mItemsPerCycle * 60 / mExtractCycleTime`` reproduces exactly. Asserted at build time.
 PURITY_MULT: dict[str, float] = {"impure": 0.5, "normal": 1.0, "pure": 2.0}
 
-#: Power Shard slots per building, giving a 250% max clock.
-#:
-#: ``Desc_CrystalShard_C.mExtraPotential = 0.5`` IS in Docs.json, but the slot count
-#: is not: ``mPotentialShardSlots`` is 0 and ``mOverridePotentialShardSlots`` is False
-#: on every building, i.e. the field is simply unpopulated in the dump. [WIKI] for 3.
-#:
-#: Corroborated on the reference save, which is the strongest evidence available
-#: without extracting the paks. Every building carries an ``InventoryPotential``
-#: component holding the shards actually slotted into it; 447 exist, 41 are non-empty,
-#: and across those 41 the counts are exactly {1: 6, 2: 16, 3: 19}. **No building holds
-#: 4**, and the highest clock observed is 2.5 = 1.0 + 3 x 0.5. A save cannot prove an
-#: upper bound the player never tried to exceed, so this stays [WIKI]-tagged -- but the
-#: cap and the observed maximum agree.
+#: Power Shard slots per building, giving a 250% max clock. [WIKI]: ``mPotentialShardSlots``
+#: is 0 on every building in the dump. The two functions below are the only places this is
+#: combined with data and stay beside it rather than at the bottom of the file.
 POTENTIAL_SHARD_SLOTS: int = 3
 
 
-#: Max clock a building can be set to, from the slot count and the shard's own
-#: ``mExtraPotential``. Only the slot count above is game knowledge; the 0.5 is data.
-#: Kept as a formula rather than a literal 2.5 so a patch to mExtraPotential flows
-#: through, and so the one hardcoded input stays visible at the point of use.
+#: Max clock a building can be set to. A formula rather than a literal 2.5 so a patch to
+#: ``mExtraPotential`` flows through.
 def max_clock(extra_potential_per_shard: float) -> float:
     return 1.0 + POTENTIAL_SHARD_SLOTS * extra_potential_per_shard
 
 
-#: Shards a building needs slotted to be *allowed* to run at ``clock``.
-#:
-#: A shard raises the building's MAXIMUM potential, it does not set the clock: the
-#: player slots shards and then drags the slider anywhere up to the new maximum. So
-#: this is a lower bound on what is installed, never an equality -- measured on the
-#: reference save, 39 of 41 overclocked buildings hold exactly this many and **two
-#: hold 3 shards while running at clock 2.0**, a spare slot filled with the slider
-#: pulled back. Deriving committed shards from clocks would therefore have leaked
-#: those 2; ``InventoryPotential`` is read directly instead.
+#: Shards a building needs slotted to be *allowed* to run at ``clock`` -- a lower bound on
+#: what is installed, never an equality. A shard raises the MAXIMUM potential and the player
+#: then drags the slider anywhere below it, so committed shards are read from
+#: ``InventoryPotential`` rather than derived from a clock.
 def shards_for_clock(clock: float, extra_potential_per_shard: float) -> int:
     if extra_potential_per_shard <= 0 or clock <= 1.0:
         return 0
-    # round() before ceil(): saved clocks are floats, and 2.0 arrives as 1.9999999
-    # often enough that a bare ceil() would demand a fourth shard for a 200% machine.
+    # round() before ceil(): saved clocks are floats, and 2.0 arrives as 1.9999999 often
+    # enough that a bare ceil() would demand a fourth shard for a 200% machine.
     need = math.ceil(round((clock - 1.0) / extra_potential_per_shard, 6))
     return min(need, POTENTIAL_SHARD_SLOTS)
 
 
-#: Conveyor ``mSpeed`` -> items/min. Cross-checked against each belt's own
-#: ``mDescription`` prose at build time, so the assertion is self-contained.
+#: Conveyor ``mSpeed`` -> items/min. Cross-checked against each belt's own ``mDescription``
+#: prose at build time, so the assertion is self-contained.
 BELT_SPEED_TO_IPM: float = 0.5
 
-#: Fluids cannot be sunk or discarded, so a fluid byproduct must be consumed exactly.
-#:
-#: This CONTRADICTS Docs.json, deliberately. The data says Heavy Oil Residue has
-#: ``mResourceSinkPoints = 30`` and ``mCanBeDiscarded = True`` (as do Fuel 75,
-#: Water 5, Turbofuel 225), but the AWESOME Sink has a conveyor-only input, so a
-#: fluid must be packaged into a solid first. Confirmed by the user.
-#:
-#: This is the conservative direction: a plan that never relies on dumping a fluid
-#: cannot stall on one in game.
+#: Fluids cannot be sunk or discarded, so a fluid byproduct must be consumed exactly. This
+#: CONTRADICTS Docs.json, which gives Heavy Oil Residue 30 sink points and
+#: ``mCanBeDiscarded = True``: the AWESOME Sink's input is conveyor-only, so a fluid must be
+#: packaged into a solid first. Confirmed by the player.
 FLUIDS_CANNOT_BE_SUNK: bool = True
 
-#: Power draw of one AWESOME Sink, charged whenever a plan sinks anything.
-#: (This one *is* from Docs.json; kept here so the sink model reads in one place.)
+#: Power draw of one AWESOME Sink, charged whenever a plan sinks anything. From Docs.json;
+#: kept here so the sink model reads in one place.
 AWESOME_SINK_MW: float = 30.0
 
 #: Somersloop amplification is capped at 2x output for 4x power on every building.
 MAX_PRODUCTION_BOOST: float = 2.0
 
 
-#: Stack sizes by the enum Docs.json reports. Not derivable from the dump -- the JSON
-#: gives only the symbol, so the numbers are game knowledge and belong in this register.
-#: Needed to answer "is this machine's output backed up", which is what separates a
-#: STARVED machine from a BLOCKED one; those need opposite fixes.
+#: Stack sizes by the enum Docs.json reports. The dump gives only the symbol, so the numbers
+#: are game knowledge. Needed to tell a STARVED machine from a BLOCKED one, which need
+#: opposite fixes.
 STACK_SIZE: dict[str, int] = {
     "SS_ONE": 1,
     "SS_SMALL": 50,
     "SS_MEDIUM": 100,
     "SS_BIG": 200,
     "SS_HUGE": 500,
-    # Fluid buffers are quoted in litres in the save, and a machine's fluid buffer holds
-    # 50 m3. Verified against observed values: Wire 500 = SS_HUGE, Iron Rod 200 = SS_BIG.
+    # Fluid buffers are quoted in litres in the save, and a machine's fluid buffer holds 50 m3.
     "SS_FLUID": 50_000,
 }
 
 
-#: Save building class -> the class Docs.json uses for the same building.
-#:
-#: The dump and the save disagree on a handful of names. Measured on the reference save,
-#: 13 classes are built that appear in NO Docs.json entry -- but almost all are world
-#: objects (BP_ResourceNode_C, BP_FrackingSatellite_C), HUB-integrated fixtures
-#: (Build_HubTerminal_C, Build_WorkBenchIntegrated_C) or fittings with no build recipe
-#: (Build_PipelineFlowIndicator_C). Those are correctly absent.
-#:
-#: Exactly ONE is a placeable building the dump names differently, and it produced a
-#: false warning: `unlocked_building_ids` is derived from build recipes, which yield
-#: Build_GeneratorBiomass_Automated_C ("Biomass Burner"), while the save stores the
-#: eight standing burners as Build_GeneratorBiomass_C. world_summary therefore reported
-#: "unlocked but never built: Biomass Burner" against 8 of them running.
-#:
-#: Build_GeneratorIntegratedBiomass_C is deliberately NOT aliased. It is the burner built
-#: into the HUB, has no build recipe of its own, and folding it in would credit the
-#: player with generators they never placed.
+#: Save building class -> the class Docs.json uses for the same building. The dump names the
+#: Biomass Burner by its build recipe's Build_GeneratorBiomass_Automated_C while the save
+#: stores standing burners as Build_GeneratorBiomass_C. Build_GeneratorIntegratedBiomass_C is
+#: NOT aliased: it is the HUB's built-in burner, has no build recipe, and folding it in would
+#: credit the player with generators they never placed.
 BUILDING_CLASS_ALIASES: dict[str, str] = {
     "Build_GeneratorBiomass_C": "Build_GeneratorBiomass_Automated_C",
 }
 
 
-#: Capabilities the game gates behind MAM research, and the schematic that grants each.
-#:
-#: **These are a cross-check, not the primary source, and the difference cost a wrong
-#: conclusion.** Probing a save from before the research found no key containing "Boost",
-#: "Amplif" or "Sloop" anywhere in its 44,307 objects, from which this module originally
-#: concluded that the game records no flag. It does:
-#: `BP_UnlockSubsystem_C.mIsBuildingProductionBoostUnlocked` appears the moment the
-#: research completes. UE omits a SaveGame property still at its default, so **absent
-#: means false** -- exactly the rule §6 (`docs/save-projection.md`) already states for
-#: empty TArrays, applied to a bool. "Not in the file" and "no such field" are different
-#: claims and only the first was evidence.
-#:
-#: The flag is authoritative when present. This register stays because it answers the
-#: other half -- *which research to go and do*, and what it costs -- and because it lets
-#: the capability be derived from the purchased-schematic set on a projection written
-#: before the flag was extracted. The mapping is the one piece of game knowledge here.
+#: Capabilities the game gates behind MAM research, and the schematic that grants each. A
+#: cross-check, not the primary source: ``BP_UnlockSubsystem_C``'s own flags are authoritative
+#: where present (§6, `docs/save-projection.md`). This register answers the other half --
+#: *which research to go and do* -- and covers a projection written before the flag existed.
 CAPABILITY_SCHEMATICS: dict[str, str] = {
     #: Somersloops in production machines: 2x output for 4x power.
     "production_boost": "Research_Alien_ProductionBooster_C",
@@ -151,30 +94,15 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
-#: NOT a measurement, and the only number in this register with no data behind it.
-#: Water is drawn from FGWaterVolume objects -- ocean, lakes -- which carry no node
-#: entry, no purity, and no geometry this project can read. So the model has no idea how
-#: many extractors a given shoreline holds; this figure exists only to keep the column
-#: from being unbounded.
-#:
-#: It is deliberately high enough not to bind, which makes it DANGEROUS to read as
-#: capacity.
-#:
-#: **Shoreline is NOT the constraint, and saying it was gave bad advice.** Corrected by
-#: the player (2026-07-28): extractors go on foundation platforms built out over open
-#: water, so frontage is irrelevant and only water AREA matters. An earlier version of
-#: this note argued a measured 105-extractor plan was implausible because "a 138x136 m
-#: platform's perimeter fits roughly 27" -- but 105 pumps at 20x18 m occupy 37,800 m2,
-#: a 194 m square, which is smaller than that same plan's own 512 m site. The real cost
-#: is 945 foundations and 4,725 Concrete, against the 32,645 Concrete its deck already
-#: needs. Siting was never the binding limit.
-#:
-#: What remains true is vertical, not horizontal: water is the only fluid that must be
-#: drawn at sea level and cannot be gravity-fed, so it still drives deck ordering. Pass
-#: ``water_extractors`` to replace this with a number the player has actually measured.
+#: The only number here with no data behind it, and DANGEROUS to read as capacity. Water is
+#: drawn from FGWaterVolume objects -- ocean, lakes -- which carry no node entry, no purity and
+#: no geometry, so this exists only to keep the column bounded and is set high enough not to
+#: bind. Extractors go on platforms built out over open water, so frontage is irrelevant and
+#: only water AREA matters; what binds is vertical, since water alone must be drawn at sea
+#: level. Pass ``water_extractors`` to replace this with a number the player has measured.
 WATER_EXTRACTOR_CAP_ASSUMED: int = 200
 
-#: Above this many extractors in one plan, say plainly that the count is an assumption
-#: and quote what the platform costs. Not a danger threshold -- platforming for hundreds
-#: is ordinary play -- just the point where the concrete stops being a rounding error.
+#: Above this many extractors in one plan, say plainly that the count is an assumption and
+#: quote what the platform costs. Not a danger threshold -- platforming for hundreds is
+#: ordinary play -- just where the concrete stops being a rounding error.
 WATER_EXTRACTOR_WARN_AT: int = 30

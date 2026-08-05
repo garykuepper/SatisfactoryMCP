@@ -22,31 +22,28 @@ from ..text import ago, stamp
 
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
 #: every pickle written by an older schema misses rather than being served without its new
-#: fields. 12 added placement yaw and belt splines; 13 added fluid pipe splines and the belt
-#: attachments -- the splitters and mergers a run passes through; 14 added a fourth column to
-#: a pipe segment, the index of its own actor, which joins the drawn pipe to the connection
-#: graph that has been in ``graph["material"]`` since schema 11 and is what lets flow
-#: direction be inferred; 15 added the SPLINE TANGENTS to both route keys, so a curved belt or
-#: a pipe elbow can be drawn as the curve it was built as rather than as the chords between its
-#: corners, and a ``storage`` key -- the containers and fluid buffers, with what is in each one.
-#: 16 is the first bump that CORRECTS existing keys rather than adding new ones, so a pickle
-#: written under 15 is not merely thinner than what this code expects, it disagrees with it:
-#: ``inventories`` bucketed eight containers' contents as unspendable machine buffers, and a
-#: placement whose rotation would not read claimed to be axis-aligned instead of saying nothing.
+#: fields. A CORRECTING bump matters more than an additive one: an old pickle then disagrees
+#: with this code rather than merely being thinner than it.
+#: 12 added placement yaw and belt splines.
+#: 13 added fluid pipe splines and the belt attachments -- the splitters and mergers a run
+#: passes through.
+#: 14 added a pipe segment's own actor index, which joins the drawn pipe to the connection
+#: graph in ``graph["material"]`` and is what lets flow direction be inferred.
+#: 15 added the spline tangents to both route keys, so a curved belt or a pipe elbow draws as
+#: the curve it was built as, and a ``storage`` key -- the containers and fluid buffers, with
+#: what is in each one.
+#: 16 CORRECTS: ``inventories`` had bucketed eight containers' contents as unspendable machine
+#: buffers, and a placement whose rotation would not read had claimed to be axis-aligned
+#: instead of saying nothing.
 #: 17 added ``power`` -- the poles, and the endpoints of every wire between them. Geometry
-#: only, and that is the shape of the change: the CONNECTIVITY has been in ``graph["power"]``
-#: since schema 11, so the new key is that edge list's positional twin (``wires[i]`` is the
-#: span of ``graph["power"][i]``) rather than a second, disagreeable copy of who is wired to
-#: whom.
+#: only: the connectivity has been in ``graph["power"]`` since schema 11, so ``wires[i]`` is
+#: the span of ``graph["power"][i]`` rather than a second copy of who is wired to whom.
 #: 18 added ``crates`` -- the death and dismantle crates lying on the ground, and what is in
-#: each one. Additive and its own key rather than more ``storage`` rows: a container is
-#: infrastructure the player built and a crate is a situation the player got into, and a
-#: pickle written under 17 simply has no such key rather than disagreeing about one.
-#: 19 is the second CORRECTING bump, and it corrects the same key 16 did: a crate's contents
-#: had counted into ``inventories["machine"]`` since schema 11 -- a dead pioneer's pockets
-#: filed with the smelter buffers, material that exists and cannot be spent -- and they are
-#: recoverable stock, so they move to their own ``inventories["crate"]`` bucket. A pickle
-#: written under 18 disagrees about ``machine`` and lacks ``crate``, so it must miss.
+#: each one. Its own key rather than more ``storage`` rows, because a container is
+#: infrastructure the player built and a crate is a situation the player got into.
+#: 19 CORRECTS the key 16 did: a crate's contents had counted into ``inventories["machine"]``,
+#: filed with the smelter buffers as material that cannot be spent, and they are recoverable
+#: stock, so they move to their own ``inventories["crate"]`` bucket.
 SCHEMA_VERSION = 19
 _MEM: dict[str, dict] = {}
 _MEM_ORDER: list[str] = []
@@ -91,10 +88,9 @@ def _child_env() -> dict[str, str]:
     """This process's environment, with the source tree put in front on PYTHONPATH.
 
     Merged over ``os.environ`` rather than replacing it, because the extractor is a normal
-    Python program: it wants the same PATH, the same TEMP and the same console encoding. The
-    one thing made explicit is where it imports from -- ``satisfactory_mcp`` for the extractor
-    module itself and ``pioneersav`` for the parser -- so that a checkout always runs its own
-    source no matter what an inherited PYTHONPATH says.
+    Python program that wants the same PATH, TEMP and console encoding. Only the import root
+    is made explicit, so that a checkout always runs its own source no matter what an
+    inherited PYTHONPATH says.
     """
     env = dict(os.environ)
     root = config.source_root()
@@ -113,8 +109,7 @@ STDERR_TAIL_CHARS = 600
 def _because(tail: str) -> str:
     """The stderr tail as a clause to hang on a message, or nothing at all.
 
-    A separate function because it is appended at three raise sites and an empty stderr must
-    add no punctuation to any of them -- a message ending in ``: `` reads as a truncated
+    An empty stderr must add no punctuation: a message ending in ``: `` reads as a truncated
     error rather than as an error with nothing more to say.
     """
     return f" -- sidecar stderr: {tail}" if tail else ""
@@ -123,14 +118,9 @@ def _because(tail: str) -> str:
 def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
     """Run the extractor in a child process and return its payload, or raise ``SaveError``.
 
-    **Both of the child's channels are evidence, and this function used to read each of them
-    in exactly one case.** stdout is the payload; stderr is the parser saying what it skipped
-    and the interpreter printing a traceback. Before this, stderr was read only when stdout
-    was empty -- so a crash whose traceback was on stderr and whose exception NAME was on
-    stdout reported ``AttributeError:`` and nothing else -- and the exit code was read only
-    in that same case, so a child that wrote a payload and then died was believed.
-
-    The four outcomes, in the order they are decided:
+    Both of the child's channels are evidence: stdout is the payload, and stderr is the parser
+    saying what it skipped and the interpreter printing a traceback. The four outcomes, in the
+    order they are decided:
 
     * **nothing on stdout** -- the sidecar never got going. Exit code and stderr tail.
     * **stdout carries an ``error`` key** -- the child's own designed refusal, an unreadable
@@ -169,32 +159,26 @@ def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
     except json.JSONDecodeError as exc:
         raise SaveError(f"sidecar emitted invalid JSON: {out[:200]}{_because(tail)}") from exc
 
-    # The child's own refusal, which is the one failure it is designed to have: `main` writes
+    # The child's own refusal, the one failure it is designed to have: `main` writes
     # `{"error": ..., "detail": ...}` and exits non-zero for an unreadable save, and for an
-    # unexpected exception it ALSO writes the traceback to stderr. That traceback used to be
-    # dropped on the floor, so "AttributeError: " was the whole of what a reader got.
+    # unexpected exception it ALSO writes the traceback to stderr, which is why the tail
+    # rides along -- without it an `AttributeError` arrives with no message at all.
     if isinstance(payload, dict) and "error" in payload:
         raise SaveError(f"{payload['error']}: {payload.get('detail', '')}{_because(tail)}")
 
-    # A non-zero exit with clean JSON on stdout, which nothing checked until now. It means
-    # the child died AFTER writing a payload -- a crash in the interpreter's own shutdown, a
-    # MemoryError past the final `json.dump`, a kill from outside -- and the payload is then
-    # of unknown completeness. Serving it would cache a half-read world under a key that says
-    # it is the whole one, which is exactly the failure the schema in `_cache_key` exists to
-    # prevent by a different route.
+    # A non-zero exit with clean JSON on stdout means the child died AFTER writing a payload
+    # -- a crash in the interpreter's own shutdown, a MemoryError past the final `json.dump`,
+    # a kill from outside -- so the payload is of unknown completeness. Serving it would cache
+    # a half-read world under a key that says it is the whole one.
     if proc.returncode != 0:
         raise SaveError(
             f"sidecar exited {proc.returncode} after writing a payload, so what it wrote "
             f"cannot be trusted{_because(tail)}"
         )
 
-    # It worked, and it still had something to say. `extract` sends the parser's own notes to
-    # stderr on purpose -- what pioneersav skipped, which conveyor chain would not decode --
-    # so that stdout stays parseable and so that the two parsers' payloads could not differ
-    # over a diagnostic. Those notes were then read by nobody at all, which is a different
-    # thing from keeping them out of the projection. They ride here instead, in the key the
-    # projection already has for exactly this.
-    #
+    # It worked, and it still had something to say: `extract` sends the parser's own notes to
+    # stderr -- what pioneersav skipped, which conveyor chain would not decode -- so that
+    # stdout stays parseable, and they are carried into the projection's `warnings` from here.
     # ONE entry rather than one per line: this is the tail of a truncated stream, so its first
     # line is very likely half a line, and splitting it would publish a fragment as though it
     # were a note somebody wrote.
@@ -235,17 +219,14 @@ def list_worlds(root: str | Path | None = None) -> tuple[list[World], list[dict]
 def _resolve_filename(p: Path) -> dict:
     """A save named the way this server itself names saves: by FILENAME, not by path.
 
-    Every presenter prints ``header["filename"]`` -- the basename -- and the server's
-    working directory is nowhere near the save tree, so a client handing one of those
-    names straight back arrived here with ``is_file()`` false and was told "save not
-    found" about a file the same server had read seconds earlier. A name the server
-    prints must resolve.
+    Every presenter prints ``header["filename"]`` -- the basename -- and the server's working
+    directory is nowhere near the save tree, so a name the server prints must resolve here or
+    a client handing one straight back is told "save not found" about a file it just read.
 
-    The scan is taken FRESH on every miss rather than from any snapshot, because the
-    name most worth resolving is the manual save the player wrote moments ago. The
-    same filename under two account folders resolves to the newest copy, which is the
-    resolver's rule everywhere else; ``casefold`` because the filesystems these saves
-    live on do not distinguish case and the resolver must not be stricter than the disk.
+    The scan is taken FRESH on every miss, because the name most worth resolving is the manual
+    save the player wrote moments ago. The same filename under two account folders resolves to
+    the newest copy; ``casefold`` because the filesystems these saves live on do not
+    distinguish case and the resolver must not be stricter than the disk.
     """
     scan = scan_saves()
     needle = p.name.casefold()
@@ -360,12 +341,10 @@ def load_projection(
                 _remember(key, payload)
                 return payload
             except Exception:
-                # Corrupt, or a stale pickle format, or -- the case that made this cache
-                # directory a shared one -- a file `prune_cache` deleted between the
-                # `is_file` above and the read. The unlink is itself best-effort for the
-                # same reason: on Windows it raises `PermissionError` while any other
-                # process holds the file open, and this used to be the one line in the
-                # whole read path that could take a caller down over a cache.
+                # Corrupt, or a stale pickle format, or a file another process's `prune_cache`
+                # deleted between the `is_file` above and the read. The unlink is best-effort
+                # for the same reason: on Windows it raises `PermissionError` while any other
+                # process holds the file open, and nothing in a read path may die over a cache.
                 try:
                     disk.unlink(missing_ok=True)
                 except OSError:
@@ -378,15 +357,13 @@ def load_projection(
         )
     _remember(key, payload)
     try:
-        # `atomic.write_bytes`, not `Path.write_bytes`, because this directory has more than
-        # one writer: the web server, any CLI invocation and -- under `pytest-xdist` -- a
-        # test worker per core, all of which resolve the same newest save and miss the same
-        # key at the same moment. A plain write is create-then-fill, so a concurrent reader
-        # gets a prefix of a pickle; `core/atomic.py` argues the whole case.
+        # `atomic.write_bytes`, not `Path.write_bytes`: this directory has more than one
+        # writer -- the web server, any CLI invocation and, under `pytest-xdist`, a test
+        # worker per core -- all resolving the same newest save and missing the same key at
+        # the same moment. See `core/atomic.py`.
         atomic.write_bytes(config.cache_dir() / f"save-{key}.pkl", pickle.dumps(payload))
-        # Prune on write, because autosaves rotate every ~5 minutes and each one is a
-        # new cache key: without this the directory grows by ~500 kB per autosave for
-        # ever. Globbing a dozen files is far cheaper than the 4 s parse we just did.
+        # Prune on write, because autosaves rotate every ~5 minutes and each one is a new
+        # cache key: without this the directory grows by ~500 kB per autosave for ever.
         prune_cache()
     except OSError:
         pass  # cache is an optimisation, never a requirement
@@ -405,18 +382,12 @@ def _remember(key: str, payload: dict) -> None:
 def prune_cache(keep: int = 12) -> int:
     """Drop all but the newest ``keep`` cached projections.
 
-    **Every filesystem call here is best-effort, because another process is deleting the
-    same files.** The directory is shared by the server, by the CLI and by a test worker per
-    core, all of which prune on every write, and the folder sits at exactly ``keep`` entries
-    in normal use -- so a prune racing another prune is the ordinary case rather than the
-    unlucky one. The ``unlink`` was already guarded; the ``stat`` inside the sort key was
-    not, and a file that vanished between the glob and the sort raised ``FileNotFoundError``
-    out of ``sorted`` -- from the ``cache_prune`` tool, which calls this directly and has no
-    outer guard to swallow it.
-
-    A file whose ``stat`` fails sorts as if it were infinitely old. It is a file this call
-    can no longer see, so ranking it last means the loop below tries to delete it and finds
-    it already gone, which is exactly what happened.
+    Every filesystem call here is best-effort, including the ``stat`` inside the sort key,
+    because another process is deleting the same files: the directory is shared by the
+    server, the CLI and a test worker per core, all of which prune on every write, and it
+    sits at exactly ``keep`` entries in normal use, so a prune racing a prune is the ordinary
+    case. A file whose ``stat`` fails sorts as if infinitely old, so the loop below tries to
+    delete it and finds it already gone.
     """
 
     def _mtime(p: Path) -> float:

@@ -6,40 +6,21 @@ indices, row 0 north -- and ``mColorToArea``, one entry per index naming the ``U
 object that index means and the bounding box of its extent in texels. This is the game's own
 biome geometry: exact polygon boundaries rasterised at 1.83 m, not an approximation of them.
 
-Two generators read it and they want different halves, which is why it lives here rather than
-in either. ``tools/gen_map_renders.py`` wants the raster and an area's stem, to colour a
-satellite render. ``tools/gen_region_names.py`` wants the raster and each area's **name**, to
-build the advisory region layer. A second decoder would be a second opinion about what the
-game says, and the two artifacts would drift the first time one was regenerated alone.
+**A palette index resolves to one area by ``PublicExportHash``, never by package name.** This
+build ships thirty-five ``Area_*`` assets under eighteen package names -- ``Area_RedJungle_1``
+and ``Area_RedJungle_2`` are both ``.../Area_RedJungle`` -- and such a pair does not always
+mean one place: the two ``Area_crater`` assets carry different display names. The hash is
+unique across the container, so :meth:`PackageView.import_export_hash` against an asset's own
+export map says exactly which file.
 
-Resolving an index to ONE area object
--------------------------------------
-An ``mColorToArea`` entry's ``MapArea`` is an outward ``FPackageIndex``, and following it only
-as far as the package NAME is not enough. This build ships thirty-five ``Area_*`` assets under
-eighteen package names -- ``Area_RedJungle_1`` and ``Area_RedJungle_2`` are both
-``.../Area_RedJungle`` -- and the two halves of such a pair do not always mean the same place:
-``Area_crater_1`` and ``Area_crater_2`` carry *different* display names, and so do the two
-``Area_RedJungle`` assets. A name-only resolution would silently pick one of them.
+**The names are the game's own.** Each asset's default object carries ``mDisplayName``, an
+``FText`` whose history is a string-table reference, and the KEY is what is read here --
+``Area_Savanna_1`` announcing ``Locations/RockyDesert`` is the game saying those two areas are
+one named region. The localised string it points at lives in ``AllStringTables.locres``, which
+this reader does not open.
 
-So an index is resolved by ``PublicExportHash``, which is unique across the container:
-:meth:`PackageView.import_export_hash` gives the hash the import names, and the same hash on
-an asset's own export map says which asset that is. Every index this build uses resolves to
-exactly one file, checked in :func:`read_map_areas`.
-
-Names are first-party
----------------------
-Each ``Area_*`` asset's default object carries ``mDisplayName``, an ``FText`` whose history is
-a string-table reference: table ``World_Data``, key ``Locations/<Something>``. The key is read
-here; the localised string it points at lives in ``en-US/AllStringTables.locres`` inside the
-``.pak``, which this reader does not open. The key is enough and is the thing worth having --
-it is the game's own identifier for the place, so ``Area_Savanna_1`` announcing
-``Locations/RockyDesert`` is the game saying those two areas are one named region, and
-``Area_RedJungle_2`` announcing ``Locations/JungleSpires`` is the game naming a region whose
-asset is called something else. Neither fact is recoverable from the asset names.
-
-Nothing here is artwork. The raster is palette indices, the areas are identifiers, and
-``mColorPalette`` is decoded only so a caller can record what was in the asset -- it is a
-minimap legend of flat primaries and no render should draw it.
+Nothing here is artwork: the raster is palette indices, the areas are identifiers, and
+``mColorPalette`` is decoded only for the record -- it is a minimap legend of flat primaries.
 """
 
 from __future__ import annotations
@@ -72,10 +53,9 @@ MAP_AREA_DIR = (
     "../../../FactoryGame/Content/FactoryGame/Interface/UI/Minimap/MapAreaPersistenLevel/"
 )
 
-#: What the texture has to be for this reader to know how to read it. ``mDataWidth`` is in the
-#: asset and is checked against this rather than trusted from it: a re-cooked texture at
-#: another size is the game changing, and a raster reshaped into whatever fits is worse than
-#: no raster at all.
+#: What the texture has to be for this reader to know how to read it. The asset's own
+#: ``mDataWidth`` is checked against this rather than trusted from it: a re-cooked texture at
+#: another size is the game changing.
 MAP_AREA_TEXELS = 4096
 
 #: The class the properties hang off, and the properties themselves.
@@ -101,10 +81,9 @@ _DISPLAY_NAME = "mDisplayName"
 class Area:
     """One ``Area_*`` asset: which file it is, which package name it shares, what it is called.
 
-    ``asset`` is the identity -- ``Area_RedJungle_2`` -- because that is the only one of the
-    three that is unique. ``stem`` is the package name it shares with its siblings, kept
-    because it is what a colour table keyed by area is keyed by. ``key`` is the game's own
-    localisation key for the place, and it is the one a display name should be built from.
+    ``asset`` is the identity, being the only one of the three that is unique. ``stem`` is the
+    package name shared with its siblings, which is what a colour table is keyed by. ``key`` is
+    the game's own localisation key and the one a display name should be built from.
     """
 
     asset: str
@@ -144,21 +123,14 @@ class MapAreas:
 
 
 class MapAreaError(Exception):
-    """The asset is not the shape this reader knows how to read.
-
-    Raised rather than exited on: this is ``core``, and the caller is a generator that owns
-    its own command line and its own exit codes. Every message says what was expected and
-    what was found, because the only sane response is to look at the asset.
-    """
+    """The asset is not the shape this reader knows how to read. Every message says what was
+    expected and what was found, because the only response is to go and look at the asset."""
 
 
 def read_map_areas(store, scripts: ScriptObjects) -> MapAreas:
-    """Decode the map-area texture and resolve every palette index to one area asset.
-
-    Every check is the same kind ``gen_map_image`` makes on a ``.ubulk`` length: a shape that
-    is not the known one means the asset was re-cooked, i.e. the game changed, and refusing is
-    better than decoding whatever is there.
-    """
+    """Decode the map-area texture and resolve every palette index to one area asset. A shape
+    that is not the known one means the asset was re-cooked, i.e. the game changed, and every
+    check below refuses rather than decoding whatever is there."""
     view = _view(store, MAP_AREA_PATH, scripts)
     export = next(
         (e for e in view.exports if (view.class_of[e["slot"]] or "") == MAP_AREA_CLASS), None
@@ -218,9 +190,9 @@ def _colour_to_area(
 ) -> tuple[tuple[Area | None, ...], tuple[tuple[int, int, int, int], ...]]:
     """``mColorToArea`` -> one :class:`Area` per palette index, plus each index's extent.
 
-    A ``TArray<FStruct>`` in Zen's tagged form is the count and then one property stream per
-    element, which is why the walk carries its own cursor rather than slicing: the elements are
-    not a fixed width and the only thing that knows where one ends is the parser that read it.
+    A ``TArray<FStruct>`` in Zen's tagged form is a count then one property stream per element.
+    The elements are not a fixed width and only the parser that read one knows where it ended,
+    hence the cursor rather than slicing.
     """
     by_hash = _areas_by_export_hash(store, view.scripts)
     count = struct.unpack_from("<i", blob, 0)[0]
@@ -237,9 +209,8 @@ def _colour_to_area(
             )
         hash_ = view.import_export_hash(fields["MapArea"])
         if hash_ is None:
-            # A null reference, which this build has exactly one of: a single-texel index
-            # naming no object at all. Kept as None rather than invented, and a caller
-            # decides what an unnamed texel means.
+            # A null reference: this build has one, a single-texel index naming no object.
+            # Kept as None, and a caller decides what an unnamed texel means.
             areas.append(None)
         else:
             area = by_hash.get(hash_)
@@ -264,9 +235,8 @@ def _colour_to_area(
 def _areas_by_export_hash(store, scripts: ScriptObjects | None) -> dict[int, Area]:
     """Every ``Area_*`` asset beside the texture, keyed by the hash an import names it by.
 
-    Read by directory scan rather than from a list, because a list is a claim about the game
-    that goes stale silently: this build has an ``Area_EasternDuneForest_1`` the texture never
-    references, and a hard-coded set would either have to carry it or pretend it is not there.
+    A directory scan rather than a list, because a list is a claim about the game that goes
+    stale silently: this build has an ``Area_EasternDuneForest_1`` the texture never references.
     """
     out: dict[int, Area] = {}
     for path in sorted(store.by_path):
@@ -289,12 +259,9 @@ def _areas_by_export_hash(store, scripts: ScriptObjects | None) -> dict[int, Are
 
 
 def _package_stem(view: PackageView) -> str | None:
-    """The package name an asset declares for itself, leaf only.
-
-    Deliberately kept even though it is not unique: it is the identifier ``Area_DuneDesert``
-    that a colour table is keyed by, and dropping it would push every caller into deriving it
-    from the file name, which is where the ``_1`` suffix lives.
-    """
+    """The package name an asset declares for itself, leaf only. Not unique, and kept anyway:
+    it is the identifier a colour table is keyed by, and deriving it from the file name instead
+    would pick up the ``_1`` suffix."""
     for name in view.pkg.names:
         if name.startswith("/Game/") and "/Area_" in name:
             return name.rsplit("/", 1)[-1]
@@ -304,11 +271,10 @@ def _package_stem(view: PackageView) -> str | None:
 def _display_name(view: PackageView) -> tuple[str | None, str | None]:
     """``mDisplayName`` as ``(key, string table)``, or ``(None, None)``.
 
-    The property is an ``FText``: ``int32`` flags, one history byte, then the history's own
-    payload. History 11 is a string-table entry, whose payload is an ``FName`` table id and an
-    ``FString`` key. Anything else is handed back as nothing rather than guessed at -- a name
-    this reader cannot read is a fact about the asset, and inventing one would put a made-up
-    label in a table whose whole point is that the labels come from the game.
+    The property is an ``FText``: ``int32`` flags, one history byte, then the history's payload.
+    History 11 is a string-table entry, whose payload is an ``FName`` table id and an ``FString``
+    key. Anything else comes back as nothing rather than guessed at, because inventing a label
+    defeats a table whose point is that the labels come from the game.
     """
     for export in view.exports:
         payload = view.props(export["slot"]).get(_DISPLAY_NAME)

@@ -1,58 +1,15 @@
 """The interned tables of the projection, decoded in one place.
 
 ``extract`` emits five tables as bare positional rows rather than as records, because a
-record per piece would be megabytes: 8,347 lightweight buildables, 3,085 belt pieces, 503
-pipes, 701 power poles and 1,297 wires on the reference world, each row a short list of
-numbers with its class held once in a ``classes`` list beside it. That shape is right, and
-it has a cost -- **every reader
-has to decode it**, and until this module existed ten sites in five modules did, each with
-its own hand-written ``isinstance``/``len``/``int()``/``float()`` guards copied from a
-neighbour:
-
-* ``domain/factories/floors.py`` -- three times, for foundations, belt runs and pipe runs;
-* ``domain/factories/structure.py`` -- once more, for the slab weld;
-* ``domain/spatial/elevation.py`` -- once, for ground samples;
-* ``domain/world/flow.py`` -- twice, for the pipe-to-graph join;
-* the web adapter -- three times, one per endpoint. That module has since been split, and
-  the callers are ``interfaces/web/routers/placements.py`` (structures),
-  ``routers/routes_layer.py`` (belts and pipes) and ``routers/power.py`` (poles and wires).
-
-Copied guards drift. They had already: one site resolved an out-of-range class index to
-``""`` and another to ``None``; one checked that a point's coordinates were numbers and
-another only that there were three of them; one dropped a row whose class index was not a
-number and another let it raise. None of that was wrong, and all of it was the same
-decision being made ten times, in four layers, where changing it means finding all ten.
-
-**What these iterators are, and are not.** They are the projection's own prose contract
-turned into code: raw centimetres, no rounding, no unit conversion, no display names, no
-game concepts. A structure row comes out as the numbers the row holds. What ``foundation``
-means, what a metre is and which class is a conveyor lift are all decisions for the layer
-above, and each one is made in exactly the module that owns it.
-
-The one lookup done here is the interned class index against the table's own ``classes``
-list, which is decoding rather than naming: the index has no meaning outside the table it
-was written with, and every caller resolved it anyway. ``None`` for an index the list cannot
-answer, which is what ``/api/structures`` already sent; the caller that wants ``""`` says so.
-
-**Tolerant of a short row, because the writer promises the columns are additive.** Schema 12
-added a fifth structure column (yaw), 14 a fourth pipe column (the actor join) and 15 a
-fourth belt and fifth pipe column (the spline tangents), and each of those docstrings states
-that a reader predating the column sees a shorter row and must keep working. So the trailing
-columns are read through a length check and default to "the projection does not carry it",
-and the row is dropped only when a column the table cannot mean anything without -- the
-class index, the position, the points -- will not decode.
-
-**A skipped row still costs its ordinal, not its neighbours' ordinals.** ``pipe_flow`` and
-``/api/pipes`` join to each other by a segment's POSITION in the table, so a torn row has to
-leave a hole rather than shift everything after it up by one. That is why the segment
-records carry ``index``: it is the row's position in the raw list, not a count of what
-decoded, and a consumer building a positional array sizes it with `segment_count` and fills
-it at ``record.index``.
-
-Finally, ``*_ROW_WIDTH`` names how many columns each iterator reads. ``test_saveio_rows``
-holds those numbers against the widest row the committed projection actually contains, so a
-schema-18 column added to any of these five tables fails a test here until somebody has
-decided whether these readers want it.
+record per piece would be megabytes -- so every reader has to decode one, and this is the
+only module that does. A row comes out as the numbers it holds: raw centimetres, no
+rounding, no unit conversion, no display names, no game concepts, and the one lookup done
+here is the interned class index against the table's own ``classes`` list, which has no
+meaning outside the table it was written with. Two shapes to trip on: trailing columns are
+additive, so a row shorter than its ``*_ROW_WIDTH`` means "the projection does not carry
+that column" rather than a tear, and a row that will not decode leaves a HOLE -- ``index``
+is the row's position in the raw list, because ``pipe_flow`` and ``/api/pipes`` join by
+position and a consumer sizes its array with ``*_count``.
 """
 
 from __future__ import annotations
@@ -81,24 +38,26 @@ __all__ = [
     "wire_count",
 ]
 
-#: Columns of ``structures["instances"]``: ``[classIndex, x, y, z, yaw]``. The fifth arrived
-#: in schema 12 and a projection cut before it is four columns long.
+# ``test_saveio_rows`` holds these five widths against the widest row the committed
+# projection contains, so a new column fails a test here until a reader has decided it wants
+# it.
+
+#: Columns of ``structures["instances"]``: ``[classIndex, x, y, z, yaw]``. Yaw arrived in
+#: schema 12.
 STRUCTURE_ROW_WIDTH = 5
 
-#: Columns of ``belts["segments"]``: ``[chainIndex, classIndex, points, spans]``. The fourth
-#: arrived in schema 15 and is emitted only for a run that actually bends, so a three-column
+#: Columns of ``belts["segments"]``: ``[chainIndex, classIndex, points, spans]``. The spans
+#: arrived in schema 15 and are emitted only for a run that actually bends, so a three-column
 #: row is the ordinary case rather than an old projection.
 BELT_ROW_WIDTH = 4
 
 #: Columns of ``pipes["segments"]``: ``[networkIndex, classIndex, points, actorIndex, spans]``.
-#: The fourth arrived in schema 14 and the fifth in schema 15, the latter again only where the
+#: The actor join arrived in schema 14 and the spans in 15, the latter again only where the
 #: pipe bends.
 PIPE_ROW_WIDTH = 5
 
-#: Columns of ``power["poles"]["instances"]``: ``[classIndex, x, y, z, yaw, actorIndex]``.
-#: Schema 17, and all six arrived together, so there is no short form of this row to be
-#: tolerant of yet -- the length guard below is the one every other table already has, kept so
-#: that a schema-18 reader predating a seventh column reads six and keeps working.
+#: Columns of ``power["poles"]["instances"]``: ``[classIndex, x, y, z, yaw, actorIndex]``. All
+#: six arrived together in schema 17, so there is no short form of this row yet.
 POWER_POLE_ROW_WIDTH = 6
 
 #: Columns of ``power["wires"]``: ``[x0, y0, z0, x1, y1, z1]``, both ends of one span, in the
@@ -109,10 +68,9 @@ WIRE_ROW_WIDTH = 6
 class Structure(NamedTuple):
     """One lightweight buildable: where it stands, which way it faces, and what it is.
 
-    ``yaw`` is ``None`` for both of the two ways a facing can be missing -- a projection
-    older than schema 12, and schema 16's null for a rotation the parser could not read --
-    because no reader here has ever distinguished them: both mean "draw it axis-aligned and
-    do not claim a bearing".
+    ``yaw`` is ``None`` for both ways a facing can be missing -- a projection older than
+    schema 12, and schema 16's null for a rotation the parser could not read -- and both
+    mean "draw it axis-aligned and do not claim a bearing".
     """
 
     class_index: int
@@ -126,15 +84,10 @@ class Structure(NamedTuple):
 class BeltSegment(NamedTuple):
     """One conveyor piece: its chain, its class, its polyline and its curve.
 
-    ``points`` are the spline's control points in world centimetres, in travel order. There
-    is at least one; there is usually more than one, and a caller wanting a route rather
-    than a place is the one that says so -- ``extract._belts`` already drops the pieces it
-    could reduce to a single point.
-
-    ``spans`` is schema 15's tangent column exactly as stored -- one entry per span, ``0``
-    for a straight one -- or ``None`` where the row carries no such column. Undecoded on
-    purpose: the only reader of it is ``/api/belts``, which converts it to metres, and
-    decoding it here would be inventing a shape for six numbers nothing else looks at.
+    ``points`` are the spline's control points in world centimetres, in travel order, and
+    there is at least one. ``spans`` is schema 15's tangent column exactly as stored -- one
+    entry per span, ``0`` for a straight one -- or ``None`` where the row carries no such
+    column; its only reader is ``/api/belts``, so it is left undecoded.
     """
 
     index: int
@@ -150,9 +103,7 @@ class PipeSegment(NamedTuple):
 
     ``actor_index`` points into ``graph["actors"]`` and is ``-1`` for a pipe that has none --
     a projection older than schema 14, or a pipe the graph does not name. ``network_index``
-    points into ``pipes["networks"]`` and is likewise ``-1`` where no network claims the
-    pipe; the network's fluid and id are left to the caller, which is the one endpoint that
-    wants them.
+    points into ``pipes["networks"]`` and is likewise ``-1`` where no network claims the pipe.
     """
 
     index: int
@@ -167,11 +118,10 @@ class PipeSegment(NamedTuple):
 class PowerPole(NamedTuple):
     """One power pole, wall outlet or tower: where it stands, and what it is joined to.
 
-    ``yaw`` is ``None`` on the same two terms a ``Structure``'s is. ``actor_index`` points
-    into ``graph["actors"]`` and is ``-1`` for a pole no wire names -- 2 of the reference
-    world's 701, both unstrung tower platforms -- exactly as a ``PipeSegment``'s is. It is
-    the join a caller counts a pole's wires with: this table carries no degree, because
-    ``graph["power"]`` already is the connectivity and a second copy could disagree with it.
+    ``yaw`` is ``None`` on a ``Structure``'s terms, and ``actor_index`` is ``-1`` for a pole
+    no wire names, such as an unstrung tower platform. That index is the join a caller counts
+    a pole's wires with: this table carries no degree of its own, because ``graph["power"]``
+    already is the connectivity and a second copy could disagree with it.
     """
 
     class_index: int
@@ -187,13 +137,10 @@ class Wire(NamedTuple):
     """One power wire's drawn span: its two endpoints in world centimetres.
 
     ``index`` is the row's position in ``power["wires"]``, which is also its position in
-    ``graph["power"]`` -- the two lists are written in one pass for exactly that reason, so
-    ``wire.index`` is how a caller reaches the pair of actors this span joins. Like a pipe's
-    ordinal, a row that will not decode leaves a HOLE rather than shifting its neighbours up.
-
-    ``a`` is the end at ``graph["power"][index][0]`` and ``b`` the end at ``[1]``: the
-    extractor measures which published endpoint is nearer which actor, because the save's own
-    order agrees with the edge's only about half the time. See ``extract._power``.
+    ``graph["power"]`` -- the two lists are written in one pass for exactly that reason -- so
+    ``wire.index`` is how a caller reaches the pair of actors this span joins. ``a`` is the
+    end at ``graph["power"][index][0]`` and ``b`` the end at ``[1]``, an order ``extract._power``
+    establishes by measurement because the save's own agrees with the edge's about half the time.
     """
 
     index: int
@@ -205,8 +152,8 @@ def _table(projection: dict, key: str) -> dict:
     """One interned table, as a dict, whatever the projection carries in its place.
 
     ``{}`` for a missing key AND for a key holding something that is not a dict, so that a
-    projection too old for ``pipes`` and one whose ``pipes`` is a stray list read the same
-    way -- "this table has nothing in it" -- instead of the second raising.
+    projection too old for ``pipes`` and one whose ``pipes`` is a stray list both read as
+    "this table has nothing in it".
     """
     payload = projection.get(key) if isinstance(projection, dict) else None
     return payload if isinstance(payload, dict) else {}
@@ -233,8 +180,7 @@ def _points(raw: Any) -> list[list[float]]:
     """A segment's control points as ``[[x, y, z], ...]`` centimetres, guarded per point.
 
     A point that will not decode costs that point and not the segment: a belt whose third
-    corner is unreadable is still a belt between the corners that read, which is the same
-    trade every one of the call sites was already making.
+    corner is unreadable is still a belt between the corners that read.
     """
     out: list[list[float]] = []
     for point in raw if isinstance(raw, (list, tuple)) else ():
@@ -255,10 +201,8 @@ def _column(row: Any, index: int) -> Any | None:
 def iter_structures(projection: dict) -> Iterator[Structure]:
     """Every lightweight buildable in ``structures``, decoded, in the table's own order.
 
-    A row is dropped when it is not a sequence, is shorter than four columns, or when its
-    class index or any of its three coordinates will not read as a number. Everything else
-    comes through, including a piece whose class index points past the ``classes`` list --
-    that is a place with a real position and an unknown class, not a place that is not there.
+    A piece whose class index points past the ``classes`` list still comes through: it is a
+    place with a real position and an unknown class, not a place that is not there.
     """
     table = _table(projection, "structures")
     classes = _classes(table)
@@ -293,9 +237,8 @@ def belt_segment_count(projection: dict) -> int:
 def iter_belt_segments(projection: dict) -> Iterator[BeltSegment]:
     """Every conveyor piece in ``belts``, decoded, in the table's own order.
 
-    A row is dropped when it is not a sequence, is shorter than three columns, when its
-    chain or class index will not read as an integer, or when not one of its points decodes
-    -- a piece with no geometry is not a piece, which is what all four call sites said.
+    A row whose points do not decode at all is dropped: a piece with no geometry is not a
+    piece.
     """
     table = _table(projection, "belts")
     classes = _classes(table)
@@ -323,9 +266,8 @@ def iter_belt_segments(projection: dict) -> Iterator[BeltSegment]:
 def pipe_segment_count(projection: dict) -> int:
     """How many rows ``pipes["segments"]`` holds, decodable or not.
 
-    What a positional array over the segments has to be sized with. ``pipe_flow`` promises
-    ``/api/pipes`` one answer per ROW rather than one per readable row, so a torn row owes
-    the array a slot it never fills.
+    What a positional array over the segments has to be sized with: ``pipe_flow`` promises
+    ``/api/pipes`` one answer per ROW rather than one per readable row.
     """
     return len(_rows(_table(projection, "pipes"), "segments"))
 
@@ -333,9 +275,9 @@ def pipe_segment_count(projection: dict) -> int:
 def iter_pipe_segments(projection: dict) -> Iterator[PipeSegment]:
     """Every fluid pipe in ``pipes``, decoded, in the table's own order.
 
-    Dropped on the same terms as a belt segment. ``actor_index`` and ``network_index`` are
-    normalised to ``-1`` rather than dropping the row: a pipe no network claims and a pipe
-    the graph does not name are both ordinary, and both are drawn.
+    Dropped on a belt segment's terms. ``actor_index`` and ``network_index`` normalise to
+    ``-1`` rather than dropping the row: a pipe no network claims and a pipe the graph does
+    not name are both ordinary, and both are drawn.
     """
     table = _table(projection, "pipes")
     classes = _classes(table)
@@ -357,9 +299,9 @@ def iter_pipe_segments(projection: dict) -> Iterator[PipeSegment]:
             class_index=class_index,
             cls=_class_at(classes, class_index),
             points=points,
-            # ``isinstance``, not ``int()``: an actor index is a position in a list the
-            # projection also carries, so a float or a string here is a torn row rather
-            # than a number in the wrong type, and -1 says "this pipe joins nothing".
+            # ``isinstance``, not ``int()``: an actor index is a position in a list this
+            # projection also carries, so a float or a string here is a torn row rather than
+            # a number in the wrong type.
             actor_index=actor if isinstance(actor, int) and actor >= 0 else -1,
             spans=_column(row, 4),
         )
@@ -368,12 +310,8 @@ def iter_pipe_segments(projection: dict) -> Iterator[PipeSegment]:
 def iter_power_poles(projection: dict) -> Iterator[PowerPole]:
     """Every power pole in ``power``, decoded, in the table's own order.
 
-    Dropped on a ``Structure``'s terms exactly -- not a sequence, shorter than four columns,
-    or a class index or coordinate that will not read -- because a pole IS a placement and
-    nothing here has ever wanted a different bar for one. The trailing two columns are read
-    through the same length check as everything else additive: a projection cut before schema
-    17 has no ``power`` key at all and yields nothing, and a hypothetically shorter row still
-    gives a place.
+    Dropped on a ``Structure``'s terms, because a pole IS a placement. A projection cut
+    before schema 17 has no ``power`` key at all and yields nothing.
     """
     table = _table(_table(projection, "power"), "poles")
     classes = _classes(table)
@@ -398,8 +336,6 @@ def iter_power_poles(projection: dict) -> Iterator[PowerPole]:
             y=y,
             z=z,
             yaw=yaw,
-            # The pipes' rule, for the pipes' reason: an index into a list this projection
-            # also carries is an integer or it is nothing.
             actor_index=actor if isinstance(actor, int) and actor >= 0 else -1,
         )
 
@@ -407,10 +343,9 @@ def iter_power_poles(projection: dict) -> Iterator[PowerPole]:
 def wire_count(projection: dict) -> int:
     """How many rows ``power["wires"]`` holds, decodable or not.
 
-    The length a positional array over the wires has to be sized with, and the number a
-    caller checks against ``len(graph["power"])`` before joining the two: the extractor
-    promises they are equal on every save, and a projection where they are not is one to
-    refuse rather than to index into.
+    The number a caller checks against ``len(graph["power"])`` before joining the two: the
+    extractor promises they are equal on every save, so a projection where they are not is
+    one to refuse rather than to index into.
     """
     payload = _table(projection, "power").get("wires")
     return len(payload) if isinstance(payload, list) else 0
@@ -419,13 +354,9 @@ def wire_count(projection: dict) -> int:
 def iter_wires(projection: dict) -> Iterator[Wire]:
     """Every power wire's span in ``power``, decoded, in the table's own order.
 
-    A row is dropped when it is not a sequence of six readable numbers, and ``null`` is
-    exactly that case: it is what the writer emits for a wire that published no geometry, so
-    a projection from a save older than the property yields no wires at all while
-    ``graph["power"]`` still carries every edge. **That is the honest degradation** -- the
-    connections are known and where they run is not -- and it is why the ordinal is carried:
-    a caller that wants the actor pair for a drawn span reads ``graph["power"][wire.index]``,
-    and a hole costs one span rather than renumbering the rest.
+    ``null`` is what the writer emits for a wire that published no geometry, so a save older
+    than the property yields no wires at all while ``graph["power"]`` still carries every
+    edge: the connections are known and where they run is not.
     """
     for index, row in enumerate(_rows(_table(projection, "power"), "wires")):
         if not isinstance(row, (list, tuple)) or len(row) < WIRE_ROW_WIDTH:

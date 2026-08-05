@@ -1,22 +1,16 @@
 """Machine footprints, derived from mClearanceData.
 
-Every buildable carries `mClearanceData`: a list of boxes describing the space it
-occupies. Turning that into a usable footprint has one trap worth naming --
+Every buildable carries `mClearanceData`, a list of boxes describing the space it occupies,
+and **the boxes can be rotated**: the Fuel-Powered Generator's clearance is thin boxes at
+45-degree increments approximating a round machine, so the largest one alone reads 22 x 4 m
+where the real footprint is 22 x 22. Every box is therefore transformed by its
+`RelativeTransform` and the union taken.
 
-**The boxes can be rotated.** The Fuel-Powered Generator's clearance is several thin
-boxes at 45-degree increments approximating a round machine. Taking the largest box
-naively yields 22 x 4 m, when the real footprint is roughly 22 x 22 -- an understatement
-of about 1,000 foundations across a 176-generator plan. So every box is transformed by
-its `RelativeTransform` and the union of all of them is taken.
-
-Boxes flagged `ExcludeForSnapping` are always skipped: those are approach clearances,
-not the building's own volume. `CT_Soft` boxes are skipped only while a hard box
-exists: on a machine, soft boxes are the overlap allowances AROUND the hard volume,
-and counting them would overstate the machine. But every architecture piece --
-foundation, wall, pillar, ramp, beam -- carries ONLY soft boxes, because soft
-clearance is how the game lets them clip into each other, and for them the soft box
-IS the piece's own size. So a buildable with no hard box falls back to the union of
-its soft ones rather than reporting no size at all.
+Which boxes count is the other rule. `ExcludeForSnapping` boxes are approach clearances and
+never the building's own volume. `CT_Soft` boxes are skipped only while a hard box exists --
+on a machine they are the overlap allowances around the hard volume -- but every architecture
+piece (foundation, wall, pillar, ramp, beam) carries ONLY soft boxes, so a buildable with no
+hard box falls back to the union of its soft ones rather than reporting no size at all.
 """
 
 from __future__ import annotations
@@ -65,32 +59,15 @@ class Footprint:
     def pack(self, count: int, columns: int = 0) -> Packed:
         """Lay ``count`` of this machine out on foundations, and measure the result.
 
-        ``foundations`` above is per-machine and says it ignores shared edges, which makes
-        ``count x foundations`` an UPPER bound rather than a build. Two Water Extractors
-        side by side span 40 m and need 5 tiles, not 6, so a real block is meaningfully
-        cheaper than the naive product -- 77 of them measure **448 foundations** packed
-        against 693 counted one at a time, a third less concrete.
+        ``foundations`` above is per-machine and ignores shared edges, so ``count x
+        foundations`` is an upper bound rather than a build: two Water Extractors side by
+        side span 40 m and need 5 tiles, not 6.
 
         ``columns`` forces an arrangement; 1 gives a single row, whose LENGTH is what
-        platform modules get measured against. Left at 0, every column count is tried and
-        the cheapest BUILDABLE one wins, ties broken toward the squarer block.
-
-        Two false starts, both recorded because both looked obviously right:
-
-        *Squarest*, on the reasoning that perimeter waste costs tiles. Wrong: four Oil
-        Extractors (8x13 m) laid 3x2 span 24x26 m and need **12** tiles, where four in a
-        row span 32x13 m and need **8**. Unfilled grid slots, and depths landing just past
-        a tile boundary, lose more than the perimeter saves.
-
-        *Cheapest outright*, which produces ribbons -- the true optimum for 77 Water
-        Extractors is 2x39, a 40x702 m strip that wastes nothing at either edge, saves 4%,
-        and is not a thing anyone builds. Hence ``MAX_BLOCK_ASPECT``.
-
+        platform modules get measured against. Left at 0, every column count is tried and the
+        cheapest one inside ``MAX_BLOCK_ASPECT`` wins, ties broken toward the squarer block.
         The result is never worse than ``count x foundations``, because the single row is
-        always among the candidates and ``ceil`` is subadditive -- n machines in a row can
-        never need more tiles than n machines each given their own patch. That guarantee
-        is what makes this strictly an improvement on the arithmetic it replaced, rather
-        than one that is better on average and worse in places.
+        always a candidate and ``ceil`` is subadditive.
         """
         import math
 
@@ -109,23 +86,15 @@ class Footprint:
 
         if columns:
             return measure(int(columns))
-        # Cheapest among BUILDABLE shapes. Unconstrained, the true optimum for 77 Water
-        # Extractors is 2x39 -- a 40x702 m ribbon that happens to waste no tiles at either
-        # edge. It saves 4% over a squarish block and nobody builds it. Capping the aspect
-        # keeps the default something a player would actually lay, and `columns=` still
-        # gives the long row on demand, where the length is the point.
         options = [measure(c) for c in range(1, n + 1)]
         buildable = [
             p
             for p in options
             if max(p.width_m, p.depth_m) <= MAX_BLOCK_ASPECT * min(p.width_m, p.depth_m)
         ]
-        # The single row is ALWAYS a candidate, whatever its aspect. It is the shape the
-        # old `n x foundations` bound implicitly assumed, so keeping it is what makes this
-        # never worse than what it replaced -- without it a 5-machine Lookout Tower block
-        # came out at 6 tiles against the old 5, and the change would have been an
-        # improvement on average and a regression in places. It rarely wins on anything
-        # large: 77 Water Extractors in one row is 579 tiles against the block's 448.
+        # `measure(n)`, the single row, is a candidate whatever its aspect: it is the shape
+        # the `n x foundations` bound assumes, and dropping it lets a 5-machine block come
+        # out at 6 tiles against that bound's 5.
         return min(
             [*buildable, measure(n)], key=lambda p: (p.foundations, abs(p.width_m - p.depth_m))
         )
@@ -181,14 +150,8 @@ def _corners(mn: dict, mx: dict) -> list[tuple[float, float, float]]:
 
 
 def extract_footprint(raw: object) -> Footprint | None:
-    """Union AABB of a building's own clearance boxes, in metres.
-
-    Hard boxes when the buildable has any; otherwise its soft ones. Architecture
-    pieces carry ONLY `CT_Soft` boxes (soft clearance is what lets a wall meet a
-    foundation without a collision refusal), so skipping soft unconditionally
-    reported every foundation, wall, pillar, ramp and beam as having no size --
-    which sent a player out to measure a Big Pillar Support in-game.
-    """
+    """Union AABB of a building's own clearance boxes, in metres. Hard boxes when the
+    buildable has any, otherwise its soft ones -- see the module docstring."""
     entries = [
         e
         for e in as_list(parse_struct(raw))
@@ -197,10 +160,8 @@ def extract_footprint(raw: object) -> Footprint | None:
         and str(e.get("ExcludeForSnapping", "")).strip().lower() != "true"
     ]
     hard = _union(e for e in entries if e.get("Type") != "CT_Soft")
-    # No hard box anywhere: the soft union IS the piece (and cannot overstate a hard
-    # volume that does not exist). Never mixed with hard boxes -- on machines the
-    # soft boxes are overlap allowances around the hard one, and the Fuel Generator
-    # would grow past the 20x20 its own hard boxes measure.
+    # Fallback, never a union of both: mixing soft into hard grows the Fuel Generator past
+    # the 20x20 its own hard boxes measure.
     return hard if hard is not None else _union(entries)
 
 
