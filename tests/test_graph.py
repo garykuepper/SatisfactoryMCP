@@ -247,6 +247,21 @@ def test_recall_degrades_gracefully_as_machines_are_removed():
     assert label.recall(set()) == 0.0
 
 
+def test_one_predicate_decides_whether_a_cluster_is_already_named():
+    """The map, factory_map and propose_factories each had their own rule -- majority,
+    all, any -- so the same cluster was a proposal on one surface and not on the other.
+    A majority is what survives both edits the other two get wrong: a new cluster that
+    swallowed one named neighbour, and a factory the player named all but one machine of.
+    """
+    store = LabelStore(world_id="TESTWORLD")
+    store.put("steel factory", STEEL)
+    assert store.covers(STEEL)
+    assert store.covers([*STEEL, *BASE_CONCRETE]), "named all but one is still named"
+    assert not store.covers([STEEL[0], *IRON]), "one named neighbour does not claim a cluster"
+    assert not store.covers([*STEEL, *IRON]), "exactly half is not a majority"
+    assert not store.covers([])
+
+
 def test_review_reports_shrinkage_without_acting_on_it():
     store = LabelStore(world_id="TESTWORLD")
     store.put("steel", list(STEEL))

@@ -129,7 +129,7 @@ def factory_map(
                 limit=n,
             )
         )
-        fresh = [c for c in line_c if not set(c.machines) <= labelled]
+        fresh = [c for c in line_c if not store.covers(c.machines)]
         rows = [_cand_row(c, store, labelled) for c in fresh[:n]]
         chunks.append(
             "## belt components (lines), unnamed first\n"
@@ -658,7 +658,7 @@ def propose_factories(
     shown = 0
     for k, pr in enumerate(proposals):
         names = sorted({lbl.name for m in pr.machines if (lbl := store.label_for(m))})
-        if unnamed_only and names:
+        if unnamed_only and store.covers(pr.machines):
             continue
         shown += 1
         if shown > render.clamp(limit):
