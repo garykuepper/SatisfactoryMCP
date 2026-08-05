@@ -921,3 +921,99 @@ Absolute levels here are **not comparable** to the 3.34 / 2.69 / 1.38 recorded i
 `docs/spatial-and-map.md`: those were pooled over whole renders in both layers with the artwork
 lift in, where flat landscape dominates. Only the directions are comparable, and the directions
 are what the falsifier was written on.
+
+---
+
+## 21. Parked: the physical logistics graph — what actually feeds what
+
+Recorded 2026-08-02, from an audit of the tool surface. Nothing here needs new decoding; it is
+a join over data three separate features already produce, and the reason it is worth writing
+down is that each of those features was built without the others in view.
+
+**The gap.** Three tools stand next to the question and none answers it. `factory_health` says
+a machine is starved. `trace_upstream` walks the RECIPE graph — what *should* feed a machine,
+by ingredient — and says so honestly. `search_conduits` finds runs near a point. What no tool
+can say is which belt actually terminates at *this* machine, and what stands at that belt's
+other end. The field tester met the same wall from the other side and twice told the player a
+build did not exist, because proximity is not connection.
+
+**What already exists.** Belt chains carry their polylines and their attachments — splitters
+and mergers are in the projection and drawn on the map. Pipe runs carry an `FGPipeNetwork` id
+and an inferred flow direction (typed ports, pump orientation, propagation; 0 of 89 riser
+violations on the reference world). `domain/world/conduits.py` already turns both into runs
+with both ends and what stands at each. Machine footprints became real when the soft clearance
+boxes were read, so a machine is a box now, not a point.
+
+**The missing piece is a port-level join, and its one hard lesson is already learned.** A
+conduit end is at a CONNECTOR, not at a machine origin — the same fact that broke floor mode's
+first cut on power wires, where an endpoint sits about 7 m above a Mk1 pole and 24 m above a
+tower. So the join is end-to-footprint with a measured tolerance, not point-to-point with a
+guessed one, and the tolerance is measured before anything is built on it: what fraction of
+machine ports on the reference world find a conduit end, how many chains end at nothing
+(dismantled, off the world, a lift's single top-down point), and how many attachments join
+three ways.
+
+**What it would enable, in order of value.**
+
+1. *Causal health.* "Starved" becomes "starved because": the feeding chain's tier caps below
+   demand, a splitter divides three ways, the upstream machine is paused or unpowered, the
+   source extractor sits on an impure node, or genuinely nothing connects. Today every one of
+   those is the player's own detective work.
+2. *Connection as a question.* "Is there a pipe between these extractors and that platform" is
+   a graph query, answered yes or no with the route, rather than a proximity search a reader
+   has to interpret.
+3. *Plan against reality.* `diff_vs_save` compares machine sets. With the graph it can say the
+   plan routes X into Y and nothing carries it — the failure that costs a player an afternoon.
+4. *Throughput along a real route.* Rates exist per machine and per belt tier; the graph is
+   what makes them a chain rather than two numbers.
+
+**Shape, smallest first cut.** One domain module joining conduit ends to machine footprints,
+returning a directed graph (belts are stored in travel order, proven folder-wide; pipes take
+their direction from the existing inference). Then `trace_upstream` gains a physical mode
+beside its recipe walk, and `factory_health` cites evidence instead of asserting a state. The
+graph is a derived artifact of one save, so it caches exactly like the other domain
+computations and needs no schema bump.
+
+**Risks worth stating before starting.** The join is a heuristic and must report its
+confidence rather than assert connection; a belt passing over a machine is not a belt feeding
+it; conveyor lifts are a single point from above and need their vertical extent from the
+piece, not the polyline. If the measured port-coverage comes out low, the honest answer is a
+partial graph that says what it could not join — never a confident wrong edge, which is the
+one failure mode worse than the silence we have today.
+
+## 22. Parked: the world as a time series
+
+Recorded 2026-08-02. Every tool answers "how is my world now" from one save. The reference
+install holds 45 saves of that world and 67 across all worlds — a time series nothing reads.
+`diff_vs_save` compares a PLAN to reality; reality is never compared to its own past.
+
+**What it would enable.** What changed since yesterday, in machines built and removed and
+factories that appeared. When a machine stopped producing, found by bisecting the saves rather
+than by memory. Growth curves that are already in the data: power draw against capacity,
+machine count, stored stock, phase progress. How long a build actually took, from the first
+save its machines appear in.
+
+**Why it is affordable.** Instance ids are actor names and are stable across saves, so
+machine-level diffs are exact rather than fuzzy — that is the fact that makes "when did this
+stop" answerable at all. A full projection per save would be far too expensive to do eagerly,
+so the shape is a TIMELINE INDEX: one small row per save (playtime, mtime, machine count,
+power drawn and installed, phase, a few inventory totals, per-factory machine counts),
+computed once and cached beside the projection cache, with deep pairwise diffs only on demand
+between two chosen saves — sharing `domain/planning/diff.py`'s machinery rather than growing
+a second one.
+
+**The trap that must be designed for on day one.** Autosave filenames rotate: `autosave_0`,
+`_1`, `_2` are recycled, so the same name is a different world state hours apart. The index
+keys on (`save_identifier`, playtime, mtime), never on the filename. The shallow version of
+this trap already bit the field tester, who was twice told "nothing is here" from an autosave
+hours behind the live session.
+
+**Two honesty constraints.** The x-axis is PLAYTIME, not wall clock: a week away from the game
+is not a week of production, and a graph that pretends otherwise invents a stall. And history
+is lossy — saves are deleted and rotated — so every answer says what window it can actually
+see, in the same voice the rest of the surface names the file it read.
+
+**Where it multiplies.** With §21 the two compound: "this belt was fine yesterday, the splitter
+is new" is a question neither can answer alone. And `factory_health` gains a tense — starved
+*since* a moment, rather than starved as a timeless fact — which is the difference between a
+symptom and a lead.
