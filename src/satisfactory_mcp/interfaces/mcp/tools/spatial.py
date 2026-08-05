@@ -30,6 +30,10 @@ def list_regions(with_resource: str | None = None) -> str:
     to a 256 m grid to publish and a 64 m one to look up in, so a name near a boundary can
     be one cell out. Use them to talk about places, not to compute with -- every node row
     also carries an exact grid cell.
+
+    `anchor` is a coordinate that provably lies in the region, which a centroid does not:
+    a concave region's mean lands on its neighbour's ground, and the map has drawn its
+    names at the anchor all along.
     """
     g = game()
     rm = regions_mod.load_regions()
@@ -45,13 +49,15 @@ def list_regions(with_resource: str | None = None) -> str:
         hits = rm.filter_nodes(pool, name)
         if rid and not hits:
             continue
-        cx, cy = info["centroid"]
+        # Every column is read off the anchor, so the row cannot name a direction and a
+        # grid cell belonging to a point it does not print.
+        ax, ay = info["anchor"] or info["centroid"]
         rows.append(
             (
                 name,
-                info["direction"],
-                info["grid"],
-                f"{int(cx / 100)},{int(cy / 100)}",
+                geo.direction_of(ax, ay),
+                geo.grid_cell(ax, ay),
+                f"{int(ax / 100)},{int(ay / 100)}",
                 render.num(info["area_km2"]),
                 len(hits),
             )
@@ -59,12 +65,14 @@ def list_regions(with_resource: str | None = None) -> str:
     rows.sort(key=lambda r: -r[5])
     scope = f" containing {g.item_name(rid)}" if rid else ""
     return render.envelope(
-        f"# {len(rows)} region(s){scope}; centroid in metres",
-        render.table(
-            ("region", "dir", "grid", "centroid(m)", "km2", "nodes"), rows, total=len(rows)
-        ),
+        f"# {len(rows)} region(s){scope}; anchor in metres",
+        render.table(("region", "dir", "grid", "anchor(m)", "km2", "nodes"), rows, total=len(rows)),
         [
             f"names are advisory, ~{rm.meta.get('accuracy_m', 256)}m boundary accuracy",
+            (
+                "the anchor is a cell that provably belongs to the region, not its "
+                "centroid: a concave region's mean lands in its neighbour"
+            ),
             "any region name works as a source selector for plan_factory",
         ],
     )

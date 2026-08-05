@@ -271,6 +271,34 @@ def test_boundary_cells_are_flagged_not_hidden(rm):
     assert "l" in codes  # interior cells exist too
 
 
+def test_a_label_anchor_lands_on_its_own_regions_ground(rm):
+    """A centroid is a mean and a mean can land in the neighbour: Titan Forest's sits in
+    the Swamp, so a tool quoting it sends the player to a coordinate the map paints as
+    somewhere else. Measured against the PUBLISHED grid, because that is the raster the
+    map draws and the anchor has to agree with what the reader sees."""
+    letters = {name: ch for ch, name in rm.legend.items()}
+    for name in rm.names():
+        anchor = rm.label_anchor(name)
+        assert anchor is not None, name
+        at = rm.cell_of(*anchor)
+        assert at is not None, (name, anchor)
+        assert rm.grid[at[1]][at[0]] == letters[name], (name, anchor)
+
+
+def test_a_concave_regions_anchor_leaves_its_centroid(rm):
+    """The case the anchor exists for. If a regenerated raster ever makes every centroid
+    land on its own ground this test is free to be deleted -- but silently agreeing with
+    the centroid everywhere would mean the correction stopped running."""
+    moved = [
+        name for name in rm.names() if rm.label_anchor(name) != tuple(rm.regions[name]["centroid"])
+    ]
+    assert moved, "no region's centroid misses its own ground, so nothing is being corrected"
+
+
+def test_an_unknown_region_has_no_anchor(rm):
+    assert rm.label_anchor("Nowhere At All") is None
+
+
 def test_a_node_is_named_by_where_it_stands_and_nothing_else(rm, table):
     """The override table is gone, and this is what replaced it.
 

@@ -168,7 +168,41 @@ class RegionMap:
         entry["name"] = resolved
         entry["grid"] = geo.grid_cell(cx, cy)
         entry["direction"] = geo.direction_of(cx, cy)
+        entry["anchor"] = self.label_anchor(resolved)
         return entry
+
+    def label_anchor(self, name: str) -> tuple[float, float] | None:
+        """A point inside a region that provably belongs to it, in centimetres.
+
+        The coordinate to hand anyone who asks where a region IS. A centroid is a mean, and
+        the mean of a concave region lands on its neighbour's ground -- Titan Forest's sits
+        in the Swamp -- so the centroid is used only when its own cell carries the region's
+        letter, and otherwise the anchor moves to the centre of the nearest cell that does.
+        ``None`` for a name that resolves to no region.
+
+        Measured against the PUBLISHED grid, never against ``label_for``: that reads the
+        finer grid, and answering at that resolution puts the anchor on a cell the map
+        paints as somebody else's.
+        """
+        resolved = self.resolve(name)
+        if resolved is None:
+            return None
+        cx, cy = self.regions[resolved]["centroid"]
+        letter = next((ch for ch, known in self.legend.items() if known == resolved), None)
+        at = self.cell_of(cx, cy)
+        if letter is None or (at is not None and self.grid[at[1]][at[0]] == letter):
+            return cx, cy
+        best: tuple[float, float, float] | None = None
+        for j, row in enumerate(self.grid):
+            for i, cell in enumerate(row):
+                if cell != letter:
+                    continue
+                px = self.x0 + (i + 0.5) * self.cell
+                py = self.y0 + (j + 0.5) * self.cell
+                d = (px - cx) ** 2 + (py - cy) ** 2
+                if best is None or d < best[0]:
+                    best = (d, px, py)
+        return (cx, cy) if best is None else (best[1], best[2])
 
 
 #: Keyed by the file and its mtime, so a regenerated raster is picked up without a restart.
