@@ -218,6 +218,83 @@ def describe_location(
     return render.envelope(render.kv(fields), "", notes)
 
 
+def _networks_view(g, st, origin: tuple[float, float], where: str, limit, offset: int) -> str:
+    """One row per fluid network in the world: what it carries, and what it ends on.
+
+    The view that makes a run list navigable. A run is one placed pipe and there are 503
+    of them; a NETWORK is the connected plumbing system they belong to, which is the unit
+    a player thinks in and the reason "is there a pipe from here to there" has an answer
+    at all.
+    """
+    grouped: dict[object, list] = {}
+    for run in st.conduit_runs:
+        if run.kind == "pipe":
+            grouped.setdefault(run.network, []).append(run)
+    order = sorted(grouped.items(), key=lambda kv: -sum(r.length_m for r in kv[1]))
+
+    rows = []
+    start = max(0, offset)
+    for net, runs in order[start : start + render.clamp(limit, default=12)]:
+        fluid = next((r.fluid for r in runs if r.fluid), None)
+        ends = [e for r in runs for e in (r.a, r.b)]
+        # What the system TOUCHES: a plug naming another run is plumbing continuing, not
+        # something the network delivers to.
+        touches: list[str] = []
+        for run in runs:
+            for name in (run.a.plugs, run.b.plugs, *run.via):
+                if name and not name.startswith(("pipe:", "chain:")) and name not in touches:
+                    touches.append(name)
+        extra = len(touches) - 4
+        centre = (
+            f"{sum(e.x for e in ends) / len(ends) / 100:.0f},"
+            f"{sum(e.y for e in ends) / len(ends) / 100:.0f}"
+        )
+        rows.append(
+            (
+                net if net is not None else "-",
+                g.item_name(fluid) if fluid else "?",
+                len(runs),
+                f"{sum(r.length_m for r in runs):.0f}m",
+                centre,
+                f"{min(r.z_min_m for r in runs):.0f}..{max(r.z_max_m for r in runs):.0f}",
+                f"{min(r.dist_m(*origin) for r in runs):.0f}m",
+                ", ".join(touches[:4]) + (f" +{extra} more" if extra > 0 else "") or "?",
+            )
+        )
+
+    named = [r for r in (st.projection.get("pipe_networks") or ()) if isinstance(r, dict)]
+    notes = [
+        (
+            "a network is ONE connected plumbing system: everything on it shares a fluid "
+            "and a pressure, so two places on the same network are joined even where no "
+            "single pipe spans them"
+        ),
+        (
+            f"the save names a fluid for {len(named)} of its networks; a '?' here is one "
+            "it does not -- drained, or plumbed and never run"
+        ),
+        "search_conduits near=<x,y> lists the individual runs on any of these",
+    ]
+    if None in grouped:
+        notes.append(
+            f"{len(grouped[None])} pipe piece(s) belong to no network at all -- placed, "
+            "but joined to nothing that holds fluid"
+        )
+    return render.envelope(
+        f"# {st.age_note}\n"
+        f"# {len(order)} fluid network(s), most pipe first; centre in metres, "
+        f"distance measured from {where}",
+        render.table(
+            ("network", "carries", "pieces", "pipe", "centre(m)", "z(m)", "dist", "touches"),
+            rows,
+            total=len(order),
+            offset=start,
+            limit=limit,
+        ),
+        notes,
+    )
+
+
 @mcp.tool(structured_output=False)
 def search_conduits(
     near: Annotated[
@@ -236,6 +313,7 @@ def search_conduits(
         float | None, Field(description="radius around `to`, defaults to radius_m")
     ] = None,
     kind: Annotated[str | None, Field(description="belt | pipe")] = None,
+    show: Annotated[str, Field(description="runs | networks")] = "runs",
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 12,
@@ -248,6 +326,12 @@ def search_conduits(
     run is one belt CHAIN (consecutive conveyor pieces, split at splitters, mergers and
     machines) or one placed pipeline piece. Longest first; each row carries both ends
     with what stands there where known, the drawn length, and the elevation span.
+
+    `show="networks"` answers the other size of question: one row per FLUID NETWORK in
+    the whole world, what each carries, how much pipe it is, where its middle is and
+    what it ends on. A network is one connected plumbing system, so that is the view
+    that tells you which system a run belongs to; `radius_m` and `to` do not narrow it,
+    and the distance column places each network relative to `near`.
 
     `near` and `to` accept a coordinate in metres, `me`, a named factory, or one of this
     tool's own run ids -- `chain:7`, `pipe:333` -- which centres on that run's midpoint,
@@ -268,11 +352,18 @@ def search_conduits(
     want = (kind or "").strip().casefold() or None
     if want not in (None, "belt", "pipe"):
         return f"! unknown kind {kind!r}. Choose from: belt, pipe"
+    view = (show or "runs").strip().casefold()
+    if view not in ("runs", "networks"):
+        return f"! unknown show {show!r}. Choose from: runs, networks"
 
     try:
         origin, where = resolve_origin(st, near)
     except ValueError as exc:
         return f"! {exc}"
+    if view == "networks":
+        if want == "belt":
+            return "! show='networks' lists fluid networks; a belt chain belongs to none"
+        return _networks_view(g, st, origin, where, limit, offset)
     second, where2 = None, ""
     if to is not None:
         try:

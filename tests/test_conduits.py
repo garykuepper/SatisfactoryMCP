@@ -337,6 +337,47 @@ def test_the_tool_takes_back_the_ids_it_prints(game, monkeypatch):
     assert "pipe:1" in out
 
 
+def test_the_network_view_summarises_the_plumbing_systems(game, monkeypatch):
+    """503 pipe rows are not navigable; 19 plumbing systems are. The top-level
+    pipe_networks table had no reader outside one test, and this is the view it is for."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import spatial as stools
+
+    projection = {
+        "header": {"save_identifier": "TEST-conduit-networks", "session_name": "t"},
+        "pipe_networks": [{"instance": "L:P.FGPipeNetwork_33", "fluid": "Desc_Water_C"}],
+        "pipes": {
+            "classes": ["Build_Pipeline_C"],
+            # One named network of two pieces, one nameless network of one.
+            "networks": [{"id": 33, "fluid": "Desc_Water_C"}, {"id": 34, "fluid": None}],
+            "segments": [
+                [0, 0, [[0, 0, 0], [3000, 0, 0]], -1, None],
+                [0, 0, [[3000, 0, 0], [3000, 4000, 0]], -1, None],
+                [1, 0, [[0, 90000, 0], [1000, 90000, 0]], -1, None],
+            ],
+        },
+        "machines": [],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None: st)
+
+    out = stools.search_conduits(near="0,0", show="networks")
+    assert "2 fluid network(s)" in out
+    # Most pipe first, and the whole world regardless of radius: the far network is here.
+    rows = [line.split("\t") for line in out.splitlines() if "\t" in line][1:]
+    assert [r[0] for r in rows] == ["33", "34"]
+    assert rows[0][1] == "Water" and rows[1][1] == "?"
+    assert rows[0][2] == "2" and rows[0][3] == "70m"
+    assert "the save names a fluid for 1 of its networks" in out
+
+    assert "! unknown show" in stools.search_conduits(near="0,0", show="bogus")
+    assert "belt chain belongs to none" in stools.search_conduits(
+        near="0,0", show="networks", kind="belt"
+    )
+
+
 # ------------------------------------------------------------ the tool, live
 
 
