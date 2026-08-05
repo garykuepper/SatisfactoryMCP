@@ -890,7 +890,7 @@ def commission_plan(
     ] = None,
     save: str | None = None,
     world: str | None = None,
-    limit: Limit = 60,
+    limit: Limit = 25,
     offset: int = 0,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
 ) -> str:

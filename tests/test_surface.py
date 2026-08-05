@@ -76,6 +76,21 @@ def test_row_limits_are_schema_enforced():
         assert "25" in flat, f"{tool.name} limit is not capped: {limit}"
 
 
+def test_every_declared_default_lies_inside_its_own_bound():
+    """Pydantic does not validate defaults, so a tool can publish one its own schema
+    rejects -- and a client that echoes the advertised default back gets a hard error for
+    doing exactly what the schema told it. commission_plan shipped `limit=60` against
+    `le=25` for that reason."""
+    for tool in _run(srv.mcp.list_tools()):
+        for name, spec in (tool.inputSchema.get("properties") or {}).items():
+            default = spec.get("default")
+            if not isinstance(default, int | float) or isinstance(default, bool):
+                continue
+            lo, hi = spec.get("minimum"), spec.get("maximum")
+            assert lo is None or default >= lo, (tool.name, name, default, lo)
+            assert hi is None or default <= hi, (tool.name, name, default, hi)
+
+
 def test_tool_descriptions_stay_short():
     """Tool descriptions are always resident, so their first line is the budget that
     matters. Procedure belongs in prompts."""
