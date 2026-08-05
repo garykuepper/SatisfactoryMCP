@@ -379,8 +379,8 @@ def search_conduits(
             "there, and a chain:/pipe: entry is the run it continues into"
         ),
         (
-            "length follows the drawn line corner to corner, so a curved run reads a "
-            "touch short of its true arc"
+            "length is the drawn line, with every bend the save records tangents for "
+            "integrated along its spline -- the same number the web map measures"
         ),
     ]
     if any("-mk" in r.label for r in hits):

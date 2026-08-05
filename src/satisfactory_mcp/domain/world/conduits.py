@@ -18,10 +18,10 @@ A **run** here is the unit a player talks about:
   system (19 networks claim all 503 pipes here) and "the run" at network granularity
   would be a map-wide blob with no endpoints.
 
-Lengths are measured corner to corner along the stored polyline. The points are spline
-control points and a bend's true arc is slightly longer than its chords -- up to 16.4 m
-on one measured belt piece -- so a curved run reads a touch SHORT, and callers are told
-so rather than having an arc length invented for them.
+Lengths follow the drawn line: a span whose tangents schema 15 records is integrated along
+its own spline, and a span with none is its chord. The projection stores tangents exactly
+where a chord would be out by a centimetre or more, so both branches measure the curve the
+map draws -- a chord across one bend was out by 16.4 m.
 
 Endpoint attachment is a NEAREST-PORT guess, labelled as one. The save records exact
 connection components, but the interned belt table carries no actor identity to join
@@ -139,10 +139,79 @@ def _seg_dist_m(x: float, y: float, p: list[float], q: list[float]) -> float:
     return geo.distance_m((x, y), (px + t * dx, py + t * dy))
 
 
-def _length_m(line: list[list[float]]) -> float:
+#: Eight-point Gauss-Legendre quadrature, already mapped onto ``[0, 1]`` as ``(t, weight)``.
+#: The integrand is the norm of a quadratic, so eight nodes hold the arc of the sharpest
+#: elbow the game builds to well under a millimetre -- far below the whole-centimetre
+#: resolution the control points themselves are stored at.
+_GAUSS = tuple(
+    (0.5 + 0.5 * x, 0.5 * w)
+    for x, w in (
+        (-0.9602898564975363, 0.1012285362903763),
+        (-0.7966664774136267, 0.2223810344533745),
+        (-0.5255324099163290, 0.3137066458778873),
+        (-0.1834346424956498, 0.3626837833783620),
+        (0.1834346424956498, 0.3626837833783620),
+        (0.5255324099163290, 0.3137066458778873),
+        (0.7966664774136267, 0.2223810344533745),
+        (0.9602898564975363, 0.1012285362903763),
+    )
+)
+
+
+def _arc_cm(p0: list[float], p1: list[float], m0, m1) -> float:
+    """Arc length of one cubic Hermite span, in the centimetres its inputs are in.
+
+    ``Q(t) = h00 p0 + h10 m0 + h01 p1 + h11 m1``, integrated as ``|Q'(t)|`` -- the same
+    curve ``/api/belts`` tessellates and the frontend draws, so the two halves report one
+    length for one belt.
+    """
+    total = 0.0
+    for t, weight in _GAUSS:
+        a = 6.0 * t * t - 6.0 * t  # h00', and h01' is its negation
+        b = 3.0 * t * t - 4.0 * t + 1.0  # h10'
+        c = 3.0 * t * t - 2.0 * t  # h11'
+        dx = a * (p0[0] - p1[0]) + b * m0[0] + c * m1[0]
+        dy = a * (p0[1] - p1[1]) + b * m0[1] + c * m1[1]
+        dz = a * (p0[2] - p1[2]) + b * m0[2] + c * m1[2]
+        total += weight * math.sqrt(dx * dx + dy * dy + dz * dz)
+    return total
+
+
+def _tangents(spans, index: int) -> tuple[list[float], list[float]] | None:
+    """One span's ``[leave, arrive]`` pair, or ``None`` where it is straight.
+
+    Read guarded on the same terms as the points beside it -- schema 15 emits the column
+    only for a route that bends, stores ``0`` for a flat span inside a bent one, and a row
+    that will not decode costs its curve rather than the run.
+    """
+    if not isinstance(spans, (list, tuple)) or index >= len(spans):
+        return None
+    entry = spans[index]
+    if not isinstance(entry, (list, tuple)) or len(entry) != 6:
+        return None
+    try:
+        vals = [float(v) for v in entry]
+    except (TypeError, ValueError):
+        return None
+    return vals[:3], vals[3:]
+
+
+def _length_m(line: list[list[float]], spans=None) -> float:
     """3D drawn length in metres: the vertical leg of a lift or a downcomer is real
-    conveyor and real pipe, so a plan-view length would sell every riser short."""
-    return sum(geo.distance_3d_m(p, q) for p, q in itertools.pairwise(line))
+    conveyor and real pipe, so a plan-view length would sell every riser short.
+
+    A span whose tangents the save records is INTEGRATED along its spline rather than cut
+    across its chord: a chord is out by up to 16.4 m on a single piece, which is the map's
+    own measurement, and a text answer that disagreed with the drawn line by that much is
+    a different belt."""
+    total = 0.0
+    for i, (p, q) in enumerate(itertools.pairwise(line)):
+        curve = _tangents(spans, i)
+        if curve is None:
+            total += geo.distance_3d_m(p, q)
+        else:
+            total += _arc_cm(p, q, *curve) / geo.CM_PER_M
+    return total
 
 
 def _mk_label(kind: str, classes: set[str], game) -> str:
@@ -273,7 +342,7 @@ def build_runs(projection: dict, game, pipe_flow: list[dict] | None = None) -> l
                 ident=f"chain:{chain}",
                 label=_mk_label(kind, classes, game),
                 pieces=len(pieces),
-                length_m=sum(_length_m(p.points) for p in pieces),
+                length_m=sum(_length_m(p.points, p.spans) for p in pieces),
                 a=a,
                 b=b,
                 z_min_m=min(zs) / geo.CM_PER_M,
@@ -332,7 +401,7 @@ def build_runs(projection: dict, game, pipe_flow: list[dict] | None = None) -> l
                 ident=f"pipe:{seg.index}",
                 label=_mk_label("pipe", {seg.cls} if seg.cls else set(), game),
                 pieces=1,
-                length_m=_length_m(seg.points),
+                length_m=_length_m(seg.points, seg.spans),
                 a=a,
                 b=b,
                 z_min_m=min(zs) / geo.CM_PER_M,

@@ -10,9 +10,12 @@ mid-span crossings count, zeroes are printed, and geometry guesses are labelled 
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from satisfactory_mcp.core.saveio import rows as saverows
+from satisfactory_mcp.domain.spatial import geo
 from satisfactory_mcp.domain.world import conduits
 
 # ------------------------------------------------------------ synthetic worlds
@@ -128,6 +131,68 @@ def test_an_end_inside_a_machines_footprint_names_the_machine(game):
     two_piece = next(r for r in runs if r.pieces == 2)
     assert two_piece.b.plugs == game.buildings["Build_ConstructorMk1_C"].name
     assert two_piece.a.plugs is None
+
+
+# ------------------------------------------------------------ length is the drawn line
+
+#: A 90-degree elbow with the tangents the game gives one: 20 m across, 20 m up the y
+#: axis, each tangent along its own axis at three times the quarter-circle control offset.
+_ELBOW_P0 = [0.0, 0.0, 0.0]
+_ELBOW_P1 = [2000.0, 2000.0, 0.0]
+_ELBOW_SPAN = [0.0, 3313.7, 0.0, 3313.7, 0.0, 0.0]
+
+
+def _tessellated_m(p0, p1, span, steps: int = 8192) -> float:
+    """The same span walked in tiny straight steps -- the tessellation ``/api/belts``
+    hands the page. An independent answer, so the quadrature is checked against the curve
+    rather than against itself."""
+
+    def at(t: float) -> list[float]:
+        t2, t3 = t * t, t * t * t
+        h00, h10 = 2 * t3 - 3 * t2 + 1, t3 - 2 * t2 + t
+        h01, h11 = -2 * t3 + 3 * t2, t3 - t2
+        return [h00 * p0[i] + h10 * span[i] + h01 * p1[i] + h11 * span[i + 3] for i in range(3)]
+
+    points = [at(k / steps) for k in range(steps + 1)]
+    return sum(geo.distance_3d_m(a, b) for a, b in itertools.pairwise(points))
+
+
+def test_a_bend_is_integrated_along_its_spline_not_cut_across_it():
+    """The two halves disagreed about the same belt: the map drew the Hermite the save
+    records and this module summed the chords between its corners, out by up to 16.4 m on
+    one piece. Both now measure the curve."""
+    arc = conduits._length_m([_ELBOW_P0, _ELBOW_P1], [_ELBOW_SPAN])
+    assert arc == pytest.approx(_tessellated_m(_ELBOW_P0, _ELBOW_P1, _ELBOW_SPAN), abs=1e-4)
+    assert arc > geo.distance_3d_m(_ELBOW_P0, _ELBOW_P1) + 3.0
+
+
+def test_a_span_with_no_recorded_tangents_stays_its_chord():
+    """Schema 15 emits the column only where a chord is out by a centimetre or more, and
+    stores ``0`` for a flat span inside a bent route. Both are the straight case, and a
+    projection older than 15 has no column at all."""
+    line = [[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0], [2000.0, 0.0, 0.0]]
+    assert conduits._length_m(line) == pytest.approx(20.0)
+    assert conduits._length_m(line, [0, 0]) == pytest.approx(20.0)
+    # A torn row costs its curve, never the run.
+    assert conduits._length_m(line, ["nonsense", [1, 2]]) == pytest.approx(20.0)
+
+
+def test_the_fixture_world_gains_length_where_it_bends(game, projection):
+    """Measured on the committed world: the arc is longer than the chord everywhere the
+    tangents exist and nowhere else, so a change that quietly stopped reading the column
+    shows up as equality rather than as a plausible smaller number."""
+    curved = straight = 0
+    for seg in saverows.iter_belt_segments(projection):
+        chord = sum(geo.distance_3d_m(p, q) for p, q in itertools.pairwise(seg.points))
+        arc = conduits._length_m(seg.points, seg.spans)
+        assert arc >= chord - 1e-9
+        if seg.spans:
+            curved += 1
+            assert arc > chord
+        else:
+            straight += 1
+            assert arc == pytest.approx(chord)
+    assert curved and straight
 
 
 def test_a_projection_without_conduit_tables_yields_no_runs(game):
