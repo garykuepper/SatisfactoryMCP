@@ -2,44 +2,12 @@
 
     uv run python tools/gen_resource_nodes.py
 
-Node resource type and purity are NOT serialized in save files -- node actors carry
-only ``mResourcesLeft`` and a transform -- so this static table is the only source.
-It is map data, not save data, which is why it lives with the server rather than
-coming out of the sidecar.
-
-One source: ``data/world_resource_nodes.json``, the game's own node actors read out of
-the installed build's ``Persistent_Level.umap`` by ``tools/gen_world_resource_nodes.py``.
-It carries the node set, resource, purity, position AND the satellite -> fracking-core
-link -- the ``mCore`` ObjectProperty on every ``BP_FrackingSatellite`` export, a
-reference in the shipped data rather than an inference -- so the two-source merge this
-file used to perform is gone. The MIT-licensed table that supplied the node set is
-retired and deleted; the record of what it was and how parity was proven when it went is
-``_meta.retired_mit_table`` in the source file, and it stays there so the change is on
-the record rather than tidied away. (Before that, the well grouping came from a GPL SCIM
-table via a vendored parser; that is longer gone still. Nothing third-party reaches this
-file any more, from either direction.)
-
-This generator is a projection -- filter the classes, rename the fields, attach the well
-link -- and a projection can rot in only two ways, so ``main`` measures both on every
-run and dies rather than writing:
-
-* **the well grouping**: re-derived geometrically from the positions and compared with
-  the ``mCore`` link. Satellites sit in a tight ring around their core (median 34 m, max
-  66 m) while the next-nearest core is at least 3.8x further, so the assignment is
-  unambiguous -- and a satellite whose nearest core is not its recorded core means the
-  table is stale or the world moved, both of which need a human;
-* **the projection itself**: every emitted row is compared back to the source file --
-  identity, resource, purity, and position to within this file's own 2-decimal rounding.
-  The comparison is recorded under ``_meta.cross_validation.positions`` in the same
-  block shape the skew gate in ``domain/spatial/nodes.py`` reads, and it shows this
-  table exactly matching the installed build, which is what keeps that gate silent. When
-  a game update lands, ``tools/gen_world_resource_nodes.py`` is the refresh, and its own
-  build pin plus the per-kind save counts pinned in tests are what make skipping the
-  refresh loud.
-
-Geysers are labelled ``Desc_Geyser_C`` here. That name exists nowhere in Docs.json -- a
-geyser is not an item, it is a placement target for the Geothermal Generator -- so the
-label is synthetic and says so.
+Node resource type and purity are NOT serialized in save files -- node actors carry only
+``mResourcesLeft`` and a transform -- so this static table is the only source. It is a
+projection of ``data/world_resource_nodes.json``: filter the classes, rename the fields,
+attach the satellite -> fracking-core link the game ships as ``mCore``. ``main``
+re-measures both the grouping and the projection on every run and dies rather than
+writing, so the two committed artifacts cannot drift apart.
 """
 
 from __future__ import annotations
@@ -53,31 +21,27 @@ ROOT = Path(__file__).resolve().parents[1]
 #: Save actors are keyed by this prefix; the world table stores bare ids.
 INSTANCE_PREFIX = "Persistent_Level:PersistentLevel."
 
-#: class -> our node kind.
-#:
-#: A well satellite yields half a plain node's rate AND needs a Pressurizer on its
-#: parent core, so conflating the two overstates a field by 2x.
+#: A well satellite yields half a plain node's rate AND needs a Pressurizer on its parent
+#: core, so conflating the two with a plain node overstates a field by 2x.
 _KINDS = {
     "BP_ResourceNode_C": "node",
     "BP_FrackingSatellite_C": "well_sat",
     "BP_ResourceNodeGeyser_C": "geyser",
 }
 
-#: Excluded on purpose: a fracking core produces nothing itself and is referenced as
-#: ``well_core`` on its satellites. (Resource DEPOSITS never reach this generator at all:
-#: the world table emits none, for the reason its ``_meta.deposits`` states -- they are
-#: hand-mineable only, so a row would advertise capacity that cannot be built.)
+#: A fracking core produces nothing itself and reaches the table as ``well_core`` on its
+#: satellites.
 _EXCLUDED = {"BP_FrackingCore_C"}
 
-#: Geysers have no real item class; keep the label stable for downstream code.
+#: Synthetic: a geyser is not an item in Docs.json, it is a placement target for the
+#: Geothermal Generator.
 _GEYSER_RESOURCE = "Desc_Geyser_C"
 
-#: Purity vocabulary, asserted against the source rows so a renamed value cannot pass.
 _PURITIES = {"impure", "normal", "pure"}
 
-#: This file emits whole-hundredth centimetres -- ``round(v, 2)`` -- so a comparison
-#: against the source's finer floats can never read below half a hundredth per axis.
-#: Any delta at or under this is that rounding and nothing else.
+#: This file emits whole-hundredth centimetres, so a comparison against the source's
+#: finer floats can never read below half a hundredth per axis. Any delta at or under
+#: this is that rounding and nothing else.
 ROUNDING_FLOOR_CM = math.sqrt(3) / 2 * 0.01
 
 
@@ -94,9 +58,9 @@ def load_world() -> tuple[list[dict], dict]:
 def check_geometry(world: list[dict]) -> dict:
     """Re-derive the well grouping from positions and compare with the ``mCore`` link.
 
-    Returns the distance distribution and the ambiguity margin. A satellite whose
-    nearest core is not its recorded core is a hard error: either the table is stale
-    or the world moved, and both need a human.
+    Returns the distance distribution and the ambiguity margin: satellites sit in a tight
+    ring around their core, median 34 m, while the next-nearest core is at least 3.8x
+    further, so the nearest core is the recorded one or something moved.
     """
     pos = {e["id"]: (e["x"], e["y"], e["z"]) for e in world}
     cores = [e["id"] for e in world if e["class"] == "BP_FrackingCore_C"]
@@ -140,12 +104,8 @@ def check_geometry(world: list[dict]) -> dict:
 def check_projection(nodes: list[dict], world: list[dict], world_meta: dict) -> dict:
     """Every emitted row against the source file: the projection cannot drift silently.
 
-    The block is shaped the way ``domain/spatial/nodes.py`` reads a positions comparison,
-    and what it records is the refreshed state that keeps the skew gate silent: this
-    table IS the installed build, to within its own rounding, with no row missing on
-    either side. The gate fires again the day a comparison block appears whose deltas
-    are past its floor -- which is what a future re-measure against a newer build would
-    add -- not from anything here.
+    The returned block is shaped the way ``domain/spatial/nodes.py`` reads a positions
+    comparison, so renaming a key here silences that skew gate.
     """
     by_id = {e["id"]: e for e in world if e["class"] not in _EXCLUDED}
     emitted = {n["instance"].removeprefix(INSTANCE_PREFIX): n for n in nodes}
@@ -255,8 +215,6 @@ def main() -> int:
                         "authoritative node set, resource, purity, position, and the "
                         "satellite -> fracking-core link"
                     ),
-                    # Every source records which game build it was read at, so a reader
-                    # can tell whether this table predates the build they are running.
                     "game_version_pinned": world_meta.get("game_version_pinned"),
                     "generated": world_meta.get("generated"),
                 },
@@ -271,11 +229,8 @@ def main() -> int:
                 "satellites": by_kind.get("well_sat", 0),
                 "fracking_cores_referenced": len(cores),
                 "geometry": geometry,
-                # One comparison, because there is only one build in play: this table is
-                # cut from the installed build, and the block records the projection
-                # matching it exactly. The skew gate reads this shape and stays silent on
-                # a table that matches; a re-measure against some future build would add
-                # a second block here, and THAT is what would make it speak.
+                # A re-measure against a newer build adds a second block beside this one;
+                # the skew gate speaks when any block's deltas pass its floor.
                 "positions": {"against_the_installed_build": projection},
             },
             "excluded": {

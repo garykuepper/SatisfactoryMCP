@@ -2,200 +2,41 @@
 
     uv run --extra gen python tools/gen_map_image.py
 
-The web page has always been able to show a base map at ``data/local/map.png``, and the
-repository has always shipped none: a rendered map of this world is Coffee Stain's
-artwork, so ``/api/mapimage`` is a loader and only a loader. That left the one honest
-source of a base map -- **the player's own installed game** -- unreachable without a
-third-party download, which is what this file fixes. It writes to ``data/local/``, which
-is gitignored; the tool is committed and its output never is.
+A rendered map of this world is Coffee Stain's artwork, so ``/api/mapimage`` is a loader
+and only a loader: this reads the player's own install into gitignored ``data/local/``,
+and none of it is ever committed or served past localhost.
 
-**Where the picture is.** The in-game world map is four ``Texture2D`` under
-``/Game/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/Map_{col}-{row}``, each
-4096x4096 ``PF_DXT1`` with 13 mips. The four stitch into one 8192x8192 sheet.
+The in-game world map is four ``Texture2D`` under
+``/Game/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/Map_{col}-{row}``, each 4096x4096
+``PF_DXT1`` with 13 mips, stitching into one 8192x8192 sheet. Both readings of that name
+produce a plausible map -- the world is roughly symmetric at a glance -- so ``seam_residuals``
+re-proves the layout every run and the run refuses to write if it stops holding. That the
+sheet spans the corners the sidecar pins is likewise re-measured, by ``calibrate``.
 
-**The name is column-row, not row-column, and that is re-proven every run.** ``Map_1-0``
-is the NORTH-EAST quadrant, not the south-west one. Both readings produce a plausible
-map -- the world is roughly symmetric at a glance -- so the layout is not asserted here:
-``seam_residuals`` measures the mean per-channel difference across each 4096 px seam at
-full resolution, scores the *other* reading of the name with the same statistic, and
-compares both against two controls taken inside a single tile. Tiles that genuinely abut
-differ about as little as two adjacent scanlines of the same tile do; tiles that do not,
-differ like two scanlines 100 rows apart. The run refuses to write unless the chosen
-reading beats both the other reading and the distant control, so a slice being renamed or
-re-cut cannot silently produce a mirrored world.
+The sheet is also cut into ``data/local/tiles/{z}/{x}_{y}.png``, one resolution per zoom, so
+that the page fetches a few hundred KB at the whole-world framing instead of 16.2 MB that
+decodes to 268 MB of RGBA. ``map.png`` stays as the fallback for a page that finds no
+pyramid and the one file a reader can open and eyeball. ``tiles@2x/`` is the same grid at
+twice the density for a display whose device pixel ratio is above one, one level shallower
+by arithmetic, and a client past its top asks for the 1x tile again; ``--no-tiles-2x`` skips
+it. Each tree is staged and renamed into place separately, so no pair is ever half-swapped.
 
-**And it is cut into a pyramid, because one 8192 px sheet is the wrong thing to hand a
-browser.** ``data/local/tiles/{z}/{x}_{y}.png`` holds the same sheet at one resolution per
-zoom: z0 is the whole world in a single 256 px tile, z5 is the full 8192 in 32x32 of them,
-1,365 tiles in all. The page then fetches the pixels it can actually show -- a few hundred
-KB at the whole-world framing instead of 16.2 MB that decodes to 268 MB of RGBA -- and
-``/api/maptiles`` serves them. ``map.png`` is still written: it is what a page falls back
-to when it finds no pyramid, and the one file a reader can open and eyeball. The pyramid
-is written to ``tiles.incoming`` and **renamed** into place, so ``tiles/`` is either whole
-or absent; a run interrupted halfway leaves a staging directory nothing serves rather than
-a tree missing the levels it had not reached.
-
-``tiles@2x/`` is that identical GRID at twice the density -- level z is still ``2**z`` tiles
-a side, each 512 px instead of 256 -- for a display whose device pixel ratio is above one.
-One level shallower by arithmetic rather than by choice, since ``512 * 2**z`` runs out of
-sheet before ``256 * 2**z`` does, and a client past its top asks for the 1x tile again. It
-is cut and renamed into place on its own, so the pair is never half-swapped. The renders
-have written both trees since the endpoint learned to serve them; this tool wrote only the
-1x one until now, which meant the game's own artwork was the one layer a hi-dpi display saw
-soft. ``--no-tiles-2x`` skips it.
-
-**The ``.ubulk`` length is the integrity check.** Each is exactly 11,182,080 bytes, which
-is the mip chain 4096 down to 128 stored largest-first -- ``MIP_SIZES`` derives that total
-rather than quoting it, so the constant cannot drift from the arithmetic. Mip 0 is
-therefore simply ``ubulk[:8388608]``, with no offset to guess. A length that is not this
-one means the texture was re-cooked at a different size or mip count, i.e. **the game
-changed**, and the run stops rather than decoding whatever is there.
-
-**BC1 decodes to BGRA.** ``texture2ddecoder.decode_bc1`` returns raw bytes in B, G, R, A
-order; handing them to Pillow as ``"RGBA"`` swaps the red and blue channels, which turns
-the ocean orange and looks enough like a stylised map that it survives a glance. The
-``"raw", "BGRA"`` argument to ``Image.frombytes`` is what makes the water blue.
-
-**The corners are measured, not trusted.** The sidecar pins the image at the in-game map
-square the server already defaults to -- x [-3247, 4253] m, y [-3750, 3750] m -- and
-states it explicitly rather than relying on that default. That the sheet really spans it
-is re-measured every run in ``_meta.calibration``: the 625 static resource nodes of
-``data/world_resource_nodes.json`` are projected onto the sheet and counted against
-the flat open-ocean colour, and the whole box is then swept +-300 m in 50 m steps. Nodes
-stand on land, so a pin that is right cannot be improved on by sliding the box. A few
-nodes read as sea at every pin -- this map's shoreline is drawn rather than sampled, and a
-node on a headland sits inside a stroke of it -- so the verdict is not "zero" but "nothing
-beyond one sweep step does better", which is what makes the corners good to about +-100 m
-and no finer. A larger best shift is drift, and the run says so instead of quietly drawing
-a map a few hundred metres off its own dots.
-
-**Staleness.** The project's standing rule is that a pinned map artifact announces drift
-rather than answering silently wrong. Two halves of it live here. The sidecar records the
-installed build under ``sources.map_slices.game_version_pinned``, in the same shape
-``data/resource_nodes.json`` uses, so an image and a node table cut from different builds
-are comparable on sight. And the run **refuses to overwrite** an existing ``map.png``
-unless the sidecar beside it names the build now installed: a picture cut from another
-build -- or from somewhere else entirely, with no sidecar at all -- is not ours to
-replace on a whim, and the repository's own tables are pinned to a build the new artwork
-might no longer agree with. ``--force`` says it anyway.
-
-**What opens the container, and where it comes from.** Oodle-compressed container blocks
-are opened by ``ooz``, from ``pyooz``, the BC1 blocks by ``texture2ddecoder``, and Pillow
-writes the PNG. All three are the project's ``gen`` extra: optional dependencies, pinned
-exactly because they decide the bytes this file writes, and asked for on the command line
--- the same posture as ``tools/gen_world_collectibles.py``:
-
-    uv run --extra gen python tools/gen_map_image.py
-
-Optional means optional **at import time**: none of the three is imported at module scope
-anywhere in this repository, so a machine with none of them installed still imports every
-module, runs the whole test suite and serves the map -- it just cannot generate. The one
-``import ooz`` lives inside ``core.gameassets.iostore.oodle_decompress``, and the BC1
-decoder and Pillow are imported inside ``main`` and handed on to ``.textures`` and
-``.pyramid`` as arguments.
-
-None of the reading is reimplemented here, and none of it is imported by file path any
-more: the container is ``satisfactory_mcp.core.gameassets.iostore``, the mip arithmetic and
-the BC1 decode are ``.textures``, the build pin is ``.provenance``, and the pyramid --
-which two other layers are now cut with -- is ``.pyramid``. Each takes its decoder as an
-argument rather than importing one, which is what keeps the ``gen`` extra optional
-everywhere but at the point of use.
-
-**``--enhance``: two more zoom levels than the artwork has pixels.** The sheet runs out at
-8192 px -- about 0.9 m to the pixel -- and a factory is machines eight metres across, so
-the closest useful framing is already looking at a handful of pixels blown up eight times.
-``--enhance`` adds z6 and z7 by running the sheet through Real-ESRGAN 4x on the GPU, which
-a read-only bake-off picked over Lanczos, vtracer+resvg and two other models by measuring
-stroke depth and edge gradient on four sampled regions. It is **off by default**: it needs
-a 45 MB binary this repository will not vendor and a Vulkan device, and a tool whose
-default path silently depends on either is a tool that fails on somebody else's machine.
-The same command, with the flag on the end:
+``--enhance`` adds z6 and z7 -- two more zoom levels than the artwork has pixels, since
+8192 px is about 0.9 m to the pixel and a factory is machines eight metres across -- by
+running the sheet through Real-ESRGAN 4x on the GPU. Off by default: it needs a 45 MB
+binary this repository will not vendor and a Vulkan device.
 
     uv run --extra gen python tools/gen_map_image.py --enhance
 
-The stage is four passes and the model is only the second, because a second read-only
-bake-off round measured the model's two remaining defects and found both of them fixable
-from outside it. On five sampled regions the amended pipeline beats the plain hybrid on
-every metric in every region: round-trip error 5.35 to 4.98, flat-fill colour drift 0.894
-to 0.438, weak-stroke retention 0.823 to 0.911 against a target of 1.0, and edge gradient
-26.6 to 26.9 -- sharper, not the softer that usually pays for the rest.
+The stage is four passes and the model is only the second; ``presharpen``, ``faint_mask``
+and ``colour_fix`` are the other three, and each says at its own definition what it repairs.
+Everything it claims is re-measured per run into ``_meta.tiles.enhancement``: the tile seams
+against boundaries that are not seams, and the low levels against the enhanced pixels they
+did not come from. A run whose recipe is behind the one the sidecar names refuses rather
+than quietly halving the map's resolution; ``--force`` says it anyway.
 
-Six things about that stage are findings rather than choices, and each is pinned here.
-
-*Tiling is mandatory, not an optimisation.* Handed the whole 32768 px output the binary
-segfaults at about 70% of the rows: 32768*32768*3 is 3,221,225,472, and the index into its
-output buffer is signed 32-bit, which tops out at 2,147,483,648. So the sheet goes through
-in ``ENHANCE_TILE_PX`` squares with ``ENHANCE_OVERLAP_PX`` of context on every side, and
-the overlap is cropped off after upscaling -- no tile edge the model saw is ever in the
-output. The overlap is 96 px rather than the 64 the bake-off measured because 64 left one
-seam of eight reading 2.4x its own in-tile control; every run re-measures all seven internal
-boundaries at three rows and records the ratios in ``_meta.tiles.enhancement.seams``.
-
-*The AI erases the faintest marks, so they are put back.* Its one measured defect is
-expanded contrast: strong strokes deepen, and the weakest contour lines and map glyphs fade
-out. Lanczos is the only candidate that keeps weak strokes at full depth, so the output is
-the AI everywhere except a feathered mask over faint detail, where it is Lanczos --
-computed from the same source pixels, at about 6% coverage. ``faint_mask`` is the whole
-rule and is measured on the SOURCE alone, so it is reproducible from the input.
-
-*And a mark the model never drew cannot be repaired, so the faintest ones are raised
-first.* Repairing the output is a floor, not a cure: a mark 4 to 10 luma below what it is
-drawn on sits under the model's own response floor, and what comes back is a blend of two
-renderings of a stroke that has already half-vanished from one of them. ``presharpen``
-therefore unsharps the INPUT -- three rounds, sigma 1, amount 0.14, so about a third of
-gain on that band -- on a mask of the same depth statistic, and hands the model something
-it can see. Two details of it are measurements. The mask stops at ``PRESHARPEN_HI`` = 10
-rather than the repair's 14, because a mid stroke handed extra contrast is a mid stroke the
-model expands harder; decoupling the two bands costs 0.03 of weak retention and buys back
-the whole of that. And the mask is a depth mask rather than the edge detector this is
-usually done with: XDoG is tuned for near-black anime linework and on this artwork it
-selects 74-90% of the STRONG band and 1-5% of the weak one -- exactly backwards -- which
-was measured as making the output worse than doing nothing at all.
-
-*The model also drifts the flat fills, so the low frequencies are taken back off it.* An
-upscaler is entitled to an opinion about detail the source does not resolve. It is not
-entitled to one about what colour a fill is, and this one moves the largest fill in a
-square by up to a whole level of the map's palette. ``colour_fix`` subtracts the output's
-low band and adds the source's, at sigma 6 in output pixels -- wide enough to pass a 4 to
-8 px stroke through untouched -- which halves that drift for no measurable sharpness. It is
-one line of arithmetic and the largest single improvement of the two.
-
-*The low levels still come from the original sheet.* z0..z5 are Lanczos downscales of the
-8192 px artwork exactly as they were before ``--enhance`` existed; only z6 and z7, which
-have no artwork behind them at all, come from the enhanced pixels. Whether that seam in
-provenance is visible is measured rather than assumed: every run downscales eight enhanced
-cores back to their source resolution and compares them against the source, against the
-adjacent-column control, in ``_meta.tiles.enhancement.low_zoom``.
-
-*The binary is pinned and verified.* ``ENHANCE_URL`` names one immutable GitHub release
-asset and ``ENHANCE_SHA256`` is its digest; a download that hashes to anything else is not
-unzipped. It is cached **outside this repository**, under platformdirs'
-``user_cache_dir`` -- the same tree ``src/satisfactory_mcp/config.py`` builds ``cache_dir``
-from, with ``bin/`` beneath it -- because it belongs to the machine's GPU rather than to
-one checkout, and ``prune_cache`` only ever deletes ``save-*.pkl``. If it will not download
-or will not run, the stage says which and exits nonzero. It never quietly substitutes
-Lanczos: a pyramid that is soft where the sidecar says it is sharp is worse than no run.
-
-And an enhanced pyramid is not silently downgraded. A later plain re-run over a
-``tiles/`` tree whose sidecar says ``enhanced`` refuses in the same breath as the
-cross-build guard, for the same reason: a refresh that quietly halves the map's resolution
-is drift, and drift is announced. ``--enhance`` again, or ``--force``.
-
-That guard compares recipe NUMBERS, not a boolean, because "enhanced" stopped being one
-thing the moment this pipeline was amended. ``ENHANCE_RECIPES`` names each of them and
-``ENHANCE_RECIPE`` is what this file cuts; the sidecar records it, and a run refuses only
-when its own recipe is behind what is already on disk. So re-cutting recipe 1's tiles with
-recipe 2 is the upgrade it plainly is and runs without a flag, while a reader can still
-read off which pipeline drew the pixels they are looking at.
-
-The stage needs ``numpy`` and ``scipy``, which unlike Pillow are dependencies of this
-project outright, so they come from the environment ``uv run`` provides -- the same one
-``--extra gen`` adds the decoders to, which is what makes the two halves of the stage
-provably the same numpy.
-
-**Licence.** The bytes this writes are Coffee Stain's artwork, read out of the reader's
-own installed copy of the game and left in a gitignored directory. Nothing here is
-committed, uploaded or redistributed, and ``/api/mapimage`` serves it to localhost only.
+The stage needs ``numpy`` and ``scipy``, which are outright dependencies of this project, so
+both halves of it provably run against one numpy.
 """
 
 from __future__ import annotations
@@ -241,11 +82,10 @@ from tools._common import base_parser, require_gen
 #: The mount-relative directory holding the four slices, inside FactoryGame-Windows.utoc.
 SLICE_DIR = "../../../FactoryGame/Content/FactoryGame/Interface/UI/Assets/MapTest/SlicedMap/"
 
-#: The four slices. The suffix is ``<col>-<row>``: 0-0 is NW, 1-0 NE, 0-1 SW, 1-1 SE.
-#: Proven per run by ``seam_residuals`` -- see the module docstring.
+#: The suffix is ``<col>-<row>``: 0-0 is NW, 1-0 NE, 0-1 SW, 1-1 SE, proven per run by
+#: ``seam_residuals``.
 SLICES = ("Map_0-0", "Map_1-0", "Map_0-1", "Map_1-1")
 
-#: One slice, decoded, is this square. Four of them make the sheet.
 TILE_PX = 4096
 SHEET_PX = TILE_PX * 2
 
@@ -255,39 +95,25 @@ MIP_SIZES = bc1_mip_sizes(TILE_PX, 6)
 MIP0_BYTES = MIP_SIZES[0][1]
 UBULK_BYTES = sum(size for _px, size in MIP_SIZES)
 
-#: What the sheet is written at by default: the game's own resolution, because measured
-#: rather than feared. An optimised RGB PNG of the whole 8192 sheet is 16 MB, which a
-#: browser ``imageOverlay`` fetches off localhost instantly, so there is no reason to hand
-#: the reader a downscale of their own map. ``--size`` takes it down for a machine where
+#: The game's own resolution. An optimised RGB PNG of the whole sheet is 16 MB, which a
+#: browser fetches off localhost instantly; ``--size`` takes it down for a machine where
 #: 8192x8192 is too much picture to decode.
 DEFAULT_SIZE_PX = 8192
 
-#: The corners the sidecar pins, metres, game axes -- the in-game map square, which is
-#: also ``DEFAULT_MAP_BOUNDS_M`` in the web API. Stated here so the sidecar carries them
+#: The corners the sidecar pins, metres, game axes -- the in-game map square, which is also
+#: ``DEFAULT_MAP_BOUNDS_M`` in the web API. Stated here so the sidecar carries them
 #: explicitly instead of leaning on the server's default, and re-measured by ``calibrate``.
 BOUNDS_M = {"x_min_m": -3247.0, "x_max_m": 4253.0, "y_min_m": -3750.0, "y_max_m": 3750.0}
 
-#: Where the picture and its sidecar go. Gitignored, and that is the point.
+#: Gitignored, and that is the point.
 LOCAL_DIR = ROOT / "data" / "local"
 IMAGE_NAME = "map.png"
 SIDECAR_NAME = "map.json"
 
-# And where the pyramid goes: ``tiles/{z}/{x}_{y}.png``, cut from the same sheet in the
-# same run. ``map.png`` stays -- it is the fallback for a page that finds no pyramid, and
-# the one file a reader can open and eyeball -- but it is 16 MB of 8192x8192 that a
-# browser decodes to 268 MB of RGBA whatever the view is, which is what the pyramid is
-# for: at the whole-world framing the page fetches a few hundred KB of z2 instead. The
-# names, the level arithmetic and the staged rename are imported above from
-# ``core.gameassets.pyramid``, which cuts all three of this project's pyramids.
-
-#: --------------------------------------------------------------------------------------
-#: The optional enhancement stage. See the module docstring; these are the pinned numbers.
-#: --------------------------------------------------------------------------------------
+# --- The optional enhancement stage: the pinned numbers. ------------------------------
 
 #: One immutable GitHub release asset, and the digest of the bytes this file was written
-#: against. A download that hashes to anything else is not unzipped and not run: it is a
-#: 6 MB executable off the internet, and "the asset changed" is not a thing that happens
-#: to a published release for a good reason.
+#: against. A download that hashes to anything else is not unzipped and not run.
 ENHANCE_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
     "realesrgan-ncnn-vulkan-20220424-windows.zip"
@@ -295,20 +121,19 @@ ENHANCE_URL = (
 ENHANCE_SHA256 = "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d"
 ENHANCE_EXE_NAME = "realesrgan-ncnn-vulkan.exe"
 
-#: The model the bake-off chose, of the five the archive ships. It is the anime-tuned one
-#: because this artwork is flat colour and drawn linework rather than photography, which is
-#: what that model is trained on -- x4plus keeps photographic texture the map does not have.
+#: The anime-tuned model of the five the archive ships: this artwork is flat colour and
+#: drawn linework, and x4plus keeps photographic texture the map does not have.
 ENHANCE_MODEL = "realesrgan-x4plus-anime"
 ENHANCE_SCALE = 4
 
-#: Source-side tiling. 1024 px squares with 96 px of context every side, so the model never
-#: sees a tile edge that survives into the output -- and, more bluntly, so it does not
-#: segfault on a 32-bit index. See the docstring.
+#: Source-side tiling, which is mandatory rather than an optimisation: handed the whole
+#: 32768 px output the binary segfaults on a signed 32-bit index into its output buffer.
+#: The overlap is context the model sees and the crop throws away, and 96 rather than 64
+#: because 64 left one seam of eight reading 2.4x its own in-tile control.
 ENHANCE_TILE_PX = 1024
 ENHANCE_OVERLAP_PX = 96
 
-#: The scratch tree the stage works in, beside the staging pyramid and gitignored with it.
-#: Deleted before and after, so a dead run leaves nothing a later one would merge into.
+#: Deleted before and after the stage, so a dead run leaves nothing a later one merges in.
 ENHANCE_WORK = "enhance.work"
 
 #: The faint-detail mask, and the whole of it. ``depth`` is how far a pixel sits below the
@@ -322,22 +147,17 @@ FAINT_LO = 3.0
 FAINT_HI = 14.0
 FAINT_FEATHER = 5
 
-#: The pre-sharpen, which runs on the INPUT square before the model ever sees it: three
-#: rounds of unsharp masking, blended in only where the same depth statistic says there is
-#: a faint mark. The amount is small on purpose -- it is a nudge that carries the weak band
-#: over the model's own floor, not a sharpening pass -- and a second bake-off round measured
-#: this exact set against five regions.
+#: The pre-sharpen, on the INPUT square before the model sees it: three rounds of unsharp
+#: masking blended in where the same depth statistic says there is a faint mark. The amount
+#: is a nudge that carries the weak band over the model's floor, not a sharpening pass.
 #:
-#: PRESHARPEN_HI is 10 rather than the repair's 14, and the two masks are deliberately not
-#: the same object. The repair's band must cover the mid strokes it protects; the
-#: pre-sharpen's must not, because amplifying a mid stroke hands the model more contrast to
-#: expand and pushes mid retention from 1.07 to 1.13. Decoupling costs 0.03 of weak-stroke
-#: retention and buys back the whole of that regression.
+#: PRESHARPEN_HI is 10 against the repair's 14 because amplifying a mid stroke hands the
+#: model more contrast to expand: decoupling the two bands costs 0.03 of weak-stroke
+#: retention and buys back a mid retention of 1.13 against 1.07.
 #:
-#: The mask is a hard one here, not a ramp: above PRESHARPEN_ON it is on, then it grows by
-#: one PASSIVE round -- a pixel joins only if more than three of its eight neighbours are
-#: already in, so a mark thickens and a lone speck of noise does not spread -- and
-#: PRESHARPEN_EDGE feathers the result so the blend still has no edge.
+#: The mask is hard rather than a ramp, then grown by one PASSIVE round -- a pixel joins
+#: only if more than three of its eight neighbours are already in, so a mark thickens and a
+#: lone speck of noise does not spread -- and PRESHARPEN_EDGE feathers the blend.
 PRESHARPEN_ROUNDS = 3
 PRESHARPEN_SIGMA = 1.0
 PRESHARPEN_AMOUNT = 0.14
@@ -346,19 +166,14 @@ PRESHARPEN_ON = 0.15
 PRESHARPEN_NEIGHBOURS = 4
 PRESHARPEN_EDGE = 0.6
 
-#: The colour fix, on the output: the model may decide high-frequency detail, but the low
-#: frequencies are the source's and it has no business moving them. Sigma is in pixels of
-#: the 4x output and must exceed a stroke's width there -- strokes are 4 to 8 px at 4x -- or
-#: the fix blurs back the sharpening it exists to protect. All three channels, which
-#: measured better than the chroma-only form on every metric.
+#: In pixels of the 4x output, and it must exceed a stroke's width there -- strokes are 4
+#: to 8 px at 4x -- or the fix blurs back the sharpening it exists to protect.
 COLOUR_FIX_SIGMA = 6.0
 
 #: Which recipe cut the pixels, so that "enhanced" is not one thing forever. The
-#: no-silent-downgrade guard compares these numbers rather than a boolean: re-cutting an
-#: older recipe's tiles with a newer one is an upgrade and must not be refused, and a plain
-#: run is recipe 0 and still is. Recipe 1 wrote no number -- it is what a sidecar that says
-#: ``enhanced`` and nothing else describes -- which is why ``pinned_recipe`` reads that case
-#: as 1 rather than as "unknown".
+#: no-silent-downgrade guard compares these numbers rather than a boolean: a plain run is
+#: recipe 0, and recipe 1 wrote no number, which is why ``pinned_recipe`` reads a sidecar
+#: that says only ``enhanced`` as 1 rather than as "unknown".
 ENHANCE_RECIPES = {
     0: "no enhancement: z0..z5 cut straight from the game's own artwork, Lanczos",
     1: "upscale, then Lanczos back over the faint marks",
@@ -370,54 +185,47 @@ ENHANCE_RECIPES = {
 ENHANCE_RECIPE = 2
 
 #: Where the seam check reads, in tile rows of the enhanced top level, and the columns its
-#: control averages over. One arbitrary pair of adjacent columns is far too noisy a
-#: denominator -- on quiet ground it is near zero and any seam divides into it enormously --
-#: so the control is what adjacent columns cost across the whole tile.
+#: control averages over. One arbitrary column pair is too noisy a denominator: on quiet
+#: ground it is near zero and any seam divides into it enormously.
 SEAM_ROWS = (32, 64, 96)
 CONTROL_COLS = (32, 64, 96, 128, 160, 192, 224)
 
-#: How much worse than a boundary that is NOT a seam a real seam may read. The comparison
-#: is against the same statistic measured where two tiles were cut from one upscaled core,
-#: because that is the only honest zero: an edge in the artwork that happens to land on a
-#: boundary costs the same whether the boundary is a seam or not.
+#: How much worse than a boundary that is NOT a seam a real seam may read. An edge in the
+#: artwork that lands on a boundary costs the same whether the boundary is a seam or not,
+#: which is why the comparison is against that and not against zero.
 SEAM_RATIO_MAX = 1.5
 
-#: Where the low-zoom check samples, in tiles of the original top level. A stride that is
-#: coprime with nothing in particular -- just a spread across the sheet -- and tiles that
-#: are flat ocean are dropped rather than counted as agreement.
+#: Where the low-zoom check samples, in tiles of the original top level. Tiles that are
+#: flat ocean are dropped rather than counted as agreement.
 LOW_ZOOM_STRIDE = 5
 LOW_ZOOM_SAMPLES = 12
 
 #: Where the sidecar records the build, and what the staleness guard reads back.
 PIN_PATH = ("sources", "map_slices", "game_version_pinned")
 
-#: And where it records whether the pyramid beside it was enhanced, which is what the
-#: no-silent-downgrade guard reads back. It lives inside the ``tiles`` block rather than
-#: beside it because it is a fact about that pyramid, and the two are replaced together.
-#: ``RECIPE_PATH`` is the finer-grained half of the same statement: which recipe, not just
-#: whether. Both are read, because every sidecar written before the recipe existed carries
-#: only the boolean and still describes a real pipeline.
+#: Both are read: every sidecar written before the recipe existed carries only the boolean
+#: and still describes a real pipeline. They sit inside the ``tiles`` block because they
+#: are facts about that pyramid, and the two are replaced together.
 ENHANCED_PATH = ("tiles", "enhanced")
 RECIPE_PATH = ("tiles", "enhancement", "recipe")
 
-#: What a sidecar that says ``enhanced`` but names no recipe was cut by. Not "unknown": the
-#: boolean was introduced by recipe 1 and retired by recipe 2, so there is exactly one
-#: pipeline it can mean.
+#: The boolean was introduced by recipe 1 and retired by recipe 2, so a sidecar that says
+#: ``enhanced`` and names no recipe means exactly one pipeline rather than "unknown".
 UNNUMBERED_RECIPE = 1
 
-#: The calibration's own knobs. The sweep resolution is what bounds the claim: a pin that
-#: survives +-300 m in 50 m steps is right to about 100 m, and no better than that.
+#: The sweep resolution is what bounds the claim: a pin that survives +-300 m in 50 m steps
+#: is right to about 100 m, and no better than that.
 CALIBRATION_PX = 1024
 SWEEP_M = 300
 SWEEP_STEP_M = 50
 
-#: How close a sampled pixel must be to the corner colour to count as open ocean. The
-#: sheet's extreme corner is flat sea, and land on this map is beige-to-green: 12 sits in
-#: the wide gap between "the same flat colour" and "anything the map actually draws".
+#: How close a sampled pixel must be to the corner colour to count as open ocean. Land on
+#: this map is beige-to-green, so 12 sits in the wide gap between "the same flat colour"
+#: and "anything the map actually draws".
 OCEAN_TOLERANCE = 12.0
 
-#: A seam is only believed if it reads better than this control -- two scanlines 100 rows
-#: apart inside one tile, i.e. what two pieces of map that do NOT abut look like.
+#: Two scanlines 100 rows apart inside one tile: what two pieces of map that do NOT abut
+#: look like, which is the control a seam has to beat.
 CONTROL_NEAR = (2000, 2001)
 CONTROL_FAR = (2000, 2100)
 
@@ -425,16 +233,12 @@ CONTROL_FAR = (2000, 2100)
 class MissingUpscaler(RuntimeError):
     """The GPU stage cannot run, and says what to do about it.
 
-    Raised rather than degraded from. ``--enhance`` asked for a pyramid whose top two
-    levels are upscaled on the GPU; quietly giving back Lanczos ones instead would write a
-    sidecar that says ``enhanced`` over pixels that are not, which is the one outcome worse
-    than not running at all.
+    Raised rather than degraded from: giving back Lanczos levels would write a sidecar
+    that says ``enhanced`` over pixels that are not.
     """
 
 
-# --------------------------------------------------------------------------------------
-# Decoding and stitching.
-# --------------------------------------------------------------------------------------
+# --- Decoding and stitching. ----------------------------------------------------------
 
 
 def read_slice(store, name: str) -> bytes:
@@ -484,12 +288,10 @@ def _seams(nw, ne, sw, se) -> dict[str, float]:
 def seam_residuals(tiles: dict) -> dict:
     """Mean per-channel difference across each seam, against the alternative and controls.
 
-    This is what proves ``Map_<col>-<row>``. Three numbers decide it, and none of them
-    assumes the answer. The **other** reading of the name -- ``<row>-<col>``, which swaps
-    the two off-diagonal slices -- is scored with the identical statistic, so the layout is
-    chosen by comparison rather than by decree. The **controls** come from inside one tile,
-    so they need no layout at all: adjacent scanlines say what a continuous map costs, and
-    scanlines 100 rows apart say what two unrelated pieces of map cost.
+    This is what proves ``Map_<col>-<row>``. The other reading of the name -- ``<row>-<col>``,
+    which swaps the two off-diagonal slices -- is scored with the identical statistic, and
+    the controls come from inside one tile so they need no layout at all: adjacent scanlines
+    say what a continuous map costs, scanlines 100 rows apart what two unrelated pieces do.
     """
     nw, ne, sw, se = (tiles[n] for n in ("Map_0-0", "Map_1-0", "Map_0-1", "Map_1-1"))
     seams = _seams(nw, ne, sw, se)
@@ -526,17 +328,16 @@ def seam_residuals(tiles: dict) -> dict:
     }
 
 
-# --------------------------------------------------------------------------------------
-# Calibration: do the corners the sidecar pins actually put the world where the map is?
-# --------------------------------------------------------------------------------------
+# --- Calibration: do the pinned corners put the world where the map is? ---------------
 
 
 def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
     """Project the static node table onto the sheet and sweep the pin for a better one.
 
-    Nodes stand on land. A pin that is right therefore puts as few of them as possible on
-    the flat open-ocean colour, and a pin that is wrong can be beaten by shifting the box.
-    The sweep is the measurement; the wiki square is only the starting point.
+    Nodes stand on land, so a pin that is right puts as few of them as possible on the flat
+    open-ocean colour and cannot be improved on by shifting the box. A few read as sea at
+    any pin -- this map's shoreline is drawn rather than sampled -- so the verdict is not
+    "zero" but "nothing beyond one sweep step does better".
     """
     table = ROOT / "data" / "world_resource_nodes.json"
     if not table.is_file():
@@ -596,20 +397,16 @@ def calibrate(sheet, image_mod, bounds: dict[str, float]) -> dict:
     }
 
 
-# --------------------------------------------------------------------------------------
-# --enhance: two levels the artwork does not have, on the GPU, with the faint marks kept.
-# --------------------------------------------------------------------------------------
+# --- --enhance: two levels the artwork does not have, with the faint marks kept. -------
 
 
 def upscaler_cache_dir() -> Path:
     """Where the GPU binary lives: the machine's cache, never this repository.
 
-    Built the way ``src/satisfactory_mcp/config.py`` builds ``cache_dir`` -- platformdirs'
-    ``user_cache_dir`` under LOCALAPPDATA, which must not roam -- with ``bin/`` beneath it.
-    A checkout is the wrong home for it twice over: it is 45 MB of somebody else's
-    executable, and it is a property of this machine's GPU rather than of this clone, so N
-    worktrees should share one copy. ``prune_cache`` next door only ever deletes
-    ``save-*.pkl``, so nothing in the project sweeps this away behind the reader's back.
+    Built the way ``src/satisfactory_mcp/config.py`` builds ``cache_dir``, with ``bin/``
+    beneath it, because it is a property of this machine's GPU rather than of this clone
+    and N worktrees should share one copy. ``prune_cache`` next door only ever deletes
+    ``save-*.pkl``, so nothing sweeps this away behind the reader's back.
     """
     from platformdirs import user_cache_dir
 
@@ -628,14 +425,8 @@ def sha256_of(path: Path) -> str:
 def run_upscaler(exe: Path, models: Path, src: Path, dst: Path, scale: int) -> tuple[int, str]:
     """One invocation of the ncnn binary. ``src``/``dst`` are both files or both directories.
 
-    ``-m`` is passed explicitly: the binary will find ``models/`` beside itself, but only
-    by resolving its own path, and a tool that depends on that is a tool that breaks when
-    it is invoked through a symlink or a copied exe.
-
-    ``stdin=DEVNULL`` for the reason every other subprocess in this repository has it: a
-    downloaded binary that decides to prompt inherits this process's console and blocks a
-    generator that has no one watching it. Closed stdin turns that into an immediate EOF
-    and a return code, which is a failure the caller can report.
+    ``-m`` is passed explicitly: the binary finds ``models/`` beside itself only by
+    resolving its own path, which breaks through a symlink or a copied exe.
     """
     proc = subprocess.run(
         [
@@ -664,14 +455,10 @@ def run_upscaler(exe: Path, models: Path, src: Path, dst: Path, scale: int) -> t
 def ensure_upscaler(cache: Path | None = None, *, smoke: bool = True) -> dict:
     """Download, verify and unpack the upscaler once, and prove the GPU will run it.
 
-    Every failure here is a ``MissingUpscaler`` carrying what to do about it, because all
-    of them are setup rather than bugs: no network, a proxy serving an error page, no
-    Vulkan device, a laptop on its integrated GPU. The digest is checked before the archive
-    is opened -- an executable is not unpacked on the strength of having arrived.
-
-    The smoke test is the only cheap way to tell "no GPU" from "the map broke it": it is
-    the 12 KB sample the archive ships, upscaled into a temporary directory, and it costs
-    about a second against a run of several minutes.
+    The digest is checked before the archive is opened: an executable is not unpacked on
+    the strength of having arrived. The smoke test is the only cheap way to tell "no GPU"
+    from "the map broke it" -- the 12 KB sample the archive ships, about a second against a
+    run of several minutes.
     """
     cache = Path(cache) if cache is not None else upscaler_cache_dir()
     stem = ENHANCE_URL.rsplit("/", 1)[-1][: -len(".zip")]
@@ -751,11 +538,9 @@ def ensure_upscaler(cache: Path | None = None, *, smoke: bool = True) -> dict:
 def check_array_stack() -> tuple[str, str]:
     """numpy and scipy, and the check that they came out of the same environment.
 
-    A scipy compiled against a different numpy than the one that wins the import fails as
-    a segfault or a wrong answer rather than an ImportError, so it is cheaper to state and
-    check than to debug. One environment holds both now -- the one ``uv run`` provides,
-    which is also where ``--extra gen`` puts the decoders -- so this should never fire;
-    a check that never fires is what a satisfied invariant looks like.
+    A scipy compiled against a different numpy than the one that wins the import fails as a
+    segfault or a wrong answer rather than an ImportError, which is cheaper to check than
+    to debug.
     """
     try:
         import numpy
@@ -781,11 +566,9 @@ def check_array_stack() -> tuple[str, str]:
 def faint_depth(luma):
     """How far each pixel sits below its own neighbourhood, grown to cover a mark's halo.
 
-    The one statistic both masks are built on, and the reason they can disagree about
-    where the faint band ENDS without disagreeing about what faintness is. Measured on the
-    SOURCE luma alone, so everything downstream is reproducible from the input without
-    reference to any candidate's output -- which is what makes the blends below rules
-    rather than tastes. The map's marks are all darker than what they are drawn on, so
+    The one statistic both masks are built on. Measured on the SOURCE luma alone, so
+    everything downstream is reproducible from the input without reference to any
+    candidate's output. The map's marks are all darker than what they are drawn on, so
     depth is positive on a mark and near zero on flat fill.
     """
     import numpy as np
@@ -798,9 +581,8 @@ def faint_depth(luma):
 def faint_band(depth, hi: float):
     """The band from FAINT_LO to ``hi``, as feathered weights in [0, 1].
 
-    A product of two clipped ramps -- nothing to select on flat fill, nothing above the
-    band either -- box-blurred, which cannot leave the interval. So a caller can blend
-    with it without clamping again.
+    A product of two clipped ramps, box-blurred, which cannot leave the interval -- so a
+    caller can blend with it without clamping again.
     """
     import numpy as np
     from scipy.ndimage import uniform_filter
@@ -811,29 +593,16 @@ def faint_band(depth, hi: float):
 
 
 def faint_mask(luma):
-    """Where the AI must not be trusted: 1 on faint marks, 0 on flat fill and strong ones.
-
-    Between FAINT_LO and FAINT_HI is the band the model erases, and the two ends of the
-    band are the two ends of the argument: nothing to protect on flat fill, and above it
-    the AI is the better answer than Lanczos is.
-    """
+    """Where the AI must not be trusted: 1 on faint marks, 0 on flat fill and strong ones."""
     return faint_band(faint_depth(luma), FAINT_HI)
 
 
 def presharpen_mask(luma):
     """Where the input is nudged before the model sees it: a hard mask, grown passively.
 
-    The repair's band and this one are the same shape and stop in different places --
-    PRESHARPEN_HI against FAINT_HI -- because they are asked different questions. The
-    repair covers every stroke the model weakens, mid ones included. The pre-sharpen must
-    cover only the weak ones: handing the model a mid stroke with more contrast in it is
-    handing it something to expand, and it does.
-
-    Boolean rather than a ramp, because what follows is a blend of two images and the
-    feather belongs on the blend. One PASSIVE dilation round then thickens a mark without
-    letting a lone pixel spread: a pixel joins only if PRESHARPEN_NEIGHBOURS or more of its
-    eight neighbours are already in, which a speck of noise cannot satisfy and the shoulder
-    of a real stroke always can.
+    Stops at PRESHARPEN_HI where the repair's band stops at FAINT_HI: the repair covers
+    every stroke the model weakens, mid ones included, while this one must cover only the
+    weak ones, because a mid stroke handed more contrast is one the model expands harder.
     """
     import numpy as np
     from scipy.ndimage import convolve
@@ -847,20 +616,15 @@ def presharpen_mask(luma):
 def presharpen_pixels(rgb):
     """Unsharp the faint marks of one source square, and nothing else. Returns (rgb, mask).
 
-    The model's floor is the problem this is aimed at: a mark 4 to 10 luma below its
-    surroundings is faint enough that the upscaler renders it away, and no amount of
-    repairing the output puts back a stroke that was never drawn. Amplifying it by a third
-    on the way IN carries it over that floor, and the model then keeps about 85% of what it
-    was handed instead of 79% of a mark it half-missed.
+    A mark 4 to 10 luma below its surroundings sits under the model's response floor, and
+    no amount of repairing the output puts back a stroke that was never drawn. Amplifying
+    it by a third on the way IN carries it over, and the model then keeps about 85% of what
+    it was handed instead of 79% of a mark it half-missed.
 
-    Only on the mask: unsharping the whole square would raise the strong strokes too, which
-    is the failure mode the second bake-off round measured and rejected. Past the mask and
-    the two pixels its feather reaches, the blend weight is exactly zero and the arithmetic
-    is exactly the identity -- so this is not "mostly the source" anywhere, it is the
-    source, and the sharpening cannot leak onto a fill it was never meant to touch.
+    Past the mask and the two pixels its feather reaches, the blend weight is exactly zero
+    and the arithmetic is exactly the identity, so the sharpening cannot leak onto a fill.
 
-    Arrays in, arrays out, so this is testable without an imaging library: ``presharpen``
-    below is the two lines that make it an image.
+    Arrays in, arrays out, so this is testable without an imaging library.
     """
     import numpy as np
     from scipy.ndimage import gaussian_filter
@@ -889,16 +653,13 @@ def colour_fix_pixels(out_rgb, source_rgb, sigma: float = COLOUR_FIX_SIGMA):
 
         fixed = out - blur(out, sigma) + blur(source, sigma)
 
-    An upscaler is allowed an opinion about detail the source does not resolve. It is not
-    allowed one about what colour a flat fill is, and this model quietly drifts them: the
-    largest fill in a square comes back up to a whole level of the map's own palette away
-    from where it started. Swapping the low band for the source's costs nothing measurable
-    in sharpness and halves that drift on its own -- the single largest improvement the
-    second bake-off round found, and one line of arithmetic.
+    An upscaler is allowed an opinion about detail the source does not resolve, not about
+    what colour a flat fill is, and this model drifts the largest fill in a square by up to
+    a whole level of the map's own palette.
 
     Both arrays are at the OUTPUT's resolution and ``sigma`` is in its pixels: the source
     is Lanczos'd up to meet it rather than blurred small and stretched, because the cheap
-    way is half the cost and drifts half again as much.
+    way drifts half again as much.
     """
     import numpy as np
     from scipy.ndimage import gaussian_filter
@@ -925,9 +686,8 @@ def hybrid_upscale(source, upscaled, image_mod, scale: int = ENHANCE_SCALE):
     """The AI everywhere, Lanczos where the AI drops detail. Returns (image, coverage).
 
     Both sides are computed from the same source square, so the only thing the mask picks
-    between is two renderings of identical pixels. The mask is upsampled bilinearly rather
-    than by nearest: it is a blend weight, and a blocky weight would print the mask's own
-    4 px grid into the output.
+    between is two renderings of identical pixels. It is upsampled bilinearly: a blocky
+    blend weight would print the mask's own 4 px grid into the output.
     """
     import numpy as np
 
@@ -944,9 +704,9 @@ def hybrid_upscale(source, upscaled, image_mod, scale: int = ENHANCE_SCALE):
 def _padded_crop(sheet, image_mod, tx: int, ty: int, tile: int, overlap: int):
     """One source square plus ``overlap`` px of context on every side.
 
-    Off the sheet -- which only happens at its outer border -- the pad is black. Every
-    padded pixel is cropped away again after upscaling, so the pad's only effect is on what
-    the model sees as context at the world's edge, which is open ocean.
+    Off the sheet -- only at its outer border -- the pad is black. Every padded pixel is
+    cropped away after upscaling, so the pad only ever affects what the model sees as
+    context at the world's edge, which is open ocean.
     """
     x0, y0 = tx * tile, ty * tile
     box = (x0 - overlap, y0 - overlap, x0 + tile + overlap, y0 + tile + overlap)
@@ -974,8 +734,7 @@ def _column_control(image) -> float:
 
     The denominator every ratio below is taken against. One arbitrary column pair is not
     it: quiet ground gives a control near zero, and dividing by that turns an invisible
-    difference into an enormous number. Averaged across the tile it is a stable statement
-    of how much this piece of map changes from one column to the next.
+    difference into an enormous number.
     """
     return sum(_mean_abs(_column(image, c), _column(image, c + 1)) for c in CONTROL_COLS) / len(
         CONTROL_COLS
@@ -993,10 +752,9 @@ def _boundary(dest: Path, image_mod, z: int, x: int, y: int) -> tuple[float, flo
 def _split_boundaries(samples: list[tuple[float, float]]) -> tuple[list[float], list[float]]:
     """Ratios where the ground has variation, absolute differences where it has none.
 
-    A tile of open ocean has a control of exactly zero, and no ratio taken against it means
-    anything -- so those samples are not divided into and quietly turned into infinities.
-    They are reported as what they are: the raw difference across a boundary drawn on
-    ground that is one flat colour, where anything but zero would be a visible line.
+    A tile of open ocean has a control of exactly zero, so those samples are reported as
+    raw differences rather than divided into infinities. On one flat colour, anything but
+    zero is a visible line.
     """
     live = sorted(round(edge / control, 3) for edge, control in samples if control)
     flat = sorted(edge for edge, control in samples if not control)
