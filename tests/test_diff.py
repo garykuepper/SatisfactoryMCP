@@ -229,10 +229,10 @@ def test_paused_machines_count_as_built_and_are_unpaused_not_rebuilt(spire):
 
 
 def test_an_action_names_the_machines_it_applies_to(spire, state):
-    """"unpause 3 of 23 Water Extractors" named none of them, and the three are not the
-    first three matched -- rendering `have_instances[:3]` would have sent the player to
-    three pumps that are already running. SETRECIPE is worse: the idle machines it takes
-    are not in the matched set at all."""
+    """The row said "UNPAUSE 3, have 23" and named none of them, and the three are not
+    the first three matched -- rendering `have_instances[:3]` would have sent the player
+    to three pumps that are already running. SETRECIPE is worse: the idle machines it
+    takes are not in the matched set at all."""
     _req, _sol, rep = spire
     paused = {r["instance"].rsplit(".", 1)[-1] for r in state._all_records() if r.get("paused")}
 

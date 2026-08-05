@@ -359,9 +359,7 @@ def render_diff(
     if acts:
         # Per row, not pooled like the build targets: which machines an action applies to
         # is the whole point, and "unpause 3" over 23 pumps names three of them or nothing.
-        parts.append(
-            "# machines to act on, reusable as machine: selectors\n" + "\n".join(acts)
-        )
+        parts.append("# machines to act on, reusable as machine: selectors\n" + "\n".join(acts))
     if rep.neighbours:
         near = ", ".join(f"{n}x {label}" for label, n in rep.neighbours[:3])
         parts.append(
