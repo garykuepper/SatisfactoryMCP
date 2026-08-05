@@ -1,15 +1,10 @@
-"""Primitive reads over a save file's byte stream.
-
-Unreal serialises with a small, regular vocabulary -- little-endian fixed-width integers
-and length-prefixed strings -- and everything above this module is built from it. Keeping
-the primitives in one place is what makes the rest of the parser readable, and it is the
-only place that touches ``struct``.
+"""Primitive reads over a save file's byte stream: Unreal's little-endian fixed-width
+integers and length-prefixed strings. This is the only module that touches ``struct``.
 
 The string encoding is the one thing worth knowing before reading anything else. A string
 is an int32 length followed by bytes, and **the sign of the length is the encoding**:
 positive means ASCII/Latin-1 at one byte per character, negative means UTF-16LE at two.
-Either way the count INCLUDES the trailing null, which is stripped. A zero length is an
-empty string with no bytes at all, not a null terminator on its own.
+Either way the count INCLUDES the trailing null, which is stripped.
 """
 
 from __future__ import annotations
@@ -40,8 +35,6 @@ class Reader:
     def _take(self, count: int) -> bytes:
         end = self.pos + count
         if count < 0 or end > len(self.data):
-            # The commonest failure on a file the running game is rewriting under us, and
-            # the reason ParseError is defined below this layer rather than above it.
             raise ParseError(f"read of {count} at {self.pos} runs past end ({len(self.data)})")
         chunk = self.data[self.pos : end]
         self.pos = end
@@ -77,9 +70,8 @@ class Reader:
     def string(self) -> str:
         """Length-prefixed string; the sign of the length picks the encoding.
 
-        Decoded with ``errors="replace"`` rather than strictly: a single odd byte in one
-        cosmetic field should not lose a 44,000-object save. Anything that matters here is
-        a class path or an instance name, and those are ASCII.
+        Decoded with ``errors="replace"`` rather than strictly, so that one odd byte in a
+        cosmetic field does not lose a 44,000-object save.
         """
         count = self.i32()
         if count == 0:
