@@ -41,8 +41,28 @@ export function html(markup: string): Markup {
   return { html: markup };
 }
 
+/** The class a copyable span carries, and the attribute holding what a click puts on the
+ *  clipboard. Declared with the writer rather than with the listener in copy.ts, because
+ *  copy.ts reaches toast.ts, which reaches this file -- the other way round is a ring. */
+export var COPY_CLASS = "copyable";
+export var COPY_ATTR = "data-copy";
+
+/* A selector, and a click that copies it -- every one of these exists to be pasted into an
+ * MCP tool call. The exact text is repeated into `data-copy` so that what gets copied is
+ * this string and not whatever the cell ends up rendering. The listener is in copy.ts. */
 export function code(text: unknown): Markup {
-  return html("<code>" + esc(text) + "</code>");
+  var value = esc(text);
+  return html(
+    '<code class="' +
+      COPY_CLASS +
+      '" ' +
+      COPY_ATTR +
+      '="' +
+      value +
+      '" title="click to copy">' +
+      value +
+      "</code>"
+  );
 }
 
 export function popup(pairs: Row[]): string {

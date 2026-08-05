@@ -606,6 +606,21 @@ select {
   white-space: nowrap;
 }
 
+/* A selector, marked as something you can click. Dotted rather than solid underline, so it
+   reads as an affordance and not as a link to somewhere: there is nowhere to go, the click
+   puts the text on the clipboard. `word-break` because an instance id is one long token and
+   a popup is 300 px wide. See code() in dom.ts and the listener in copy.ts. */
+.copyable {
+  cursor: pointer;
+  border-bottom: 1px dotted #9aa0a8;
+  word-break: break-all;
+}
+
+.copyable:hover {
+  color: var(--ok);
+  border-bottom-color: var(--ok);
+}
+
 /* THE INVENTORY GRID: what is in a crate or a container. See contentsRows() in dom.ts.
 
    A wrapping flex row rather than `display: grid`, because a grid with a fixed column count
