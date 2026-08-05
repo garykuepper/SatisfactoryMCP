@@ -25,10 +25,8 @@ def _leaf(instance: str) -> str:
 def _class_of_removed(leaf: str) -> str:
     """Class of a removed actor from its instance name, for the `other` bucket only.
 
-    Mirrors the sidecar's `_removed_class`: strip a trailing index, a `_UAID_<hex>` if present,
-    then a trailing `_C`. Duplicated rather than imported because the sidecar runs as a separate
-    process and importing across that boundary is what the boundary exists to prevent -- and it
-    is only ever used to LABEL an unmatched class, never to decide a group.
+    Mirrors the sidecar's `_removed_class`, duplicated because the sidecar runs as a separate
+    process. Only ever used to LABEL an unmatched class, never to decide a group.
     """
     parts = leaf.split("_")
     if parts and parts[-1].isdigit():
@@ -49,11 +47,10 @@ _GLUED_INDEX = re.compile(r"(?<=[A-Za-z])\d+$")
 def _name_stem(leaf: str) -> str:
     """A label for a removed actor the map table has no row for. NOT a class.
 
-    Both halves of that matter. It is a label because the map is the only thing that can
-    name a class -- ``BP_WAT133`` is a somersloop and ``BP_Crystal_C_15`` can be a yellow
-    slug -- so anything derived from a name is a display string and never a decision. It is
-    still worth computing because the alternative is 89 spore flowers appearing as 40
-    one-row entries with the counter still attached.
+    Only the map can name a class -- ``BP_WAT133`` is a somersloop and ``BP_Crystal_C_15``
+    can be a yellow slug -- so anything derived from a name is a display string and never a
+    decision. Worth computing all the same: without it 89 spore flowers appear as 40 one-row
+    entries with the placement counter still attached.
     """
     return _GLUED_INDEX.sub("", _class_of_removed(leaf))
 
@@ -74,10 +71,9 @@ class CollectibleTable:
 
     def __post_init__(self) -> None:
         for row in self.rows:
-            #: ``(cell, name)``, never the bare name. All 14,367 UAID names are globally
-            #: unique but auto-numbered ones are not: the pair is unique over all 69,364
-            #: map actors and a bare name is not, so a name-only index would both invent
-            #: matches and miss real ones.
+            #: ``(cell, name)``, never the bare name: auto-numbered placements reuse names
+            #: across cells, while the pair is unique over all 69,364 map actors. A
+            #: name-only index would both invent matches and miss real ones.
             self.by_key[(row["cell"], _leaf(row["instance"]))] = row
             self.by_category.setdefault(row["category"], []).append(row)
 
@@ -103,9 +99,8 @@ class CollectibleTable:
         """Whether a save records anything at all about this class.
 
         ``rows_any_save_mentions`` counts the placements some save on disk names, live or
-        gone. Where it is 0 the class is not save-serialised, and the table says so: it
-        "can be located and never state-tracked". That is the difference between a
-        ``remaining`` figure and a fabricated one -- with no record of a collection,
+        gone; where it is 0 the class is not save-serialised. That is the difference between
+        a ``remaining`` figure and a fabricated one: with no record of a collection,
         ``placed - collected`` equals ``placed`` whether or not the player took every one.
         """
         return bool(self.info(category).get("rows_any_save_mentions"))
@@ -147,25 +142,18 @@ class CollectibleTable:
 COLLECTIBLES_FILE = "world_collectibles.json"
 
 
-#: Keyed by the file and its mtime, for the argument ``spatial.nodes._TABLE`` makes. This
-#: table is the one of the three that moves MOST -- it is untracked, it is regenerated
-#: whenever the reader re-derives placements from a new game build, and a stale copy is
-#: exactly the "pinned tables drift every map update" failure the loaders are warned about.
-#:
-#: A miss is not cached. ``None`` here means the file is absent or unreadable, which is a
-#: state a reader fixes by running the generator, and there would be no mtime to key the
-#: absence on anyway -- so the next call looks again rather than answering from a cached no.
+#: Keyed by the file and its mtime, so a table regenerated against a newer game build is
+#: picked up without a restart. A miss is never cached: an absent or unreadable file is a
+#: state the reader fixes by running the generator, so the next call looks again.
 _TABLE: dict[tuple[str, int], CollectibleTable] = {}
 
 
 class CollectiblesUnreadable(Exception):
     """The table is THERE and will not parse -- a different fact from "not generated".
 
-    Absent is the ordinary state of a fresh clone and the answer is "run the generator".
-    Corrupt is a half-written file, a truncated download or an interrupted run, and the
-    answer is "delete it and run the generator" -- but only if somebody is told, and
-    collapsing the two meant nobody ever was. A reader that has generated the table and
-    then sees "no collectible table" goes looking for the run that did not happen.
+    Absent is the ordinary state of a fresh clone, and the answer is "run the generator".
+    Corrupt is a half-written file or an interrupted run, and the answer is "delete it and
+    run the generator", which nobody can act on if the two arrive as one.
     """
 
 
@@ -177,12 +165,10 @@ def load_collectibles(*, strict: bool = False) -> CollectibleTable | None:
     is lost without it is everything the save cannot know by itself -- how many of each
     kind exist, where they are, and therefore what remains.
 
-    ``strict=True`` raises :class:`CollectiblesUnreadable` for a file that exists and
-    cannot be read, and still returns ``None`` for one that is not there. Off by default
-    because the degrading callers are right to degrade; on for a caller -- a generator
-    checking its own output, a report saying why a census is save-only -- that wants to
-    tell the reader the difference between "you never ran it" and "what it wrote is
-    broken". Both used to arrive as ``None``, so nobody could.
+    ``strict=True`` raises :class:`CollectiblesUnreadable` for a file that exists and cannot
+    be read, and still returns ``None`` for one that is not there. Off by default, since the
+    degrading callers are right to degrade; on for a caller that wants to tell the reader
+    "you never ran it" apart from "what it wrote is broken".
     """
     path = config.data_dir() / COLLECTIBLES_FILE
     if not path.is_file():
@@ -194,15 +180,13 @@ def load_collectibles(*, strict: bool = False) -> CollectibleTable | None:
             return hit
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        # ``ValueError`` covers ``JSONDecodeError``, which subclasses it, and the numeric
-        # parse errors a truncated file produces on the way there. Named rather than caught
-        # broadly so that a bug in this function keeps raising as a bug.
+        # ``ValueError`` covers ``JSONDecodeError`` and the numeric parse errors a truncated
+        # file produces. Named rather than caught broadly, so a bug here still raises.
         if strict:
             raise CollectiblesUnreadable(f"{path} exists but will not read: {exc}") from exc
         return None
-    # A JSON file that is not an object at all is corrupt, not empty -- and it used to
-    # reach ``payload.get`` and raise ``AttributeError`` out of a function documented to
-    # return ``None``, which is neither of the two answers this is allowed to give.
+    # A JSON file that is not an object at all is corrupt, not empty, and this function is
+    # only allowed to answer ``None`` or raise ``CollectiblesUnreadable``.
     rows = payload.get("collectibles") or [] if isinstance(payload, dict) else []
     if not rows:
         if strict:

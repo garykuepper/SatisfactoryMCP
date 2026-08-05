@@ -1,17 +1,10 @@
 """The formatting PRIMITIVES: tables, envelopes, footers, numbers and rates.
 
-The bottom layer of the package, not the whole of it. Nothing outside
-``presenters.text`` formats output, and inside it the split is one formatter module per
-concept -- ``bom``, ``diff``, ``layout``, ``plan_factory`` and the rest -- each of which
-composes what is here. So this file owns HOW a table looks and never WHICH table a tool
-returns, and a rule about layout belongs here exactly when it applies to all of them.
+This file owns HOW a table looks and never WHICH table a tool returns. Context budget is the
+binding constraint: every response is read by a model, and all 291 automatable recipes in the
+tightest possible TSV is already ~25k characters. The layout rules live here and are not
+restated per formatter:
 
-Context budget is the binding design constraint: every response here is read by a
-model, and all 291 automatable recipes in the tightest possible TSV is already
-~25k characters. Centralising formatting is what stops that budget regressing one
-tool at a time.
-
-Rules enforced here:
   * compact TSV, not JSON -- the win is dropping repeated keys and braces
   * names in rows, IDs once in a footer
   * scoped aggregates BEFORE rows (an unscoped total is often actively misleading)
@@ -54,12 +47,8 @@ def table(
     limit: int | None = None,
     hint: str = "",
 ) -> str:
-    """Tab-separated table with an honest truncation envelope.
-
-    ``total`` is the number of MATCHES, not the number of lines emitted. The header
-    and any footer are never counted -- reporting "showing 7" for 5 data rows tells
-    the model something false about what it has seen.
-    """
+    """Tab-separated table with a truncation envelope. ``total`` is the number of MATCHES,
+    not the number of lines emitted; the header and any footer are never counted."""
     body = [list(r) for r in rows]
     shown = len(body)
     lines = ["\t".join(headers)]
@@ -80,11 +69,8 @@ def table(
 
 
 def envelope(summary: str, body: str = "", notes: Iterable[str] = ()) -> str:
-    """Summary first, then notes, then rows.
-
-    Warnings lead because that is where the actionable insight is -- "Blender
-    unlocked but 0 built" matters more than the twentieth process row.
-    """
+    """Summary first, then notes, then rows: warnings lead because that is where the
+    actionable insight is, not in the twentieth data row."""
     chunks = [summary.rstrip()]
     note_list = [n for n in notes if n]
     if note_list:
@@ -111,21 +97,18 @@ def bullets(lines: Iterable[str], marker: str = "-") -> str:
 
 
 def flows(items: Iterable[tuple[str, float, bool]]) -> str:
-    """Render an ingredient/product list: ``30 Crude Oil + 20 Water``.
-
-    Fluids arrive pre-divided by 1000, so this never shows raw litres.
-    """
+    """Render an ingredient/product list: ``30 Crude Oil + 20 Water``. Fluids arrive
+    pre-divided by 1000, so this never shows raw litres."""
     return " + ".join(f"{num(amount)} {name}" for name, amount, _ in items) or "-"
 
 
 def where_bands(distances_m: Iterable[float], gap_m: float = 200.0, max_bands: int = 3) -> str:
     """Where a set of machines actually is, as ``4@0 13@1 6@2.5`` kilometres.
 
-    A count alone hides the thing that matters: 23 Water Extractors reads as one fleet
-    until you see that 4 stand at the plant, 13 at the main base and 6 two and a half
-    kilometres away. A mean hides it just as well, so distances are single-linkage
-    clustered at the same 200 m the node and site clustering uses, and every group is
-    shown with its own count.
+    A count hides what matters and a mean hides it just as well: 23 Water Extractors reads as
+    one fleet until you see 4 at the plant, 13 at the main base and 6 two and a half
+    kilometres away. Clustering is single-linkage at the same 200 m the node and site
+    clustering uses.
     """
     ordered = sorted(distances_m)
     if not ordered:
@@ -136,8 +119,8 @@ def where_bands(distances_m: Iterable[float], gap_m: float = 200.0, max_bands: i
             groups.append([])
         groups[-1].append(d)
     if len(groups) > max_bands:
-        # Near groups stay separate -- that is where the reusable machines are -- and
-        # the tail collapses, since it only ever means "and some far away".
+        # Near groups stay separate, since that is where the reusable machines are; the tail
+        # collapses, since it only ever means "and some far away".
         head, tail = groups[: max_bands - 1], groups[max_bands - 1 :]
         groups = [*head, [d for g in tail for d in g]]
     parts = [f"{len(g)}@{sum(g) / len(g) / 1000:.1f}".rstrip("0").rstrip(".") for g in groups]

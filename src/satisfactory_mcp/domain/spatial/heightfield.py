@@ -1,62 +1,13 @@
-"""The 1 m terrain field: its on-disk format, and the loader that is only a loader.
+"""The 1 m terrain field: the on-disk format, and the loader that is only a loader.
 
-``tools/gen_world_heightmap.py`` cuts a real heightmap of this world out of the reader's
-own installed game and writes it to ``data/local/heightmap/``, which is gitignored. This
-module is the other half: the byte format both sides agree on, and a reader that answers
-"how high is the ground at this coordinate" from it -- or says the field is absent, which
-is the default, because the repository ships no terrain and never will.
-
-**Absent is the normal case.** Nothing here raises when ``data/local/heightmap/`` is not
-there. ``load_field()`` returns ``None`` and every caller is expected to carry on without
-it, the same loader-or-nothing shape ``/api/mapimage`` has had since the map image was
-made optional. A field only exists on a machine where somebody ran the generator against
-their own install.
-
-The format, and why it is this one
-----------------------------------
-Four rasters over one grid, plus a JSON sidecar that carries the georeference so the
-arrays never have to be interpreted from constants a caller typed in themselves.
-
-* ``height.i16.z`` -- terrain top surface, **decimetres**, ``-32768`` for no data. int16
-  costs 0.028 m RMS of quantisation, which is an eighth of the field's own measured
-  accuracy and therefore free; int32 would double 16.5 MB for nothing.
-* ``prov.u8.z`` -- which layer answered each texel, so an answer can carry its own
-  uncertainty rather than one number being quoted for a field that is a metre good in the
-  middle and four metres good at the edge.
-* ``water.i16.z`` -- water surface Z on the same grid, same no-data. Information only; see
-  the generator's docstring for the measurement that says it must not gate terrain.
-* ``waterq.u8.z`` -- whether the water's **depth** is knowable at that texel, which is a
-  different question from whether its level is. The level comes from a cooked water
-  volume's own bounding box and is good to centimetres everywhere; the depth is that level
-  minus the ground, and over the fill layer the ground is a 3.9 m-quantised raster whose
-  own no-data value the water surface frequently *is*. So a texel says one of three
-  things: dry, water whose depth was measured against 1 m terrain, or water whose level is
-  known and whose depth is not. Printing the third as a depth of zero is the one mistake
-  this byte exists to prevent.
-
-Every raster is ``zlib`` over the raw bytes, and the two int16 ones are **row-delta**
-first: neighbouring texels of a 1 m heightfield differ by a few decimetres, so the deltas
-are small and repetitive where the raw values are neither. Measured on the shipped field,
-that is 112 MB of int16 down to **16.45 MB**, against 26.72 MB for plain zlib of the same
-array -- so the delta is worth 38% of the artifact and is not decoration.
-
-The delta runs along a row and the arithmetic is deliberately allowed to wrap: a delta
-between two int16 values need not fit in an int16, and both sides do the sum in int32 and
-truncate back, so the round trip is exact for every input without the format needing a
-wider type for the rare texel where a cliff face meets no-data.
-
-Why the whole raster is decoded at once
----------------------------------------
-zlib over the whole array is one stream, so a texel read costs a full decode: about 170 MB
-resident for height and provenance together and a fraction of a second, once, on the first
-question anybody asks. That is the price of the format that measured smallest, and it is
-paid lazily and cached, so a server that is never asked about terrain never pays it. Water
-and its quality byte are decoded separately and only if something asks for them.
-
-**A field written before the quality byte existed still reads.** ``waterq.u8.z`` is absent
-from those, and a reading then falls back to the only test that field supports -- a water
-surface standing above the ground -- which is exactly what it meant before. Missing is not
-the same as dry, and it is not read as dry.
+``tools/gen_world_heightmap.py`` cuts the field out of the reader's own installed game and
+writes it to the gitignored ``data/local/heightmap/``; this module is the byte format both
+sides agree on and a reader over it. **Absent is the normal case** -- the repository ships
+no terrain, so ``load_field()`` returns ``None`` on any machine where nobody ran the
+generator, and every caller carries on without one. A raster is ``zlib`` over raw bytes,
+the two int16 ones row-delta first, and a texel read costs a full decode of its plane, so
+each plane is decoded lazily and cached. What each plane means is stated at the constant
+that names it; the georeference is in ``meta.json`` and is never assumed.
 """
 
 from __future__ import annotations
@@ -105,6 +56,8 @@ __all__ = [
 #: The directory the generator writes and this module reads, under ``data/local/``.
 DIR_NAME = "heightmap"
 
+#: The planes over one grid, plus the sidecar carrying the georeference. Height and water
+#: are int16 DECIMETRES of world Z; provenance, water quality and density are uint8 codes.
 HEIGHT_NAME = "height.i16.z"
 PROV_NAME = "prov.u8.z"
 WATER_NAME = "water.i16.z"
@@ -113,41 +66,29 @@ DENSITY_NAME = "density.u8.z"
 META_NAME = "meta.json"
 
 #: The int16 value that means "nothing is known here". Not zero: zero is sea level and a
-#: real answer, and a no-data raster silently read as a flat sea at the map's edge is
-#: exactly the kind of invented number this project refuses elsewhere.
+#: real answer, so a no-data texel read as zero is a flat sea at the map's edge.
 NODATA = -32768
 
 #: Which layer answered a texel. The numbers are the file format and must not be
-#: renumbered; 2 is deliberately absent, because the prototype that used it -- baseline
-#: values standing in for cliffs over the landscape -- was superseded by real geometry.
-#:
-#: **5 is additive and a reader that does not know it degrades correctly.** It splits the
-#: cliff province in two by how the texel was answered rather than by what answered it: 5
-#: is a texel a source vertex actually landed in, 4 is one the rasteriser reached by
-#: interpolating across a triangle wider than the texel. An old reader that tests
-#: ``== PROV_CLIFF`` reads 5 as "not landscape, not fill, not no-data", which is the whole
-#: of what 4 used to mean -- so the split costs nothing and states something new.
-#:
-#: A field written before the split emits no 5 at all and no density plane, and its 4s are
-#: the undivided cliff province. Which is why the split is announced by the presence of
-#: ``density.u8.z``, and never inferred from a texel being 4.
+#: renumbered; 2 is unused. 5 splits the cliff province by HOW the texel was answered -- a
+#: source vertex landed in it, against 4 where the rasteriser interpolated across a
+#: triangle wider than the texel -- and is additive: a reader testing ``== PROV_CLIFF``
+#: reads 5 as the whole of what 4 meant before. The split is announced by the presence of
+#: ``density.u8.z`` and never inferred from a texel being 4.
 PROV_NODATA = 0
 PROV_LANDSCAPE = 1
 PROV_FILL = 3
 PROV_CLIFF = 4
 PROV_CLIFF_DIRECT = 5
 
-#: The two values that are both the cliff layer. Anything asking "is this texel cliff"
-#: means this, and spelling it once is what stops the next caller testing only ``== 4``.
+#: Both values that are the cliff layer. Anything asking "is this texel cliff" means this;
+#: testing ``== PROV_CLIFF`` alone misses 5.
 PROV_CLIFF_VALUES = (PROV_CLIFF, PROV_CLIFF_DIRECT)
 
 PROV_NAMES = {
     PROV_NODATA: "no data",
     PROV_LANDSCAPE: "landscape",
     PROV_FILL: "fill",
-    # 4 keeps the name it has had since it existed, deliberately. A field written before
-    # the split has no density plane and its 4s mean "cliff" and nothing finer, so renaming
-    # them would make an old field claim a distinction it never measured.
     PROV_CLIFF: "cliff",
     PROV_CLIFF_DIRECT: "cliff, direct",
 }
@@ -156,14 +97,12 @@ PROV_NAMES = {
 #: is a second surface over the same texel, not a different source for the ground.
 PROV_WATER_NAME = "water"
 
-#: ``waterq.u8.z``'s three values, and they are the file format: do not renumber. The
-#: distinction is between what the channel measured and what it only located. A level
+#: ``waterq.u8.z``'s values, which are the file format: do not renumber. A water LEVEL
 #: comes from a cooked water volume's own box and is good to centimetres wherever there is
-#: water at all; a DEPTH is that level minus the ground, and it exists only where the
-#: ground under the water was measured at 1 m -- the landscape and cliff layers. Over the
-#: fill layer, and over no-data, the ground beneath a water surface is unknown, so the
-#: depth is unknown, and ``WATER_LEVEL_ONLY`` is the channel saying so out loud instead of
-#: subtracting two numbers one of which it does not have.
+#: water; a DEPTH is that level minus the ground, so it exists only where the ground was
+#: measured at 1 m -- the landscape and cliff layers. Over the fill layer and over no-data
+#: the bed is unknown, and ``WATER_LEVEL_ONLY`` says so rather than subtracting a number
+#: it does not have.
 WATER_DRY = 0
 WATER_MEASURED = 1
 WATER_LEVEL_ONLY = 2
@@ -174,12 +113,8 @@ WATER_QUALITY_NAMES = {
     WATER_LEVEL_ONLY: "water, depth unknown",
 }
 
-#: zlib level 6. Measured against 9 on the shipped field: 9 costs 4.4x the compression
-#: time and saves 1.6% of 16.5 MB, which is not a trade worth making in a tool that runs
-#: for two minutes and writes to a gitignored directory.
 ZLIB_LEVEL = 6
 
-#: Decimetres to metres. The container's step, and the whole of its rounding error.
 DM_PER_M = 10.0
 
 #: What a caller is told when the sidecar records no measured accuracy for a layer. Only
@@ -188,8 +123,8 @@ UNKNOWN_ACCURACY_M = None
 
 
 # --------------------------------------------------------------------------------------
-# The codec. Pure functions over arrays and bytes, so the generator and the loader cannot
-# hold two opinions about the format: there is one implementation and both import it.
+# The codec. Pure functions over arrays and bytes: one implementation, imported by both
+# the generator and the loader, so the two cannot hold different opinions about the format.
 # --------------------------------------------------------------------------------------
 
 
@@ -197,13 +132,10 @@ def encode_i16(grid: np.ndarray) -> bytes:
     """One int16 raster to bytes: row-delta, then zlib.
 
     ``prepend=0`` makes the first column its own absolute value, so a row decodes from its
-    own bytes with nothing carried in from the row above -- which is what keeps a corrupt
-    stream a corrupt stream rather than a whole field shifted by a constant.
-
-    The subtraction is done in int32 and truncated back to int16 on purpose. Two int16
-    values can differ by more than an int16 holds -- a cliff top beside a no-data texel
-    does exactly that -- and the truncation is the same two's-complement wrap ``decode_i16``
-    undoes, so the pair is exact rather than merely usually right.
+    own bytes and a corrupt stream cannot shift the whole field by a constant. The
+    subtraction is done in int32 and truncated back: two int16 values can differ by more
+    than an int16 holds -- a cliff top beside a no-data texel does -- and the truncation is
+    the two's-complement wrap ``decode_i16`` undoes, so the pair is exact for every input.
     """
     if grid.dtype != np.int16:
         raise TypeError(f"expected an int16 raster, got {grid.dtype}")
@@ -214,9 +146,9 @@ def encode_i16(grid: np.ndarray) -> bytes:
 def decode_i16(blob: bytes, height: int, width: int) -> np.ndarray:
     """The inverse of ``encode_i16``, given the shape the sidecar records.
 
-    The shape is not in the stream, deliberately: it is in ``meta.json`` beside the
-    georeference it belongs with, and a raster whose length does not match what the sidecar
-    says is a mismatched pair rather than a raster to reshape into whatever fits.
+    The shape lives in ``meta.json`` beside the georeference and not in the stream, so a
+    raster whose length disagrees with it is a mismatched pair rather than a raster to
+    reshape into whatever fits.
     """
     delta = np.frombuffer(zlib.decompress(blob), dtype="<i2")
     if delta.size != height * width:
@@ -229,12 +161,7 @@ def decode_i16(blob: bytes, height: int, width: int) -> np.ndarray:
 
 
 def encode_u8(grid: np.ndarray) -> bytes:
-    """One uint8 raster to bytes: plain zlib, no delta.
-
-    The provenance byte takes four distinct values in large flat runs, which zlib's own
-    match finder handles better than a delta would: measured at 0.9 MB either way, so the
-    simpler one wins.
-    """
+    """One uint8 raster to bytes: plain zlib, no delta."""
     if grid.dtype != np.uint8:
         raise TypeError(f"expected a uint8 raster, got {grid.dtype}")
     return zlib.compress(grid.tobytes(), ZLIB_LEVEL)
@@ -260,10 +187,9 @@ def decode_u8(blob: bytes, height: int, width: int) -> np.ndarray:
 class Reading:
     """One texel of the field, with the uncertainty that belongs to that texel.
 
-    A reading is **not** a ``Sample``. A sample is a thing somebody's save says is at a
-    height; a reading is the cooked terrain the game itself ships, looked up. They are kept
-    apart all the way out to the page for the same reason nodes and foundations are: mixing
-    two kinds of evidence into one median produces a number that describes neither.
+    A reading is **not** an ``elevation.Sample``: a sample is a thing somebody's save says
+    is at a height, a reading is the game's own cooked terrain looked up. They are kept
+    apart all the way out to the page, because one median over both describes neither.
     """
 
     z_m: float
@@ -280,11 +206,11 @@ class Reading:
     def submerged(self) -> bool:
         """Whether water stands over this ground. Never a terrain correction.
 
-        The channel decides this, not a comparison here. Over the fill layer the ground is
-        a 3.9 m-quantised raster that routinely rounds *above* a sea surface 17 m down, so
-        ``water_m > z_m`` reads the open ocean as dry -- which is precisely the arithmetic
-        the quality byte was added to stop being the answer. It is still the answer for a
-        field written before that byte existed, because there it is all such a field has.
+        The quality channel decides it, not a comparison here: over the fill layer the
+        ground is a 3.9 m-quantised raster that routinely rounds *above* a sea surface 17 m
+        down, so ``water_m > z_m`` reads the open ocean as dry. That comparison is the
+        fallback only for a field written before the quality plane existed, where it is all
+        there is.
         """
         if self.water_m is None:
             return False
@@ -303,9 +229,8 @@ class Reading:
     def water_depth_m(self) -> float | None:
         """How deep the water is, or ``None`` where the bed is not known well enough.
 
-        ``None`` rather than zero, and the difference is the whole point: a texel of open
-        ocean has a real depth this field cannot state, and reporting 0.0 there would read
-        as "the water is exactly at the ground", which is a measurement nobody made.
+        ``None`` rather than zero: a texel of open ocean has a real depth this field cannot
+        state, and 0.0 would read as "the water is exactly at the ground".
         """
         if not self.submerged or not self.depth_known or self.water_m is None:
             return None
@@ -313,12 +238,11 @@ class Reading:
 
 
 class Field:
-    """A loaded heightmap: three rasters, a georeference, and the accuracy it measured.
+    """A loaded heightmap: its rasters, a georeference, and the accuracy it measured.
 
-    Constructed by ``load_field``. The height and provenance rasters are decoded when the
-    object is built -- there is no answer without both -- and the two water rasters only
-    when something asks, because most questions are about ground and the channel is a
-    fraction of a MB compressed against 112 MB decoded.
+    Constructed by ``load_field``. Height and provenance are decoded when the object is
+    built, since there is no answer without both; the water and density planes only when
+    something asks, because a decoded plane is tens of MB resident.
     """
 
     def __init__(self, meta: dict[str, Any], directory: Path) -> None:
@@ -358,10 +282,9 @@ class Field:
     def texel(self, x_cm: float, y_cm: float) -> tuple[int, int] | None:
         """``(row, col)`` for a world coordinate, or ``None`` if it is off the grid.
 
-        Rounded rather than floored: the grid is **vertex-aligned**, so a texel's recorded
-        height belongs to the point ``x0 + col*spacing`` exactly, and the nearest vertex is
-        the nearest measurement. Flooring would answer with the vertex up to a metre
-        south-west of the question, which on a cliff edge is a different cliff.
+        Rounded, never floored: the grid is **vertex-aligned**, so a texel's height belongs
+        to the point ``x0 + col*spacing`` exactly. Flooring would answer with the vertex up
+        to a metre south-west of the question, which on a cliff edge is a different cliff.
         """
         col = round((x_cm - self.x0_cm) / self.spacing_cm)
         row = round((y_cm - self.y0_cm) / self.spacing_cm)
@@ -378,13 +301,7 @@ class Field:
         return self._water_dm
 
     def _water_quality_raster(self) -> np.ndarray | None:
-        """``waterq.u8.z``, or ``None`` for a field written before it existed.
-
-        Public enough to be read by name: ``tools/gen_map_renders.py`` draws the channel
-        straight off the rasters rather than one texel at a time, and it needs this one for
-        the same reason a reading does -- to stop asking whether the surface stands above a
-        ground it has no measurement of.
-        """
+        """``waterq.u8.z``, or ``None`` for a field written before it existed."""
         if not self._water_quality_tried:
             self._water_quality_tried = True
             path = self.directory / WATER_QUALITY_NAME
@@ -395,15 +312,12 @@ class Field:
     def density_raster(self) -> np.ndarray | None:
         """``density.u8.z``, or ``None`` for a field written before it existed.
 
-        How many source vertices landed in each texel, clamped at 255 -- zero everywhere
-        the cliff layer did not answer, because the landscape and the fill are lattices and
-        "samples per texel" is not a question either of them has.
-
-        This is the interface between the geometry and anything that draws it. A renderer
-        asking for a pixel finer than the field's own 1 m spacing has to decide whether it
-        is reading a measurement or an interpolant, and this is the only plane that can
-        tell it. ``None`` is not zero: a field that predates the plane knows nothing about
-        its own density, and a caller must not read that as "no samples anywhere".
+        How many source vertices landed in each texel, clamped at 255 and zero wherever the
+        cliff layer did not answer -- the landscape and the fill are lattices, so "samples
+        per texel" is not a question either has. It is the only plane that can tell a
+        renderer asking for a sub-metre pixel whether it is reading a measurement or an
+        interpolant. ``None`` is not zero: a field predating the plane knows nothing about
+        its own density, and that must not be read as "no samples anywhere".
         """
         if not self._density_tried:
             self._density_tried = True
@@ -415,10 +329,8 @@ class Field:
     def at(self, x_cm: float, y_cm: float) -> Reading | None:
         """The terrain at one world coordinate, or ``None`` where the field knows nothing.
 
-        ``None`` is returned for both reasons a field can be silent -- off the grid, and a
-        no-data texel inside it -- because they are the same answer to the caller: this
-        module has nothing to say about that spot, and a caller that invents something from
-        the silence would be doing what the sampled populations exist to avoid.
+        ``None`` covers both silences -- off the grid, and a no-data texel inside it --
+        because they are one answer to the caller: nothing is known about that spot.
         """
         where = self.texel(x_cm, y_cm)
         if where is None:
@@ -447,9 +359,8 @@ class Field:
         )
 
 
-#: Loaded fields, keyed by the directory and its sidecar's mtime, so a regenerated field
-#: is picked up without a restart while a repeated question costs one dictionary lookup
-#: rather than 170 MB of zlib.
+#: Loaded fields, keyed by the directory and its sidecar's mtime, so a regenerated field is
+#: picked up without a restart while a repeated question costs a dictionary lookup.
 _CACHE: dict[tuple[str, int], Field] = {}
 
 
@@ -463,11 +374,10 @@ def field_dir(local_dir: Path | None = None) -> Path:
 def load_field(local_dir: Path | None = None) -> Field | None:
     """The terrain field, or ``None`` if this machine has none.
 
-    A loader and only a loader. Every failure mode -- no directory, no sidecar, a sidecar
-    that will not parse, a raster whose length disagrees with it -- returns ``None`` rather
-    than raising, because a caller asked "is there terrain here" and "no" is a complete
-    answer to that. The generator is where a broken field is diagnosed; the server's job is
-    to carry on with the sampled populations it had before the field existed.
+    Every failure mode -- no directory, no sidecar, a sidecar that will not parse, a raster
+    whose length disagrees with it -- returns ``None`` rather than raising: the caller asked
+    "is there terrain here", and "no" is a complete answer. A broken field is diagnosed by
+    the generator, not here.
     """
     directory = field_dir(local_dir)
     meta_path = directory / META_NAME

@@ -1,8 +1,8 @@
 """A solved factory plan as TSV: the build table, the flows, and the caveats.
 
-Almost all of this file is caveat. That is the point: an LP will happily hand back a plan
-that needs research the player has not bought, shards they do not hold, or clocks that
-quietly cost hundreds of MW, and none of that is visible in the numbers themselves.
+Almost all of this file is caveat, because an LP will happily hand back a plan that needs
+research the player has not bought, shards they do not hold, or clocks that quietly cost
+hundreds of MW, and none of that is visible in the numbers themselves.
 """
 
 from __future__ import annotations
@@ -57,10 +57,8 @@ def render_plan_factory(
         for p in sol.processes[: render.clamp(limit, default=15)]
     ]
 
-    # An export the caller NAMED coming out at zero leads the notes: it is the answer to
-    # a question the caller did not ask, and a session that requested Plastic and Rubber
-    # read "766 Plastic" as success with nothing saying Rubber was 0. One sentence of
-    # why, where the LP can tell.
+    # An export the caller NAMED coming out at zero leads the notes: without it, a request
+    # for Plastic and Rubber reads "766 Plastic" as success with nothing saying Rubber was 0.
     zero_notes = []
     for z in report.zero_exports:
         name = z["name"]
@@ -165,11 +163,9 @@ def render_plan_factory(
             for r in bill.sloop_used_rows[:4]
         )
         held = report.sloop_budget
-        # The overshoot guard. The LP spends sloops against machine-EQUIVALENTS and the
-        # build table rounds those up to whole machines, so an honest bill can exceed the
-        # budget it was solved under. Same shape as the extractor cap that reported 64
-        # machines under a limit of 54; caught here rather than left for the player to
-        # discover at the workbench.
+        # The overshoot guard. The LP spends sloops against machine-EQUIVALENTS and the build
+        # table rounds those up to whole machines, so an honest bill can exceed the budget it
+        # was solved under.
         over = (
             f" -- ROUNDING UP to whole machines needs {bill.sloops_used - budget} more "
             f"than the budget of {budget}; drop a machine or raise it"
@@ -182,11 +178,8 @@ def render_plan_factory(
             if bill.sloops_used > held["free"]
             else f" You hold {held['free']:.0f} free."
         )
-        # Committed sloops are read from InventoryPotential, the same component as shards.
-        # Only FREE ones can pay for this plan, so the committed count is context and never
-        # added in -- but it is worth showing, because pulling one out of a machine is a
-        # legitimate way to fund a plan and the player cannot do that if nobody says where
-        # they are.
+        # Only FREE sloops can pay for this plan, so the committed count is shown but never
+        # added in: pulling one out of a machine is a legitimate way to fund a plan.
         unmeasured = (
             f" A further {held['committed']:.0f} sit in {len(held['holders'])} machine(s) "
             "and would have to be pulled out first."
@@ -222,10 +215,9 @@ def render_plan_factory(
             f"{aside}{why}"
         )
 
-    # Supplied items are FREE here, which is the point and also the trap. advisor.py
-    # records what it costs to forget: feeding a basket in as free raw inflated a
-    # northern baseline from 92,269 MW to 171,882. Correct for a MODULE, whose inputs are
-    # paid for in the plan that makes them, and badly wrong for a whole-plant comparison.
+    # Supplied items are FREE here, which is the point and also the trap: correct for a
+    # MODULE, whose inputs are paid for in the plan that makes them, and badly wrong for a
+    # whole-plant comparison, where it once inflated a baseline from 92,269 MW to 171,882.
     if req.scenario.raw_caps:
         given = ", ".join(
             f"{v:g} {g.item_name(k)}/min" for k, v in sorted(req.scenario.raw_caps.items())
@@ -298,9 +290,8 @@ def render_plan_factory(
                     ("grid_import_MW", render.num(sol.grid_import_mw)),
                 ]
             ),
-            # Zero-solved NAMED exports are printed as 0 rather than omitted: the
-            # exports line is where a caller checks what they asked for, and a missing
-            # row reads as "forgot to look", not as "the solver said none".
+            # Zero-solved NAMED exports are printed as 0 rather than omitted: a missing row
+            # reads as "forgot to look", not as "the solver said none".
             "exports: "
             + render.kv(
                 [

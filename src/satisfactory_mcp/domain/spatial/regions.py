@@ -1,45 +1,13 @@
 """Advisory region names -- layer 2 of the spatial design.
 
-Layer 1 (``geo``: grid cells, cones, radii, clustering) is exact, derived from the
-coordinate frame, and is what every calculation uses. This module only attaches
-human-readable names to coordinates. Every lookup carries a confidence, so a caller can tell
-"definitely Northern Forest" from "somewhere near the Northern Forest boundary".
-
-**A region name must never feed a computation.** It is for labelling output and for
-letting a person say "the oil in the Northern Forest" instead of a bounding box.
-
-What the confidence words mean now
-----------------------------------
-They changed with the table under them, and the change is worth stating because the words
-did not. ``data/region_names.json`` used to be a raster of a hand trace of a wiki image, so
-``boundary`` meant *the trace might be off here* -- a statement about somebody's eyesight.
-The table is derived from the game's own ``FGMapAreaTexture`` now, whose boundaries are exact
-polygon edges at 1.83 m, so a confidence is a statement about THIS TABLE's resolution and
-nothing else:
-
-``interior``
-    the whole 64 m cell is one region. The name is right unless the map changed.
-``boundary``
-    an exact region boundary runs through this 64 m cell, so a point inside it can be on
-    either side. Off by at most one cell, and the source knows which -- this table does not.
-``unnamed``
-    the game names no region here. The label is ``No Man's Land``, which is the game's own
-    name for the outer coast and the ocean, and it is a real answer rather than a shrug.
-``void``
-    no name at all: off the grid, or the game names nothing here and no known static object
-    stands within a kilometre. Ocean and off-map.
-
-``verified`` is gone. It meant "a human checked this node against the wiki's picture", which
-was the best available answer while the geometry was a trace and is worth nothing beside the
-geometry itself.
-
-Two grids, and which one answers
---------------------------------
-The file publishes a 256 m grid -- what ``/api/regions`` serves and what the map paints -- and
-carries a 64 m one for lookups. This module reads the 64 m grid, because a majority downsample
-at 256 m mislabels 14.1% of known world objects against 5.3% at 64 m. A table with no fine
-grid still loads and answers at its own resolution, which is what makes the two shapes one
-contract rather than two.
+Layer 1 (``geo``) is the exact geometry every calculation uses; this module only attaches
+human-readable names to coordinates, and **a region name must never feed a computation.**
+``data/region_names.json`` is derived from the game's own ``FGMapAreaTexture``, whose
+boundaries are exact polygon edges at 1.83 m, so a lookup's confidence is a statement about
+this table's own resolution and nothing else. The file publishes a 256 m grid, which
+``/api/regions`` serves and the map paints, and carries a 64 m one that lookups here prefer
+-- a majority downsample at 256 m mislabels 14.1% of known world objects against 5.3% at
+64 m -- while a table with no fine grid still loads and answers at its own resolution.
 """
 
 from __future__ import annotations
@@ -54,8 +22,11 @@ __all__ = ["Label", "RegionMap", "load_regions"]
 
 VOID = "."
 
-#: Confidence codes, ordered worst to best. See the module docstring for what each one is a
-#: statement ABOUT -- they are facts about this table's resolution, not about anyone's care.
+#: Confidence codes, worst to best. ``void`` is off the grid, or the game names nothing here
+#: and no known static object stands within a kilometre. ``unnamed`` is the game's own
+#: ``No Man's Land`` for the outer coast and ocean, and is a real answer. ``boundary`` means
+#: an exact region edge crosses this cell, so a point inside it can be on either side.
+#: ``interior`` means the whole cell is one region.
 CONFIDENCE = {
     ".": "void",
     "u": "unnamed",
@@ -108,10 +79,9 @@ class RegionMap:
     def cell_of(self, x: float, y: float) -> tuple[int, int] | None:
         """The PUBLISHED grid's cell at a point, or ``None`` off it.
 
-        Public because ``/api/regions`` needs it: that endpoint serves this grid and has to
-        place its label anchors on it, and asking ``label_for`` instead would answer at the
-        finer grid's resolution and put a label on a cell the payload paints as another
-        region's.
+        Public because ``/api/regions`` places its label anchors on this grid: asking
+        ``label_for`` instead answers at the finer grid's resolution, which can put a label
+        on a cell the payload paints as another region's.
         """
         i = int((x - self.x0) // self.cell)
         j = int((y - self.y0) // self.cell)
@@ -122,9 +92,8 @@ class RegionMap:
     def _lookup(self, x: float, y: float) -> tuple[str, str, int] | None:
         """The raw ``(letter, confidence letter, accuracy)`` at a point, or ``None``.
 
-        Prefers the fine pair and falls back to the published one, which is the whole of the
-        two-grid arrangement: one origin, one legend, and a caller that never has to know
-        which answered. Off either grid is off the map, so it is ``None`` either way.
+        Prefers the fine pair and falls back to the published one: one origin, one legend,
+        and a caller that never has to know which answered.
         """
         if self.fine and self.fine_confidence:
             i = int((x - self.x0) // self.fine_cell)
@@ -155,12 +124,8 @@ class RegionMap:
     def label_for_node(self, node: dict) -> Label:
         """Name a resource node, which is to say: name where it stands.
 
-        Kept as its own method because that is what every caller asks for and because it used
-        to mean something else. There was an override table -- 48 oil nodes whose region had
-        been read off a wiki image by eye and was trusted over the raster, reported as
-        ``verified``. The raster is the game's own geometry now, so a hand correction has
-        nothing to correct; and keying one by instance name would be the wrong repair anyway,
-        since a map update renames instances. This is a position lookup and says so.
+        A position lookup and nothing else -- no per-node override table, which a map update
+        renaming instances would silently strand anyway.
         """
         return self.label_for(node["x"], node["y"])
 
@@ -207,8 +172,6 @@ class RegionMap:
 
 
 #: Keyed by the file and its mtime, so a regenerated raster is picked up without a restart.
-#: See ``spatial.nodes._TABLE`` for the argument; this artifact moves for the same reason,
-#: a map update, and moves in the same generation run.
 _MAP: dict[tuple[str, int], RegionMap] = {}
 
 

@@ -13,8 +13,8 @@ __all__ = ["PowerLedger"]
 class PowerLedger:
     """Generation and draw over one save.
 
-    ``paused_count`` is passed in rather than counted here: which records exist is
-    the build census's subject, and this class only needs the total to report it.
+    ``paused_count`` is the build census's count, passed in because this class only needs
+    the total to report it.
     """
 
     projection: dict
@@ -24,27 +24,24 @@ class PowerLedger:
     def power_report(self) -> dict:
         """Generation capacity, and draw both nameplate and measured.
 
-        This used to report nameplate only, saying uptime "is not modelled here". The
-        uptime was in the projection all along -- the 300 s productivity monitor, on 524 of
-        570 records -- and the difference is not a rounding detail. On the reference save
-        nameplate draw is **6,901 MW** while utilisation-weighted draw over the last
-        complete window is **2,389 MW**, because most of the factory is idle. Headroom
-        therefore reads 649 MW nameplate against roughly **5,161 MW** actual: an 8x
-        error in the number `commission_plan` sizes a startup against.
-
-        Both are reported because both are true and they answer different questions:
+        Uptime is the projection's 300 s productivity monitor, carried by **524 of 570**
+        records on the reference save. Both draws are reported because they answer different
+        questions:
 
         * ``headroom_mw`` (nameplate) is the **safe** figure -- what is free if everything
           currently built ran at once. Energising a block can un-starve idle machines
           downstream, so this is the one not to exceed if you cannot watch it.
-        * ``measured_headroom_mw`` is the **current** figure -- what is free right now,
-          given how much of the factory is actually running.
+        * ``measured_headroom_mw`` is the **current** figure, weighted by how much of the
+          factory is actually running.
+
+        They are far apart: on the reference save nameplate draw is **6,901 MW** against a
+        measured **2,389 MW**, so 649 MW of headroom nameplate against roughly
+        **5,161 MW** actual.
 
         A machine with no productivity monitor is charged at full nameplate on both sides:
         unknown utilisation must not read as idle. Generators are capacity either way,
-        since they burn to meet demand rather than at a rate of their own.
-
-        Paused buildings are excluded from both sides.
+        since they burn to meet demand rather than at a rate of their own. Paused buildings
+        are excluded from both sides.
         """
         gen: dict[str, dict] = {}
         total_mw = 0.0
@@ -81,8 +78,8 @@ class PowerLedger:
                 monitored += 1
                 measured += rated * (produced / window)
             else:
-                # No monitor is NOT evidence of idleness. Charged in full, so an
-                # unreadable machine can only make the measured figure conservative.
+                # No monitor is NOT evidence of idleness: charged in full, so an unreadable
+                # machine can only make the measured figure conservative.
                 unmonitored += 1
                 measured += rated
 
@@ -108,7 +105,6 @@ class PowerLedger:
             "generation_mw": total_mw,
             "draw_mw": draw,
             "headroom_mw": total_mw - draw,
-            #: Utilisation-weighted over the last complete 300 s window.
             "measured_draw_mw": measured,
             "measured_headroom_mw": total_mw - measured,
             "monitored": monitored,
