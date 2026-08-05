@@ -123,6 +123,20 @@ def test_the_fragment_delimiters_survive_escaping():
     assert "%3B" not in url and "%7C" not in url
 
 
+def test_every_target_gets_this_projects_own_map_link(game):
+    """The README's flagship example -- "show the coal powerplant on the map" -- opened
+    satisfactory-calculator.com, which cannot draw the player's world at all. Only a
+    sited plan got a link to the map that can, though local_map_url was right there."""
+    from satisfactory_mcp import server as srv
+
+    for target in ("0,0", "Crude Oil"):
+        out = srv.show_on_map(target)
+        assert "local map: " + maplink.LOCAL_BASE + "#" in out, target
+        assert "public map: " + maplink.BASE + "#" in out, target
+        # The local one leads, because it is the one that knows what was built.
+        assert out.index("local map:") < out.index("public map:")
+
+
 def test_well_variants_are_offered_only_where_wells_exist(game):
     """Coal is node-only. Emitting coalWellPure invents a token for something that does
     not exist -- harmless, since an unknown layer is ignored, but it is a guess with no

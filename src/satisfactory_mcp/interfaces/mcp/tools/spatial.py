@@ -764,12 +764,17 @@ def show_on_map(
     save: str | None = None,
     world: str | None = None,
 ) -> str:
-    """A satisfactory-calculator.com map link centred on something, with layers on.
+    """Map links centred on something: this project's own map, and the public one.
+
+    Two links for every target. The LOCAL one opens this project's web map, which draws
+    the reader's own save -- their machines, their belts, their siting. The
+    satisfactory-calculator.com one opens a third-party map of the vanilla world, which
+    knows the terrain and the nodes and nothing the player built.
 
     `target` accepts a coordinate in metres, `me`, one of your named factories, a node
     id from `search_resource_nodes`, a resource name — the last centres on that
     resource's nodes and switches its overlays on — or `plan:<name>` for a plan that
-    has a recorded siting (see site_plan), which also links this project's own web map.
+    has a recorded siting (see site_plan).
 
     Only the Crude Oil layer tokens are confirmed; the rest follow the same pattern and
     are flagged. A wrong token still opens the map in the right place, just without that
@@ -786,16 +791,12 @@ def show_on_map(
     table = nodes_mod.load_nodes()
     notes: list[str] = []
     resources: list[str] = []
-    extra_links: list[str] = []
     text = target.strip()
 
     # A node id centres on that node and lights up its own resource.
     by_instance = {k.rsplit(".", 1)[-1]: v for k, v in table.by_instance().items()}
     node = by_instance.get(text)
     if text.casefold().startswith("plan:"):
-        # A sited plan's origin. This is the one target that also gets a link into this
-        # project's OWN web map -- the siting is first-party data the public map cannot
-        # show, and the local fragment (#z=…&c=x,y) is read from the frontend's writer.
         from ....domain.planning import siting as siting_mod
 
         if st is None:
@@ -814,9 +815,6 @@ def show_on_map(
         node = None
         origin = (sit.x_m * 100, sit.y_m * 100)
         where = f"plan {stored.name!r} site ({sit.describe()})"
-        extra_links.append(
-            "web map: " + maplink.local_map_url(sit.x_m, sit.y_m, world=st.plans.world_id)
-        )
     elif node is not None:
         origin = (node["x"], node["y"])
         where = f"{text} ({g.item_name(node['resource'])}, {node['purity']})"
@@ -862,12 +860,20 @@ def show_on_map(
             nodes_mod.skew_for_save(st.header if st else None, table), [node["instance"]]
         )
 
-    url = maplink.map_url(origin[0], origin[1], tokens, zoom=zoom)
-    body = url
-    for link in extra_links:
-        body += "\n" + link
+    # The local map goes FIRST and for every target, not only for a sited plan: it is the
+    # only one of the two that can draw this world, and a link to a map that cannot see
+    # the player's factory is not the answer to "show me my factory".
+    local = maplink.local_map_url(
+        origin[0] / 100.0, origin[1] / 100.0, world=st.world_id if st else ""
+    )
+    body = f"local map: {local}\npublic map: {maplink.map_url(*origin, tokens, zoom=zoom)}"
     if tokens:
         body += "\n# layers: " + ", ".join(tokens)
+    notes.append(
+        "the local map is this project's own web map and draws YOUR save, with the server "
+        "running; the public one is satisfactory-calculator.com and knows the vanilla "
+        "world only -- nothing you built is on it"
+    )
     return render.envelope(
         f"# {where} at {int(origin[0] / 100)},{int(origin[1] / 100)} (metres)", body, notes
     )
