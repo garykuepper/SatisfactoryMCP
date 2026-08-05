@@ -1,21 +1,12 @@
-"""The factory graph: one structure, three kinds of edge.
+"""The factory graph: one structure, three kinds of edge, built once from a save
+projection and shared by identity, health, layout and diff.
 
-Built once from a save projection and shared by identity, health, layout and diff,
-which each used to re-derive fragments of it.
-
-The three edge types answer different questions and must stay separate, because
-measurement showed no single one identifies a factory:
-
-* **material** -- 11,664 edges. What feeds what. Orientable, since a machine's
-  connector role says whether it is an ``Output`` or an ``Input``. Over-fragments a
-  mature base into ~35 pieces, because a grown-together base is one belt web.
-* **power** -- 1,297 edges, with poles and towers distinguished. Tower wires have a
-  median length of 208 m against 34 m for pole wires and carry no machines, so they
-  are a pure transmission backbone. Removing them separates outposts from the main
-  base, but does NOT subdivide the base.
-* **transport** -- trains, drones and trucks. Empty on the reference save. Modelled
-  from the start because a transport link is a deliberate connection BETWEEN
-  factories, so it belongs on a boundary rather than inside one.
+The layers stay separate because no one of them identifies a factory. **material** is
+what feeds what, orientable from the connector role, and it over-fragments a mature base
+because a grown-together base is one belt web. **power** distinguishes poles from towers:
+tower wires are a pure transmission backbone, so dropping them separates outposts without
+subdividing the base. **transport** (trains, drones, trucks) is a deliberate connection
+BETWEEN factories, and so belongs on a boundary rather than inside one.
 """
 
 from __future__ import annotations

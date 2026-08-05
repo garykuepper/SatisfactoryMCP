@@ -1,16 +1,10 @@
 """One construction path from tool arguments to a solvable Scenario.
 
-plan_factory, plan_layout and diff_vs_save must all describe the SAME factory for a
-given set of arguments. Three copies of this translation would drift, and the drift
-would be invisible: each tool would return a self-consistent answer about a slightly
-different plant. So the translation lives here once and every planning tool calls it.
-
-It also mints the ``plan_id``. The server keeps no state, so diff_vs_save re-solves
-rather than taking a plan handle; the id is what makes that safe. It hashes the
-arguments TOGETHER WITH the save-derived solve inputs -- the unlocked recipe set, the
-extractor node census, the buildable set -- so two responses carrying the same id are
-provably about the same plan, and a save that rotated and changed something relevant
-shows up as a different id rather than as a silently different answer.
+plan_factory, plan_layout and diff_vs_save must all describe the SAME factory for a given
+set of arguments, so the translation lives here once. It also mints the ``plan_id``, which
+hashes the arguments TOGETHER WITH the save-derived solve inputs -- the unlocked recipe
+set, the extractor node census, the buildable set -- so two responses carrying the same id
+are provably about the same plan; that is what makes a stateless re-solve safe.
 """
 
 from __future__ import annotations
@@ -39,9 +33,7 @@ __all__ = [
     "select_for",
 ]
 
-#: Quoted verbatim whenever an export token is refused. Both facts here cost a real
-#: session four INFEASIBLE calls: the caller wrote "Power" expecting an alias (it is
-#: one, and always was) and then assumed listing an item ADDED to the default.
+#: Quoted verbatim whenever an export token is refused.
 EXPORT_HELP = (
     "exports takes item names or class ids, plus MW/mw/power/Power for grid output. "
     "It REPLACES the default [MW] rather than extending it -- list MW yourself to "
@@ -72,15 +64,10 @@ def resolve_item(game: GameData, query: str) -> str | None:
 def _export_token(game: GameData, name: str) -> tuple[str | None, str | None]:
     """Resolve one export token to an item id, or say why it cannot be.
 
-    Returns ``(id, None)`` or ``(None, error)``. MW, mw, power and Power all mean the
-    grid pseudo-item: both words turn up in the same conversation and neither is more
-    correct.
-
-    An UNRESOLVABLE token used to become the raw string, which then entered the LP as
-    an item id that no process ever produces and no balance row can satisfy -- so the
-    plan came back as a bare INFEASIBLE with nothing pointing at the typo. Naming the
-    token is the same call as `recipe_errors`: a silently mangled export whitelist
-    describes a different factory from the one that was asked for.
+    Returns ``(id, None)`` or ``(None, error)``. MW, mw, power and Power all mean the grid
+    pseudo-item. An unresolvable token is NAMED rather than passed through: as an item id
+    no process produces it would enter the LP as an unsatisfiable balance row and come back
+    as a bare INFEASIBLE with nothing pointing at the typo.
     """
     if name == MW or str(name).strip().casefold() in ("mw", "power"):
         return MW, None
@@ -93,10 +80,9 @@ def _export_token(game: GameData, name: str) -> tuple[str | None, str | None]:
 def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
     """Resolve one recipe pattern against a pool of recipe ids.
 
-    Matching is deliberately widening, in this order: exact class id, exact display
-    name, then case-insensitive substring returning EVERY match. That is what makes
-    "Recycled" drop both Recycled Plastic and Recycled Rubber in one go -- banning
-    half a two-recipe loop would leave the loop intact and the ban useless.
+    Widening, in this order: exact class id, exact display name, then case-insensitive
+    substring returning EVERY match. That is what makes "Recycled" drop both Recycled
+    Plastic and Recycled Rubber in one go -- banning half a loop leaves the loop intact.
     """
     if pattern in pool:
         return [pattern]
@@ -110,15 +96,12 @@ def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
 def select_for(game: GameData, state: WorldState, sources: list[str] | None) -> Selection:
     """Resolve a source spec against this world -- the ONE place that wiring lives.
 
-    The player position goes in as ``player``, NOT as ``origin``. origin would also turn
-    every direction selector into a cone from the player, so "north" would quietly stop
-    meaning the northern half of the map and start meaning "north of where I am standing"
-    -- a different question, and one that silently changed every plan scoped by direction.
+    The player position goes in as ``player``, NOT as ``origin``: origin would also turn
+    every direction selector into a cone from the player, so "north" would stop meaning the
+    northern half of the map and start meaning "north of where I am standing".
 
-    Shared with ``planning.provenance``, and that is the point: a stored plan records what
-    its selectors resolved to, and a recall re-resolves them. If those two ever resolved by
-    a different route from the solve, the check would be measuring something the plan does
-    not actually plan over -- a staleness gate that is itself stale.
+    ``planning.provenance`` re-resolves through here too: a staleness check taking any
+    other route would measure a field the plan does not plan over.
     """
     table = nodes_mod.load_nodes()
     here = state.player_position()
@@ -140,19 +123,16 @@ class PlanRequest:
     #: extractor rows against these, which is the one exact machine match available.
     node_rows: list[dict]
     plan_id: str
-    #: Recipes removed by exclude_recipes, and patterns that matched nothing. A
-    #: silently ignored ban would produce a plan using the very recipe the user
-    #: forbade, which is worse than refusing.
+    #: Recipes removed by exclude_recipes, and patterns that matched nothing. A silently
+    #: ignored ban would produce a plan using the very recipe the user forbade.
     excluded: list[str] = field(default_factory=list)
     recipe_errors: list[str] = field(default_factory=list)
-    #: Export / export_minimum tokens that resolve to no item, same call as
-    #: recipe_errors. The token is dropped rather than passed through, so the
-    #: scenario stays solvable and the caller is told what was ignored.
+    #: Export / export_minimum tokens that resolve to no item. The token is dropped so the
+    #: scenario stays solvable, and the caller is told what was ignored.
     export_errors: list[str] = field(default_factory=list)
-    #: Every in-scope node BEFORE the reachable/tapped filters, which is what makes
-    #: "why can this plan not get Nitrogen Gas" answerable. `node_rows` cannot: it is
-    #: the post-filter set the diff joins against, so an unreachable node is gone
-    #: from it precisely when it is the interesting one.
+    #: Every in-scope node BEFORE the reachable/tapped filters, which is what makes "why
+    #: can this plan not get Nitrogen Gas" answerable. `node_rows` cannot: an unreachable
+    #: node is gone from the post-filter set precisely when it is the interesting one.
     scoped_nodes: list[dict] = field(default_factory=list)
     only_free_nodes: bool = False
 
@@ -170,9 +150,8 @@ def build_scenario(
     clocks: list[float] | None = None,
     extractor_clocks: list[float] | None = None,
     machine_cost_mw: float = 5.0,
-    #: None means "the fastest tier this save can build". Hardcoding Mk5/Mk2 was right
-    #: on the reference world and unverified everywhere else, and getting it wrong is
-    #: silent: every belt and pipe count is off by a factor and nothing says so.
+    #: None means "the fastest tier this save can build". Getting a tier wrong is silent:
+    #: every belt and pipe count is off by a factor and nothing says so.
     belt_ipm: float | None = None,
     pipe_m3min: float | None = None,
     exclude_recipes: list[str] | None = None,
@@ -184,12 +163,9 @@ def build_scenario(
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
-    ``exports`` REPLACES the default ``[MW]``; it does not extend it. That is
-    deliberate and load-bearing: `grid_import_mw` below is derived from the export
-    set, so exporting MW also forbids drawing from the existing grid (a power plant
-    that imports power to export it is unbounded). Auto-appending MW would therefore
-    silently force every item plan to be self-powered, which is a different question
-    from the one asked. `EXPORT_HELP` says so to the caller.
+    ``exports`` REPLACES the default ``[MW]`` rather than extending it, which is
+    load-bearing: `grid_import_mw` below is derived from the export set, so auto-appending
+    MW would force every item plan to be self-powered.
     """
     export_ids: list[str] = []
     export_errors: list[str] = []
@@ -201,17 +177,15 @@ def build_scenario(
         export_ids.append(resolved)
     minimums = {}
     for name, value in (export_minimums or {}).items():
-        # Same resolution as exports, aliases included: a minimum keyed "MW" that
-        # never matched the power pseudo-item was a floor the LP silently ignored.
+        # Same resolution as exports, aliases included: a minimum keyed "MW" that does not
+        # match the power pseudo-item is a floor the LP silently ignores.
         resolved, err = _export_token(game, name)
         if resolved is None:
             export_errors.append(f"export_minimums: {err}")
             continue
         minimums[resolved] = float(value)
 
-    # Carrier tiers, from what is unlocked rather than from a constant. Falls back to
-    # the Mk5/Mk2 figures when a save cannot be read, so a game-data-only caller still
-    # gets a sane answer.
+    # The Mk5/Mk2 fallbacks are for a caller with no save to read at all.
     if belt_ipm is None:
         best = state.best_belt()
         belt_ipm = best[1] if best else 780.0
@@ -219,33 +193,24 @@ def build_scenario(
         best = state.best_pipe()
         pipe_m3min = best[1] if best else 600.0
 
-    # Items another plan hands this one, as a free input up to a rate. This is what makes
-    # a plant solvable in PIECES: give module C its 2,300 Polymer Resin and it reproduces
-    # the hand-built resin plant exactly, without needing to re-derive the rig that makes
-    # it. The cost of producing them is charged in the plan that does, and NOT here --
-    # which is exactly why `advisor` warns against feeding a basket in this way for a
-    # baseline. It is correct for a module and wrong for a whole-plant comparison, and the
-    # response says so.
+    # Items another plan hands this one, as a free input up to a rate: what makes a plant
+    # solvable in PIECES. The cost of producing them is charged in the plan that does and
+    # NOT here, which is correct for a module and wrong for a whole-plant comparison --
+    # `advisor` warns against feeding a basket this way for a baseline.
     raw_caps: dict[str, float] = {}
     for name, rate in (supplied or {}).items():
         resolved, err = _export_token(game, name)
         if resolved is None or resolved == MW:
             export_errors.append(f"supplied: {err or 'MW cannot be supplied as an item'}")
             continue
-        # A hair of slack, for the same reason phase 2 pins its objective with a
-        # tolerance rather than exactly: a rate read out of ANOTHER solve is rounded to
-        # 4dp on the way out. Chaining the reference plant hands the resin plant
-        # 2299.9998 Polymer Resin, its demand needs exactly 2300, and the module comes
-        # back INFEASIBLE for a rounding error of two ten-thousandths. The slack is
-        # 1e-6 relative -- 0.002/min on 2,300, far below anything physical -- and it
-        # removes a whole class of false infeasibility at the interface.
+        # A hair of slack, because a rate read out of ANOTHER solve is rounded to 4dp on
+        # the way out: 2299.9998 Polymer Resin against a demand for exactly 2300 is
+        # INFEASIBLE for two ten-thousandths. 1e-6 relative is far below anything physical.
         rate = float(rate)
         raw_caps[resolved] = rate + max(1e-6, abs(rate) * 1e-6)
 
     sel = select_for(game, state, sources)
     scoped = nodes_mod.annotate(sel.nodes, game, state.projection, state.unlocked_building_ids)
-    # Keep the pre-filter set: what got dropped here, and why, is the whole answer to
-    # "this plan cannot get Nitrogen Gas".
     rows = [r for r in scoped if r["reachable"]]
     if only_free_nodes:
         rows = [r for r in rows if not r["tapped"]]
@@ -266,21 +231,18 @@ def build_scenario(
             ext[key] = ext.get(key, 0) + 1
             break
     if "Build_WaterPump_C" in state.unlocked_building_ids:
-        # Water has no nodes to count, so this is an ASSUMPTION standing in for the site
-        # the model cannot see. A caller who has measured theirs should override it; see
-        # WATER_EXTRACTOR_CAP_ASSUMED.
-        #
-        # `is None`, NOT falsiness. Zero is a meaningful answer -- "this site has no water
-        # at all" is exactly the question you ask of an inland plan -- and `or`-style
-        # defaulting silently turned it into the 200-pump assumption. A plan asked to run
-        # on no water came back happily making 480 Aluminium Ingots on 480 m3/min of it.
+        # Water has no nodes to count, so this is an ASSUMPTION standing in for a site the
+        # model cannot see; a caller who has measured theirs should override it.
+        # `is None`, NOT falsiness: zero means "this site has no water at all", which is
+        # exactly the question an inland plan asks, and `or`-defaulting turns that answer
+        # into the 200-pump assumption.
         cap = WATER_EXTRACTOR_CAP_ASSUMED if water_extractors is None else int(water_extractors)
         if cap > 0:
             ext[("Build_WaterPump_C", "Desc_Water_C", "normal")] = cap
 
     recipes = [r.cls for r in state.unlocked_recipes("part")]
-    #: Kept for the miss check: a pattern that banned a recipe is not a miss even
-    #: though `recipes` no longer contains it by the time processes are matched.
+    #: Kept for the miss check: a pattern that banned a recipe is not a miss, even though
+    #: `recipes` no longer contains it by the time processes are matched.
     all_recipes = list(recipes)
     excluded: list[str] = []
     recipe_errors: list[str] = []
@@ -295,16 +257,11 @@ def build_scenario(
         if keep:
             recipes = [rid for rid in recipes if rid in keep]
 
-    # Patterns are matched against RECIPES first, then against the synthesised
-    # processes. Generator burn and extraction are built from building data, not from
-    # Docs.json, so they have no recipe to match -- "Coal-Powered Generator on Coal"
-    # printed in the build table hit nothing at all, and the only recourse was dropping
-    # rows by hand and hoping the subgraph was isolated.
-    # EVERY pattern is offered to both. Recipe-first precedence looked tidier and was
-    # wrong: "Coal" matches Biocoal/Charcoal/Compacted Coal, so under it the pattern
-    # never reached the generators and "do not burn coal here" silently did the
-    # opposite of what it said. Whatever is banned is listed back, so an over-broad
-    # pattern is visible rather than surprising.
+    # EVERY pattern is offered to recipes AND to the synthesised processes, never to the
+    # first that matches: generator burn and extraction come from building data rather
+    # than Docs.json and so have no recipe to hit, and "Coal" matches Biocoal/Charcoal, so
+    # recipe-first precedence would make "do not burn coal here" ban the opposite. What is
+    # banned is listed back, so an over-broad pattern is visible.
     pending_process_bans: list[str] = []
     for pattern in exclude_recipes or []:
         hits = match_recipes(game, pattern, recipes)
@@ -332,11 +289,9 @@ def build_scenario(
         belt_ipm=belt_ipm,
         pipe_m3min=pipe_m3min,
         buildings_available=buildings,
-        # Zero is not "unlimited", it is "spend none" -- and it is the right default.
-        # Somersloops are the scarcest thing in the game (a fixed number exist on the
-        # whole map), so a plan that quietly assumed them would be unbuildable in a way
-        # no other parameter is. Opting in also keeps the column count down: offering
-        # every sloop count roughly doubles the matrix.
+        # Zero is "spend none", not "unlimited". A fixed number of somersloops exist on
+        # the whole map, so a plan that assumed them would be unbuildable; opting in also
+        # keeps the column count down, since offering every sloop count doubles the matrix.
         sloop_budget=max(0, int(sloops or 0)),
         # Without this the power row forces generation == consumption. Ignored when MW
         # is exported, since a power plant that imports power to export it is unbounded.
@@ -344,8 +299,7 @@ def build_scenario(
     )
 
     if recycle_once:
-        # Same widening match as exclude_recipes, against the recipe name and the process
-        # label, because a caller names "Recycled" and means both halves of the loop.
+        # Widened over the process label as well as the recipe name, as exclude_recipes is.
         from .optimize import build_processes as _procs
 
         wanted: set[str] = set()
@@ -368,8 +322,6 @@ def build_scenario(
             pattern for pattern in pending_process_bans if match_recipes(game, pattern, all_recipes)
         }
         for pattern in [m for m in misses if m not in matched_a_recipe]:
-            # Still refuse quietly-wrong answers: a ban matching neither a recipe nor a
-            # process would return a plan using the very thing the user forbade.
             recipe_errors.append(f"exclude_recipes: nothing matches {pattern!r}")
 
     return PlanRequest(
@@ -388,9 +340,8 @@ def build_scenario(
 def _plan_id(sc: Scenario, only_free_nodes: bool) -> str:
     """Short hash over everything that can change the solve.
 
-    Deliberately excludes the save's mtime: a rotating autosave that changed nothing
-    relevant must yield the SAME id, or the id stops meaning "same plan" and starts
-    meaning "same second".
+    The save's mtime is excluded: a rotating autosave that changed nothing relevant must
+    yield the SAME id, or the id stops meaning "same plan" and starts meaning "same second".
     """
     payload = json.dumps(
         {

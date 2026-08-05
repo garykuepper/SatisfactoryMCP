@@ -1,92 +1,16 @@
 """Floors: the storeys of a factory, recovered from geometry rather than read off the save.
 
 Nothing in a ``.sav`` says "floor". What it does say is where every foundation piece sits,
-and players build storeys at discrete, repeated heights -- so a floor is recoverable, and
-this module recovers it. Stage 0 of the design measured the whole chain against the
-reference world and against the oldest save that can carry lightweight buildables; every
-constant below is one of those measurements, and the ones that were *guesses* before the
-measurement are called out as corrections, because each of them was wrong.
-
-The unit of decomposition is a platform, and a platform is not a slab
---------------------------------------------------------------------
-``structure.py`` welds foundations into slabs through ramps, stairs and walls, which is
-exactly right for the question it answers -- what did the player build as one thing -- and
-exactly wrong for this one: one slab on the reference world spans **287 m of Z**, because a
-ramp chain joins a ground platform to a tower. So floors are decomposed over a plain
-**4-connected flood fill of occupied 8 m cells**: 132 platforms on the reference world, 17
-of them 20 cells or larger and holding 93.2% of all foundation pieces. Slabs and labels are
-still read, but only to *name* the result.
-
-A lightweight's Z is its CENTRE
--------------------------------
-The first correction, and it moves every number downstream: ``top = z + thickness/2``,
-where the thickness comes out of the class name (``8x1`` is an 8 m square 1 m thick).
-Verified across four independent piece families. Reading ``z`` as the deck surface puts
-every band half a metre low and every machine half a metre in the air.
-
-Bands, with no fixed pitch
---------------------------
-Per platform, the top surfaces are clustered by **single linkage** at
-``CLUSTER_TOL_CM``. There is deliberately no storey pitch: the second correction is that
-this world's module is **12 m** (three wall courses), not the 4 m the design first assumed,
-and it is mixed with 1-2 m half-steps that have to stay separate bands. So a band is
-whatever the histogram says, and every band carries its own cell area -- which is what keeps
-a 6-cell mezzanine reading as a minor band instead of being merged away or promoted to a
-storey.
-
-The criterion, and it is the kill-switch stage 0 was run to test: **99.87%** of foundation
-pieces on 20-cell-or-larger platforms sit within ``BAND_EPS_CM`` of a detected band, against
-a threshold of 95%. The bands are exact rather than approximately right -- 5 cm and 50 cm
-give the identical answer -- and the oldest lightweight-capable save on this disk agrees at
-99.82%.
-
-Assignment is two offsets and two exemptions, not a table
----------------------------------------------------------
-The design expected a per-class Z-offset table derived by fitting. There is none, and that
-is the third correction:
-
-* **production buildings sit at zero above their deck** -- 93.2% within 5 cm, n=441.
-* **belt attachments sit at +100 cm**, which is the belt centre-line height.
-
-The two things that do not are exemptions rather than fits, and they are exempted by their
-own **native class** rather than by a substring of an engine id: a miner stands on a
-resource node (up to 28 m off any deck) and a water extractor stands on water. They are
-reported in their own group and never counted against a band.
-
-Orphans are on terrain, and that is a measurement
---------------------------------------------------
-Anything with no band beneath it is not simply unassigned. Against the extracted 1 m
-heightfield, no-band things sit a **median 0.59 m** above the ground and 89% are within 2 m,
-where band-assigned things average +26 m. So "on terrain" is measured, and the field is
-passed IN rather than loaded here -- the same posture ``spatial.elevation.probe`` takes,
-for the same reason: a domain answer must not silently depend on whether somebody ran a
-generator. Without a field the group is ``off-deck`` and says so, which is a weaker claim
-and is not dressed up as the stronger one.
-
-Runs group by chain first, and only then reason vertically
-----------------------------------------------------------
-The fourth correction, and it invalidated a validation check the design had already written
-down. "A lift's endpoints land on two distinct bands" is **false**: 24% of lift chains are
-same-deck jogs, belt-height hops that have nothing to do with storeys. What survives
-measurement is a pair of claims:
-
-* a consumer of ``belts`` must **group by chain before anything else** -- consecutive pieces
-  of a chain join at a median 0.00 cm, so a chain is one run and a piece is not;
-* **no chain rising ``RISER_CM`` or more lands both ends on one band** -- 0 of 89 on the
-  reference world, 0 of 75 on the 2025 save. That is the floor-connector rule, and because
-  it holds empirically, a violation is a symptom of decomposition drift rather than of an
-  unusual base. So violations are *reported*, not silently tolerated.
-
-Membership then falls out per run: 84.8% of belt runs are same-deck and 93.3% never leave
-one deck's column; pipes are 50.7% same-deck and 44.5% on terrain, because plumbing hugs
-the ground.
-
-Saves that predate the subsystem
---------------------------------
-``FGLightweightBuildableSubsystem`` is a U8 feature, and a save older than it emits no
-``structures`` at all. That answer is "this save is too old", never "this world has no
-floors" -- so the report carries a ``note`` naming the reason and no empty band list that
-could be read as a measurement.
+and players build storeys at discrete repeated heights, so a floor is recoverable from
+geometry alone. The unit is a PLATFORM -- a 4-connected flood fill of occupied 8 m cells --
+and pointedly not a ``structure.py`` slab, which welds foundations through ramps and so
+spans 287 m of Z where a ramp chain climbs a tower; slabs and the player's labels are still
+read, but only to NAME the result. Within a platform the top surfaces cluster by single
+linkage at ``CLUSTER_TOL_CM`` with no assumed storey pitch, because this world's module is
+12 m mixed with 1-2 m half-steps that have to stay separate bands, and every band carries
+its own cell area so a six-cell mezzanine reads as minor rather than as a storey. The
+premise holds empirically: 99.87% of foundation pieces on platforms of 20 cells or more sit
+within ``BAND_EPS_CM`` of a detected band.
 """
 
 from __future__ import annotations
@@ -124,36 +48,31 @@ __all__ = [
 #: One foundation tile, centimetres. The grid every platform is flood-filled over.
 CELL_CM = 800.0
 
-#: Single-linkage gap, centimetres: tops further apart than this start a new band. Swept
-#: over 10..400 cm on both reference saves -- 10, 25 and 50 give the identical 93 bands and
-#: the identical 97.87% cleanliness, and only past 100 does the count start collapsing.
+#: Single-linkage gap, centimetres: tops further apart than this start a new band. Anything
+#: from 10 to 50 gives the identical decomposition; only past 100 does the count collapse.
 CLUSTER_TOL_CM = 50.0
 
-#: How close a piece has to be to a band's level to be one of its members, centimetres.
-#: The bands are exact, so this is insensitivity rather than tuning: 5, 10, 25 and 50 all
-#: report 99.87% of pieces on real platforms as banded.
+#: How close a piece has to be to a band's level to be one of its members, centimetres. The
+#: bands are exact, so 5 and 50 report the same pieces as banded.
 BAND_EPS_CM = 25.0
 
-#: Pieces before a cluster is a band. Below three, every stray piece becomes its own storey
-#: (171 "bands" at min 1 against 93 at min 3); above, real half-steps start disappearing.
+#: Pieces before a cluster is a band. Below three every stray piece becomes its own storey;
+#: above three, real half-steps start disappearing.
 MIN_BAND_PIECES = 3
 
 #: How far ABOVE a thing its deck may be found, centimetres. A production building's pivot
-#: is its base and its base is the deck top, so this is float slop and nothing else.
-#: Swept: 0 cm loses 42 buildings to the orphan group and drops the offset agreement to
-#: 92.5%; 5, 25, 50, 100 and 450 all give the identical 441 buildings at 93.2% within 5 cm
-#: of zero. 25 sits in the middle of that flat region.
+#: is its base and its base is the deck top, so this is float slop and nothing else: at 0
+#: dozens of buildings fall out to the orphan group, and everything from 5 to 450 agrees.
 DECK_SLACK_CM = 25.0
 
 #: The same slack for a belt or pipe endpoint, which sits a metre up rather than on the
-#: deck. Swept over the same range, and here the top of it is NOT free: at 450 cm a deck up
-#: to four storeys' worth above the run wins, attachment agreement with the +100 cm offset
-#: falls from 87.7% to 81.5%, and belt runs are flattered into looking 87.4% same-deck
-#: instead of the honest 84.8%. 50 cm absorbs a run stepping over a kerb and nothing more.
+#: deck. The top of this range is NOT free: widen it towards 450 and a deck several storeys
+#: above the run starts winning, which flatters every same-deck statistic. 50 cm absorbs a
+#: run stepping over a kerb and nothing more.
 RUN_SLACK_CM = 50.0
 
-#: Belt centre-line height above the deck, centimetres. Measured, not assumed: the median
-#: attachment sits at +100.2 cm, and the legal set of endpoint heights is 100/300/500.
+#: Belt centre-line height above the deck, centimetres. The median attachment sits at
+#: +100.2 cm, and the legal set of endpoint heights is 100/300/500.
 BELT_HEIGHT_CM = 100.0
 
 #: A chain that climbs this far is a floor connector. Below it, a lift is a belt-height jog
@@ -172,14 +91,12 @@ MINOR_SHARE = 0.25
 #: so a machine on the very edge of a deck still finds it, and no further.
 NEIGHBOUR_CELLS = 1
 
-#: What counts as a floor piece. Deliberately the same two hints ``structure.py`` uses --
-#: they are one vocabulary about one set of classes, and the lightweight buildables carry no
-#: docs entry to resolve a native from.
+#: What counts as a floor piece, the same two hints ``structure.py`` matches on: lightweight
+#: buildables carry no docs entry to resolve a native class from.
 FOUNDATION_HINTS = ("Foundation", "Platform")
 
 #: Thickness in centimetres by the size token in the class name: ``8x1`` is an 8 m square
-#: 1 m thick. Read off the name rather than guessed, and the whole reference world uses two
-#: classes, both ``8x1``.
+#: 1 m thick.
 THICKNESS_CM = {
     "8x1": 100.0,
     "8x2": 200.0,
@@ -189,17 +106,14 @@ THICKNESS_CM = {
     "4x4": 400.0,
 }
 
-#: What a foundation family with no size token in its name is taken to be. Every family in
-#: every save on this disk carries one, so this is a floor under a case that has not
-#: happened rather than a fitted default.
+#: What a foundation family with no size token in its name is taken to be. Every family
+#: seen so far carries one, so this is a floor under a case that has not happened.
 DEFAULT_THICKNESS_CM = 100.0
 
-#: The dump's own native classes for the two things that do not stand on a deck. Natives
-#: rather than substrings, for the reason ``domain.world.carriers`` picks a belt that way:
-#: the distinction decides an answer, and a substring match on an engine id is not a
-#: classification. ``FGBuildableResourceExtractor`` covers the miners and the oil pumps
-#: alike -- both stand on a resource node -- which is exactly the partition the +0 cm
-#: measurement was taken over.
+#: The dump's own native classes for the two things that do not stand on a deck: a miner
+#: stands on a resource node and a water extractor stands on water. Natives rather than
+#: substrings, because a substring match on an engine id is not a classification.
+#: ``FGBuildableResourceExtractor`` covers the miners and the oil pumps alike.
 EXEMPT_NATIVES = ("FGBuildableResourceExtractor", "FGBuildableWaterPump")
 
 #: The dump's native class for a conveyor lift, told apart from a belt the same way
@@ -255,19 +169,14 @@ class Band:
     high_cm: float
     pieces: int
     cells: int
-    #: Share of the platform's largest band's cell count. Below ``MINOR_SHARE`` this band
-    #: is a mezzanine rather than a storey, and a reader is told so rather than shown a
+    #: Share of the platform's largest band's cell count. Below ``MINOR_SHARE`` this band is
+    #: a mezzanine rather than a storey, and a reader is told so rather than shown a
     #: six-cell ledge in the same voice as a 218-cell deck.
     share: float = 1.0
     machines: list[str] = field(default_factory=list)
     attachments: list[str] = field(default_factory=list)
     #: Which pieces of the ``structures`` table this deck is made of, by POSITION in it.
-    #:
-    #: A lightweight buildable has no instance name -- that is the whole point of the
-    #: subsystem -- so a deck cannot be listed by id the way a band lists its machines. What
-    #: it can be listed by is the one join a consumer of ``structures`` already has: the row's
-    #: place in the table, which every reader gets from the same ``saveio.rows`` iterator in
-    #: the same order. It is the positional key ``pipes`` already uses, for the same reason.
+    #: That is the only name a lightweight buildable has; ``foundation_tops`` says why.
     rows: list[int] = field(default_factory=list)
 
     @property
@@ -293,16 +202,15 @@ class Platform:
     pieces: int
     centre_cm: tuple[float, float]
     extent_cm: tuple[float, float]
-    #: The 8 m cells themselves, kept because narrowing to one platform is a question
-    #: about its footprint and answering it any other way means flood-filling twice.
+    #: The 8 m cells themselves, kept because narrowing to one platform is a question about
+    #: its footprint and answering it any other way means flood-filling twice.
     cell_set: set[tuple[int, int]] = field(default_factory=set, repr=False)
     bands: list[Band] = field(default_factory=list)
-    #: Fraction of this platform's pieces within ``BAND_EPS_CM`` of one of its own bands.
-    #: The premise of the whole feature, kept visible per platform rather than averaged.
+    #: Fraction of this platform's pieces within ``BAND_EPS_CM`` of one of its own bands --
+    #: the premise of the whole feature, per platform rather than averaged away.
     clean: float = 1.0
-    #: Naming only, and from two different sources: the player's own factory label where
-    #: one covers this platform's machines, and the ``structure.py`` slab those machines
-    #: belong to. Neither takes part in the decomposition.
+    #: Naming only, from the player's own factory label and the ``structure.py`` slab this
+    #: platform's machines belong to. Neither takes part in the decomposition.
     label: str | None = None
     slab: int | None = None
 
@@ -321,8 +229,8 @@ class Placement:
     pos_cm: tuple[float, float, float]
     group: str
     deck: Deck | None = None
-    #: How far above its deck top it sits. ``0`` for a production building, ``100`` for a
-    #: belt attachment -- the two measured offsets, kept as data rather than asserted.
+    #: How far above its deck top it sits: ``0`` for a production building, whose pivot is
+    #: its base, and ``100`` for a belt attachment. Reported as data rather than asserted.
     offset_cm: float | None = None
     #: How far above the extracted terrain it sits, where a field was offered.
     above_terrain_m: float | None = None
@@ -367,8 +275,7 @@ class FloorReport:
     placements: list[Placement] = field(default_factory=list)
     runs: list[Run] = field(default_factory=list)
     #: Belt chains that rise ``RISER_CM`` or more and still land both ends on one band.
-    #: Measured to be empty on every save tested, so an entry here is a symptom of the
-    #: decomposition drifting rather than of an unusual base -- see ``_violations``.
+    #: Empty on every save tested; ``_violations`` says what an entry means.
     violations: list[Run] = field(default_factory=list)
     #: Why there is nothing to report, when there is nothing to report.
     note: str | None = None
@@ -396,8 +303,8 @@ class FloorReport:
         """The shape of the answer before the rows.
 
         Nested rather than flat because ``terrain`` is both a placement group and a run
-        membership and they are different tallies -- a machine standing on the ground and a
-        pipe running along it. Flattened, one silently overwrote the other.
+        membership, and a machine standing on the ground is a different tally from a pipe
+        running along it.
         """
         return {
             "platforms": len(self.platforms),
@@ -427,9 +334,9 @@ def cell_of(x: float, y: float) -> tuple[int, int]:
 def _flood(cells: set[tuple[int, int]]) -> list[set[tuple[int, int]]]:
     """4-connected components of occupied cells, largest first.
 
-    Four rather than eight, deliberately: two platforms that touch only at a corner are two
-    platforms, and eight-connectivity welds the reference world's 132 down to 60 by joining
-    things a player never joined.
+    Four rather than eight: two platforms that touch only at a corner are two platforms,
+    and eight-connectivity roughly halves the platform count by joining things a player
+    never joined.
     """
     seen: set[tuple[int, int]] = set()
     groups: list[set[tuple[int, int]]] = []
@@ -472,21 +379,17 @@ def foundation_tops(projection: dict) -> list[tuple[int, float, float, float, st
     """``(row, x, y, top, class)`` for every foundation piece, centimetres.
 
     ``top`` is the surface a machine stands on: ``z + thickness/2``, because a lightweight's
-    stored Z is its vertical centre. Decoded through ``core.saveio.rows``, which holds the
-    ``len``/``isinstance`` guard this used to spell out for itself -- a malformed row still
-    costs one piece rather than the decomposition.
+    stored Z is its vertical CENTRE. Reading ``z`` as the deck surface puts every band half
+    a metre low and every machine half a metre in the air.
 
-    ``row`` is the piece's POSITION in the decoded ``structures`` table, and it is carried
-    because it is the only name a lightweight buildable has: the subsystem stores no
-    instance ids, so a deck can be handed to a consumer of ``structures`` by position and by
-    nothing else. Every reader walks the same iterator in the same order, which is what
-    makes the position a join rather than a coincidence -- the argument ``pipes`` already
-    makes for its own row index. Counted over the pieces the iterator YIELDS, so a
-    malformed row it drops is dropped from both sides of the join at once.
+    ``row`` is the piece's position in the decoded ``structures`` table, which is the only
+    name a lightweight buildable has -- the subsystem stores no instance ids. Every reader
+    walks the same ``saveio.rows`` iterator in the same order, which is what makes the
+    position a join rather than a coincidence, and counting over what the iterator YIELDS
+    drops a malformed row from both sides of that join at once.
 
-    ``cls`` is ``""`` rather than ``None`` for a class index the table cannot resolve,
-    because what follows asks whether a hint is a substring of it and an unnamed piece is
-    simply not a foundation.
+    ``cls`` is ``""`` rather than ``None`` for an unresolvable class index: what follows
+    asks whether a hint is a substring of it, and an unnamed piece is not a foundation.
     """
     out: list[tuple[int, float, float, float, str]] = []
     for row, piece in enumerate(saverows.iter_structures(projection)):
@@ -668,11 +571,10 @@ def belt_runs(projection: dict, game=None) -> list[tuple[int, bool, int, list]]:
     """``(chain, is_lift, pieces, points)`` per belt CHAIN, in travel order.
 
     The grouping that has to happen before any vertical reasoning: consecutive pieces of a
-    chain join at a median 0.00 cm, so the chain is the run and the piece is a fragment of
-    one. 3,085 pieces are 1,909 runs on the reference world.
+    chain join at a median 0.00 cm, so the chain is the run and a piece is a fragment of one.
     """
     # Resolved once per belt CLASS rather than once per piece, which is what the interned
-    # class index is for -- 3,085 pieces over a handful of classes on the reference world.
+    # class index is for: thousands of pieces share a handful of classes.
     lift_of: dict[int, bool] = {}
     chains: dict[int, list[tuple[int, list]]] = defaultdict(list)
     for segment in saverows.iter_belt_segments(projection):
@@ -736,14 +638,13 @@ def _runs(projection, game, index) -> tuple[list[Run], list[Run]]:
 
 
 def _violations(runs: list[Run]) -> list[Run]:
-    """Risers that land both ends on one band -- measured to be impossible, so reported.
+    """Risers that land both ends on one band. No belt chain measured has, so an entry here
+    is a symptom of the decomposition drifting rather than of an unusual base.
 
-    **Belts only, and that is not an oversight.** The claim stage 0 pinned is about a belt
-    CHAIN: a chain that climbs six metres has climbed to another floor, 0 of 89 exceptions
-    on the reference world and 0 of 75 on the 2025 save. A pipe is under no such
-    obligation -- plumbing loops up over an obstacle and comes back down on the same deck,
-    and one pipe on the reference world does exactly that -- so holding pipes to the rule
-    would report a permanent false positive and teach a reader to ignore this list.
+    **Belts only.** A chain that climbs six metres has climbed to another floor, but a pipe
+    is under no such obligation: plumbing loops up over an obstacle and comes back down on
+    the same deck, so holding pipes to the rule reports a permanent false positive and
+    teaches a reader to ignore this list.
     """
     return [r for r in runs if r.kind == "belt" and r.riser and r.membership == "same-deck"]
 
@@ -754,9 +655,8 @@ def _violations(runs: list[Run]) -> list[Run]:
 def _name_platforms(st, platforms, placements) -> None:
     """Hang the player's own words on a platform, without letting them decide anything.
 
-    A slab welds 287 m of Z and cannot be the unit of decomposition -- but it is exactly
-    what ``structure.py`` measured as the sharpest signal for what the player calls one
-    factory, so it and the label store get to supply the name and nothing else.
+    A slab is the sharpest signal for what the player calls one factory and the worst
+    possible unit of decomposition, so it and the label store supply a name and nothing else.
     """
     try:
         labels = st.labels
@@ -795,18 +695,15 @@ def floor_decomposition(
 ) -> FloorReport:
     """Decompose a world -- or one platform of it -- into floors.
 
-    ``platform`` is the index this module hands out, which is stable: platforms are ordered
-    by cell count and then by their lowest cell, so ``platform=1`` names the same deck on
-    two runs over the same save.
+    ``platform`` is the index this module hands out, and it is stable across runs over one
+    save. ``label`` is anything ``resolve_factory`` understands and narrows the answer to
+    the platforms that factory's machines stand on, raising whatever the selector grammar
+    raises rather than deciding how to say "no such factory".
 
-    ``label`` is anything ``resolve_factory`` understands -- a name the player gave a
-    factory, or a selector -- and narrows the answer to the platforms that factory's
-    machines stand on. Raises whatever the selector grammar raises; the caller decides how
-    to say "no such factory".
-
-    ``terrain_field`` is offered by the caller or not at all. With one, a thing that lands
-    on no band is measured against the ground and reported as ``terrain`` or not; without
-    one it is ``off-deck``, which is the weaker claim and is labelled as the weaker claim.
+    ``terrain_field`` is offered by the caller or not at all -- a domain answer must not
+    depend on whether somebody has run the heightfield generator. With one, a thing on no
+    band is measured against the ground and grouped ``terrain``; without one it is
+    ``off-deck``, which is the weaker claim and is labelled as the weaker claim.
     """
     projection = getattr(st, "projection", None) or {}
     payload = projection.get("structures")
@@ -839,8 +736,7 @@ def _narrow(report: FloorReport, st, platform: int | None, label: str | None) ->
 
     One rule, applied to placements and runs alike: a thing is in the view when an 8 m cell
     it occupies is one of the selected platforms' cells. Footprint rather than deck
-    membership, because a terrain-level pipe running UNDER the deck belongs in the answer
-    about that deck and has no deck of its own to be found by.
+    membership, for the reason ``Run.end_cells`` gives.
     """
     wanted: set[int] = set()
     selection: list[str] = []

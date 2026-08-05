@@ -1,64 +1,22 @@
 """Foundation slabs: what the player physically built as one thing.
 
-The fourth signal, and on the reference save the sharpest one. Measured against the
-player's own list of factories:
+The sharpest of the factory signals, because a player builds a platform and then fills
+it: belts and wires cross between platforms freely, but a foundation is only ever placed
+against another foundation deliberately. Adjacency is geometric, since snapping is a
+build-time UI concept that is not serialized -- two 8 m foundations that touch have
+centres 800 cm apart, and a multi-storey factory is one structure rather than several
+sharing a footprint. Ramps, stairs and walls join the union as nodes of their own, so a
+RUN of them bridges a gap no single piece could span; asking only whether one piece
+touches two slabs finds nothing, because the interesting case is slab -> wall -> wall ->
+slab.
 
-============================  =======  ==========================================
-signal                        pieces   failure
-============================  =======  ==========================================
-power islands (no towers)           9  one island holds 476 machines
-material components                35  19 are fragments; splits one factory in two
-**foundation slabs**              101  **every named factory has its own slab**
-============================  =======  ==========================================
+**Catwalks are excluded, and that is the whole trick.** They are the long walkways a
+player runs BETWEEN distant platforms, so chaining them scores the highest purity of any
+bridging rule and still welds two genuinely separate factories together. An over-segmented
+slab can be merged by naming; an over-merged one cannot be split.
 
-Slabs succeed where the others fail because a player builds a platform, then fills it.
-Belts and wires cross between platforms freely -- that is the whole point of them --
-but a foundation is only ever placed against another foundation deliberately.
-
-Adjacency is geometric, because snapping is a build-time UI concept that is not
-serialized: two 8 m foundations that touch have centres 800 cm apart. Three link rules,
-each measured rather than assumed:
-
-* **face adjacency** -- centres within ``LINK_XY`` at the same height. The cutoff sits
-  between a shared face (800 cm) and a shared corner (1131 cm), so diagonal-only
-  contact does not weld two platforms together.
-* **stacked floors** -- overlapping in XY within ``LINK_Z``. A multi-storey factory is
-  one structure. Without this the tor factory reads as three separate platforms that
-  happen to share a footprint.
-* **ramps, stairs and walls** -- these join the union as nodes of their own, so a RUN of
-  them bridges a gap no single 8 m piece could span. Chaining is the whole point: asking
-  only whether one piece touches two slabs finds nothing, because the interesting case is
-  slab -> wall -> wall -> slab. Tested as single pieces, zero of 1,937 walls touch two
-  slabs; tested as chains, they join four pairs.
-
-**Catwalks are excluded, and that is the whole trick.** Scored against the player's own
-twelve factories, where purity is the share of a label's machines landing on its single
-dominant slab, and a collision is one slab claimed by two different factories:
-
-=================  =====  ======  ==========================================
-bridging rule      slabs  purity  collisions
-=================  =====  ======  ==========================================
-nothing                    90    0.68  none
-walls only                 71    0.99  none
-ramps + stairs             42    0.99  none
-**ramps + stairs + walls** 41  **0.99**  **none**
-catwalks only              85    0.78  none
-plus catwalks              46    0.90  tier 1&2 welded to the tor factory
-=================  =====  ======  ==========================================
-
-Ramps connect the floors of one structure; catwalks are the long walkways a player runs
-BETWEEN distant platforms. Chaining catwalks scores the highest purity of any rule and is
-still wrong, because the one thing it merges is two genuinely separate factories. An
-over-segmented slab can be merged by naming; an over-merged one cannot be split.
-
-Walls earn their place on the same evidence. Alone they take 90 slabs down to 71; added
-to ramps and stairs they take 42 to 41, with purity unchanged at 0.987 and still no
-collision. They buy little on this save because ramps already cover most of the same
-joins, but they are structurally the right kind of edge and they cost nothing.
-
-**Not every factory sits on foundations.** Two of the player's twelve -- the concrete
-setup and the copper setup -- are built straight on the ground and have no slab at all.
-Slabs are therefore another candidate signal, never the arbiter.
+Not every factory sits on foundations -- some are built straight on the ground and have no
+slab at all -- so slabs are another candidate signal, never the arbiter.
 """
 
 from __future__ import annotations
@@ -74,23 +32,17 @@ __all__ = ["LINK_XY", "LINK_Z", "STAND_ON", "Slab", "Structures", "build_structu
 #: Face-adjacency cutoff in cm. Between a shared face (800) and a shared corner (1131).
 LINK_XY = 830.0
 
-#: Vertical reach in cm for stacked floors, measured rather than guessed. Scored against
-#: the player's twelve named factories, purity runs 0.84 at 450 cm (one wall), 0.85 at
-#: 900, 0.94 at 1200 and 0.99 at 1600 -- with no collision at any of them. Past 1600 the
-#: purity stops improving and only the merge risk grows, so the knee is the value. Four
-#: storeys sounds generous until you notice a refinery deck is not built at wall height.
+#: Vertical reach in cm for stacked floors. The knee: purity climbs to 1600 and then
+#: stops, while only the risk of merging two structures grows past it. Four storeys
+#: sounds generous until you notice a refinery deck is not built at wall height.
 LINK_Z = 1600.0
 
 #: How far under a machine to look for the tile it stands on, in cm.
 STAND_ON = 600.0
 
-#: This module works in CENTIMETRES throughout, deliberately, and is the one place that
-#: does not route distance through ``geo.distance_m``. Every threshold above is a cm
-#: figure measured against the save's own units, the comparisons are against those
-#: thresholds directly, and nothing is ever reported to a caller in metres -- so there is
-#: no conversion here to get wrong, and adding one would mean dividing by 100 only to
-#: compare against constants that would then have to be rewritten. Raw ``math.dist`` is
-#: correct here; it is not the duplication that ``geo`` exists to remove.
+#: This module works in CENTIMETRES throughout -- the save's own units -- and is the one
+#: place that does not route distance through ``geo.distance_m``. Nothing here is reported
+#: to a caller in metres, so raw ``math.dist`` against the cm thresholds above is correct.
 
 #: Connective tissue. Catwalks are POINTEDLY absent -- see the module docstring.
 _BRIDGE = ("Ramp", "Stair", "Wall")
@@ -103,12 +55,10 @@ _CELL = 800.0
 class Slab:
     """One connected platform.
 
-    ``bbox`` is the tiles' axis-aligned XY bounding box, ``(min_x, min_y, max_x,
-    max_y)`` in cm. Stored beside ``centre``/``extent`` rather than derived from them,
-    because it cannot be: ``centre`` is the tile MEAN, which sits wherever the tiles
-    are dense, so ``centre +- extent/2`` invents corners an L-shaped platform does not
-    have. The reference user reconstructed exactly this box from nine
-    describe_location probes by hand, which is what it exists to retire.
+    ``bbox`` is the tiles' axis-aligned XY bounding box, ``(min_x, min_y, max_x, max_y)``
+    in cm. It cannot be derived from ``centre``/``extent``: ``centre`` is the tile MEAN,
+    which sits wherever the tiles are dense, so ``centre +- extent/2`` invents corners an
+    L-shaped platform does not have.
     """
 
     index: int
@@ -202,8 +152,8 @@ def build_structures(
     if not tiles:
         return Structures()
 
-    # Walkways join the union as nodes of their own rather than as a post-pass, so a
-    # CHAIN of catwalks bridges a gap no single 4 m piece could span.
+    # Bridge pieces join the union as nodes of their own rather than as a post-pass, so a
+    # CHAIN of them spans a gap no single piece could.
     nodes = tiles + walkways
     cells = _grid(nodes)
     union = _Union(len(nodes))

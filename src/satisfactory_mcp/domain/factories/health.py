@@ -1,49 +1,20 @@
 """Why a machine is not running, from what the save actually records.
 
-Every buildable that manufactures carries a **productivity monitor**: a roughly
-300-second window and the seconds it spent producing inside it. Uptime is the ratio, and
-it is the only measured number in this whole MCP -- everything else is nameplate.
-
-Field semantics, re-measured against the committed reference projection (524 carriers)
-rather than assumed:
-
-* ``mLastProductivityMeasurementDuration`` is **NOT a constant, and must not be treated
-  as one.** It reads 300.00 s on 261 carriers, 300.01 on 262 and 300.02 on 1 -- the game
-  closes the window on a tick boundary, not on the second. Dividing by a hard-coded 300
-  is therefore wrong by up to 70 ppm per record and, worse, invites the next reader to
-  drop the divisor entirely. ``build`` below divides by **each record's own window**,
-  which is the only thing that stays right when a patch moves the window at all.
-  ``tests/test_reference_counts.py`` fails if this stops being true of the fixture.
-* ``mLastProductivityMeasurementProduceDuration`` is **absent when zero**. UE omits
-  SaveGame properties equal to their default, so a missing value is a real zero and not
-  missing data -- 231 of the 524 are genuinely idle.
-* ``mCurrentProductivityMeasurement*`` is a *partial* window still filling. Mixing it
-  with the last complete one would compare a 3-minute sample against a 5-minute one.
-* ``mTimeSinceStartStopProducing`` carries **FLT_MAX (3.4e38)** on roughly half the
-  carriers as a "never flipped" sentinel -- 256 of the 580 on the 316-hour save this was
-  first measured on; the projection does not carry the field, so that count is the one
-  reading there has been. It is not a duration and averaging it poisons any statistic,
-  so it is not used here at all.
-
-Uptime alone says a machine is stopped; it never says why, and starved and blocked need
-opposite fixes. The input and output buffers settle it::
+Every buildable that manufactures carries a productivity monitor -- a roughly 300-second
+window and the seconds it spent producing inside it -- and that ratio is the only measured
+number in this whole MCP; everything else is nameplate. Uptime alone says a machine is
+stopped and never why, so the input and output buffers settle it::
 
     an extractor with no node      -> DEAD NODE, it can never produce
-    a required ingredient at zero -> STARVED of that item, by name
+    a required ingredient at zero  -> STARVED of that item, by name
     an output item at a full stack -> BLOCKED, its consumer is not keeping up
     both                           -> BLOCKED wins; a full output stops it regardless
 
-Both rules are narrower than they first look, and both were wrong before they were
-measured.
-
-Starvation is not "the input is empty". Black Powder takes Coal and Sulfur, and the
-assembler that motivated this held 100 Sulfur and no Coal -- an empty-input test called
-it well-fed and left ten machines as unexplained stalls. Comparing the buffer against
-the RECIPE names the missing item, which is the whole value of the report.
-
-Blocked is checked before starved because a blocked machine's input fills up too: the
-sample reads input 100/100 Iron Ingot, output 199/200 Iron Plate. Reading the input
-first would call it well-fed and miss that nothing is taking its plates.
+Two neighbouring save fields look usable and are not. ``mCurrentProductivityMeasurement*``
+is a partial window still filling, so mixing it with the last complete one compares a
+3-minute sample against a 5-minute one; ``mTimeSinceStartStopProducing`` carries FLT_MAX
+on roughly half of all carriers as a "never flipped" sentinel, which is not a duration and
+poisons any statistic it enters.
 """
 
 from __future__ import annotations
@@ -133,14 +104,11 @@ def _stack_limit(game: GameData, item_cls: str) -> int:
 def _buffer_state(game: GameData, buffers: dict, recipe) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Returns (items backed up in the output, ingredients missing from the input).
 
-    Starvation is **a required ingredient at zero**, not an empty input. Black Powder
-    takes Coal and Sulfur; the assembler that motivated this held 100 Sulfur and no Coal,
-    so an "is the input empty" test called it well-fed and left it as an unexplained
-    stall. Naming the missing ingredient is the whole value of the report.
-
-    An ABSENT intake inventory is not an empty one either. A miner draws from its node
-    and has no InputInventory at all, so it yields no starvation evidence rather than a
-    false positive.
+    Starvation is **a required ingredient at zero**, not an empty input: an assembler on
+    Black Powder holding 100 Sulfur and no Coal is starved, and naming the missing
+    ingredient is the whole value of the report. An ABSENT intake inventory is not an
+    empty one either -- a miner draws from its node and has no InputInventory at all, so
+    it yields no starvation evidence rather than a false positive.
     """
     backed: list[str] = []
     out = (buffers.get("out") or {}).get("items") or {}
@@ -182,17 +150,20 @@ def assess(
             recipe = game.recipes.get(record.get("recipe") or "")
             live = record.get("uptime") or {}
             window = live.get("window_s") or 0.0
+            # Each record's OWN window, never a hard-coded 300: the game closes the window
+            # on a tick boundary, so it reads 300.00, 300.01 or 300.02 across one save. An
+            # absent produce_s is a real zero, since UE omits properties equal to their
+            # default -- a monitored idle machine is 0.0 uptime, not unmonitored.
             uptime = (live.get("produce_s", 0.0) / window) if window else None
             backed, missing = _buffer_state(game, record.get("buffers") or {}, recipe)
 
             if record.get("paused"):
                 state, cause = "paused", ()
             elif key == "extractors" and not record.get("node"):
-                # mExtractableResource ABSENT, not merely unresolvable. The miner is
-                # bound to nothing and can never produce -- on this save that is three
-                # miners left behind when a game update removed their resource node.
-                # Distinct from a water pump, whose node IS set but points at an
-                # FGWaterVolume that is not a purity-table key. That one works fine.
+                # mExtractableResource ABSENT, not merely unresolvable: the miner is bound
+                # to nothing, which happens when a game update removes a resource node
+                # under it. A water pump's node IS set but points at an FGWaterVolume that
+                # is not a purity-table key, and that one works fine.
                 state, cause = "dead node", ("no resource node",)
             elif key == "machines" and not record.get("recipe"):
                 state, cause = "no recipe", ()
@@ -201,8 +172,8 @@ def assess(
             elif uptime >= SATURATED:
                 state, cause = "saturated", ()
             elif uptime > STOPPED:
-                # Running, but not flat out. The same evidence applies; it is a matter
-                # of degree, so report the cause without calling it stopped.
+                # Running, but not flat out: the same evidence, reported without calling
+                # the machine stopped.
                 state = "intermittent"
                 cause = backed or missing
             elif backed:
@@ -212,8 +183,8 @@ def assess(
             elif missing:
                 state, cause = "starved", missing
             else:
-                # Has input, output not full, still not running. Power, or a monitor
-                # that has not caught up. Named rather than guessed at.
+                # Has input, output not full, still not running: power, or a monitor that
+                # has not caught up.
                 state, cause = "stalled", ()
 
             entry = MachineHealth(
