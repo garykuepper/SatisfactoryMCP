@@ -19,10 +19,8 @@ from pathlib import Path
 
 from .iostore import ContainerError, Decompressor, IoStore
 
-#: The module's surface, stated because ``tools/`` is the main caller and used to reach past
-#: a leading underscore for three of the property decoders. An underscore three importers
-#: ignore is not a boundary; this list is one, and anything not on it is genuinely internal
-#: (``_name_batch``, ``_owner_class``, the two rotation constants).
+#: The module's surface. Anything not on it is genuinely internal -- ``_name_batch``,
+#: ``_owner_class``, the two rotation constants.
 __all__ = [
     "BULK_ENTRY_BYTES",
     "LEVEL_CLASS",
@@ -88,15 +86,10 @@ def _name_batch(blob: bytes, pos: int) -> tuple[list[str], int]:
 def _fname_numbers(blob: bytes, pos: int, count: int, limit: int) -> list[int]:
     """The ``uint32[count]`` of ``FName`` numbers that follows an imported-package batch.
 
-    A name batch carries strings and nothing else, so the number half of every ``FName`` in
-    it is written separately -- as a plain array immediately after the strings, one entry
-    per name, in the same order. Reading the batch and stopping is what dropped it.
-
-    Measured on build 495413: the section runs to the end of the header and the array is
-    exactly ``4 * count`` bytes of it, on every package that has one. If it is not -- an
-    older cook, a layout change -- every number reads as zero, which is precisely the
-    behaviour this replaced, so a wrong guess degrades to the old answer rather than to a
-    wrong name.
+    A name batch carries strings and nothing else, so the number half of every ``FName`` is
+    written separately, as a plain array immediately after the strings in the same order. On a
+    layout this does not fit, every number reads as zero -- a wrong guess degrades to a name
+    with no suffix rather than to a wrong name.
     """
     if count <= 0 or pos + 4 * count > limit:
         return [0] * max(count, 0)
@@ -111,18 +104,14 @@ BULK_ENTRY_BYTES = 32
 def bulk_data_entries(blob: bytes, names_end: int, first_section: int) -> list[dict]:
     """The Zen header's ``BulkDataMap``, which is what an ``FByteBulkData`` indexes into.
 
-    Between the name batch and the first section offset the summary names, with a UE 5.4+
-    alignment pad in front of it. Bounded by ``first_section`` so a misread length is a
-    ``ValueError`` rather than a walk over the import map.
+    It sits between the name batch and the first section offset the summary names, behind a
+    UE 5.4+ alignment pad, and is bounded by ``first_section`` so a misread length raises
+    rather than walking over the import map.
 
-    Lives here rather than in ``staticmesh`` (which keeps its ``bulk_data_map`` wrapper for
-    its own ``ParseError`` contract) since the day the item icons needed the same table for
-    a texture: the map is a fact about the package HEADER, and two parsers of one 32-byte
-    layout is one more chance for them to disagree. An INLINE entry's ``offset`` -- see
-    ``textures.INLINE_BULK_FLAG`` for which those are -- is relative to the start of the
-    export-data segment, i.e. its payload is at ``header_size + offset`` in the same blob;
-    a streamed entry's is an offset into the sibling ``.ubulk``. Both measured on build
-    495413, where the two kinds sit side by side in every ordinary icon's map.
+    An INLINE entry's ``offset`` -- see ``textures.INLINE_BULK_FLAG`` for which those are --
+    is relative to the start of the export-data segment, so its payload is at
+    ``header_size + offset`` in the same blob; a streamed entry's is an offset into the
+    sibling ``.ubulk``. Both kinds sit side by side in an ordinary icon's map.
     """
     try:
         (pad,) = struct.unpack_from("<Q", blob, names_end)
@@ -151,12 +140,9 @@ def bulk_data_entries(blob: bytes, names_end: int, first_section: int) -> list[d
 
 
 def apply_fname_number(base: str, number: int) -> str:
-    """UE's own spelling of an ``FName``: ``("Foo", 4)`` is written ``Foo_3``.
-
-    One function because three readers need the identical rule -- the package's own name
-    map, ``ScriptObjects``, and the imported-package names -- and a fourth spelling of
-    ``number - 1`` would be a fourth chance to be off by one.
-    """
+    """UE's own spelling of an ``FName``: ``("Foo", 4)`` is written ``Foo_3``. One function
+    because three readers need the identical off-by-one -- the package's own name map,
+    ``ScriptObjects``, and the imported-package names."""
     return base if number == 0 else f"{base}_{number - 1}"
 
 
@@ -164,14 +150,12 @@ class ScriptObjects:
     """``/Script/...`` object paths, out of ``global.utoc``'s ScriptObjects chunk.
 
     A cooked package refers to a native class by an ``FPackageObjectIndex`` of kind
-    ``ScriptImport``, which is a 62-bit hash of the lowercased object path and carries no
-    text. The only way back is this table: a name batch, an ``int32`` count, then one
-    32-byte ``FScriptObjectEntry`` per object holding its name, its own hash and its
-    Outer's. Walking ``OuterIndex`` composes the full path -- package, then ``.`` for a
-    top-level object and ``:`` for anything nested inside one.
-
-    Without this every natively-classed actor in the map is unidentifiable, which is
-    exactly how 703 loot caches went missing.
+    ``ScriptImport``, which is a 62-bit hash of the lowercased object path and carries no text.
+    The only way back is this table: a name batch, an ``int32`` count, then one 32-byte
+    ``FScriptObjectEntry`` per object holding its name, its own hash and its Outer's. Walking
+    ``OuterIndex`` composes the full path -- package, then ``.`` for a top-level object and
+    ``:`` for anything nested inside one. Without it every natively-classed actor in the map is
+    unidentifiable.
     """
 
     CHUNK_TYPE = 5
@@ -241,15 +225,11 @@ class Package:
         import_offset, export_offset = words[7], words[8]
         self.export_offset = export_offset
         self.names, self.names_end = _name_batch(blob, 60)
-        # Where the header's sections begin, i.e. where the BulkDataMap must END. The same
-        # expression ``staticmesh._bulk_map`` has always used, kept here so the map and the
-        # sections it is bounded by come out of one read of the summary.
+        # Where the header's sections begin, i.e. where the BulkDataMap must END.
         self.first_section = min([w for w in words[6:13] if w] or [self.header_size])
-        # ``ImportedPublicExportHashes``: the array a PackageImport's low 32 bits INDEX.
-        # Without it a cross-package reference resolves only as far as the package NAME,
-        # which is not an identity -- this build ships thirty-five map-area assets sharing
-        # eighteen package names, so a name alone cannot say which object was meant. It runs
-        # from its own offset to the import map's, both in the summary.
+        # ``ImportedPublicExportHashes``: the array a PackageImport's low 32 bits INDEX, running
+        # from its own offset to the import map's. Without it a cross-package reference resolves
+        # only as far as the package NAME, which is not an identity -- see `import_export_hash`.
         self.imported_public_export_hashes: list[int] = []
         if words[6] and import_offset > words[6]:
             count = (import_offset - words[6]) // 8
@@ -264,11 +244,9 @@ class Package:
         if import_offset and export_offset > import_offset:
             count = (export_offset - import_offset) // 8
             self.imports = list(struct.unpack_from(f"<{count}Q", blob, import_offset))
-        # ``ImportedPackageNames``: a name batch, then one uint32 FName NUMBER per name.
-        # Reading only the batch spells ``SM_MERGED_BP_CaveFloor2_3`` as
-        # ``SM_MERGED_BP_CaveFloor2``, and that reference then resolves to nothing -- which
-        # is how six of the largest meshes in the world went missing from the heightfield
-        # without anything reporting a failure. The number is right there in the header.
+        # ``ImportedPackageNames``: a name batch, then one uint32 FName NUMBER per name. The
+        # batch alone spells ``SM_MERGED_BP_CaveFloor2_3`` as ``SM_MERGED_BP_CaveFloor2``, and
+        # that reference then resolves to nothing at all -- see `_fname_numbers`.
         self.imported_packages: list[str] = []
         offset = words[12]
         if offset and offset < self.header_size:
@@ -321,11 +299,7 @@ class Package:
 
     def bulk_entries(self) -> list[dict]:
         """This package's ``BulkDataMap``: one entry per ``FByteBulkData``, or ``ValueError``.
-
-        The convenience over :func:`bulk_data_entries` for a caller that already holds a
-        ``Package`` -- the item-icon generator's route to a mip chain with no ``.ubulk``,
-        where an inline entry's payload is ``blob[header_size + offset :][: size]``.
-        """
+        An inline entry's payload is ``blob[header_size + offset :][: size]``."""
         return bulk_data_entries(self.blob, self.names_end, self.first_section)
 
 
@@ -334,14 +308,12 @@ def property_tags(
 ) -> tuple[list[tuple[str | None, str | None, bytes, int]], int]:
     """Walk a tagged-property stream, yielding ``(name, type, payload, value byte)``.
 
-    The value byte is the one that follows ``Size`` in the tag. It is dead weight for every
-    type except ``BoolProperty``, whose payload is empty and whose value lives there and
-    nowhere else -- which is how ``mIsPassiveCreature`` is read.
-
-    An export body starts one byte in; a nested struct payload starts at 0, which is what
-    *pos* is for. The end offset comes back so a ``TArray<FStruct>`` can walk element by
-    element. A malformed run stops the walk rather than raising: a truncated tail costs one
-    actor's transform, and a raise costs the whole package.
+    The value byte follows ``Size`` in the tag and is dead weight for every type except
+    ``BoolProperty``, whose payload is empty and whose value lives there and nowhere else. An
+    export body starts one byte in and a nested struct payload starts at 0, which is what *pos*
+    is for; the end offset comes back so a ``TArray<FStruct>`` can walk element by element. A
+    malformed run stops the walk rather than raising -- a truncated tail costs one actor's
+    transform, a raise costs the whole package.
     """
     out: list[tuple[str | None, str | None, bytes, int]] = []
     limit = len(body)
@@ -384,11 +356,8 @@ def property_tags(
     return out, pos
 
 
-# The four property-payload decoders. Public, and named for what they read rather than
-# underscored, because ``tools/`` has always reached past the underscore for three of them
-# -- a leading underscore that three importers ignore is not a boundary, it is a note
-# nobody read. They belong to the module's surface: a caller with a raw ``bytes`` off
-# ``PackageView.props`` has nothing else to turn it into a number with.
+# The four property-payload decoders: a caller holding raw ``bytes`` off ``PackageView.props``
+# has nothing else to turn one into a number with.
 
 
 def read_triple(payload: bytes) -> tuple[float, float, float] | None:
@@ -430,8 +399,7 @@ def class_name_of(class_path: str | None) -> str:
 
     A blueprint class is named by its *package* -- ``/Game/.../BP_Crystal`` is the class
     ``BP_Crystal_C`` -- while a native one is a full object path, so the two need different
-    tails. Anything else, including the one actor in the map whose class is an export of
-    its own package, comes back as-is so it is visible rather than silently binned.
+    tails. Anything else comes back as-is, so it is visible rather than silently binned.
     """
     if not class_path:
         return "<null class>"
@@ -473,13 +441,11 @@ class PackageView:
     def object_path(self, packed: int) -> str | None:
         """An ``FPackageObjectIndex`` as a readable path.
 
-        Four kinds. ``Null`` is nothing; ``Export`` points inside this package, which no
-        class normally does and one map actor's does; ``ScriptImport`` is the 62-bit hash a
+        Four kinds. ``Null`` is nothing; ``Export`` points inside this package, which no class
+        normally does and one map actor's does; ``ScriptImport`` is the 62-bit hash a
         ``ScriptObjects`` table turns back into ``/Script/FactoryGame.Whatever``;
-        ``PackageImport`` is ``(imported package index, export hash)`` with the package
-        NAME right there in the header, because this build is UE 5.2 or later. On the older
-        layout that was a CityHash64 of the whole path with no way back, which is why an
-        earlier attempt at this built a hash reverser it turned out not to need.
+        ``PackageImport`` is ``(imported package index, export hash)`` with the package NAME in
+        the header, which holds from UE 5.2 on and not before.
         """
         kind = packed >> 62
         if kind == 3:
@@ -537,9 +503,8 @@ class PackageView:
         """An ``FPackageIndex`` pointing OUT of this package, as a path.
 
         The negative half of an ``FPackageIndex`` indexes the import map, whose entries are
-        ``FPackageObjectIndex``. Without this every cross-package reference -- a spawner's
-        ``mCreatureClass``, a deposit's ``mOverrideResourceClass``, a cache's item class --
-        reads as None, which is how the hazard channels came to look underivable.
+        ``FPackageObjectIndex``. It is how a spawner's ``mCreatureClass``, a deposit's
+        ``mOverrideResourceClass`` and a cache's item class are reached at all.
         """
         if len(payload) != 4:
             return None
@@ -556,9 +521,8 @@ class PackageView:
 
         The other half of :meth:`import_path`, and the half that is an IDENTITY. A
         ``PackageImport`` packs an imported-package slot and an index into this package's
-        ``ImportedPublicExportHashes``; the slot yields a package name, which this build
-        proves is not unique -- thirty-five ``Area_*`` assets share eighteen names -- while
-        the hash names one export in the whole container. Matched against
+        ``ImportedPublicExportHashes``; the slot yields a package name, which is not unique,
+        while the hash names one export in the whole container. Matched against
         ``exports()[...]["public_hash"]`` on the far side, it says exactly which object.
         """
         if len(payload) != 4:
@@ -621,31 +585,15 @@ class AssetIndex:
     """Container paths for ``.uasset`` classes, by leaf name.
 
     Every class-side fact a generator wants -- a component template, a creature's
-    ``mIsPassiveCreature``, a spore flower's damage radius, an ore's radioactivity -- is
-    read out of the class asset, and all of them need the same lookup.
+    ``mIsPassiveCreature``, a spore flower's damage radius, an ore's radioactivity -- is read
+    out of the class asset, and all of them need the same lookup.
 
-    **Two assumptions the first version made, and what each one lost.** A package path is a
-    reference somebody typed; a container path is what the cooker wrote. They agree on the
-    spelling of an asset far less often than they look like they do.
-
-    * *One mount.* Splitting on ``/Game/`` to get the directory works until the reference is
-      an ``/Engine/`` one, which contains no ``/Game/`` at all -- so the split returns the
-      whole path and the namesake guard can never match it. ``/Engine/BasicShapes/Sphere``
-      and ``Plane`` fail exactly this way.
-    * *One casing.* The container spells ``Medkit`` as ``MedKit`` and ``trees`` as
-      ``Trees``, and an exact-case leaf key plus an exact-case ``directory in path`` guard
-      turns both into "not in the container". ``setdefault`` compounds it: only the first
-      path for a leaf was kept, so a second package sharing a leaf was unreachable even when
-      its directory was the matching one.
-
-    Case-folding both halves and keeping every candidate is a **strict superset** of the
-    old behaviour -- an exact-case leaf still wins where one exists, and it is still the
-    first such path in container order -- so nothing that resolved before resolves
-    differently. What it adds is the four references that resolved to nothing.
-
-    The other half of that story is not here: six ``SM_MERGED_BP_CaveFloor*`` failed for a
-    different reason entirely, an ``FName`` number dropped by the header reader, and no
-    amount of case-folding would have found them. See :func:`_fname_numbers`.
+    **A package path is a reference somebody typed and a container path is what the cooker
+    wrote, and they agree less often than they look.** They differ over the MOUNT --
+    ``/Engine/BasicShapes/Sphere`` contains no ``/Game/`` to split on -- and over CASE, where
+    the container spells ``Medkit`` as ``MedKit`` and ``trees`` as ``Trees``. So both halves
+    are case-folded and every candidate is kept, with an exact-case leaf still preferred where
+    the container offers one.
     """
 
     SUFFIX = ".uasset"
@@ -660,14 +608,9 @@ class AssetIndex:
 
     @staticmethod
     def _directory(package: str) -> str:
-        """A package path's directory below its mount point, case-folded.
-
-        The mount is dropped because that is the one part the two spellings genuinely
-        disagree on: ``/Game/FactoryGame/Equipment/...`` is written
-        ``.../FactoryGame/Content/FactoryGame/Equipment/...`` and ``/Engine/BasicShapes``
-        is written ``.../Engine/Content/BasicShapes``. What is left is a substring of the
-        container path, which is what the namesake guard tests for.
-        """
+        """A package path's directory below its mount point, case-folded. The mount is dropped
+        because it is the part the two spellings genuinely disagree on; what is left is a
+        substring of the container path, which is what the namesake guard tests for."""
         directory = package.rsplit("/", 1)[0]
         for root in MOUNT_ROOTS:
             if root in directory:
@@ -684,9 +627,6 @@ class AssetIndex:
         matches = [p for p in candidates if directory in p.replace("\\", "/").lower()]
         if not matches:
             return None
-        # An exact-case leaf is a better answer than a case-folded one and is preferred
-        # wherever the container offers both, which is what keeps this a superset rather
-        # than a re-resolution of everything that already worked.
         exact = [
             p
             for p in matches
@@ -729,12 +669,10 @@ class ClassFacts:
     def failed(self) -> int:
         """Classes whose package is on disk and would not parse.
 
-        Beside ``resolved`` and ``looked_up`` because it is the third of three and the
-        one the other two hide. A class with no package at all and a class whose package
-        raised both answer ``None`` from ``_view`` and both come out of ``templates`` as
-        ``{}``, so a container this build cannot read at all -- a format change, a bad
-        decompressor -- reads as a world where nothing happens to have a template, which
-        is a normal-looking number. This one is zero on a healthy install and is not.
+        A class with no package and a class whose package raised both answer ``None`` from
+        ``_view`` and both come out of ``templates`` as ``{}``, so without this count a
+        container that cannot be read at all reads as a world where nothing has a template.
+        Zero on a healthy install.
         """
         return len(self._failures)
 
@@ -752,12 +690,9 @@ class ClassFacts:
             try:
                 view = PackageView(self.store.read_path(path))
             except Exception as exc:
-                # Still cached, because `_load` asks once per class and re-reading a
-                # package that just raised buys nothing -- but recorded, so that "no
-                # template" and "could not read the package that holds the template" stop
-                # being the same answer. They were, and a run that could not open a single
-                # asset reported the same shape of result as one where every asset was fine
-                # and simply carried no component templates.
+                # Recorded, so that "no template" and "could not read the package that holds
+                # the template" are not the same answer -- see `failed`. Still cached: `_load`
+                # asks once per class and re-reading a package that raised buys nothing.
                 self._failures[class_package] = type(exc).__name__
         self._views[class_package] = view
         return view

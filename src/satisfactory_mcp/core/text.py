@@ -1,15 +1,9 @@
 """The text helpers that are NOT presentation.
 
-Everything else that shapes a response -- tables, envelopes, footers, truncation --
-lives in ``presenters.text.primitives`` and is forbidden to domain code. These are
-here because a domain result can legitimately carry a number or a building name
-inside a sentence it owns: ``DiffRow.note`` reads "31 Refineries busy on other
-recipes" and tests assert on it at the dataclass level, so the pluralisation has to
-be reachable without importing a presenter.
-
-``stamp`` and ``ago`` are here on the same terms: the save's age belongs to the
-sentence the domain owns (``SaveIdentity.age_note``) and to a refusal ``core.saveio``
-raises, and neither of those layers may import a presenter.
+Everything else that shapes a response -- tables, envelopes, footers, truncation -- lives in
+``presenters.text.primitives`` and is forbidden to domain code. These four are here because a
+domain result owns sentences of its own (``DiffRow.note``, ``SaveIdentity.age_note``, a refusal
+``core.saveio`` raises), and no layer that owns one may import a presenter.
 """
 
 from __future__ import annotations
@@ -29,11 +23,8 @@ def num(value: float | None, places: int = 2) -> str:
 
 
 def stamp(mtime_ns: int | None) -> str | None:
-    """A file write as local wall-clock time, to the minute, or ``None`` for no mtime.
-
-    Local time on purpose: the reader is the person whose disk this is, and "08:28"
-    must be the same "08:28" their game's save dialog shows.
-    """
+    """A file write as local wall-clock time, to the minute, or ``None`` for no mtime. Local
+    on purpose: "08:28" must be the same "08:28" the player's own save dialog shows."""
     if not mtime_ns:
         return None
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime_ns / 1e9))
@@ -42,9 +33,7 @@ def stamp(mtime_ns: int | None) -> str | None:
 def ago(mtime_ns: int | None, now_s: float | None = None) -> str | None:
     """How long ago a file was written, as one coarse human unit, or ``None`` for no mtime.
 
-    Coarse by design -- "3h ago" answers "is this file the live world?" and false
-    precision ("187 minutes") makes the reader do the division the function exists to
-    do. Clamped at zero because an autosave can land between ``stat`` and ``now`` and
+    Clamped at zero because an autosave can land between ``stat`` and ``now``, and
     "-1 min ago" reads as a bug rather than as a fresh file.
     """
     if not mtime_ns:
@@ -60,8 +49,7 @@ def ago(mtime_ns: int | None, now_s: float | None = None) -> str | None:
 
 
 def plural(name: str, count: int) -> str:
-    """Pluralise a building or item name. "31 Refinerys" reads as a typo, which makes
-    the reader distrust the number next to it."""
+    """Pluralise a building or item name."""
     if count == 1:
         return name
     if name.endswith("y") and name[-2:-1] not in "aeiou":

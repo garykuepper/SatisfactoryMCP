@@ -1,32 +1,15 @@
 """Recipe search, including the reverse direction: what CONSUMES an item.
 
-``search_recipes`` used to match recipe names only, so "what eats Rubber" had no
-answer at all. The way it was actually answered was to guess candidate items from
-memory and check them one at a time -- eight speculative lookups that still could
-not prove the list was complete. Completeness is the whole point of this module,
-and it is bought with two rules:
+Completeness is the point, and it costs two rules. The census is counted over every recipe in
+Docs.json and never over the page -- ``kind``, ``include_events``, ``limit`` and ``offset``
+decide what is SHOWN and never move the header's counts -- and building recipes are counted
+even where they are not shown, because the build gun consumes items exactly as a Refinery does
+(Rubber has 15 part consumers, 7 building and 4 manual).
 
-**The census is counted over every recipe in Docs.json, never over the page.**
-``kind``, ``include_events``, ``limit`` and ``offset`` decide what is SHOWN; they
-never move the counts in the header. So a caller who reads only the first line has
-still been told the true total.
-
-**Building recipes are counted even when they are not shown.** A recipe's ``kind``
-partitions 872 recipes into 291 part, 547 building and 34 manual, and the build
-gun consumes items exactly like a Refinery does. Measured on Rubber: 15 part
-recipes, **7 building** (Fuel-Powered Generator, Packager, Resource Well
-Pressurizer, Valve, Power Pole Mk.3, Blueprint Designer Mk.2, Fluid Truck Station)
-and 4 manual. A part-only answer misses eleven of twenty-six consumers, and the
-building ones are the late-tier machines a player is about to place. So the header
-always breaks the count down by kind, and a ``kind`` filter that hides rows says
-what it hid.
-
-**The units are not comparable and must not be rendered as if they were.** Only
-part recipes run in a machine, so only they have a per-minute rate; a building
-recipe's ``mManufactoringDuration`` is 1.0 for all 547 of them, which turns
-``amount * 60 / duration`` into a rate of 1,200 Iron Ore/min for The HUB. Building
-and manual rows therefore carry the per-craft amount and are suffixed ``/build``
-and ``/craft`` so no row can be misread as a throughput.
+The units across kinds are not comparable. Only part recipes run in a machine, so only they
+have a per-minute rate; a building recipe's ``mManufactoringDuration`` is 1.0 for all 547 of
+them, which would make The HUB eat 1,200 Iron Ore/min. Building and manual rows carry the
+per-craft amount and are suffixed ``/build`` and ``/craft`` so no row reads as a throughput.
 """
 
 from __future__ import annotations

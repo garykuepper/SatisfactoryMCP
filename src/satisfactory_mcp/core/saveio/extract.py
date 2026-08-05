@@ -2,22 +2,13 @@
 
     python -m satisfactory_mcp.core.saveio.extract <path-to-sav> [--header-only]
 
-Emits a JSON projection on stdout. Diagnostics go to stderr so stdout stays clean.
-
-Why a subprocess rather than an import:
-  * the parser hard-fails on an unrecognised saveVersion, so a game patch breaks parsing
-    until the format is re-derived. One boundary means one thing to fix.
-  * A torn autosave (the file is rewritten in place every ~5 min while playing) or a
-    parser crash cannot take down the server.
-  * The projection is small and serialisable, which makes it the test fixture -- the
-    whole suite then runs with no game install and no 2.9 MB .sav in git.
-  * Every byte the parser allocated is returned to the OS when the child exits, which a
-    long-lived server reading 2.9 MB saves does not otherwise get.
-
-Why this module lives in the application package and not in ``pioneersav``: the parser
-answers "what does this file say", and this answers "what does the MCP server need" --
-the schema-19 projection is this project's shape, versioned with this project's cache,
-and it is the only place in the tree allowed to import the parser at all.
+Emits a JSON projection on stdout; diagnostics go to stderr so stdout stays clean. A
+subprocess because the parser hard-fails on an unrecognised saveVersion and because a torn
+autosave -- the file is rewritten in place every ~5 min while playing -- must not take the
+server down, and because the projection is small enough to BE the test fixture, so the whole
+suite runs with no game install and no 2.9 MB .sav in git. This module and not ``pioneersav``
+owns the schema: the parser answers "what does this file say" and this answers "what does the
+MCP server need", and it is the only place in the tree allowed to import a parser at all.
 
 Property-access hazards handled here, all of which fail SILENTLY otherwise:
   * ComponentHeader has no typePath attribute at all.
@@ -27,8 +18,7 @@ Property-access hazards handled here, all of which fail SILENTLY otherwise:
     finds nothing.
   * mItemsPickedUp is a MapProperty keyed by player state containing an inner map.
 
-There is one parser: ``pioneersav``. The vendored GPL-3.0 one it replaced is deleted, and
-the switch that chose between them went with it -- see the comment above the import.
+There is one parser: ``pioneersav``. See the comment above the import.
 """
 
 from __future__ import annotations
@@ -41,16 +31,14 @@ import sys
 import traceback
 from pathlib import Path
 
-# There was a second parser here until the vendored GPL-3.0 `sat_sav_parse` was deleted, and a
-# `SATISFACTORY_SAVPARSE` switch to pick between them. The switch existed for one purpose --
-# running the same save through both and diffing the projection, so that "they agree" was a
-# measurement rather than an argument -- and it has no second option left to choose.
+# There is one parser. The vendored GPL-3.0 `sat_sav_parse` it replaced is deleted, and so is
+# the `SATISFACTORY_SAVPARSE` switch that ran a save through both and diffed the projection.
 #
-# What that measurement said, at the moment the library was removed: the two agreed on **every
-# projection key, leaf for leaf, on all 31 saves the vendored parser could read**. That diff can
-# never be run again, so it is banked in `tests/fixtures/vendor_parity.json` as a per-save,
-# per-key digest of what the vendored parser produced, and `test_savparse_parity.py` holds this
-# parser to it. `pioneersav` additionally reads the 35 pre-1.0 saves the old one refused.
+# What that diff said at the moment the library was removed: the two agreed on **every
+# projection key, leaf for leaf, on all 31 saves the vendored parser could read**. It can never
+# be run again, so it is banked in `tests/fixtures/vendor_parity.json` as a per-save, per-key
+# digest of what the vendored parser produced, and `test_savparse_parity.py` holds this parser
+# to it. `pioneersav` additionally reads the 35 pre-1.0 saves the old one refused.
 #
 # Absolute, and the only import in this file: the parser is a top-level package beside
 # `satisfactory_mcp`, so this module runs the same whether it is started with `-m` or as a
@@ -68,65 +56,41 @@ SCHEMA_VERSION = 19
 #: The classes the game drops on the ground when items have nowhere else to go. Schema 18;
 #: see `_crates`.
 #:
-#: **One class, and the game says so.** ``AFGCrate`` (``FGCrate.h``) is the whole family:
-#: "containers of items that are spawned on demand when the contents do not fill into the
-#: player's inventory, or when the player dies". A death crate and a dismantle crate are the
-#: same actor with a different ``mCrateType``, which is why this is a class list of one and
-#: the KIND is read off a property rather than off a name. All 170 crates across the 67 saves
-#: on the reference machine are ``BP_Crate_C``; there is no second class to find.
+#: One class, because ``AFGCrate`` (``FGCrate.h``) is the whole family: a death crate and a
+#: dismantle crate are the same actor with a different ``mCrateType``, so the KIND is read off
+#: a property rather than off a name.
 #:
-#: **Not the item pickups beside them, and the distinction is the world's rather than ours.**
-#: ``FGItemPickup_Spawnable`` (336 on the reference world) and ``BP_ItemPickup_Spawnable_C``
-#: (7) are map-placed loot -- the things that were always lying there -- and they are the
-#: ``collectibles`` layer's business, which already reports them against the world table.
-#: A crate is the opposite record: it did not exist until the player made it exist, by dying
-#: or by dismantling something with a full inventory.
+#: NOT the item pickups beside them. ``FGItemPickup_Spawnable`` and
+#: ``BP_ItemPickup_Spawnable_C`` are map-placed loot, which is the ``collectibles`` layer's
+#: business; a crate did not exist until the player made it exist, by dying or by dismantling
+#: something with a full inventory.
 CRATE_CLASSES = ("BP_Crate_C",)
 
-#: ``EFGCrateType`` (``FGCrate.h``) as the projection spells it. The enum's own three values,
-#: renamed only by dropping the ``CT_`` and lowercasing -- the game's vocabulary, not a new one.
+#: ``EFGCrateType`` (``FGCrate.h``) as the projection spells it: the enum's own three values,
+#: renamed only by dropping the ``CT_`` and lowercasing.
 #:
-#: ``none`` is the game's OWN third value and not a parse failure, which is the whole reason
-#: it is spelled out here. ``mCrateType`` is a ``SaveGame`` property, so UE omits it while it
-#: is still at the class default of ``CT_None``, and the header comments beside its siblings
-#: say what that means: ``mMapText`` is "name of the crate on the map (before distinction
-#: between dismantle and death crates was added)". A crate that predates the distinction
-#: carries no type and never will -- measured, and it is not a handful: on the reference
-#: machine's saves the property does not appear at all below build 433351, and two of the
-#: reference world's own crates were created under builds 201717 and 186638 and still read
-#: ``none`` under 495413. So "unknown kind" is a permanent, ordinary state of an old crate,
-#: and reporting it as a death crate would be inventing the one fact the save withheld.
+#: ``none`` is the game's OWN third value and not a parse failure. ``mCrateType`` is a
+#: ``SaveGame`` property, so UE omits it while it sits at the class default of ``CT_None``,
+#: and a crate built before the game distinguished death from dismantle carries no type and
+#: never will -- the property appears in no save below build 433351, and crates created under
+#: builds 201717 and 186638 still read ``none`` under 495413. "Unknown kind" is therefore a
+#: permanent, ordinary state of an old crate rather than something to resolve to ``death``.
 CRATE_KINDS = {"CT_None": "none", "CT_DismantleCrate": "dismantle", "CT_DeathCrate": "death"}
 
 #: The classes drawn as POLES by the power layer: where a wire can end at something the
 #: player placed for the purpose of ending wires at it. Schema 17; see `_power`.
 #:
-#: **Listed rather than matched on "PowerPole", for the reason PIPE_CLASSES and
-#: STORAGE_CLASSES both give.** ``Build_ConveyorPole_C`` and ``Build_PipelineSupport_C`` are
-#: poles by every naming test and carry no power at all -- 795 and 215 of them on the
-#: reference world, which a substring rule would draw as power infrastructure. In the other
-#: direction ``Build_PowerTowerPlatform_C`` carries no "Pole" in its name and is the biggest
-#: piece of transmission this world has.
+#: Listed rather than matched on "PowerPole", for the reason PIPE_CLASSES and STORAGE_CLASSES
+#: both give: ``Build_ConveyorPole_C`` and ``Build_PipelineSupport_C`` are poles by every
+#: naming test and carry no power at all, while ``Build_PowerTowerPlatform_C`` carries no
+#: "Pole" in its name and is the biggest piece of transmission a world has. The wall outlets
+#: are here because they are wire endpoints and nothing else is; leaving them out would draw
+#: their wires ending in mid-air.
 #:
-#: What the reference save actually holds, and why each entry is here:
-#:
-#: * ``Build_PowerPoleMk1_C`` (426), ``Mk2`` (105), ``Mk3`` (7) -- the poles, 1,571 of the
-#:   world's 2,594 wire endpoints between them.
-#: * ``Build_PowerPoleWall_C`` (4), ``Build_PowerPoleWall_Mk2_C`` (19),
-#:   ``Build_PowerPoleWallDouble_Mk2_C`` (3) -- the wall outlets. Included because they are
-#:   wire endpoints and nothing else is: 130 endpoints land on these 26 pieces, and leaving
-#:   them out would draw 130 wires ending in mid-air.
-#: * ``Build_PowerTowerPlatform_C`` (137) -- the Power Tower. 290 endpoints, and the only
-#:   thing on this world carrying a wire more than a kilometre.
-#:
-#: **Three classes are deliberately absent and the reason is that this world has none.** A
-#: Power Switch, a Priority Power Switch and a Power Storage are all wire endpoints in the
-#: game and the reference save contains zero of each (a full class census of its 9,778
-#: ``Build_`` actors), so nothing here can say what one's connector offset is, what it should
-#: be drawn as, or whether "pole" is even the right word for it. Their wires still DRAW --
-#: the geometry comes off the wire actor and not off what it lands on, which is the whole
-#: point of `_power`'s design -- so a world with a switch in it loses the switch's glyph and
-#: not the line running to it. That is a smaller wrong answer than a guess.
+#: The Power Switch, Priority Power Switch and Power Storage are absent because no save here
+#: contains one, so nothing can say what a connector offset or a glyph for it would be. Their
+#: wires still DRAW: the geometry comes off the wire actor and not off what it lands on, so
+#: such a world loses the switch's glyph and not the line running to it.
 POWER_POLE_CLASSES = (
     "Build_PowerPoleMk1_C",
     "Build_PowerPoleMk2_C",
@@ -179,14 +143,12 @@ _GENERATOR_HINTS = (
     "GeneratorGeoThermal",
     "GeneratorIntegratedBiomass",
 )
-#: The pieces a belt run passes THROUGH: splitters, the smart and programmable splitters,
-#: and mergers. They are ordinary Build_ actors with a transform, and until now the record
-#: built for them was thrown away, so a map drawing belts alone showed a four-metre hole
-#: wherever a run was split or joined -- 842 of them on the reference world.
+#: The pieces a belt run passes THROUGH: splitters, the smart and programmable splitters, and
+#: mergers. Without them a map drawing belts alone shows a four-metre hole wherever a run is
+#: split or joined.
 #:
-#: ``Build_ConveyorCeilingAttachment_C`` is deliberately NOT here despite the shared word:
-#: a ceiling mount is a pole a belt hangs from, not a piece the items pass through, and the
-#: two would draw the same square while meaning different things.
+#: ``Build_ConveyorCeilingAttachment_C`` is NOT here despite the shared word: a ceiling mount
+#: is a pole a belt hangs from, not a piece the items pass through.
 _ATTACHMENT_HINTS = (
     "ConveyorAttachmentSplitter",
     "ConveyorAttachmentMerger",
@@ -195,26 +157,22 @@ _ATTACHMENT_HINTS = (
 #: The classes whose whole point is to hold items, keyed by the component they hold them in
 #: (``StorageInventory``, always). Schema 15; see `_storage`.
 #:
-#: **Listed, not matched on the word "Storage", and the reason is the same one PIPE_CLASSES
-#: gives.** Every splitter and merger in the world owns a component literally named
-#: ``StorageInventory`` -- 848 of them on the reference save, 741 of them non-empty -- and
-#: what sits in it is the one to three items physically inside the junction at the moment of
-#: the save. Those are items in TRANSIT on a belt, not stock; the belts layer already draws
-#: every one of those pieces; and a "what have I got in storage" answer that counted them
-#: would be reporting the conveyor network twice, once as a route and once as a warehouse.
+#: Listed, not matched on the word "Storage": every splitter and merger in the world owns a
+#: component literally named ``StorageInventory``, holding the one to three items physically
+#: inside the junction at the moment of the save. Those are items in TRANSIT, and counting
+#: them would report the conveyor network twice, once as a route and once as a warehouse.
 #:
-#: Machine buffers are excluded for the same kind of reason and are not lost: an
-#: ``InputInventory`` / ``OutputInventory`` / ``FuelInventory`` is already on its own
-#: machine's record under ``buffers``, where it means "this smelter is starved" rather than
-#: "the player owns this". So is the AWESOME Shop's ``ShopInventory``, which is a catalogue,
-#: and the Space Elevator's intake, which ``progression`` already reports against the phase.
+#: Machine buffers are excluded and are not lost: an ``InputInventory`` / ``OutputInventory``
+#: / ``FuelInventory`` is already on its own machine's record under ``buffers``, where it
+#: means "this smelter is starved" rather than "the player owns this". So is the AWESOME
+#: Shop's ``ShopInventory``, which is a catalogue, and the Space Elevator's intake, which
+#: ``progression`` already reports against the phase.
 STORAGE_CLASSES = (
     # The two the player means by "a container": 5 x 11 m either way, 24 and 48 slots.
     "Build_StorageContainerMk1_C",
     "Build_StorageContainerMk2_C",
-    # The Personal Storage Box, and the two boxes that come attached to something else --
-    # the HUB's built-in container and the Blueprint Designer's. All three hold stock the
-    # player put there, which is the only test that matters here.
+    # The Personal Storage Box, the HUB's built-in container and the Blueprint Designer's.
+    # All three hold stock the player put there, which is the only test that matters here.
     "Build_StoragePlayer_C",
     "Build_StorageIntegrated_C",
     "Build_StorageBlueprint_C",
@@ -227,12 +185,9 @@ STORAGE_CLASSES = (
 #: Owners whose ``StorageInventory`` counts as the player's stock but which are not in
 #: STORAGE_CLASSES, matched on a word inside the instance name rather than by class.
 #:
-#: One entry, and it is here rather than in the list above because the two are known
-#: differently. A Freight Wagon is a VEHICLE, not a buildable: it has no ``Build_`` class, no
-#: footprint in the docs dump, and no save in this repository's reference directory holds one
-#: -- so the exact class name cannot be read off anything here, only guessed at. This word is
-#: what the bucket rule has matched on since schema 11, it is unchanged, and leaving it alone
-#: is the only way to be sure the fix beside it does not quietly move a wagon's cargo.
+#: A Freight Wagon is a VEHICLE, not a buildable: it has no ``Build_`` class, no footprint in
+#: the docs dump, and no save in the reference directory holds one, so its exact class name
+#: cannot be read off anything here and the name match stands in for it.
 _STORAGE_OWNER_HINTS = ("FreightWagon",)
 
 #: The fluid half. A different record, not a different key: these hold a single fluid in an
@@ -250,12 +205,10 @@ FLUID_BUFFER_CLASSES = (
 #: How far a span's curve is allowed to leave the straight line between its two control
 #: points before the projection bothers to carry the tangents that bend it, in centimetres.
 #:
-#: One centimetre, and it is the control points' OWN resolution rather than a taste: they are
-#: rounded to whole centimetres by the lines above, so a curve that cannot depart its chord by
-#: a whole centimetre is describing something finer than the geometry it is drawn through
-#: records. Dropping it costs nothing that survived the rounding, and it drops a great deal --
-#: 5,011 of the reference save's 6,691 spans, which is what keeps schema 15 a 15% payload
-#: growth instead of a 54% one.
+#: One centimetre is the control points' OWN resolution -- they are rounded to whole
+#: centimetres above -- so a curve that cannot depart its chord by a whole centimetre
+#: describes something finer than the geometry it is drawn through records. It drops most
+#: spans, which is what keeps schema 15 a 15% payload growth rather than a 54% one.
 TANGENT_EPS_CM = 1.0
 
 #: The peak of both cubic Hermite tangent basis functions on ``[0, 1]``: ``h10 = t^3-2t^2+t``
@@ -354,45 +307,26 @@ def pos_of(header) -> list | None:
 def yaw_of(quat) -> float | None:
     """Top-down facing in degrees from a placement quaternion ``(x, y, z, w)``, or None.
 
-    **The convention, and it is measured rather than assumed.**
+    The convention, measured against tile-spaced foundation pairs rather than assumed:
 
-    * **Axis: world Z (up), and only Z.** Every one of the reference save's 8,347
-      lightweight buildables has ``x == y == 0`` exactly, and of its 9,153 ``Build_*``
-      actors only 396 do not -- pipeline flow indicators, ceiling attachments and wall
-      poles, i.e. parts mounted on a wall, none of them a machine. So a single yaw is the
-      whole rotation of everything a top-down or floor view draws, which is why §16b
-      (``docs/parked.md``) settles for one float instead of three.
-    * **Handedness: positive yaw turns +X towards +Y**, in the same coordinates the
-      projection's ``pos`` reports -- that is, it is directly comparable with
-      ``atan2(dy, dx)`` between two positions, with no sign flip and no axis swap.
-    * **Range** ``(-180, 180]``, the range ``atan2`` gives -- after one fold. A quaternion
-      stored as float32, which is what an actor header carries, lands a half-turn on
-      ``-179.999...``, so rounding alone would emit both ``-180.0`` and ``180.0`` for the
-      same facing and a consumer bucketing yaws would see two of them.
+    * Axis is world Z (up) and only Z. Every lightweight buildable has ``x == y == 0``
+      exactly, and the ``Build_`` actors that do not are parts mounted on a wall -- flow
+      indicators, ceiling attachments, wall poles -- never a machine. So one yaw is the whole
+      rotation of everything a top-down or floor view draws.
+    * Positive yaw turns +X towards +Y, in the same coordinates the projection's ``pos``
+      reports, so it is directly comparable with ``atan2(dy, dx)`` between two positions.
+    * Range ``(-180, 180]``, after one fold. A float32 quaternion, which is what an actor
+      header carries, lands a half-turn on ``-179.999...``, so rounding alone would emit both
+      ``-180.0`` and ``180.0`` for the same facing and a consumer bucketing yaws sees two.
 
-    Verified against the geometry rather than against a formula. Take the 440 ``8x1``
-    foundations of the reference world's ``-20`` degree platform: their 928 pairs sitting
-    exactly one 800 cm tile apart lie at ``70.0000`` degrees modulo 90 (spread 0.0016),
-    and ``-20 mod 90 = 70``. The same holds for the ``-10`` / ``70`` / ``160`` / ``30``
-    degree groups -- 2,588 / 425 / 264 / 66 tile-spaced pairs, each within 0.001 degrees of
-    its own yaw. A flipped sign or a swapped axis fails all five.
+    The general form is kept even though ``x == y == 0`` reduces it to ``2*atan2(z, w)``,
+    because the wall-mounted actors do carry pitch and this is their yaw, not nonsense.
 
-    The general form is kept even though ``x == y == 0`` reduces it to ``2*atan2(z, w)``:
-    the 396 wall-mounted actors above do carry pitch, and this is their yaw, not nonsense.
-
-    **A rotation that will not read comes back as None, and it used to come back as 0.0.**
-    Schema 16, and the reason is the one this module states everywhere else: 0.0 is a
-    MEASUREMENT -- it means axis-aligned, which most of the world genuinely is -- so an
-    unreadable quaternion returning it published a bearing nobody read off anything, mixed
-    in with 8,000 real ones and indistinguishable from them. A consumer bucketing yaws, or
-    drawing a footprint, had no way to tell the two apart afterwards. Null is the claim the
-    rest of the stack already understands: the web adapter's ``serial._yaw`` maps it through,
-    and the map draws a null yaw axis-aligned while saying "facing: unknown" rather than
-    "facing: 0deg" -- which it has done since schema 12, for a projection too old to carry
-    the field at all. This is the same statement about one placement instead of all of them.
-
-    ``extract`` counts what came back null and says so in ``warnings``, so a save where the
-    header decode is going wrong announces itself instead of looking like a tidy grid.
+    A rotation that will not read comes back as None and never as 0.0 (schema 16): 0.0 is a
+    MEASUREMENT meaning axis-aligned, which most of the world genuinely is, so null is the
+    only way to say "facing unknown" distinguishably. ``extract`` counts what came back null
+    into ``warnings``, so a save where the header decode is going wrong announces itself
+    instead of looking like a tidy grid.
     """
     try:
         x, y, z, w = (float(v) for v in quat)
@@ -423,8 +357,6 @@ def header_info(path: str) -> dict:
 
 
 #: What a run threw away, keyed by a sentence that reads with a count in front of it.
-#: A plain ``Counter`` rather than a class: the only operations are ``+= 1`` at a dozen
-#: guards and one drain at the end, and the guards are the point.
 Drops = collections.Counter
 
 #: How many distinct drop reasons ``warnings`` names before it stops naming them. A save
@@ -441,14 +373,9 @@ def _drop_notes(drops: Drops) -> list[str]:
     """One ``warnings`` sentence per kind of record this extraction threw away.
 
     The projection is built by a dozen guards that ``continue`` past anything they cannot
-    read, and every one of them is right to: a single undecodable spline must not cost the
-    other 502 pipes. What was wrong is that they were silent, so a save whose trailing
-    bytes had stopped decoding published a *smaller* world and called it the world -- and
-    the caller, which reads ``warnings`` and shows it, had nothing to show.
-
-    Counted rather than logged per occurrence, the same shape the world generators use for
-    their own unresolved tallies: 900 identical lines say exactly what one line and a
-    number say, and only one of the two survives a scroll buffer.
+    read, because a single undecodable spline must not cost the other 502 pipes. Silent, they
+    would publish a SMALLER world and call it the world, so every guard counts what it drops
+    and the tally is drained here.
     """
     notes = [f"{count} {reason}" for reason, count in drops.most_common(DROP_REASONS_SHOWN)]
     rest = len(drops) - DROP_REASONS_SHOWN
@@ -460,9 +387,7 @@ def _drop_notes(drops: Drops) -> list[str]:
 def extract(path: str) -> dict:
     save = read_full_save(path)
     # Diagnostics, and only to stderr: stdout is the projection and has to stay parseable.
-    # pioneersav reports what it skipped rather than silently approximating it, and those
-    # notes are worth seeing without becoming a projection field -- adding them to `out`
-    # would make the two parsers' output differ for a reason that is not a disagreement.
+    # `projection._run_sidecar` folds this stream into the projection's own `warnings`.
     for offset, what in getattr(save, "warnings", None) or []:
         print(f"pioneersav: at body offset {offset}: {what}", file=sys.stderr)
 
@@ -483,44 +408,29 @@ def extract(path: str) -> dict:
         # Fluid pipe routing, as polylines. Schema 13; see `_pipes`.
         "pipes": {"classes": [], "networks": [], "segments": []},
         # The poles and the wires between them. Schema 17; see `_power`. Geometry ONLY: the
-        # connectivity is ``graph["power"]`` and has been since schema 11, and ``wires`` is
-        # that list's own positional twin rather than a second opinion about it.
+        # connectivity is ``graph["power"]``, and ``wires`` is that list's positional twin.
         "power": {"poles": {"classes": [], "instances": []}, "wires": []},
         "machines": [],
         "extractors": [],
         "generators": [],
         # The splitters and mergers a belt run passes through. Schema 13; see
-        # `_ATTACHMENT_HINTS`. Their own list rather than a fourth kind of machine: they
-        # run no recipe, draw no power and belong to the belt network, which is also the
-        # layer that draws them.
+        # `_ATTACHMENT_HINTS`. Their own list rather than a fourth kind of machine: they run
+        # no recipe, draw no power and belong to the belt network that draws them.
         "attachments": [],
         # The containers and fluid buffers, and what is in each one. Schema 15; see `_storage`.
-        # Their own list rather than a fourth kind of machine for the same reason
-        # ``attachments`` is: a container runs no recipe and draws no power, and what it IS is
-        # its contents. ``inventories["storage"]`` next door is the same stacks summed over the
-        # whole world, which answers "have I got enough steel" and cannot answer "where is it".
+        # ``inventories["storage"]`` next door is the same stacks summed over the whole world,
+        # which answers "have I got enough steel" and cannot answer "where is it".
         "storage": [],
-        # The crates on the ground and what is in each one. Schema 18; see `_crates`.
-        #
-        # Its OWN key rather than more rows in ``storage``, and the reason is that the two
-        # answer different questions. A container is infrastructure: the player built it, it
-        # stays where it was put, and "where did I leave the steel" is a question about a
-        # base. A crate is a SITUATION -- somebody died here, or dismantled something with a
-        # full inventory -- it self-destructs the moment it is emptied, and the question it
-        # answers is "what did I lose and where". Merging them would put 2 rows that are
-        # events among 151 that are places, and any client wanting one without the other
-        # would have to filter by class to get its own question back.
+        # The crates on the ground and what is in each one. Schema 18; see `_crates`. Its own
+        # key rather than more ``storage`` rows: a container is infrastructure that stays where
+        # it was put, and a crate is a situation that self-destructs the moment it is emptied.
         "crates": [],
         "pipe_networks": [],
         "depot": {},
-        # Split by owner: lumping machine buffers in with carried stock overstates
-        # everything. Fluids are raw litres here; the server scales them.
-        #
-        # ``crate`` is schema 19's bucket and the split's second correction (16 moved eight
-        # containers out of ``machine``; this moves the crates out). A death crate's contents
-        # are a pioneer's pockets lying on the ground -- recoverable stock, not a machine
-        # buffer -- and summing them with the smelter buffers made them material that exists
-        # and cannot be spent. See `inventory_bucket`.
+        # Split by owner: lumping machine buffers in with carried stock overstates everything.
+        # Fluids are raw litres here; the server scales them. A crate's contents get their own
+        # bucket (schema 19) because they are recoverable stock rather than a machine buffer.
+        # See `inventory_bucket`.
         "inventories": {"player": {}, "storage": {}, "machine": {}, "crate": {}},
         "node_state": {},
         # Char_Player_C carries the pawn's transform. BP_PlayerState_C sits at the
@@ -531,9 +441,8 @@ def extract(path: str) -> dict:
         "graph": {"actors": [], "roles": [], "material": [], "power": []},
         "warnings": [],
     }
-    #: Threaded into the three builders that skip records rather than returned by them,
-    #: because what a reader wants is ONE list of what this save cost, not three fields
-    #: nobody added to the schema. Drained into ``warnings`` at the bottom.
+    #: Threaded into the builders that skip records rather than returned by them, so that a
+    #: reader gets ONE list of what this save cost. Drained into ``warnings`` at the bottom.
     drops = Drops()
     counts: dict[str, int] = {}
     n_objects = 0
@@ -549,17 +458,16 @@ def extract(path: str) -> dict:
     pipe_nets: list[tuple] = []
     #: (class, instanceName, pos, yaw, mFluidBox) per container and fluid buffer, and
     #: owner instanceName -> (totals, slotCount) for every ``StorageInventory`` in the world.
-    #: Held rather than joined in the walk for the two reasons the walk cannot do it: a
-    #: container's inventory is a COMPONENT, written after the actor that owns it, and a fluid
-    #: buffer's fluid comes off its pipe NETWORK, which may be written after either.
+    #: Held because the walk cannot join them: a container's inventory is a COMPONENT, written
+    #: after the actor that owns it, and a fluid buffer's fluid comes off its pipe NETWORK,
+    #: which may be written after either.
     storage_actors: list[tuple] = []
     held: dict[str, tuple] = {}
     #: (class, instanceName, pos, yaw, mCrateType) per crate, and owner instanceName ->
-    #: (totals, slotCount) for every component named ``Inventory``. Held for the reason the
-    #: containers above are, and one more: a crate's inventory component is spelled
-    #: ``.inventory`` on some saves and ``.Inventory`` on others -- both cases occur on this
-    #: machine, 89 and 81 times -- so the role test has to be case-folded and the join has to
-    #: happen where the OWNER's class is known. See `_crates`.
+    #: (totals, slotCount) for every component named ``Inventory``. Held for the containers'
+    #: reason and one more: a crate's inventory component is spelled ``.inventory`` on some
+    #: saves and ``.Inventory`` on others, so the join has to happen where the OWNER's class
+    #: is known. See `_crates`.
     crate_actors: list[tuple] = []
     crate_held: dict[str, tuple] = {}
     #: (class, instanceName, pos, yaw) per pole, and shortName -> (endA, endB) for every actor
@@ -626,11 +534,10 @@ def extract(path: str) -> dict:
                     "slots": len(p["mInventoryStacks"] or []),
                 }
             elif role == "StorageInventory":
-                # Every one of them, including the 848 splitters and mergers that also own a
+                # Every one of them, including the splitters and mergers that also own a
                 # component by this name: filtering here would mean knowing the owner's class,
                 # which a component header does not carry. `_storage` looks up only the owners
-                # it has an actor for, so the splitters simply go unclaimed -- see
-                # STORAGE_CLASSES for why they must.
+                # it has an actor for, so the splitters go unclaimed.
                 totals = {}
                 _accumulate_inventory(p["mInventoryStacks"], totals)
                 held[str(instance).rpartition(".")[0]] = (
@@ -638,14 +545,12 @@ def extract(path: str) -> dict:
                     len(p["mInventoryStacks"] or []),
                 )
             elif role.lower() == "inventory":
-                # Every one of them, on the terms ``StorageInventory`` above is collected on:
-                # a player pawn, a crashed drop pod and a crate all own a component by this
-                # name, and which of them this is cannot be known from a component header.
-                # `_crates` looks up only the owners it has a crate ACTOR for, so the pawn and
-                # the pods simply go unclaimed. Case-folded because the game spells the same
-                # component both ways across save versions -- ``.inventory`` and ``.Inventory``
-                # -- and a case-sensitive test would silently empty half the crates in the
-                # world while reporting them all as present.
+                # A player pawn, a crashed drop pod and a crate all own a component by this
+                # name, and a component header cannot say which; `_crates` looks up only the
+                # owners it has a crate ACTOR for. Case-folded because the game spells it
+                # ``.inventory`` on some save versions and ``.Inventory`` on others, and a
+                # case-sensitive test silently empties half the crates in the world while
+                # reporting them all as present.
                 totals = {}
                 _accumulate_inventory(p["mInventoryStacks"], totals)
                 crate_held[str(instance).rpartition(".")[0]] = (
@@ -653,13 +558,10 @@ def extract(path: str) -> dict:
                     len(p["mInventoryStacks"] or []),
                 )
             elif role == "InventoryPotential":
-                # The overclock slot inventory: what is physically plugged into the
-                # building. This is the ONLY record of a committed Power Shard, and it
-                # cannot be reconstructed from the clock. A shard raises the MAXIMUM
-                # potential; the slider is then set anywhere below it, so two buildings
-                # on this save hold 3 shards while running at 2.0. Deriving from clock
-                # would report 95 committed shards where 97 are actually spent.
-                # Every building has this component (447 of them); 41 are non-empty.
+                # The overclock slot inventory: what is physically plugged into the building.
+                # This is the ONLY record of a committed Power Shard and cannot be
+                # reconstructed from the clock, because a shard raises the MAXIMUM potential
+                # and the slider is then set anywhere below it.
                 totals = {}
                 _accumulate_inventory(p["mInventoryStacks"], totals)
                 if totals:
@@ -703,17 +605,14 @@ def extract(path: str) -> dict:
                 )
 
         # A drawn wire's own geometry, keyed on the PROPERTY rather than on the class: what
-        # makes an actor a wire here is that it carries the endpoints of one, which is the
-        # same test `mWires` above applies to a connection. All 1,297 carriers on the
-        # reference world are ``Build_PowerLine_C``, and a future ``Build_PowerLineHighSpeed``
-        # or a modded one would be read by this and skipped by a class list. See `_wire_span`.
+        # makes an actor a wire here is that it carries the endpoints of one, so a modded or
+        # future power line is read by this and would be skipped by a class list. See
+        # `_wire_span`.
         #
-        # NOT counted as a drop when it will not read, and that is a deliberate difference
-        # from every other guard in this file. A wire whose geometry is missing is not a wire
-        # this run lost: it keeps its edge in ``graph["power"]`` and it keeps its ROW in
-        # ``power["wires"]``, holding null, which is the record. Counting it would also put a
-        # warning on every save older than this property -- see `_power` on what an all-null
-        # wires list means.
+        # NOT counted as a drop when it will not read, unlike every other guard in this file:
+        # a wire whose geometry is missing keeps its edge in ``graph["power"]`` and its ROW in
+        # ``power["wires"]``, holding null, and counting it would warn on every save older
+        # than the property.
         if "mWireInstances" in p:
             span = _wire_span(p["mWireInstances"])
             if span is not None:
@@ -829,11 +728,9 @@ def extract(path: str) -> dict:
             continue
 
         # ---- crates ---------------------------------------------------------
-        # ``continue``d past, unlike the pipes and containers below, and the difference is
-        # that a crate is NOT a ``Build_`` actor: it owes ``building_counts`` nothing, has no
-        # recipe, no clock and no buffers, and every line under the gate below is about a
-        # buildable. Held rather than emitted because its contents are a component, written
-        # after it -- the containers' reason exactly.
+        # ``continue``d past, unlike the pipes and containers below, because a crate is NOT a
+        # ``Build_`` actor: it owes ``building_counts`` nothing and has no recipe, clock or
+        # buffers.
         if cls in CRATE_CLASSES:
             crate_actors.append(
                 (
@@ -850,30 +747,25 @@ def extract(path: str) -> dict:
             continue
         counts[cls] = counts.get(cls, 0) + 1
 
-        # Every buildable's place, for `_power`'s endpoint pairing and nothing else. Cheap --
-        # one tuple per actor, 9,778 of them on the reference world -- and it has to be every
-        # one of them rather than only the poles, because a wire ends on a machine as often as
-        # on a pole: 700 of this world's 2,594 endpoints are a smelter, a refinery or a miner.
+        # Every buildable's place, for `_power`'s endpoint pairing and nothing else. It has to
+        # be every one of them rather than only the poles, because a wire ends on a machine
+        # nearly as often as on a pole.
         at = pos_of(header)
         if at is not None:
             actor_at[str(instance).rsplit(".", 1)[-1]] = tuple(at)
 
-        # Held, not `continue`d past, for the reason the pipes and containers below are: a
-        # pole is a Build_ actor and still owes ``building_counts`` its tally.
+        # Poles, pipes and containers are HELD rather than `continue`d past: each is a Build_
+        # actor and still owes ``building_counts`` its tally and `record` below its row.
         if cls in POWER_POLE_CLASSES:
             pole_actors.append(
                 (cls, instance, pos_of(header), yaw_of(getattr(header, "rotation", None)))
             )
 
-        # Held, not `continue`d past: a pipe is still a Build_ actor and still owes
-        # `building_counts` its tally, which is a schema-11 key that predates all of this.
         if cls in PIPE_CLASSES:
             pipe_actors.append(
                 (cls, instance, getattr(header, "position", None), p.get("mSplineData"))
             )
 
-        # Held, not `continue`d past, for the reason the pipes above are: a container is a
-        # Build_ actor and still owes `building_counts` its tally.
         if cls in STORAGE_CLASSES or cls in FLUID_BUFFER_CLASSES:
             storage_actors.append(
                 (
@@ -889,10 +781,9 @@ def extract(path: str) -> dict:
             "cls": cls,
             "instance": instance,
             "pos": pos_of(header),
-            # The KEY is always emitted, like `pos` and unlike the property-derived fields
-            # below: an actor header always carries a transform, so an absent yaw would mean
-            # the projection is old rather than the building is unrotated. Its VALUE is null
-            # where the transform would not read -- a third claim again, and see `yaw_of`.
+            # The KEY is always emitted, unlike the property-derived fields below: an actor
+            # header always carries a transform, so an absent yaw means the projection is old
+            # rather than the building unrotated. Its VALUE is null where it would not read.
             "yaw": yaw_of(getattr(header, "rotation", None)),
         }
         if "mCurrentPotential" in p:
@@ -927,8 +818,6 @@ def extract(path: str) -> dict:
             record["fuel"] = ref_class(p.get("mCurrentFuelClass"))
             out["generators"].append(record)
         elif any(h in cls for h in _ATTACHMENT_HINTS):
-            # Nothing to read off the properties: what a splitter is, is where it stands
-            # and which way it faces, and `record` already carries both.
             out["attachments"].append(record)
 
     # Buffers, now that every component has been seen.
@@ -943,11 +832,8 @@ def extract(path: str) -> dict:
         if record is not None:
             record["potential_slots"] = slotted
 
-    # A power wire always joins exactly two connections; anything else is a
-    # half-built or orphaned line and is dropped rather than guessed at.
-    #
     # The edges and the drawn spans come out of ONE pass over ``wire_ends``, which is what
-    # makes ``power["wires"][i]`` the geometry of ``graph["power"][i]``. Two passes would be
+    # makes ``power["wires"][i]`` the geometry of ``graph["power"][i]``: two passes would be
     # two chances to drop a different wire. See `_power`.
     power_edges, out["power"] = _power(
         wire_ends, wire_geom, pole_actors, actor_at, actor_id, actor_ix, drops
@@ -971,29 +857,19 @@ def extract(path: str) -> dict:
     out.setdefault("progression", {}).setdefault("available_recipes", [])
     out["progression"].setdefault("purchased_schematics", [])
 
-    # Counted off the finished payload rather than tallied inside `yaw_of`, which is a pure
-    # function called from three places including `_structures`, and threading a counter
-    # through them would buy nothing this does not: what is reported is exactly the number of
-    # null yaws a reader can go and find. Silent on a healthy save -- all 8,347 lightweight
-    # pieces and all 9,153 actors on the reference world read -- and the point is that a
-    # header decode going wrong stops looking like a world built on the grid.
+    # Counted off the FINISHED payload rather than tallied inside `yaw_of`, so that what is
+    # reported is exactly the number of null yaws a reader can go and find. Silent on a
+    # healthy save; the point is that a header decode going wrong stops looking like a world
+    # built on the grid. Every list carrying a placement is counted -- a kind left out would
+    # make this a count of some of the world rather than of the world.
     unread = (
         sum(
             1
-            # Schema 18's crates join the census on the terms schema 17's poles did: a crate's
-            # yaw is read by the same `yaw_of` and means the same thing, and a placement left
-            # out would make this a count of some of the world. Free on the evidence -- all
-            # 170 crates in the 67 saves on the reference machine read their rotation -- which
-            # is exactly why it can be added to a banked key without moving it.
             for key in ("machines", "extractors", "generators", "attachments", "storage", "crates")
             for record in out[key]
             if record.get("yaw") is None
         )
         + sum(1 for row in out["structures"]["instances"] if len(row) > 4 and row[4] is None)
-        # Schema 17's poles, counted here for the same reason the five record lists are: a
-        # pole's yaw is read by exactly the same `yaw_of` and means exactly the same thing,
-        # so leaving 701 more placements out of this census would make the number a count of
-        # some of the world rather than of the world.
         + sum(1 for row in out["power"]["poles"]["instances"] if row[4] is None)
     )
     if unread:
@@ -1013,21 +889,18 @@ def _removed(save) -> dict:
     What it says is which ones do *not* any more, and that negative record is the only way to
     answer "how many slugs have I picked up" or "which crash sites have I looted".
 
-    Both parsers can produce this. `pioneersav` merges the three lists the format keeps into
-    `destroyed_actors`; the vendored parser exposes the same three separately, as each level's
-    `collectables1`/`collectables2` plus two save-level lists. Verified equal set for set on
-    the reference save -- 889 actors either way -- which is why this is a projection field and
-    not a reason the two disagree.
+    `pioneersav` merges the three lists the format keeps into `destroyed_actors`; the fallback
+    below reads the same three separately, as each level's `collectables1`/`collectables2` plus
+    two save-level lists, and the two were verified equal set for set.
 
     Interned by cell, and the actor's path is reduced to its leaf: the full path repeats
-    `Persistent_Level:PersistentLevel.` on every one of 889 entries and says nothing.
+    `Persistent_Level:PersistentLevel.` on every entry and says nothing.
     """
     refs = getattr(save, "destroyed_actors", None)
     if refs is None:
-        # The vendored parser's spelling: three lists, none of them merged.
-        # ref_path, not str(): the vendored ObjectReference's __str__ renders the whole
-        # object as "<ObjectReference: levelName=..., pathName=...>", so str() ends in ">"
-        # and every leaf name comes out unique -- 889 distinct classes instead of 270.
+        # ref_path, not str(): an ObjectReference's __str__ renders the whole object as
+        # "<ObjectReference: levelName=..., pathName=...>", so str() ends in ">" and every
+        # leaf name comes out unique.
         pairs: list[tuple[str, str]] = []
         for level in getattr(save, "levels", None) or []:
             for which in ("collectables1", "collectables2"):
@@ -1041,9 +914,8 @@ def _removed(save) -> dict:
     cells: dict[str, int] = {}
     instances: list[list] = []
     counts: dict[str, int] = {}
-    # Sorted, because the order is an artefact of which of the three lists a parser walks
-    # first and means nothing. Both engines then emit byte-identical output, which keeps this
-    # field usable as a cache key and keeps the parity diff a measurement of content.
+    # Sorted, because the order is an artefact of which of the three lists was walked first
+    # and means nothing; sorting keeps this field usable as a cache key.
     for cell, path in sorted(refs, key=lambda pair: (pair[0], pair[1])):
         leaf = path.rsplit(".", 1)[-1]
         if not leaf:
@@ -1067,9 +939,8 @@ def _removed_class(leaf: str) -> str:
     world id, then an index). So the class is recovered by stripping from the right: the
     trailing index, then a `_UAID_<hex>` if present, then a trailing `_C`.
 
-    Approximate on purpose, and the reason is worth stating: `BP_Crystal2_228` cannot be told
-    from a class literally named `BP_Crystal2`, so the census groups by what the name shows
-    rather than by a class list nobody has. Callers wanting slugs should match a prefix
+    Approximate: `BP_Crystal2_228` cannot be told from a class literally named `BP_Crystal2`,
+    so the census groups by what the name shows. Callers wanting slugs should match a prefix
     (`BP_Crystal`), which is what `save/state.py` does.
     """
     parts = leaf.split("_")
@@ -1102,16 +973,10 @@ def _phase_costs(raw) -> dict:
     """mGamePhaseCosts: remaining delivery amounts per phase. DEPRECATED AND FROZEN.
 
     FGGamePhaseManager.h calls both this array and the EGamePhase enum it is keyed by
-    "DEPRECATED Only kept for save compatibility". That is not a warning about a future
-    removal -- the field is already dead, and it is emitted here only so the server can
-    show it next to the live record and say so.
-
-    Measured across all 29 parseable saves of the reference world: the array is
-    byte-identical at 180 h and at 316 h, spanning the play session (between 244.0 h and
-    251.0 h) where mCurrentGamePhase advanced Phase_2 -> Phase_3 and mTargetGamePhase
-    Phase_3 -> Phase_4. Completing an entire Space Elevator phase moved nothing in it.
-    It still claims 500 Modular Engine and 100 Adaptive Control Unit outstanding on a
-    phase the player finished 70 hours ago.
+    "DEPRECATED Only kept for save compatibility", and it is frozen in fact as well as in the
+    header: measured across 29 saves of one world it is byte-identical either side of a
+    completed Space Elevator phase, still claiming deliveries the player made 70 hours ago.
+    It is emitted only so the server can show it beside the live record and say so.
 
     Only 4 phases are stored while the game has more, so later phases never appear.
     """
@@ -1179,20 +1044,14 @@ def _ongoing(raw) -> list:
 def _placed(inst) -> bool:
     """Is this lightweight record a piece that exists, or a stale slot?
 
-    173 of the 224,530 records across the 31 saves carry **no swatch and no recipe** -- every
-    other one carries both, and not a single record carries exactly one, which is what makes
-    this a clean test rather than a heuristic. They occur on 7 saves, up to 80 in one.
+    A stale slot carries NO swatch and NO recipe; a real piece carries both, and across 31
+    saves not one record carries exactly one, which makes this a clean test rather than a
+    heuristic. Emitting a stale slot invents floor: `graph/structure.py` builds foundation
+    slabs from these positions and `spatial/elevation.py` samples every one as ground height.
 
-    Emitting them is not cosmetic. `graph/structure.py` builds foundation slabs from these
-    positions and `spatial/elevation.py` samples every one as ground height, so a stale record
-    invents floor: on `Han solo.sav` the phantom records produce an entire extra 7-tile slab,
-    and on `Han Solo_260726-212757` the newest construction measures 521 tiles where 496 exist.
-
-    Deliberately NOT positional. Our parser's instance has the swatch at index 3 and the recipe
-    at 10; the vendored parser's has them at 2 and 7, because it does not surface the scale. A
-    positional guard would therefore read a different field per engine and break the projection
-    parity that the whole reimplementation is measured by. Asking "does any field name an asset"
-    is true of a real piece and false of a stale slot under either shape.
+    NOT positional, and must not become so: the field indices differ between parsers, so
+    asking "does any field name an asset" is the only test true of a real piece and false of a
+    stale slot under either shape.
     """
     for field in inst if isinstance(inst, list) else ():
         if getattr(field, "pathName", None):
@@ -1205,10 +1064,10 @@ def _placed(inst) -> bool:
 def _lightweight(obj) -> dict:
     """Build_* classes held by FGLightweightBuildableSubsystem.
 
-    These appear in NO actor header -- a header-only census reported 86 built
-    classes where 103 are actually built. The data lives in ``actorSpecificInfo``,
-    not in ``properties``, shaped as ``[count, [buildClassPath, [instance, ...]], ...]``,
-    so the count comes from the instance list that follows each class path.
+    These appear in NO actor header, so a header-only census undercounts what is built. The
+    data lives in ``actorSpecificInfo`` and not in ``properties``, shaped as
+    ``[count, [buildClassPath, [instance, ...]], ...]``, so the count comes from the instance
+    list that follows each class path.
     """
     out: dict[str, int] = {}
 
@@ -1233,29 +1092,20 @@ def _lightweight(obj) -> dict:
 def _structures(obj, drops: Drops) -> dict:
     """Transforms of every lightweight buildable -- foundations, ramps, walls, catwalks.
 
-    These carry the one signal power and belts both lack: what the player physically
-    BUILT AS ONE THING. Measured on the reference save, foundation slabs split into 101
-    pieces where power gives 9 and belts give 35, and every named factory lands on its
-    own dominant slab.
+    These carry the one signal power and belts both lack: what the player physically BUILT AS
+    ONE THING, which is why factory slabs resolve far more finely here than either graph.
 
-    ``actorSpecificInfo`` is a list of ``[buildClassPath, [instance, ...]]`` pairs, and
-    each instance is ``[rotationQuaternion, position, ...]`` -- so unlike the class
-    census above, the transform is the SECOND element, not derivable from the count.
+    ``actorSpecificInfo`` is a list of ``[buildClassPath, [instance, ...]]`` pairs, and each
+    instance is ``[rotationQuaternion, position, ...]`` -- so unlike the class census above,
+    the transform is the SECOND element, not derivable from the count.
 
-    Rows are ``[classIndex, x, y, z, yaw]``. The yaw column arrived in schema 12 and is
-    what stops a client drawing an angled platform as a staircase: 4,631 of the reference
-    save's 8,347 pieces sit at a yaw that is not a multiple of 90, across 34 distinct
-    angles. It is always present -- 0.0 is "axis-aligned", not "unknown" -- and every
-    consumer of these rows reads them positionally with a ``len(row) >= 4`` guard, so the
-    extra column is additive for a reader that predates it.
+    Rows are ``[classIndex, x, y, z, yaw]``, the yaw column since schema 12; most of a world's
+    pieces sit at an angle that is not a multiple of 90, and without it a client draws an
+    angled platform as a staircase. Interned and rounded to whole centimetres, because
+    sub-centimetre precision cannot change whether two 8 m foundations touch.
 
-    Interned and rounded to whole centimetres: 8,372 pieces cost 198 KB this way
-    against roughly 1.2 MB emitted naively, and sub-centimetre precision is meaningless
-    for deciding whether two 8 m foundations touch.
-
-    The slab geometry is deliberately NOT computed here. It lives behind a subprocess
-    and a cache, so freezing the link distance in the sidecar would mean a 3-minute
-    re-parse to tune a threshold.
+    Slab geometry is NOT computed here. It lives behind a subprocess and a cache, so freezing
+    the link distance in the sidecar would mean a 3-minute re-parse to tune a threshold.
     """
     classes: list[str] = []
     index: dict[str, int] = {}
@@ -1263,8 +1113,7 @@ def _structures(obj, drops: Drops) -> dict:
 
     for entry in getattr(obj, "actorSpecificInfo", None) or []:
         # NOT a drop: the blob is ``[version, [classPath, [instance, ...]], ...]``, so the
-        # leading element is the record format's version word and is skipped on every save
-        # there has ever been. Counting it would put a warning on all 31 of them.
+        # leading element is the record format's version word and is skipped on every save.
         if not isinstance(entry, list):
             continue
         if len(entry) != 2:
@@ -1300,13 +1149,8 @@ def _structures(obj, drops: Drops) -> dict:
 def _length(x: float, y: float, z: float) -> float:
     """Length of a 3-vector, in whatever unit its components are.
 
-    Spelled out rather than reached for as the stdlib's point-to-point distance, which
-    `test_geo_centroid` reserves package-wide for the one module that works in centimetres
-    throughout: the difference between a 2D and a 3D distance is a modelling decision that has
-    to be named rather than implied by how long a tuple happens to be. Here there is no
-    decision to make and none to hide -- a spline tangent has three components and all three of
-    them are the tangent -- so this takes three scalars and says so, rather than `_bulge`
-    handing 3-tuples to something that would silently accept 2-tuples too.
+    Three scalars rather than a sequence, so that a 2-tuple cannot be passed where a spline
+    tangent is meant: `test_geo_centroid` reserves the stdlib distance helper package-wide.
     """
     return math.sqrt(x * x + y * y + z * z)
 
@@ -1314,41 +1158,31 @@ def _length(x: float, y: float, z: float) -> float:
 def _bulge(p0: list, m0: list, p1: list, m1: list) -> float:
     """An UPPER BOUND, in centimetres, on how far a cubic Hermite span leaves its own chord.
 
-    The whole of `_spans`' decision, and it is a bound rather than a measurement on purpose:
-    it may only ever OVERSTATE the curve, because overstating costs bytes and understating
-    would silently flatten a bend that the save does record.
+    The whole of `_spans`' decision. A bound rather than a measurement, and it may only ever
+    OVERSTATE the curve: overstating costs bytes, and understating would silently flatten a
+    bend the save does record.
 
     A Hermite span is ``Q(t) = h00 p0 + h10 m0 + h01 p1 + h11 m1``. Split both tangents into
-    the part along the chord ``v = p1 - p0`` and the part across it, and the two halves can be
-    bounded separately, because the curve's distance from the chord SEGMENT is at most its
-    sideways offset plus however far it runs off either end:
+    the part along the chord ``v = p1 - p0`` and the part across it; the curve's distance from
+    the chord SEGMENT is at most its sideways offset plus however far it runs off either end:
 
-    * **Sideways** is ``h10 m0_perp + h11 m1_perp``, and both basis functions peak at 4/27, so
-      it never exceeds ``(4/27)(|m0_perp| + |m1_perp|)``. A bound, not an equality -- the two
-      peak at different ``t`` (1/3 and 2/3) and partly cancel.
-    * **Along** is the cubic ``u(t) = (s0+s1-2) t^3 + (3-2 s0-s1) t^2 + s0 t``, where ``s`` is
-      a tangent's chord-relative length, and it is solved EXACTLY: ``u`` runs 0 to 1, and any
-      excursion outside that is a real overshoot past an endpoint. Exactly, because bounding
-      this one the same crude way costs the whole optimisation -- the game's commonest tangent
-      is half the chord, for which the loose bound reads 7% of the chord (29 cm on a 4 m belt)
-      while the true overshoot is zero. Two roots of a quadratic buy back 5,011 spans.
+    * Sideways is ``h10 m0_perp + h11 m1_perp``, and both basis functions peak at 4/27, so it
+      never exceeds ``(4/27)(|m0_perp| + |m1_perp|)``. A bound, not an equality: the two peak
+      at different ``t`` (1/3 and 2/3) and partly cancel.
+    * Along is the cubic ``u(t) = (s0+s1-2) t^3 + (3-2 s0-s1) t^2 + s0 t``, where ``s`` is a
+      tangent's chord-relative length, and it is solved EXACTLY -- ``u`` runs 0 to 1 and any
+      excursion outside that is a real overshoot past an endpoint. Exactly, because the crude
+      bound reads 7% of the chord for the game's commonest tangent (half the chord) where the
+      true overshoot is zero, which would cost the whole optimisation.
 
-    **Verified against sampling on the reference save.** Over all 6,691 belt and pipe spans,
-    against the maximum distance from a 512-point tessellation to the chord segment: the bound
-    is never smaller than the sampled truth (that is the property that matters) and never more
-    than 3.08x it. It calls 5,011 spans flat where an exact test would call 5,147 -- 136 spans
-    keep tangents they did not need, which is the side to err on.
-
-    **And it is why this is affordable at all.** 7.5 ms over those 6,691 spans, against 485 ms
-    to sample them and a 2.19 s parse. Sampling would have made curve fidelity cost more than
-    reading the belt trailers does.
+    Checked against a 512-point tessellation of every span in the reference save: never
+    smaller than the sampled truth, and never more than 3.08x it.
     """
     vx, vy, vz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
     n2 = vx * vx + vy * vy + vz * vz
     if n2 <= 0:
-        # Coincident control points: there is no chord to be along, so all of both tangents
-        # is sideways. 116 of the reference save's spans are this, all of them the zero-length
-        # joint where a conveyor lift meets its belt.
+        # Coincident control points, which is the zero-length joint where a conveyor lift
+        # meets its belt: there is no chord to be along, so all of both tangents is sideways.
         return _HERMITE_PEAK * (_length(*m0) + _length(*m1))
     s0 = (m0[0] * vx + m0[1] * vy + m0[2] * vz) / n2
     s1 = (m1[0] * vx + m1[1] * vy + m1[2] * vz) / n2
@@ -1379,16 +1213,14 @@ def _spans(points: list, tangents: list) -> list:
     """The curve column for one route: ``[[...]]`` to append, or ``[]`` when it is all straight.
 
     Returned as a list to splat onto the row rather than as a value, because a route with no
-    bend in it gets **no column at all** -- 2,198 of the reference save's 3,085 belt pieces and
-    222 of its 503 pipes. That is the shape that keeps the addition free for everything that
-    was already right: a straight run's row is byte-identical to the one schema 14 emitted.
+    bend in it gets NO COLUMN AT ALL, which keeps a straight run's row byte-identical to the
+    one schema 14 emitted.
 
-    Within a route that does bend, one entry per SPAN rather than per point, because a span is
-    the unit a curve is drawn in -- it needs the leave tangent of the point behind it and the
-    arrive tangent of the point ahead, and nothing needs the arrive tangent of the first point
-    or the leave tangent of the last. (Which is also the only place the save stores a bare unit
-    vector instead of a real tangent, so dropping them removes the one shape a consumer would
-    have had to special-case.)
+    One entry per SPAN rather than per point, because a span is the unit a curve is drawn in:
+    it needs the leave tangent of the point behind it and the arrive tangent of the point
+    ahead, and nothing needs the arrive tangent of the first point or the leave tangent of the
+    last -- which are also the only places the save stores a bare unit vector rather than a
+    real tangent.
 
     A flat span stores ``0``, not its tangents. See `_bulge` for what "flat" is measured as.
     """
@@ -1407,67 +1239,38 @@ def _spans(points: list, tangents: list) -> list:
 def _belts(chains: list, drops: Drops) -> dict:
     """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``.
 
-    The one thing a map of a factory cannot be drawn without and the projection had no
-    field for. Belts are not lightweight buildables and their geometry is not in any
-    property: it lives in ``FGConveyorChainActor``'s trailing bytes, which
-    ``pioneersav.trailers`` decodes and which nothing read until schema 12.
+    Belts are not lightweight buildables and their geometry is in no property: it lives in
+    ``FGConveyorChainActor``'s trailing bytes, which ``pioneersav.trailers`` decodes as
+    ``location, arrive tangent, leave tangent`` per point.
 
     Rows are ``[chainIndex, classIndex, [[x, y, z], ...]]``, and ``[..., tangents]`` where the
-    run bends -- see `_spans` for the fourth column and the note below for what it fixes:
+    run bends -- see `_spans` for the fourth column.
 
-    * **chainIndex** groups segments into the run the game itself groups them into -- one
-      chain is one continuous flow of items, 1,909 chains over 3,085 belt pieces on the
-      reference save. Dense and ordered, so a consumer that wants per-chain polylines
-      concatenates the rows sharing an index and a consumer that wants per-belt polylines
+    * **chainIndex** groups segments into the run the game itself groups them into: one chain
+      is one continuous flow of items. Dense and ordered, so a consumer wanting per-chain
+      polylines concatenates the rows sharing an index and one wanting per-belt polylines
       draws each row.
     * **classIndex** interns the belt's class, which carries both the mark and whether the
-      piece is a belt or a LIFT -- 302 lift segments here, on 183 chains. A floor view
-      needs exactly that distinction: a lift is the connector between two Z bands.
-    * The points are the spline's control points at the same whole-centimetre precision
-      ``_structures`` uses, and there is nothing to thin: a straight belt is
-      2 points and the reference save's 3,085 segments carry 8,292 points between them,
-      2.7 apiece. They are already the bends and nothing else.
+      piece is a belt or a LIFT. A floor view needs exactly that distinction, because a lift
+      is the connector between two Z bands.
+    * The points are the spline's control points at the whole-centimetre precision
+      ``_structures`` uses. There is nothing to thin: they are already the bends.
 
-    **The points are the bends, and until schema 15 they were ALSO the whole curve, which is
-    why a curved belt drew as a fan of chords.** A chain's trailer stores three vectors per
-    point, not one -- ``pioneersav.trailers`` has decoded ``location, arrive tangent, leave
-    tangent`` since it could read a chain at all -- and this function read ``point[0]`` and
-    threw the other two away. So a bend the player laid as a smooth arc arrived as its four or
-    six corners joined by straight lines.
-
-    **That the tangents mean what UE says they mean is measured, not assumed, and the check is
-    a good one because the save states the answer independently.** Every chain segment records
-    where it starts and ends in centimetres ALONG THE CHAIN, so the difference is that
-    segment's true arc length -- a number the geometry did not write. Reconstructing each
-    segment as a cubic Hermite through these tangents and integrating: **3,079 of 3,085
-    segments land within 1 cm of the length the save declares**, worst case 2.4 cm. The chord
-    polyline the projection used to emit manages 2,336, is out by 46.8 cm at the 95th
-    percentile and by **16.4 m** at its worst. On the 848 segments that actually bend the split
-    is 843 against 208. Two independent claims -- the Hermite basis, and which of the three
-    stored vectors is the arrive and which the leave -- both fall out of one measurement.
-
-    **Two facts about the source that this function is entirely about, both measured.**
+    Two measured facts about the source that this function is entirely about.
 
     1. **The spline is in the chain actor's frame**, so the actor's own position has to be
-       added back. Compared against the belt actors' own headers, ``point + chainPos`` is a
-       median 0.0 cm from the belt it belongs to, where the raw point is 156,041 cm away --
-       a whole map. All **51,200 chains across the 66 saves on this disk** carry an identity
-       rotation, so there is no orientation to undo; a chain that ever carried one would
-       need this to rotate the points before translating them, which is why the measurement
-       is stated rather than the assumption made quietly.
-    2. **Segments are stored output-first.** ``pioneersav.trailers`` records that offsets
-       grow towards the output and that ``segments[-1]`` holds offset 0, i.e. the chain's
-       input, so rows come out reversed -- in TRAVEL ORDER, input first. Measured over the
-       reference save's 1,176 joins between consecutive segments of one chain: reversed,
-       1,096 of them are the exact same point and the other 80 are the 200/300/400 cm of
-       spline-less offset a conveyor lift junction carries. In file order the median join
-       is 2,450 cm and the worst 11,200, i.e. every chain is drawn as a zigzag.
+       added back -- the raw points sit a whole map away from the belts they belong to. Every
+       chain on this disk carries an identity rotation, so there is no orientation to undo; a
+       chain that ever carried one would need the points rotated before translating.
+    2. **Segments are stored output-first.** Offsets grow towards the output and
+       ``segments[-1]`` holds offset 0, the chain's input, so rows come out reversed and in
+       TRAVEL ORDER. In file order consecutive segments of one chain do not meet, and every
+       chain draws as a zigzag.
 
     A chain whose trailing bytes will not decode costs that chain and is counted into
-    ``warnings``, not the whole projection: belts are new and a save that projected
-    yesterday must not stop projecting because one trailer is unreadable. The first few
-    also name their exception on stderr, because the type of the failure is what says
-    whether the format moved, and a count cannot carry it.
+    ``warnings`` rather than the whole projection. The first few also name their exception on
+    stderr, because the TYPE of the failure is what says whether the format moved and a count
+    cannot carry it.
     """
     classes: list[str] = []
     index: dict[str, int] = {}
@@ -1480,9 +1283,8 @@ def _belts(chains: list, drops: Drops) -> dict:
             info = obj.actorSpecificInfo
         except PARSE_ERROR as exc:
             drops["conveyor chain(s) dropped: the trailing bytes would not decode"] += 1
-            # Capped: one line per chain is three lines on a torn save and 1,909 -- the
-            # whole reference world -- on a version bump, which is the case where stderr
-            # matters most and is exactly the case that scrolls the reason off the top.
+            # Capped: a version bump makes this every chain in the world, which is the case
+            # where stderr matters most and exactly the case that scrolls the reason off.
             if chain_notes < CHAIN_NOTES_SHOWN:
                 chain_notes += 1
                 print(f"pioneersav: conveyor chain skipped: {exc}", file=sys.stderr)
@@ -1517,22 +1319,19 @@ def _belts(chains: list, drops: Drops) -> dict:
             for point in seg[2] if isinstance(seg[2], list) else ():
                 try:
                     at, arrive, leave = point[0], point[1], point[2]
-                    # Rounded, not truncated as `_structures` does. That field's truncation
-                    # is in the banked parity digests and cannot move now; a belt point is
-                    # new, and rounding is both unbiased and exactly commutative with the
-                    # whole-centimetre translation above, which is what lets a test check
-                    # the frame correction by moving the chain and subtracting.
-                    # Every one of the three read and rounded BEFORE anything is appended, so
-                    # that a point the decoder cannot make sense of costs its whole triple.
-                    # Appending as they are computed is the bug this shape exists to prevent:
-                    # a tangent that raises after its point is already stored leaves the two
-                    # lists one apart, and every span after the fault then bends around the
-                    # wrong control point -- which still draws a curve, just not this one.
+                    # Rounded, not truncated as `_structures` does: that field's truncation is
+                    # in the banked parity digests and cannot move, while rounding here is
+                    # unbiased and exactly commutative with the whole-centimetre translation.
                     #
-                    # The tangents get the rounding and NOT the translation. They are
+                    # All three are read and rounded BEFORE anything is appended, so that a
+                    # point the decoder cannot make sense of costs its whole triple. Appending
+                    # as they are computed leaves the two lists one apart when a tangent
+                    # raises, and every span after the fault then bends around the wrong
+                    # control point -- which still draws a curve, just not this one.
+                    #
+                    # The tangents get the rounding and NOT the translation: they are
                     # displacement vectors, so moving the chain's origin moves the points they
-                    # hang off and leaves them alone -- the same reason `_pipes` and this
-                    # function both translate without rotating.
+                    # hang off and leaves them alone.
                     at = [round(at[0] + ox), round(at[1] + oy), round(at[2] + oz)]
                     pair = ([round(v) for v in arrive], [round(v) for v in leave])
                     points.append(at)
@@ -1540,8 +1339,7 @@ def _belts(chains: list, drops: Drops) -> dict:
                 except (TypeError, ValueError, IndexError):
                     drops["belt point(s) dropped: location or tangent would not read"] += 1
                     continue
-            # A single point is not a route. 2 is the commonest case by far -- a straight
-            # belt -- and the most that can be said about a 1-point segment is where it is.
+            # A single point is not a route.
             if len(points) < 2:
                 drops["belt segment(s) dropped: fewer than 2 readable points"] += 1
                 continue
@@ -1564,11 +1362,10 @@ def _conveyor_class(path: str) -> str:
     name -- the same stripping ``_removed_class`` does, except that the trailing ``_C``
     stays, because these names are compared against class names that carry it.
 
-    Checked rather than trusted: unlike a destroyed actor, a conveyor DOES have an actor
-    header of its own, so the stripped name can be held against the real ``typePath``. Over
-    the whole save folder the two agree on **83,389 of 83,389 segments**, with none whose
-    belt is missing a header -- which is why the class is taken from the cheap source
-    instead of the projection carrying a second index of every belt actor in the world.
+    Safe because a conveyor, unlike a destroyed actor, has an actor header of its own: the
+    stripped name was checked against the real ``typePath`` for every segment in the save
+    folder and agreed on all of them, so the projection need not carry a second index of
+    every belt actor in the world.
     """
     leaf = path.rsplit(".", 1)[-1]
     parts = leaf.split("_")
@@ -1584,79 +1381,39 @@ def _pipes(actors: list, networks: list, actor_ix: dict, drops: Drops) -> dict:
     ``networks`` is ``[(mPipeNetworkID, fluidClass, [memberPath, ...]), ...]``, and
     ``actor_ix`` is the connectivity graph's ``{shortName: index}``, read only.
 
-    The other half of "draw what the player built". Belts came out of a trailer; a pipe is
-    simpler and was in reach the whole time -- **the spline is a PROPERTY**, ``mSplineData``,
-    an array of structs whose ``Location`` is one control point.
-
-    **Its ``ArriveTangent`` and ``LeaveTangent`` used to be dropped here, on the grounds that
-    "the game builds pipes out of straight runs and elbows", and that was wrong.** It is true
-    that the reference save's 503 pipes are 224 two-point straights and 195 six-point elbows,
-    and false that an elbow's six points describe it: they are the corners of the elbow, and
-    the tangents are the curve through them. Measured on those 1,484 spans, the curve leaves
-    the chord by more than 10 cm on 166 of them and by up to 6.6 m -- so a six-point elbow drew
-    as a five-segment polygon cutting the corner it was built to round. Schema 15 carries them,
-    on the same terms the belts do; see `_spans` and `_bulge`.
+    Unlike a belt, a pipe's spline is a PROPERTY: ``mSplineData``, an array of structs whose
+    ``Location`` is one control point and whose ``ArriveTangent``/``LeaveTangent`` are the
+    curve through them. The points are only the corners of an elbow, so dropping the tangents
+    draws the polygon that cuts the corner the pipe was built to round; see `_spans`.
 
     Rows are ``[networkIndex, classIndex, [[x, y, z], ...], actorIndex]``, and
     ``[..., tangents]`` where the pipe bends:
 
     * **networkIndex** points into ``networks``, ``[{"id": ..., "fluid": ...}, ...]`` -- the
-      game's own ``FGPipeNetwork`` grouping, 19 of them here, and the reason this key can say
-      WATER or CRUDE OIL rather than only "a pipe". ``-1`` for a pipe no network claims,
-      which happens on none of the reference save's 503.
+      game's own ``FGPipeNetwork`` grouping, and the reason this key can say WATER or CRUDE
+      OIL rather than only "a pipe". ``-1`` for a pipe no network claims.
     * **classIndex** interns the build class: Mk1 and Mk2, each with a ``NoIndicator``
       variant, which is a pipe whose flow indicator the player switched off.
-    * The points are whole centimetres, like ``_belts``, and there is nothing to thin --
-      1,987 points over 503 pipes, 3.9 apiece, and they are already only the corners.
-    * **actorIndex** points into ``graph["actors"]`` -- schema 14, one integer, and the whole
-      of that schema's change. See below for why a fourth column beats a fifth key.
+    * The points are whole centimetres, like ``_belts``, and are already only the corners.
+    * **actorIndex** points into ``graph["actors"]``. Schema 14.
 
-    **The frame is the actor's, translated and not rotated -- measured, not assumed.** Every
-    ``Location`` is stored relative to the pipe's own actor position, so that position is
-    added back. That the first point of all 503 is exactly ``(0, 0, 0)`` proves the frame is
-    local but proves nothing about which correction is right, so the check is made against
-    things the pipes did not write:
+    The frame is the actor's, TRANSLATED AND NOT ROTATED: every ``Location`` is relative to
+    the pipe's own actor position, and every pipeline actor on this disk carries an identity
+    quaternion, so a pipe that ever carried a rotation would need its points rotated before
+    translating. The same statement `_belts` makes about chains.
 
-    * The world's 306 ``Build_PipelineFlowIndicator_C`` actors are hung ON a pipe. Translated,
-      294 of them sit within 10 cm of a pipe polyline -- **median 0.0 cm, p95 4.7 cm**. Raw,
-      not one is within 10 cm of any pipe.
-    * Pipe endpoints against the 141 junctions and pumps: translated, the median endpoint is
-      6.0 m from the nearest fitting and 400 of 1,006 are within 3 m; raw, the median is
-      1.7 km, which is a map away.
+    Flow direction is NOT on a pipe and this file does not invent one. Its two connectors are
+    named ``PipelineConnection0`` and ``PipelineConnection1`` rather than input and output,
+    ``mFluidBox`` is a single float of contents, and the spline's order is the order the
+    player dragged it. What the save does state is the coupling graph -- every fluid
+    connection is a component carrying ``mConnectedComponent``, folded into
+    ``graph["material"]``, with the component's own name typing the port at a machine
+    (``PipeInputFactory``, ``PipeOutputFactory``, ``ConnectionAny0``) -- and ``actorIndex`` is
+    the join from a segment row to it. Direction is inferred a layer up, in
+    ``domain/world/flow.py``, where the guesswork can be labelled and refused.
 
-    **No rotation to undo, and that is the same statement `_belts` makes about chains**: all
-    **18,069 pipeline actors across the 66 saves on this disk** carry an identity quaternion.
-    A pipe that ever carried one would need its points rotated before translating, so the
-    measurement is stated rather than the assumption made quietly.
-
-    **Flow direction is still not ON a pipe, and schema 14 does not pretend otherwise.** A
-    pipe's two connectors are named ``PipelineConnection0`` and ``PipelineConnection1`` -- not
-    input and output, unlike a belt's -- ``mFluidBox`` is a single float of contents, and the
-    flow indicator actor carries nothing but its paint. The spline's own order is the order the
-    player dragged it. All of that stands.
-
-    **What was never interrogated is the rest of the network, and the rest of the network says
-    a great deal.** Every fluid connection is a COMPONENT carrying ``mConnectedComponent``,
-    which the walk above has been folding into ``graph["material"]`` since schema 11 -- 1,560
-    directed pipe couplings on the reference save, **total** (no connection lacks a peer),
-    **symmetric** (all 1,560 name each other back) and never crossing an ``mPipeNetworkID``.
-    And the component's own name types the port at a machine: ``PipeInputFactory`` on 36 of
-    this world's refinery ports against ``PipeOutputFactory`` on 12, ``ConnectionAny0``/``1``
-    on the fluid buffers, plain ``FGPipeConnectionFactory`` where the building has one port and
-    its own role settles it. That is the game's ``EPipeConnectionType`` -- Consumer, Producer,
-    Any -- surviving in the serialised component name.
-
-    So the graph and its typed ends were already in the projection, and the ONE thing missing
-    was the join: a segment row could not be matched to the ``graph["actors"]`` entry that owns
-    it. ``actorIndex`` is that join and nothing more. The direction itself is inferred a layer
-    up, in ``domain/world/flow.py``, where the guesswork can be labelled and refused; this file
-    keeps emitting only what the save states.
-
-    **Which end of the spline is which, measured.** ``PipelineConnection0`` is ``points[0]``
-    and ``PipelineConnection1`` is ``points[-1]``: over the 221 pipe-to-pipe couplings the two
-    claimed endpoints land **0.06 cm apart at the median, p95 0.11 cm**, where the opposite
-    reading puts them a median of **52.5 m** apart and never once inside 10 cm. All 559
-    pipe-to-machine couplings agree, with the claimed endpoint nearer the machine every time.
+    ``PipelineConnection0`` is ``points[0]`` and ``PipelineConnection1`` is ``points[-1]``,
+    established by measuring claimed endpoints against their couplings.
     """
     fluid_of: dict[str, int] = {}
     nets: list[dict] = []
@@ -1697,9 +1454,7 @@ def _pipes(actors: list, networks: list, actor_ix: dict, drops: Drops) -> dict:
             except (TypeError, ValueError, IndexError):
                 drops["pipe point(s) dropped: Location or tangent would not read"] += 1
                 continue
-        # A single point is not a route, the same bar `_belts` sets -- and unlike a belt
-        # there is no lift here to except: not one of the reference save's 503 pipes is
-        # vertical (minimum horizontal span 11.6 cm), so every pipe is drawable as a line.
+        # A single point is not a route, the bar `_belts` sets.
         if len(points) < 2:
             drops["pipe(s) dropped: fewer than 2 readable spline points"] += 1
             continue
@@ -1723,42 +1478,21 @@ def _pipes(actors: list, networks: list, actor_ix: dict, drops: Drops) -> dict:
 def _wire_span(raw) -> tuple[list, list] | None:
     """The two ends of one power wire, in WORLD centimetres, or None if it has no pair.
 
-    ``mWireInstances`` is an array of ``FWireInstance``, and each one carries a two-element
-    ``Locations`` and a two-element ``CachedRelativeLocations``. **The absolute pair is what
-    is taken**, so nothing here has to know where a connector sits on the thing it is bolted
-    to -- which is the reason schema 17 needed no table of per-class connector offsets.
+    ``mWireInstances`` is an array of ``FWireInstance``, each carrying a two-element
+    ``Locations`` and a two-element ``CachedRelativeLocations``. The ABSOLUTE pair is what is
+    taken, in the world's own unrotated frame, so nothing here has to know where a connector
+    sits on the thing it is bolted to -- which is why schema 17 needs no table of per-class
+    connector offsets. Verified against the actor's own ``mCachedLength``, which these numbers
+    reproduce to float32 noise.
 
-    THE EVIDENCE THAT ``Locations`` IS THE WIRE, measured on the reference save's 1,297
-    lines. The actor also stores ``mCachedLength``, the game's own figure for the wire, and
-    it is not derived from these numbers by anything this code can see:
-
-    * over the 1,162 single-instance lines, ``|dist(loc0, loc1) - mCachedLength|`` has a
-      **median of 0.000031 cm and a maximum of 0.000484 cm** -- float32 noise, on a quantity
-      ranging up to 300 m;
-    * with no free parameter at all: over the 399 wires strung between two
-      ``Build_PowerPoleMk1_C``, the distance between the two POLES' OWN header positions
-      matches ``mCachedLength`` to a maximum of 0.000484 cm, and every one of the 1,166 Mk1
-      endpoints sits at exactly ``origin + (0, 0, 700)`` -- **maximum error 0.000000 cm**.
-      Mk2 is +760, Mk3 is +885, the wall outlet is -80, each with zero spread.
-
-    So the frame is the world's, unrotated and unscaled, and the two published points are the
-    ends of the drawn line. (The same measurement done in each owner's BODY frame gives a
-    fixed local offset per class with zero spread across hundreds of instances -- 205
-    constructors at (210, -470, 687.2), 93 smelters at (220, -310, 480) -- which is the
-    connector table this key does not have to carry.)
-
-    **The first pair, and 135 lines have two.** Every one of those is a Power Tower strung to
-    another Power Tower, and the second instance is the PARALLEL CONDUCTOR: two strands
-    12.2 m apart spanning the same two towers, each of them ``mCachedLength`` long. Taking
-    the first is taking one real strand rather than averaging two into a line neither of them
-    occupies; drawing both would put a 12 m ladder on a map where 12 m is a fifth of a pixel
-    at the world view. The reference save's other 1,162 lines carry exactly one instance.
+    THE FIRST PAIR ONLY. A line with two instances is a Power Tower span whose second instance
+    is the PARALLEL CONDUCTOR: two strands 12 m apart between the same two towers. Taking the
+    first takes one real strand rather than averaging two into a line neither occupies.
 
     Walked rather than indexed, because the decoded property nests the values beside their
-    type descriptors and the nesting is the serialiser's business, not this key's. Document
-    order is preserved, which is what makes "the first two" the first STRAND: on the
-    four-location lines the first two points are the two ENDS of strand one (they land at
-    opposite towers), not the two strands' starts.
+    type descriptors. Document order is preserved, which is what makes "the first two" the
+    first STRAND: on a four-location line the first two points are the two ENDS of strand one,
+    not the two strands' starts.
     """
     found: list[list] = []
 
@@ -1793,13 +1527,11 @@ def _power(
 ) -> tuple[list, dict]:
     """The power network's GEOMETRY, and the edge list it is the twin of.
 
-    Returns ``(power_edges, power)``, and returning both is the design rather than an
-    inconvenience: ``graph["power"]`` has carried this world's 1,297 power edges as interned
-    actor-index pairs since schema 11, and schema 17 adds where those edges are DRAWN. Two
-    functions building two lists from the same dict would be two chances to skip a different
-    wire and leave the reader joining lists that no longer line up.
-
-    So there is one pass and one rule::
+    Returns ``(power_edges, power)``, and returning both is the design: ``graph["power"]``
+    has carried the power edges as interned actor-index pairs since schema 11, and schema 17
+    adds where those edges are DRAWN. Two functions building two lists from the same dict
+    would be two chances to skip a different wire and leave the reader joining lists that no
+    longer line up. So there is one pass and one rule::
 
         len(power["wires"]) == len(graph["power"])
         power["wires"][i] is the span of graph["power"][i]
@@ -1809,45 +1541,32 @@ def _power(
     older than the property, in which case every row is null and the invariant still holds.
     An empty ``wires`` list therefore means "no power edges at all", never "no geometry".
 
-    **Why the geometry is not simply the two actors' positions.** A wire is strung between
-    CONNECTORS, and a connector is a component sitting at a fixed offset on its owner: the
-    endpoint of a wire on a Mk1 pole is 7 m above the pole's origin, the endpoint on a
-    constructor is 2.1 m forward and 4.7 m to one side of its centre. Drawing pole-origin to
-    machine-origin would put every wire through the middle of the machine it feeds. The save
-    publishes the true endpoints and `_wire_span` reads them.
+    The geometry is not the two actors' positions, because a wire is strung between
+    CONNECTORS and a connector sits at a fixed offset on its owner -- 7 m above a Mk1 pole's
+    origin, 2.1 m forward and 4.7 m to one side of a constructor's centre. Drawing
+    pole-origin to machine-origin would put every wire through the middle of the machine it
+    feeds, so `_wire_span` reads the endpoints the save publishes.
 
-    **The pair is ORDERED to match the edge, and it is ordered by measurement.** The save's
-    own order is not the edge's: over the reference world's 1,297 wires the order the two
-    connection components were serialised in agrees with the order the two ``Locations`` are
-    stored in **687 times and disagrees 608 times** -- a coin flip, so a consumer joining
-    ``wires[i][0:3]`` to ``graph["power"][i][0]`` would be wrong about half the world. Each
-    end is therefore assigned to the nearer of the two actors, in plan. That this is the
-    right assignment is not assumed: under it the offset from each endpoint to its owner's
-    origin collapses to a per-class CONSTANT -- 0.0 cm planar on all 1,166 Mk1 endpoints,
-    514.8 cm on all 205 constructor endpoints, zero spread on 14 of the 16 commonest classes
-    -- which a wrong assignment cannot produce. Where the two are equidistant (2 wires on this
-    world, both strung between two poles at the same range) the save's order is kept, because
-    there is nothing to measure.
+    The pair is ORDERED TO MATCH THE EDGE by measurement, because the save's own order agrees
+    with the edge's about half the time: each end is assigned to the nearer of the two actors,
+    in plan, which collapses the endpoint-to-origin offset to a per-class constant. Where the
+    two are equidistant the save's order is kept, there being nothing to measure.
 
-    **Poles are the other half and are a plain interned table**, the shape ``structures`` uses
-    -- ``[classIndex, x, y, z, yaw, actorIndex]``, whole centimetres. The sixth column is the
-    pole's index in ``graph["actors"]`` and is the same join schema 14 gave a pipe: with it a
-    reader counts a pole's wires off the edge list, and without it "how many things are
-    plugged into this pole" would need a second copy of the connectivity in this key.
-    ``-1`` for a pole no wire names -- 2 of this world's 701, both Power Tower platforms
-    someone built and never strung.
+    Poles are the other half, a plain interned table in the shape ``structures`` uses:
+    ``[classIndex, x, y, z, yaw, actorIndex]``, whole centimetres. The sixth column is the
+    pole's index in ``graph["actors"]``, the join schema 14 gave a pipe, and is what lets a
+    reader count a pole's wires off the edge list rather than off a second copy of the
+    connectivity. ``-1`` for a pole no wire names.
 
-    ``actor_id`` interns and ``actor_ix`` only reads, which is the whole reason both are
-    passed. The wire pass MINTS actor indices exactly as it always has (it is where most of
-    ``graph["actors"]`` comes from); the pole pass must not, because a pole with no wire would
-    otherwise be added to a list that has already been snapshotted -- see the note in
-    `extract` above the ``_pipes`` call, which is the same hazard.
+    ``actor_id`` interns and ``actor_ix`` only reads. The wire pass MINTS actor indices; the
+    pole pass must not, because a pole with no wire would be added to a list already
+    snapshotted -- the hazard the note above the ``_pipes`` call in `extract` names.
     """
     edges: list[list[int]] = []
     wires: list[list | None] = []
     for path, ends in wire_ends.items():
         # Exactly two connections or it is not a wire: a half-built or orphaned line is
-        # dropped rather than guessed at, which is what schema 11 has always done here.
+        # dropped rather than guessed at.
         if len(ends) != 2:
             continue
         a_owner, b_owner = ends[0][0], ends[1][0]
@@ -1912,35 +1631,18 @@ def _storage(actors: list, held: dict, networks: list) -> list:
     ``{ownerInstanceName: ({itemClass: count}, slotCount)}`` for every ``StorageInventory``
     component in the world, and ``networks`` is `_pipes`' ``[(id, fluid, [member, ...]), ...]``.
 
-    **The projection could already say what the player owns and never where any of it was.**
-    ``inventories["storage"]`` has summed these same stacks since schema 11, which answers "have
-    I got enough steel to build that" and is exactly the wrong shape for "where did I put the
-    steel" -- a question a base with 105 containers over 7 km cannot be walked to answer.
-    Nothing else in the projection carried a container at all: they run no recipe, so they were
-    never machines; they draw no power, so they are not in the power graph; they are ordinary
-    actors, so they are not lightweight buildables either. A container was a number in
-    ``building_counts`` and nothing more.
-
-    Rows are one dict apiece, not an interned table, and that is a size argument rather than a
-    style one: there are 151 of these against 3,085 belt pieces, and the whole key is 26 KB.
+    ``inventories["storage"]`` sums these same stacks, which answers "have I got enough steel"
+    and is the wrong shape for "where did I put it". Rows are one dict apiece rather than an
+    interned table, there being few enough of them for the whole key to cost tens of kilobytes.
 
     Solids come from the owning actor's ``StorageInventory`` component, joined by instance
-    name. **Verified on real data rather than on the shape**: the reference world's fullest
-    containers read 12,000 Concrete, 9,500 Wire with 950 Copper Sheet beside it, 4,800 Iron
-    Plate, 4,800 Iron Rod -- all of them plausible multiples of a stack against the slot count
-    the same component reports (24 on a Mk1, 48 on a Mk2), which a mis-joined or double-counted
-    inventory would not be. 92 of the 118 solid containers hold something.
+    name. Fluids are the other record entirely: a buffer keeps one ``mFluidBox`` float of
+    CUBIC METRES and does not name its fluid, so the name comes off the ``FGPipeNetwork`` that
+    claims the buffer -- the game's own answer, and the same join a pipe's ``fluid`` uses. A
+    buffer no network claims keeps its level and gets a null fluid.
 
-    Fluids are the other record entirely. A buffer keeps one ``mFluidBox`` float of cubic
-    metres and does not name the fluid at all -- so the name comes off the ``FGPipeNetwork``
-    that claims the buffer, which is the same source and the same join a pipe's ``fluid`` uses,
-    and it is the game's own answer rather than an inference from what the buffer is plugged
-    into. All five buffers here are claimed: 1,730.6 and two smaller of Fuel, 379.1 of Fuel,
-    and one of Crude Oil. A buffer no network claims keeps its level and gets a null fluid, for
-    the reason `_pipes` gives: "drawn, contents unknown" beats "not drawn".
-
-    Sorted by class then instance so the key is stable between runs, which is what lets it be
-    diffed between two saves of one world -- the projection's own posture everywhere else.
+    Sorted by class then instance so the key is stable between runs and diffable between two
+    saves of one world.
     """
     fluid_of: dict[str, str | None] = {}
     for _net_id, fluid, members in networks:
@@ -1954,24 +1656,22 @@ def _storage(actors: list, held: dict, networks: list) -> list:
         if cls in FLUID_BUFFER_CLASSES:
             row["fluid"] = fluid_of.get(str(instance))
             # Cubic metres, and NOT the litres ``inventories`` reports: a fluid stack in an
-            # inventory is stored 1000x, and this is a fluid box, which is not. Checked
-            # against the capacities the docs dump states for these two classes -- 400 and
-            # 2,400 m3 -- which every reading here is inside and none is inside at 1/1000th.
+            # inventory is stored 1000x and a fluid box is not. Checked against the capacities
+            # the docs dump states for these two classes.
             try:
                 row["stored_m3"] = round(float(fluid_box), 2)
             except (TypeError, ValueError):
                 row["stored_m3"] = None
         else:
             totals, slots = held.get(str(instance), ({}, 0))
-            # Biggest first: a popup shows the top few and says how many it did not show, and
-            # the useful few are the big ones. Ties by class so the order is total.
+            # Biggest first, ties by class, so the order is total and a popup showing the top
+            # few shows the useful few.
             row["items"] = [
                 [item, amount]
                 for item, amount in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
             ]
-            # The container's real slot count, straight off the component -- 24 on a Mk1, 48 on
-            # a Mk2. Read here rather than looked up per class because it is a fact about this
-            # container, and because the docs dump spells it as two numbers to multiply.
+            # Straight off the component rather than looked up per class, because it is a fact
+            # about this container and the docs dump spells it as two numbers to multiply.
             row["slots"] = slots
         rows.append(row)
     return rows
@@ -1980,11 +1680,10 @@ def _storage(actors: list, held: dict, networks: list) -> list:
 def crate_kind(raw) -> str:
     """``mCrateType`` as one of ``CRATE_KINDS``' words, defaulting to ``none``.
 
-    The parser hands an EnumProperty back as ``[enumName, "EFGCrateType::CT_DeathCrate"]``,
-    so the word wanted is the tail of the second element. Anything else -- an absent property,
-    a shape this parser has not met, a value the enum has grown since -- is ``none``, which is
-    the enum's own name for "this crate does not say", and is therefore not a lie in any of
-    the three cases.
+    The parser hands an EnumProperty back as ``[enumName, "EFGCrateType::CT_DeathCrate"]``, so
+    the word wanted is the tail of the second element. Anything else -- an absent property, an
+    unmet shape, a value the enum has grown since -- is ``none``, which is the enum's own name
+    for "this crate does not say".
     """
     if not isinstance(raw, (list, tuple)) or len(raw) < 2:
         return CRATE_KINDS["CT_None"]
@@ -1998,39 +1697,22 @@ def _crates(actors: list, held: dict) -> list:
     ``{ownerInstanceName: ({itemClass: count}, slotCount)}`` for every component named
     ``Inventory``, in either case, anywhere in the world.
 
-    **The record nothing else in the projection could carry.** A crate is not a buildable, so
-    it is not in ``building_counts``, not a machine, not a lightweight piece and not a
-    container -- schema 15's ``storage`` deliberately lists the classes it joins, and this is
-    not one of them. What the projection said about a crate's contents from schema 11 to 18
-    was that they were somewhere in ``inventories["machine"]``: the bucket rule saw a
-    component called ``Inventory`` on an owner that was neither a player nor a storage class
-    and filed a dead pioneer's pockets with the smelter buffers. Schema 18 deliberately left
-    that alone -- it is a banked schema-11 key, and moving it was a separate decision from
-    being able to see a crate at all. Schema 19 made that decision:
-    ``inventories["crate"]`` now holds the same stacks these rows itemise, and the parity
-    bank compares the old shape through the reconstruction ``test_savparse_parity`` documents.
+    A crate is not a buildable, not a machine, not a lightweight piece and not one of the
+    classes ``storage`` joins, so nothing else in the projection can carry it. The same stacks
+    are summed into ``inventories["crate"]``; see `inventory_bucket`.
 
-    **The kind comes off ``mCrateType`` and is ``none`` for a crate that predates it**, which
-    is a third of the crates on this machine and the reason `CRATE_KINDS` argues the point at
-    length. It is the game's own value, not a parse failure.
+    THE SAVE NAMES NO OWNER. ``AFGCrate`` has exactly one ``SaveGame`` property and it is
+    ``mCrateType`` -- no player, no timestamp, no cause of death -- so in a single-player world
+    every death crate is the player's by construction, and in a co-op world this projection
+    cannot say whose it was. The kind is ``none`` for a crate predating the property, which is
+    the game's own value and not a parse failure; see `CRATE_KINDS`.
 
-    **What the save does NOT say, stated because the obvious question is "is it mine".**
-    ``AFGCrate`` has exactly one ``SaveGame`` property and it is ``mCrateType``; there is no
-    owning player, no timestamp and no cause of death on the actor -- verified against
-    ``FGCrate.h`` in the install's own ``Headers.zip`` and against every crate in all 67 saves
-    on this machine, none of which carries a second property. So in a single-player world every
-    death crate is the player's by construction, and in a co-op world this projection cannot
-    say whose it was. A field invented here would answer that question wrongly and look exactly
-    like an answer.
+    Contents are joined by owner instance name, the join `_storage` uses, with the same guard:
+    a player pawn and the crashed drop pods also own a component named ``Inventory`` and are
+    not in ``actors``, so they are never looked up.
 
-    **Contents are joined by owner instance name**, the join `_storage` uses, and the same
-    guard applies: a player pawn and 93 crashed drop pods also own a component named
-    ``Inventory``, and they are not in ``actors``, so they are never looked up. Items biggest
-    first, ties by class, for the popup that shows the top few.
-
-    Sorted by kind then instance so the key is stable between two runs and diffable between
-    two saves of one world -- and so that the interesting rows, the death crates, do not move
-    around inside the list as dismantle crates come and go.
+    Sorted by kind then instance, so the key is diffable between two saves of one world and
+    the death crates do not move around as dismantle crates come and go.
     """
     rows: list[dict] = []
     for cls, instance, pos, yaw, raw_type in actors:
@@ -2047,8 +1729,7 @@ def _crates(actors: list, held: dict) -> list:
                     for item, amount in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
                 ],
                 # Off the component, like a container's: a crate is sized to what was put in
-                # it, so this is a fact about this crate rather than about its class -- 1 slot
-                # for a dropped stack of rods, 55 for a full inventory's worth of death.
+                # it, so this is a fact about this crate rather than about its class.
                 "slots": slots,
             }
         )
@@ -2073,46 +1754,22 @@ def inventory_bucket(instance: str) -> str:
     ``...PersistentLevel.Build_ConstructorMk1_C_2147441119.InputInventory``, so it
     carries both the owning actor class and the inventory's ROLE.
 
-    This distinction is not cosmetic. Summing every stack in the world gives Water
-    5,556,375 and Fuel 1,048,762 -- pipe and machine-buffer contents, in litres --
-    which is a wildly wrong answer to "what do I have on hand". A build-cost check
-    against that number would tell the player they can afford anything.
+    The distinction is not cosmetic: summing every stack in the world counts pipe and
+    machine-buffer contents in litres, which would tell the player they can afford anything.
 
-    **The storage test is membership in STORAGE_CLASSES, and it was three substrings.**
-    Schema 16. Until now this asked whether the owner's name contained ``StorageContainer``,
-    ``CentralStorage`` or ``FreightWagon``, which is a different question from the one the
-    list next door answers and gets a different answer: the Personal Storage Box
-    (``Build_StoragePlayer_C``), the HUB's own container (``Build_StorageIntegrated_C``) and
-    the Blueprint Designer's (``Build_StorageBlueprint_C``) contain none of those words, so
-    everything in them was bucketed as a MACHINE BUFFER -- material that exists but cannot be
-    spent -- and ``stock()`` never saw it. On the reference save that is 8 containers holding
-    **10,667 units across 31 item classes**: 2,309 Wire, 1,445 Concrete, 1,353 Steel Beams,
-    440 Gifts, 125 SAM Fluctuators, and the alien remains a MAM node costs -- 16 Hog, 5
-    Stinger, 2 Spitter. Every affordability answer in the server reads ``stock()``, so all 31
-    were understated; two of them were reported as **zero** with the player standing next to
-    a box of them, 12 Wood and 34 Copper Ingot, and the rest were short by that much.
+    **Storage is membership in STORAGE_CLASSES and NOT a substring of the owner's name.** The
+    Personal Storage Box, the HUB's own container and the Blueprint Designer's carry no
+    "Storage" word a name test would catch, and everything in them then buckets as a machine
+    buffer -- material that exists and cannot be spent, which ``stock()`` never sees. The ROLE
+    gate stays beside the class test, because a container owns other components too and only
+    ``StorageInventory`` means stock.
 
-    The two lists had already disagreed once, in writing: schema 15's ``storage`` key joins
-    its rows by STORAGE_CLASSES and its reconciliation test recorded the difference as a
-    remainder to be tolerated. It is the same eight containers, and it was the bug.
-
-    The role gate stays. Every splitter and merger in the world owns a component literally
-    named ``StorageInventory`` -- 848 of them here -- but so does nothing else on these
-    classes, and requiring the role is what keeps a container's other components out of a
-    total that means "stock".
-
-    **The crate test is schema 19, and it is the split's second correction.** A crate's
-    contents live in a component named ``Inventory`` -- ``.inventory`` on some saves,
-    ``.Inventory`` on others, both real on this machine, hence the case fold `_crates`
-    already argues for -- on an owner that is neither a player nor a storage class, so the
-    schema-11 rule filed a dead pioneer's pockets with the smelter buffers: material that
-    exists and cannot be spent, summed anonymously into ``machine``. They are recoverable
-    stock lying on the ground, which is neither of those buckets, so they get their own.
-    The owner test is membership of CRATE_CLASSES read off the instance name, exactly the
-    class test the ``crates`` key's own join makes -- and the player pawn and the crashed
-    drop pods, which also own a component by this name, are untouched: the pawn is caught
-    by the player test above and a drop pod is no crate class, so both land where they
-    always did.
+    **Crate is schema 19.** A crate's contents live in a component named ``Inventory`` on an
+    owner that is neither a player nor a storage class, so the schema-11 rule filed a dead
+    pioneer's pockets with the smelter buffers; they are recoverable stock lying on the
+    ground, which is neither bucket. The owner test is membership of CRATE_CLASSES, so the
+    player pawn (caught by the player test above) and the crashed drop pods (no crate class)
+    land where they always did.
     """
     owner = instance.rsplit(".", 2)[-2] if instance.count(".") >= 2 else instance
     role = instance.rsplit(".", 1)[-1]

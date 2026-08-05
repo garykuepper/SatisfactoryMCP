@@ -31,19 +31,11 @@ def pretty_class(cls: str | None) -> str | None:
     """An engine class id as words: ``Build_GeneratorIntegratedBiomass_C`` ->
     ``Generator Integrated Biomass``.
 
-    The LAST resort, for the ids the docs dump has no entry for -- the biomass burners,
-    the synthetic recipe strings. It is not a display name and cannot become one; what it
-    is, is the same language the display names are in. A response that prints
-    ``Fuel-Powered Generator`` in one row and ``Build_GeneratorIntegratedBiomass_C`` in
-    the next is teaching its reader two vocabularies for one kind of object, and the
-    reader -- a model, on this surface -- has to guess whether they are the same thing.
-
-    There were four spellings of this fallback in the tree before it moved here: this
-    one, ``cls.replace("Build_", "").replace("_C", "")`` in two places, and
-    ``k.replace("Build_", "")`` in a third, which left the ``_C`` on. So the same
-    unlisted building could appear in one tool's output as ``Generator Integrated
-    Biomass``, in another's as ``GeneratorIntegratedBiomass`` and in a third's as
-    ``GeneratorIntegratedBiomass_C``.
+    The LAST resort, for the ids the docs dump has no entry for -- the biomass burners, the
+    synthetic recipe strings. It is not a display name and cannot become one; what it is, is
+    the same language the display names are in. A response that prints ``Fuel-Powered
+    Generator`` in one row and ``Build_GeneratorIntegratedBiomass_C`` in the next teaches its
+    reader two vocabularies for one kind of object.
     """
     if not cls:
         return None
@@ -72,9 +64,9 @@ class Item:
     is_resource: bool
     #: ``mExtraPotential``: how much max clock ONE of these adds when slotted into a
     #: building's InventoryPotential. 0.5 for the Power Shard, 0 for everything else
-    #: including the Somersloop, which shares the same native class but boosts
-    #: production rather than clock. Reading it is what lets the shard maths avoid
-    #: naming ``Desc_CrystalShard_C`` anywhere.
+    #: including the Somersloop, which shares the same native class but boosts production
+    #: rather than clock -- so filtering on this field is what keeps ``Desc_CrystalShard_C``
+    #: out of the code.
     extra_potential: float = 0.0
 
     @property
@@ -87,11 +79,8 @@ class Item:
 
     @property
     def sinkable(self) -> bool:
-        """Whether an AWESOME Sink can consume this.
-
-        Fluids are excluded by a hardcoded physical rule that deliberately
-        contradicts Docs.json -- see constants.FLUIDS_CANNOT_BE_SUNK.
-        """
+        """Whether an AWESOME Sink can consume this. Fluids are excluded against what the
+        dump says -- see ``constants.FLUIDS_CANNOT_BE_SUNK``."""
         from .constants import FLUIDS_CANNOT_BE_SUNK
 
         if self.is_fluid and FLUIDS_CANNOT_BE_SUNK:
@@ -193,22 +182,11 @@ class Building:
     flow_m3_min: float = 0.0
     #: How much fluid a buffer holds, in cubic metres, from ``mStorageCapacity`` -- 400 on the
     #: Fluid Buffer and 2,400 on the Industrial one. 0.0 for everything that is not a
-    #: reservoir, which is every other building in the dump: the field is on
-    #: ``FGBuildablePipeReservoir`` alone.
-    #:
-    #: Here because a level is not a reading without one. The save records a buffer's contents
-    #: as a bare ``mFluidBox`` float, so "1,730.6 m3" is a number a player cannot act on and
-    #: "1,730.6 of 2,400, 72% full" is the same number as an answer. The solid containers need
-    #: no equivalent: their slot count comes off the save itself, per container.
+    #: reservoir: the field is on ``FGBuildablePipeReservoir`` alone. Here because a level is
+    #: not a reading without a capacity beside it, and the save records only a bare
+    #: ``mFluidBox`` float.
     storage_capacity_m3: float = 0.0
-    #: Metres of head a pipeline pump lifts, from ``mDesignPressure``. 20 on Mk1, 50 on
-    #: Mk2.
-    #:
-    #: This project spent a while asserting that head-per-pump was "a game rule with no
-    #: data behind it" and refusing to give pump counts on that basis. It was in
-    #: Docs.json the whole time, under a name nobody grepped for -- *pressure*, not
-    #: *head* or *lift*. The refusal was right in spirit and wrong in fact.
-    #:
+    #: Metres of head a pipeline pump lifts, from ``mDesignPressure``. 20 on Mk1, 50 on Mk2.
     #: ``mMaxPressure`` is higher (22 and 55) and is the point of failure rather than the
     #: rating, so the design figure is the one to plan against.
     head_lift_m: float = 0.0
@@ -307,35 +285,24 @@ class GameData:
     def building_name(self, cls: str | None) -> str | None:
         """The building's display name, or a readable rendering of its class id.
 
-        Beside ``item_name`` because it answers the same question about the other half of
-        the dump, and it exists at all because the two SURFACES were answering it
-        differently: the web API resolved the id and fell back to spaced words, the MCP
-        tools resolved the id and fell back to three different unspaced manglings. One
-        world, one name for a thing in it.
-
-        ``None`` in, ``None`` out -- an occupant that is not there is not a building with
-        an unknown name, and the callers that pass an optional id want to keep the
-        difference.
+        ``None`` in, ``None`` out -- an occupant that is not there is not a building with an
+        unknown name, and the callers that pass an optional id keep the difference.
         """
         b = self.buildings.get(cls or "")
         return b.name if b else pretty_class(cls)
 
     def clock_shards(self) -> dict[str, float]:
-        """Item class -> max-clock added per unit slotted, for every shard that
-        overclocks. Derived, not listed: ``FGPowerShardDescriptor`` holds two classes
-        and only the Power Shard has ``mExtraPotential > 0``, so filtering on the field
-        excludes the Somersloop without either class being named in code."""
+        """Item class -> max-clock added per unit slotted, for every shard that overclocks.
+        ``FGPowerShardDescriptor`` holds two classes and only the Power Shard has
+        ``mExtraPotential > 0``, so the filter excludes the Somersloop by data."""
         return {c: it.extra_potential for c, it in self.items.items() if it.extra_potential > 0}
 
     def slug_yields(self) -> dict[str, float]:
-        """Item class -> Power Shards it crafts into, for every single-ingredient
-        shard recipe.
+        """Item class -> Power Shards it crafts into, for every single-ingredient shard recipe.
 
-        Derived from the recipes, never listed: the dump gives Power Shard (1), (2) and
-        (5) taking one Blue, Yellow or Purple slug, so the 1/2/5 ratios are data rather
-        than game knowledge. Restricted to ONE ingredient on purpose -- Synthetic Power
-        Shard also makes shards, but from Time Crystal, Dark Matter Crystal, Quartz and
-        Photonic Matter, which is a production chain and not something lying in a crate.
+        Restricted to ONE ingredient: Synthetic Power Shard also makes shards, but from Time
+        Crystal, Dark Matter Crystal, Quartz and Photonic Matter, which is a production chain
+        rather than something lying in a crate.
         """
         shard_items = set(self.clock_shards())
         out: dict[str, float] = {}
