@@ -1,46 +1,28 @@
 /* Floor mode: the same map, one storey at a time.
  *
- * WHAT THIS IS NOT is a second renderer. Everything on screen in floor mode was drawn by the
- * module that always drew it -- `placements.ts` for the concrete and the machines, `routes.ts`
- * for the belts and the pipes -- and this file only decides which of those pieces are on the
- * floor being looked at. That is the whole design: a factory's storeys are not a different
- * picture of a factory, they are the same picture with four fifths of it taken away, and a
- * second set of drawing code would be four more places for the map to disagree with itself.
+ * NOT A SECOND RENDERER. Everything on screen in floor mode was drawn by the module that always
+ * drew it, and this file only decides which of those pieces are on the floor being looked at.
+ * `/api/floors` answers the one thing a client cannot derive -- WHICH floor each thing is on --
+ * so the only geometry rule here is `standsOn`, for the layers the payload does not cover.
  *
- * WHAT A FLOOR IS is not in the save, and is not decided here either. `/api/floors` recovers
- * it -- 4-connected platforms of 8 m foundation cells, then a per-platform cluster of deck
- * heights, every constant measured before it was written -- and answers with the one thing a
- * client cannot derive: WHICH floor each thing is on. So this module holds no geometry rule
- * of its own except the one the payload does not cover; see `standsOn`, which is the only
- * place a height is compared with a height, and which exists for exactly one layer.
- *
- * THE FOUR JOINS, because there are four and they are all different:
+ * THE JOINS, because they are all different:
  *
  *   * a machine, extractor, generator or belt attachment -- BY INSTANCE ID. A band lists them.
- *   * a belt run BY CHAIN, a pipe run BY ITS ROW. `/api/floors` groups runs by what they do
- *     to a floor (`same-deck`, `connector`, `terrain`, `mixed`) and keys them by the number
- *     the belt and pipe payloads already carry.
+ *   * a belt run BY CHAIN, a pipe run BY ITS ROW, keyed by the number the belt and pipe
+ *     payloads already carry.
  *   * a foundation piece -- BY POSITION in `/api/structures`. A lightweight buildable has no
  *     instance name at all, so `deck_rows` is the only name a deck can be listed by.
- *   * storage -- BY WHERE IT STANDS, because the decomposition does not decompose it. That is
- *     the one geometric rule here, and it is written down as one rather than buried in a filter.
- *   * the power grid -- BY WHERE ITS ENDS STAND, for the same reason twice over. `/api/floors`
- *     groups belt chains and pipe rows and has never grouped a wire: power arrives as a
- *     wiring graph rather than as runs laid on decks, and the endpoint would have to decide
- *     what a circuit is before it could decide what floor one is on. So this file places the
- *     wires itself, with `standsOn` -- the same rule storage gets, applied twice because a
- *     wire has two ends. Each end is judged at its ANCHOR -- the base of the pole it
- *     terminates at where `/api/power` names one, the drawn endpoint where it does not --
- *     because an endpoint is a connector 7 m over a Mk1 pole and 24 m over a tower, and
- *     judging heights by it misfiled cables around 1-2 m mezzanine half-bands. See
- *     `onThisFloor`, `anchors` in power.ts, and the power branch of `applyFilter` below.
+ *   * storage -- BY WHERE IT STANDS, because the decomposition does not decompose it.
+ *   * the power grid -- BY WHERE ITS ENDS STAND. `/api/floors` has never grouped a wire, so
+ *     this file places them with `standsOn`, twice, because a wire has two ends. Each end is
+ *     judged at its ANCHOR rather than at its drawn endpoint, because an endpoint is a
+ *     connector 7 m over a Mk1 pole and 24 m over a tower. See `onThisFloor` and the power
+ *     branch of `applyFilter`.
  *
- * THE GROUND is a pseudo-floor and not a band, and that follows from the data: the API's own
- * `exempt`, `terrain` and `off-deck` groups plus the runs that never reach a deck. A miner
- * stands on a resource node up to 28 m off any deck and plumbing hugs the ground -- neither is
- * on floor zero, and putting them there would be the map claiming a measurement it does not
- * have. The row says which claim it is, because without a heightfield "on terrain" degrades to
- * "off-deck" and those are different sentences.
+ * THE GROUND is a pseudo-floor and not a band, because a miner stands on a resource node up to
+ * 28 m off any deck and plumbing hugs the ground -- neither is on floor zero, and putting them
+ * there would claim a measurement the page does not have. The row says WHICH claim it is,
+ * because without a heightfield "on terrain" degrades to "off-deck".
  */
 
 import { get } from "./api";
@@ -48,9 +30,8 @@ import { code, popup } from "./dom";
 import { batch, hideFloors, onFloorExit, onFloorPick, showFloors } from "./layercontrol";
 import { L } from "./leaflet";
 import { map, writeHash } from "./map";
-// The one drawing module this file reaches, and it is reached for a rule rather than for a
-// picture: `sinkRoutes` owns the stacking inside the three route layers, and rebuilding a
-// group is exactly what disturbs it. See the calls in applyFilter and clearFilter.
+// Reached for a rule rather than a picture: `sinkRoutes` owns the stacking inside the three
+// route layers, and rebuilding a group is exactly what disturbs it.
 import { sinkRoutes } from "./routes";
 import { state } from "./state";
 import { friendly, note } from "./toast";
@@ -70,18 +51,14 @@ type FloorRun = components["schemas"]["FloorRun"];
 /** The pseudo-floor's key, in the picker and in the fragment alike. */
 export var GROUND = "ground";
 
-/* What "show me this factory" already means, borrowed rather than restated: a factory at
- * factory scale IS its machines and the routes between them. `labels.ts` says why, and says
- * why storage is deliberately not the fourth. Storage is still FILTERED here when the reader
- * has ticked it, which is the difference between what a gesture turns on and what a mode is
- * about. */
+/* What "show me this factory" means, borrowed from labels.ts rather than restated. Storage is
+ * still FILTERED below when the reader has ticked it, which is the difference between what a
+ * gesture turns on and what a mode is about. */
 var FLOOR_LAYERS = ["machines", "belts", "pipes"];
 
-/* Every layer floor mode has an opinion about, which is every layer it filters.
- *
- * `power` is last, and the order is load-bearing twice over: `foundations` has to come first
- * because the storage rule needs this deck's own 8 m cells, and `power` needs them too -- a
- * pole is placed exactly the way a storage box is. */
+/* Every layer floor mode filters. THE ORDER IS LOAD-BEARING: `foundations` first, because the
+ * storage rule needs this deck's own 8 m cells, and `power` needs them too -- a pole is placed
+ * exactly the way a storage box is. */
 var FILTERED = [
   "foundations",
   "machines",
@@ -276,16 +253,13 @@ function snapshot(group: L.LayerGroup): L.Layer[] {
   return group._floorAll;
 }
 
-/* Ghosting, and why it is a restyle rather than a second polygon.
+/* Ghosting: a machine on a lower deck that comes up through this floor, restyled rather than
+ * redrawn. A Refinery is 15 m tall on a 12 m storey module, so it is in the way of anything
+ * built above it -- a fact about the floor above that only the floor below records. A restyle
+ * means no second shape that could end up somewhere the machine is not.
  *
- * A Refinery is 15 m tall on this world's 12 m storey module, so it is physically through the
- * deck above and in the way of anything built there -- a fact about the floor above that only
- * the floor below records. The machine is already drawn at its real footprint and its real
- * yaw; what changes is how it is stroked, so there is no second shape to keep in step with
- * the first and no chance of an outline being somewhere the machine is not.
- *
- * The original options are parked on the path, because unghosting has to be exact: guessing
- * the drawing module's colours back would put this file in the business of knowing what a
+ * The original options are parked on the path, because unghosting has to be exact: guessing the
+ * drawing module's colours back would put this file in the business of knowing what a
  * Constructor is painted. */
 function ghost(piece: L.Path, rows: Row[]): void {
   if (!piece._floorStyle) {
@@ -297,15 +271,9 @@ function ghost(piece: L.Path, rows: Row[]): void {
       fillOpacity: was.fillOpacity,
       dashArray: was.dashArray,
     };
-    // The card goes with the paint. A ghost says something different about the same machine
-    // -- where it really stands, and how far through this floor it comes -- and a machine
-    // that stops being a ghost on the next storey must stop saying it.
-    //
-    // The CONTENT, not the popup object. `bindPopup` with a string REUSES the popup a layer
-    // already has, so keeping the popup would be keeping a reference to the very thing the
-    // next line overwrites -- and the machine would carry the ghost's card for ever.
-    // Asserted, not widened: `getContent` is typed for Leaflet's function form as well, and
-    // no popup on this page is built that way -- see the note on `_floorCard`.
+    // The CONTENT, not the popup object: `bindPopup` with a string REUSES the popup a layer
+    // already has, so keeping the popup would keep a reference to the very thing the next line
+    // overwrites, and the machine would carry the ghost's card for ever.
     var card = piece.getPopup();
     piece._floorCard = card ? (card.getContent() as string | HTMLElement) : null;
   }
@@ -364,19 +332,13 @@ function ghostRows(platform: FloorPlatform, band: FloorBand, mark: FloorMark): R
   ];
 }
 
-/* The up/down glyph a connector gets on every floor it touches.
+/* The up/down glyph a connector gets on every floor it touches. A lift's ring says nothing
+ * about which way it goes; the glyph does, and the popup names the far end as a FLOOR rather
+ * than a height, because "it goes to floor 4" is the sentence a reader is after.
  *
- * A conveyor lift is already drawn as a ring, which is the right picture -- seen from above,
- * a lift is a hole in the floor -- and a ring says nothing about which way it goes. The glyph
- * does, and the popup says where: the two ends `/api/floors` measured, named as FLOORS rather
- * than as heights, because "it goes to floor 4" is the sentence a reader is after.
- *
- * A divIcon rather than a path, so the arrow is a character instead of a triangle this file
- * has to build -- and a REAL size, unlike the factory anchors next door, which are 0x0
- * because their tooltip is the clickable body. Here the arrow IS the body: an icon sized 0x0
- * with the character overflowing it looks identical and cannot be clicked at all, so the
- * popup saying where the connector goes would be unreachable. `GLYPH_PX` is therefore both
- * the mark and its pointer target, anchored on its own centre so it sits on the run's end. */
+ * The icon needs a REAL size, unlike the factory anchors, whose 0x0 works because their tooltip
+ * is the clickable body. Here the arrow IS the body: sized 0x0 it looks identical and cannot be
+ * clicked at all, so the popup would be unreachable. */
 function otherEnd(run: FloorRun, platform: number, band: FloorBand): FloorDeck | null {
   var found: FloorDeck | null = null;
   run.ends.forEach(function (end) {
@@ -385,10 +347,9 @@ function otherEnd(run: FloorRun, platform: number, band: FloorBand): FloorDeck |
   return found;
 }
 
-/* The mark itself, with no opinion about what is leaving the floor -- an arrow at a point,
- * pointing the way it goes. Shared by the two things that can leave a floor, a run and a wire,
- * so that a reader learns one glyph: the difference between them is what the popup says, not
- * what the reader has to recognise. */
+/* An arrow at a point, pointing the way it goes. Shared by the two things that can leave a
+ * floor, a run and a wire, so a reader learns one glyph: the difference between them is what
+ * the popup says. */
 function glyphMarker(at: Point3M, up: boolean): L.Marker {
   return L.marker([-at[1], at[0]], {
     icon: L.divIcon({
@@ -424,13 +385,11 @@ function connectorGlyph(run: FloorRun, platform: number, band: FloorBand, at: Po
 
 /* ---------------------------------------------------------------- the power grid */
 
-/* Which band of this platform a point stands on, by height alone.
- *
- * `standsOn` twice over, once per band, and it is the WEAKER of the two tests the storage
- * rule makes -- there is no "over this deck's own concrete" here, because the cells are only
- * ever collected for the band being looked at and this has to be able to ask about the others.
- * That is enough for what it is used for: naming the floor at the far end of a wire, and
- * deciding whether a wire is over any deck at all rather than which one. */
+/* Which band of this platform a point stands on, BY HEIGHT ALONE -- the weaker of the two tests
+ * the storage rule makes, because the deck cells are only ever collected for the band being
+ * looked at and this has to be able to ask about the others. Enough for what it is used for:
+ * naming the floor at the far end of a wire, and deciding whether a wire is over any deck at
+ * all rather than which one. */
 function bandAtHeight(platform: FloorPlatform, z_m: number): FloorBand | null {
   var found: FloorBand | null = null;
   platform.bands.forEach(function (band) {
@@ -455,22 +414,17 @@ function onThisFloor(
   return cells[cellKey(at[0], at[1])] === true && standsOn(platform, band, at[2]);
 }
 
-/* The glyph a wire gets when it leaves the floor it is on, and the sentence it carries.
+/* The glyph a wire gets when it leaves the floor it is on: the same mark the belt and pipe
+ * risers get, with a different sentence, because a cable that goes up through the ceiling is
+ * neither a named lift class nor a run that climbs a storey.
  *
- * The same mark the belt and pipe risers get -- same character, same class, same size, so a
- * reader learns one arrow rather than two -- and a different sentence, because a wire is not a
- * riser. A conveyor lift is a named class and a pipe riser is a run that climbs a storey; a
- * cable that goes up through the ceiling is neither of those, it is just a cable that goes
- * somewhere else, and the honest row says which floor and how far.
+ * The floor CLAIMS -- which band the far end lands on, and whether the cable goes up or down --
+ * are made at the two ANCHORS, the same points the filter judged the wire by, so the arrow can
+ * never name a different storey than the filter used. The drawn coordinates and the rise stay
+ * the wire's own ends: the rise is real cable, connector to connector.
  *
- * The floor CLAIMS -- which band the far end lands on, and whether the cable goes up or down
- * -- are made at the two ANCHORS, the same points the filter judged the wire by, so the
- * arrow can never name a different storey than the filter used. The drawn coordinates and
- * the rise stay the wire's own ends: the rise is real cable, connector to connector.
- *
- * `awayAnchor` may be on no band at all, which is the wire running down to something on the
- * ground. That is a real answer and not a missing one, so it is spelled out rather than left
- * blank. */
+ * `awayAnchor` may be on no band at all, which is a real answer -- the wire running down to
+ * something on the ground -- so it is spelled out rather than left blank. */
 function wireGlyph(
   platform: FloorPlatform,
   here: Point3M,
@@ -489,9 +443,8 @@ function wireGlyph(
       // Where the other end actually is, because a wire can leave a floor sideways as well as
       // vertically and "up" alone would not say which cable this is.
       ["other end", away[0] + ", " + away[1] + " m"],
-      // Said here as well as on the wire itself: the reader is looking at an arrow rather
-      // than at the line, and the arrow is on a floor plan where a straight chord through
-      // three storeys is exactly the thing that needs the caveat.
+      // Said here as well as on the wire itself, because the reader is looking at an arrow on a
+      // floor plan, where a straight chord through three storeys is what needs the caveat.
       ["shape", "a straight chord — a wire sags and the save records no sag"],
     ])
   );
@@ -564,49 +517,37 @@ function applyFilter(): void {
           extra.push(connectorGlyph(run, platform.index, band, at));
           return;
         }
-        /* THE POWER GRID, placed by this file because nothing else can place it.
-         *
-         * A pole is a point and is judged exactly as a storage box is. A wire has two ends
-         * and therefore three answers, which are the same three the API's own run memberships
-         * name -- and having to derive them here rather than read them is the whole difference
-         * between this layer and the belts:
+        /* THE POWER GRID, placed by this file because nothing else can place it. A pole is a
+         * point and is judged exactly as a storage box is; a wire has two ends and therefore
+         * three answers:
          *
          *   both ends on this floor  -- a cable running along this deck. Shown.
          *   one end on this floor    -- it leaves. Shown, plus the arrow saying where to.
          *   neither                  -- not this storey's cable. Hidden.
          *
-         * On the GROUND pseudo-floor the question flips, as it does for every other layer:
-         * what belongs there is what belongs on no deck, so a wire is kept when NEITHER of
-         * its ends is at any band's height. That is the weaker of the two tests on purpose --
-         * see bandAtHeight -- because "not on a deck" is a claim about height alone, and a
-         * cable strung across open country 40 m up is still not on anybody's floor.
+         * On the GROUND pseudo-floor the question flips, as it does for every layer: a wire is
+         * kept when NEITHER end is at any band's height. That is the weaker test on purpose
+         * (see bandAtHeight), because "not on a deck" is a claim about height alone.
          */
         if (mark.power) {
           var span = mark.ends;
-          /* Where the two ends COUNT AS STANDING, against where they are drawn. For a wire
-           * whose end terminates at a pole the server named, this is the pole's base -- the
-           * exact point the pole's own mark is filtered by, so a wire and its pole cannot
-           * land on different storeys -- and for every other end it IS the drawn endpoint,
-           * which keeps the pre-join height rule exactly where the join is unknown. */
+          /* Where the two ends COUNT AS STANDING, against where they are drawn: the base of
+           * the pole an end terminates at where the server names one -- the exact point the
+           * pole's own mark is filtered by, so a wire and its pole cannot land on different
+           * storeys -- and the drawn endpoint everywhere else. */
           var anchor = mark.anchors || span;
           if (!band) {
-            /* THE GROUND, and the one place this layer has to invent a scope.
+            /* THE GROUND, and the one place this layer has to invent a SCOPE. Every other
+             * layer's ground row is the API's own answer, computed about THIS FACTORY; there is
+             * no such grouping for power, so an unscoped height test would put every cable in
+             * the world under this one factory's ground row.
              *
-             * Every other layer's ground row is the API's own answer -- `exempt`, `terrain`,
-             * `off-deck`, and the `terrain` and `mixed` run memberships -- and every one of
-             * those was computed about THIS FACTORY. There is no such grouping for power, so
-             * an unscoped height test would put every cable in the world under this one
-             * factory's ground row.
-             *
-             * The scope is the platform's own extent, which this file already measures for
-             * the flight, pad and all: a pole feeding a factory stands just off its concrete
-             * far more often than on it, so the 40 m that keeps a deck from filling the
-             * screen is also about the right margin for "this factory's". Borrowed rather
-             * than re-derived, so there is one box and not two that can disagree.
+             * The scope is the platform's own extent, pad and all, borrowed from the flight so
+             * there is one box and not two that can disagree -- a pole feeding a factory stands
+             * just off its concrete more often than on it, so the 40 m is about right.
              *
              * Within it, the test is the runs' own two memberships said in heights: a piece
-             * belongs to the ground when it TOUCHES the ground -- neither end on a band, which
-             * is `terrain`, or one end on a band and one not, which is `mixed`. */
+             * belongs to the ground when it TOUCHES the ground. */
             if (!reach) return;
             if (span && anchor) {
               if (!reach.contains([-anchor[0][1], anchor[0][0]]) &&
@@ -644,17 +585,13 @@ function applyFilter(): void {
           var tailHere = onThisFloor(platform, band, cells, cellKey, anchor[1]);
           if (!headHere && !tailHere) return;
           keep.push(piece);
-          /* And the arrow, on a NARROWER test than the one that kept the wire.
+          /* And the arrow, on a NARROWER test than the one that kept the wire: being kept only
+           * means one end is on this deck, while a cable running off the edge of the platform
+           * at the same height leaves the FACTORY rather than the STOREY. So it is asked of the
+           * heights -- the two ends on different bands, or one on no band at all.
            *
-           * Being kept only means one end is on this deck; a cable that runs off the edge of
-           * the platform at the same height is on this floor and leaves the FACTORY, which is
-           * not what an up-or-down arrow says. The arrow is for leaving the STOREY, so it is
-           * asked of the heights: the two ends have to land on different bands, or one of
-           * them on no band at all, which is the same test `/api/floors` makes when it calls
-           * a run a connector rather than same-deck.
-           *
-           * One arrow per wire, which is what `casing` is marked for -- the piece underneath
-           * has the same two ends and would otherwise put a second arrow on the same pixel. */
+           * One arrow per wire, which is what `casing` is marked for: the piece underneath has
+           * the same two ends and would otherwise put a second arrow on the same pixel. */
           if (mark.power !== "wire") return;
           // The claims from the anchors -- the same points the keep above was decided at --
           // and the drawn geometry from the wire's own ends, so the arrow sits on the cable.
@@ -698,18 +635,11 @@ function applyFilter(): void {
       var drawn = keep.concat(extra);
       for (var i = 0; i < drawn.length; i++) group.addLayer(drawn[i]!);
     });
-    /* AND THE STACKING BACK, because rebuilding a group rebuilds its draw order.
-     *
-     * Draw order on the shared canvas is ADD order, so clearing a route layer and re-adding
-     * what survived puts every piece back at the top in the order this loop happened to keep
-     * them -- which is not the order `sinkRoutes` established. The belts and pipes have always
-     * quietly lost their splitter-over-run stacking here and it was hard to see. The power
-     * casings are not hard to see: a casing is the same chord as its core and two pixels
-     * wider, so a casing left on top HIDES the core completely and a cased line becomes a fat
-     * dark one. Restated at the one place that disturbs it, rather than left to be rediscovered.
-     *
-     * Cheap and idempotent -- it is the same pass the drawing modules run at the end of every
-     * draw -- and it also re-raises the node dots, which the same rebuild would have buried. */
+    /* AND THE STACKING BACK, because rebuilding a group rebuilds its draw order. Clearing a
+     * route layer and re-adding what survived puts every piece back at the top in the order
+     * this loop happened to keep them, which is not the order `sinkRoutes` established -- and
+     * a power casing left on top is two pixels wider than its core, so it hides it completely.
+     * Cheap and idempotent, and it re-raises the node dots the same rebuild buried. */
     sinkRoutes();
   } finally {
     applying = false;
@@ -920,14 +850,10 @@ function flyToPlatform(): void {
   map.flyToBounds(bounds, { maxZoom: FLOOR_MAX_ZOOM });
 }
 
-/* Turn on what a floor is made of, once, and remember what this mode turned on.
- *
- * Often nothing, and that is the point of returning a list rather than a count. The card is
- * reached by clicking a factory LABEL, and that click has already revealed exactly these three
- * layers with its own toast -- so entering from the card usually turns on nothing and leaving
- * therefore turns off nothing, which is right: the layers are the reader's from the label
- * click onwards. The list is only ever non-empty on the path that skips the label, which is a
- * pasted `#floor=` link. */
+/* Turn on what a floor is made of, once, and remember what this mode turned on. Often nothing,
+ * which is why it returns a list rather than a count: the card is normally reached by clicking
+ * a factory LABEL, and that click has already revealed these three layers, so they are the
+ * reader's from then on. The list is non-empty only on a pasted `#floor=` link. */
 function revealFor(): string[] {
   var turned: string[] = [];
   applying = true;
@@ -946,15 +872,9 @@ function revealFor(): string[] {
   return turned;
 }
 
-/* A tick the reader makes during floor mode is theirs, and leaving must not undo it.
- *
- * Exactly the rule regions.ts states for the base map's default: the default is what the page
- * does when it has not been told, not what it does instead of being told. So a layer this mode
- * turned on stops being this mode's the moment the reader touches its box, and leaving puts
- * back only what is still on loan.
- *
- * Registered in main.ts with the rest of the map listeners, so the order it runs in is written
- * down in one place rather than decided by the import graph. */
+/* A tick the reader makes during floor mode is theirs, and leaving must not undo it: a layer
+ * this mode turned on stops being this mode's the moment the reader touches its box, and
+ * leaving puts back only what is still on loan. */
 export function noteFloorChoice(event: L.LeafletEvent): void {
   if (!view || applying) return;
   var touched = (event as L.LayersControlEvent).layer;
@@ -975,11 +895,10 @@ function url(query: string): `/api/floors?${string}` {
  * `band` is what the fragment asked for, where it asked for one; without it the busiest storey
  * is opened, because "show me the floors of this factory" should land on a factory.
  *
- * A 4xx is not a failure to be toasted away here. `/api/floors` answers a factory standing on
- * no platform with a sentence saying so, and a save too old to record foundations with a 200
- * and a note. Both are ANSWERS, and both are shown in the picker -- the mode is entered either
- * way, so a reader gets the sentence and a way out rather than a toast that disappears over a
- * map that did not change. */
+ * A 4xx IS NOT A FAILURE HERE. `/api/floors` answers a factory standing on no platform with a
+ * sentence saying so, and both that and the 200-with-a-note are ANSWERS shown in the picker --
+ * the mode is entered either way, so a reader gets the sentence and a way out rather than a
+ * toast that disappears over a map that did not change. */
 export function enterFloors(query: string, title: string, band?: string): void {
   get<FloorsResponse & { error?: string }>(url(query))
     .then(function (body) {
@@ -1072,12 +991,12 @@ export function parseFloorFragment(raw: string | undefined): { platform: number;
   return { platform: platform, band: band };
 }
 
-/* One fragment's floor half, applied. Returns whether anything moved, because the caller owes
- * a write if nothing else did -- the same contract `applySubject` has next to it.
+/* One fragment's floor half, applied. Returns whether anything moved, because the caller owes a
+ * write if nothing else did.
  *
- * A platform index rather than a factory name in the address, deliberately: the index is what
- * `/api/floors` hands out and promises to be stable over one save, and a factory name would
- * make the link depend on the player not renaming anything. */
+ * A platform INDEX rather than a factory name in the address: the index is what `/api/floors`
+ * hands out and promises to be stable over one save, and a factory name would make the link
+ * depend on the player not renaming anything. */
 export function applyFloorFragment(asked: string | undefined): boolean {
   var want = parseFloorFragment(asked);
   var have = state.floor;

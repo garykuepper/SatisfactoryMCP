@@ -21,32 +21,17 @@ import type { FactoriesResponse, FactoryRow, ProposalRow } from "./api-shapes";
 import type { BboxM, PointM } from "./geometry";
 import type { Row } from "./dom";
 
-/* `machines`, `belts` and `pipes` are all off at the whole-world zoom on purpose: 438
- * rectangles and 3,588 routes across 7 km are a smear, and unticking them is the right
- * default. What
- * was wrong is what happened next -- clicking a factory label flew the map to that
- * factory's own extent and landed on bare concrete, with the reason eight unfolded rows
- * down a control the player had not opened.
+/* Turn on the factory-scale layers, once, and say so.
  *
- * So the click that changes the SCALE turns those layers on, once, and says so. Not zoom:
- * a layer that ticked and unticked itself as the map moved would be the only control on
- * this page the player does not own, and the checkbox would be lying about who decided.
- * This is the same grammar as everything else here -- a ticked box, unticked by whoever
- * wants it unticked -- reached by the one gesture that means "show me this factory".
+ * TRIGGERED BY THE CLICK AND NOT BY THE ZOOM. A layer that ticked and unticked itself as the
+ * map moved would be the only control on this page the player does not own, and the checkbox
+ * would be lying about who decided. One function and one NOTE for the whole set, because the
+ * player made one gesture.
  *
- * One function for the whole set, rather than one per layer, so the grammar cannot drift:
- * a layer that is factory-scale information is off at world scale and arrives with the
- * flight. One NOTE for the whole set too -- two toasts for one click would read as two
- * events, and the player made one gesture.
- *
- * ...and ONE RENDER for the whole set, which is what `batch` is doing here. Three
- * `addTo(map)` calls outside it are three `overlayadd` events, and every one of them
- * re-rendered the layer control (twice: Leaflet's own `_onLayerChange` and this page's
- * decorator) and re-ran the declutter pass over every label on the map. Six renders and three
- * full-layout passes, for one click, to reach a state that could be described once -- and the
- * two intermediate declutters were measuring labels against a half-revealed map, so the "+n"
- * badges were computed twice from views nobody was ever shown. `batch` ends with a single
- * render and the settled passes, which is where the one declutter this gesture owes belongs. */
+ * ...and ONE RENDER, which is what `batch` is for: three `addTo(map)` calls outside it are
+ * three `overlayadd` events, each re-rendering the layer control twice and re-running the
+ * declutter pass -- against a half-revealed map, so the "+n" badges would be computed from
+ * views nobody is shown. */
 export function reveal(names: string[]): void {
   var turned: string[] = [];
   batch(function () {
@@ -70,57 +55,29 @@ export function reveal(names: string[]): void {
   );
 }
 
-/* What "show me this factory" means, in layers. A factory at factory scale is its machines
- * and the routes between them -- belts AND pipes, because a refinery block is half plumbing
- * and a view that showed only the belts would read as a factory with pieces missing. All
- * three are unreadable at the zoom the click starts from.
+/* What "show me this factory" means, in layers: what a factory is MADE OF. Take the belts away
+ * and the machines are a scatter of rectangles; take the pipes away and a refinery block is
+ * half missing. All three are unreadable at the zoom the click starts from.
  *
- * STORAGE IS DELIBERATELY NOT THE FOURTH, and the reason is not the mechanics.
+ * STORAGE IS NOT THE FOURTH: containers are what is standing in a factory rather than what it
+ * is made of, and the layer is a toggle a player asks for on purpose.
  *
- * The mechanics were checked first, because they were the obvious thing to be blocked by and
- * they do not block: reveal() builds its list with `slice(0, -1).join(", ") + " and " + last`,
- * so four names come out as "machines, belts, pipes and storage" -- a correct list, not the
- * "a and b and c" a plain join would give -- and the sentence after it already says "those
- * layers" for any count above one. The grammar scales.
- *
- * The reason is what the layer MEANS. These three are what a factory is made of: take the
- * belts away and the machines are a scatter of rectangles, take the pipes away and a refinery
- * block is half missing. Containers are not what a factory is made of -- they are what is
- * standing in it, and "where is my steel" is a question a player asks on purpose rather than
- * one implied by "show me this factory". The owner asked for this as a TOGGLE, and a layer
- * that four other gestures turn on for you is not one.
- *
- * There is a cost argument too and it is the weaker one, so it is second: revealing a fourth
- * layer means a click the reader did not make changes four things, and the toast that has to
- * list them gets longer than the note it is trying to be.
- *
- * POWER IS NOT THE FOURTH EITHER, and for the opposite reason to storage's: it is already on.
- * `reveal` turns on what is off, so a layer that starts ticked would either be a no-op here or
- * -- in the one case where it is not, a reader who unticked it -- would re-tick a box the
- * reader had just turned off, which is the one thing this function must never do. The wires
- * are on at world scale because unlike the three above they READ at world scale: 1,297 lines
- * with a median span of 21 m draw the spine joining this world's bases, where 3,588 routes and
- * 438 rectangles draw a smear. See drawPower in power.ts.
- */
+ * POWER IS NOT EITHER, because it starts ticked -- so the only case where `reveal` would do
+ * anything to it is a reader who had just unticked it, and re-ticking that box is the one
+ * thing this function must never do. */
 var FACTORY_LAYERS = ["machines", "belts", "pipes"];
 
-/* Factory labels, and the two things they used to get wrong.
+/* Factory labels: a permanent tooltip has to hang off something, and that something is a
+ * zero-sized divIcon. The DEFAULT icon would request two image files and append 25x41 px of
+ * <img> to the marker pane at zIndex 600, above the canvas everything clickable is drawn on --
+ * invisible at opacity 0 and still a pointer target, so every label would punch a hole in the
+ * map.
  *
- * A permanent tooltip has to hang off SOMETHING, and that something used to be
- * `L.marker(pos, {opacity: 0})`. An invisible marker is still a marker: Leaflet builds it
- * from the default Icon, which requests `vendor/images/marker-icon.png` and
- * `marker-shadow.png` -- two files nobody ever vendored, so every page load logged two
- * 404s -- and it appends those <img> elements to the marker pane, at zIndex 600, above
- * the canvas everything clickable is drawn on. At opacity 0 they are invisible and still
- * 25x41 px of pointer target, so each of the 15 labels punched a hole in the map: a click
- * on a node under one hit the transparent image instead. A divIcon fetches no image and
- * is sized 0x0 here, which closes both holes with one change.
- *
- * The tooltip is then made `interactive`, which is what turns a label from decoration
- * into the map's index: click it and the map flies to the factory's own extent -- the
- * server's `bbox_m`, because the client is sent a machine COUNT and never the machines --
- * and opens the card. Zooming to a bounding box rather than to a fixed zoom at the
- * centroid is what makes one click work for both a 40 m outpost and a 600 m base.
+ * The tooltip is `interactive`, which is what turns a label into the map's index: click it and
+ * the map flies to the factory's own extent (the server's `bbox_m`, because the client is sent
+ * a machine COUNT and never the machines) and opens the card. Flying to a bounding box rather
+ * than a fixed zoom at the centroid is what makes one click work for a 40 m outpost and a 600 m
+ * base alike.
  */
 
 // Breathing room around a factory's extent, metres. A one-machine factory has a
@@ -132,8 +89,6 @@ var FACTORY_PAD_M = 40;
 var FACTORY_MAX_ZOOM = 1;
 
 function anchorMarker(centroid_m: PointM): L.Marker {
-  // divIcon, not the default icon: no image request, and iconSize [0,0] means the anchor
-  // occupies no pointer area at all. The tooltip is the whole visible and clickable body.
   return L.marker([-centroid_m[1], centroid_m[0]], {
     icon: L.divIcon({ className: "factory-anchor", iconSize: [0, 0] }),
   });
@@ -149,13 +104,9 @@ function factoryBounds(bbox_m: BboxM | null | undefined): L.LatLngBounds | null 
   );
 }
 
-/* The card, and the one action on it.
- *
- * `factory` is a NAME when the card is a named factory's and null when it is a proposal's,
- * and that is the whole of the difference: a floor view is asked for by selector, and a
- * proposal is a cluster this page invented rather than something the player named. So the
- * action is on the labels and not on the proposals, and the two go through one builder so
- * that the rest of the card cannot drift between them. */
+/* The card, and the one action on it. `factory` is a NAME for a named factory and null for a
+ * proposal: a floor view is asked for by selector, and a proposal is a cluster this page
+ * invented rather than something the player named, so only the named ones get the action. */
 function cardFor(rows: Row[], factory: string | null): string | HTMLElement {
   return factory === null ? popup(rows) : cardWithFloors(rows, factory);
 }
@@ -182,7 +133,6 @@ function factoryAnchor(
   if (bounds) {
     var to = bounds;
     marker.on("click", function () {
-      // A factory at factory scale IS its machines and the routes between them; see reveal above.
       reveal(FACTORY_LAYERS);
       map.flyToBounds(to, { maxZoom: FACTORY_MAX_ZOOM });
     });
@@ -232,11 +182,9 @@ export function drawFactories(data: FactoriesResponse): void {
   declutter();
 }
 
-/* Last of the static wave, and that is the one ordering decision in this file: the labels are
- * the map's index, and `declutter` decides which of them fit by measuring screen rectangles
- * against the ones already placed -- so it wants to run when there is a map to measure on
- * rather than first, into an empty one. Two layers under one entry because /api/factories
- * answers with both, and a proposal is a factory the player has not named yet. */
+/* Last of the static wave, which is the one ordering decision in this file: `declutter` decides
+ * which labels fit by measuring screen rectangles, so it wants a drawn map to measure on. Two
+ * layers under one entry because /api/factories answers with both. */
 registerFetch<FactoriesResponse>({
   wave: "static",
   rank: 70,
@@ -247,23 +195,18 @@ registerFetch<FactoriesResponse>({
   draw: drawFactories,
 });
 
-/* Labels are the map's index, so a pile of them is a broken index: at the whole-world
- * zoom the base's labels overlap in dozens of pairs and whichever tooltip was added last
- * takes every click -- the player's largest factory used to open a 2-machine outpost.
+/* Labels are the map's index, so a pile of them is a broken index: overlapping tooltips give
+ * every click to whichever was added last, and the largest factory opens a 2-machine outpost.
  *
- * The rule: show every label that fits, hide what it covers. Named labels outrank
- * proposals, bigger factories outrank smaller, and the test is the labels' actual screen
- * rectangles, re-run whenever zoom or the ticked layers change. A hidden label reappears
- * the moment there is room, and every label that IS visible is clickable -- no
- * dead-looking clickables, no invisible click thieves.
+ * THE RULE: show every label that fits, hide what it covers. Named labels outrank proposals,
+ * bigger factories outrank smaller, and the test is the labels' actual screen rectangles,
+ * re-run whenever zoom or the ticked layers change. A hidden label reappears the moment there
+ * is room, and every VISIBLE label is clickable -- no dead-looking clickables, no invisible
+ * click thieves.
  *
- * The rule is right; it used to be applied in silence. At the home view 8 of 15 labels
- * are display:none, and a player who NAMED a factory could not tell hidden from lost --
- * the map said nothing about the eight, and the player has no way to know the pass exists.
- * So every label that covered something wears a "+n" badge: the count of names folded
- * under it, drawn only when this pass actually hid that many at this view, and gone the
- * moment a zoom-in makes room. Clicking it steps the map toward the group it names, which
- * keeps the page's one rule about labels -- visible means clickable. */
+ * Applied out loud, because a player who named a factory cannot tell hidden from lost: every
+ * label that covered something wears a "+n" badge counting the names folded under it, and
+ * clicking it steps the map toward the group. */
 /* One label, measured. `node` is the tooltip's own element -- the thing with a screen
  * rectangle -- and `marker` is what a badge click has to fly to. */
 interface Entry {
@@ -286,21 +229,13 @@ interface Measured {
   rect: DOMRect;
 }
 
-/* READ EVERYTHING, THEN WRITE, and the two halves below are separated for that alone.
+/* READ EVERYTHING, THEN WRITE, which is the only reason this is its own function.
  *
- * `getBoundingClientRect` is a synchronous question about layout, so it returns the geometry
- * the browser would draw right now -- which means it cannot be answered while a style change
- * is pending. Deciding and hiding inside the measuring loop therefore made every rectangle
- * after the first hidden label cost a forced reflow: the previous iteration's
- * `display: none` invalidated layout, and the next `getBoundingClientRect` had to flush it.
- *
- * On this world that is up to one reflow per label on every zoomend -- the pass runs on every
- * zoom step and on every layer tick, and at the home view eight of fifteen labels are hidden,
- * so eight of the fifteen reads were paying for the seven writes before them. Measuring all
- * fifteen first costs exactly one flush (the class reset above it) and answers the same
- * question with the same numbers: nothing in the overlap test depends on what the loop has
- * already hidden, because a hidden label is never a cover -- only `kept` is, and `kept` holds
- * the rectangles measured here. */
+ * `getBoundingClientRect` cannot be answered while a style change is pending, so hiding inside
+ * the measuring loop makes every rectangle after the first hidden label cost a forced reflow.
+ * Measuring first costs exactly one flush and answers the same question with the same numbers:
+ * nothing in the overlap test depends on what the loop has already hidden, because a hidden
+ * label is never a cover -- only `kept` is. */
 function measureAll(entries: Entry[]): Measured[] {
   return entries.map(function (entry): Measured {
     return { entry: entry, rect: entry.node.getBoundingClientRect() };
@@ -341,8 +276,7 @@ export function declutter(): void {
   measured.forEach(function (m) {
     var r = m.rect;
     // `find`, because the highest-ranked cover owns the badge and `kept` is already in rank
-    // order: it stops at the first overlap, which is what the loop this replaced achieved by
-    // testing a flag on every later element and assigning to none of them.
+    // order, so the first overlap is the right one.
     var covered = kept.find(function (k) {
       var b = k.rect;
       return r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom;
@@ -359,11 +293,10 @@ export function declutter(): void {
   });
 }
 
-/* One click on a badge is a STEP toward the group, not a teleport. Two labels 40 m apart
- * do not separate until zoom 3, and flying six levels in one go from the whole-world view
- * loses every landmark on the way; three levels always moves the map and stays legible.
- * If the group is still covered when the flight ends the badge is still there -- the
- * declutter pass reruns on zoomend -- so the step simply repeats. */
+/* One click on a badge is a STEP toward the group, not a teleport: two labels 40 m apart do not
+ * separate until zoom 3, and flying six levels in one go from the whole-world view loses every
+ * landmark on the way. If the group is still covered when the flight ends the badge is still
+ * there, so the step simply repeats. */
 var LABEL_STEP_ZOOM = 3;
 
 function badgeHidden(entry: Entry, hidden: Entry[]): void {

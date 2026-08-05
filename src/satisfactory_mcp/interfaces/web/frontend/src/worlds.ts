@@ -15,14 +15,6 @@ import { fail, friendly } from "./toast";
 
 import type { WorldRow, WorldsResponse } from "./api-shapes";
 
-/* `WorldsResponse` was the frontend's last hand-written claim about a payload, declared
- * right here with the fetch. It is the server's claim now -- `/api/worlds` declares a
- * `response_model` like everything else, which was a body change and made as one (the
- * model filters; see routers/world.py) -- so both names come from api-shapes.ts, and the
- * generated body keeps what the claim had: `worlds` and `unsupported` REQUIRED, with the
- * error branch supplied by the `ApiError` intersection `Body<>` applies. No `|| []`
- * guards, same reason as ever: the endpoint sends both fields or sends `error` instead. */
-
 function worldOption(w: WorldRow, dupes: Record<string, number>): HTMLOptionElement {
   var option = document.createElement("option");
   option.value = w.world_id;
@@ -95,10 +87,9 @@ function fillSavePicker(): void {
 /* Both pickers, re-pointed at whatever `state.world` and `state.save` now say.
  *
  * Exported for the one caller that changes the selection without touching a <select>: the
- * fragment listener in fragment.ts, where the gesture is typing in the address bar. A picker
- * still showing the previous world's name while the map draws the new one is the same lie
- * this module already exists to prevent on a rescan -- and the two rebuilds are cheap enough
- * that doing them unconditionally beats a second code path that decides which one moved. */
+ * fragment listener in fragment.ts, where the gesture is typing in the address bar. Both
+ * pickers are rebuilt unconditionally, which is cheaper than a code path deciding which of
+ * them moved. */
 export function syncPickers(): void {
   fillWorldPicker(true);
   fillSavePicker();
@@ -139,19 +130,14 @@ export function loadWorlds(): Promise<void> {
           " (set SATISFACTORY_SAVES if they live elsewhere)";
         el("summary").textContent = text;
         el("summary").title = text; // the span ellipsises; the full diagnosis survives hover
-        // Geography needs no save. The node table still draws -- the same table the
+        // Geography needs no save, so the node table still draws -- the same table the
         // right-click inspector reads, so the two surfaces agree even with no world.
         //
-        // Through the registry rather than hand-rolled here, which it was: this file used to
-        // spell a second /api/nodes fetch with an epoch guard of its own and an empty catch,
-        // and that copy is exactly the kind of thing that stops matching. The guard it needed
-        // is the registry's own -- "no readable saves" is precisely the state a player fixes
-        // while the tab is open, and `refreshWorlds` then adopts the world and reloads, so
-        // this fetch outlives that switch and its late reply would otherwise land on top of
-        // the world's own table with every dot's occupancy silently back to "no extractor
-        // known here". What the copy did NOT have is the failure half, which is the whole
-        // reason to route it: a failure now empties the node layers and says so, instead of
-        // being swallowed on the one page where a diagnosis is the only thing on screen.
+        // Through the registry and not a fetch of its own, for the epoch guard: "no readable
+        // saves" is the state a player fixes while the tab is open, `refreshWorlds` then
+        // adopts the world and reloads, and this fetch outlives that switch. An unguarded late
+        // reply would land on the new world's table with every dot's occupancy back to "no
+        // extractor known here".
         loadOne("/api/nodes");
         return;
       }
@@ -182,9 +168,8 @@ export function refreshWorlds(): void {
       return r.json() as Promise<WorldsResponse>;
     })
     .then(function (body) {
-      // An empty list is the scan hiccup this function exists to survive, and it is a
-      // different thing from the absent field the `|| []` here used to imply: the endpoint
-      // either sends the list or sends `error`, so what is guarded is the CONTENT.
+      // An empty list is the scan hiccup this function exists to survive. What is guarded is
+      // the CONTENT: the endpoint either sends the list or sends `error`.
       if (body.error || !body.worlds.length) return;
       state.worlds = body.worlds;
       fillWorldPicker(true);

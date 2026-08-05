@@ -1,24 +1,15 @@
-/* The other half of the page's address: reading a fragment somebody typed.
+/* The other half of the page's address: reading a fragment somebody typed. `writeHash` in
+ * map.ts writes it and `BOOT` in state.ts parses it once at load; this is what happens when
+ * the address bar changes under an open tab.
  *
- * `writeHash` in map.ts has always written `#world=…&save=…&mode=…&z=…&c=x,y`, and `BOOT` in
- * state.ts has always parsed it -- ONCE, at load. So the fragment was a link format and not
- * an address: paste it into a new tab and it worked, edit it in the tab already open and
- * nothing whatsoever happened. The page went on drawing the old world under a URL that said
- * the new one, which is the one failure worse than ignoring the edit, because the address bar
- * is then a caption on the map and it is wrong.
+ * ITS OWN MODULE because applying a fragment means reaching the world picker, the base map
+ * and the viewport, and no other file can reach all three: state.ts imports nothing, map.ts
+ * is below tiles.ts in the graph, and worlds.ts is imported BY the loader it would have to
+ * call. This file sits above all of them and is imported only by main.ts.
  *
- * WHY THIS IS ITS OWN MODULE. Applying a fragment means reaching the world picker, the base
- * map and the viewport, and no existing file can reach all three: state.ts deliberately
- * imports nothing, map.ts is below tiles.ts in the graph, and worlds.ts is imported BY the
- * loader it would have to call. This file sits above all of them and is imported only by
- * main.ts, which is what keeps the graph acyclic -- the same reason `onSettled` exists in
- * layercontrol.ts, arrived at from the other direction.
- *
- * WHAT IT DOES NOT DO is decide anything. Every branch below ends in a call that already
- * existed and is already the page's one way of doing that thing: `reload()` for a world or
- * save change (epoch bump, busy marker, both waves), `setMode()` for the picture,
- * `map.setView` for the viewport. A fragment is a request to press the buttons the page
- * already has, not a second way of changing the page.
+ * WHAT IT DOES NOT DO is decide anything. Every branch below ends in a call that is already
+ * the page's one way of doing that thing -- `reload()`, `setMode()`, `map.setView`. A
+ * fragment is a request to press the buttons the page already has.
  */
 
 import { applyFloorFragment } from "./floors";
@@ -48,11 +39,11 @@ function askedMode(raw: string | undefined): BaseMode | null {
  * Both are checked against what the page actually has rather than trusted. A world id the
  * scan never returned is a stale bookmark, and adopting it would give the header a name with
  * no saves under it; a filename this world does not hold resolves to "" through `pinnedPath`,
- * which is the page's existing spelling of "follow the newest save".
+ * which is this page's spelling of "follow the newest save".
  *
  * Returns whether anything moved, because the caller owes a `reload()` if so and must not
- * fire one if not -- a reload is a visible event (the map dims, the header says "loading")
- * and firing it for a fragment that changed only `z` would make every pan look like a switch.
+ * fire one if not: a reload is a visible event, and firing it for a fragment that changed
+ * only `z` would make every pan look like a switch.
  */
 function applySubject(asked: Record<string, string>): boolean {
   var world = asked.world;
@@ -91,11 +82,10 @@ function applyView(asked: Record<string, string>): void {
  * then viewport. That order is not cosmetic -- a world switch closes the popup and dims the
  * map, and doing it after the flight would throw the flight's own settling away.
  *
- * It always ENDS in a write, and that is the point of the last two lines. What was typed may
- * be a shorthand (`#z=0`), or may name a mode this machine cannot draw and got `plain`
- * instead; either way the address bar would go on asserting something the page is not doing.
- * `reload()` writes the fragment itself, so the two branches are one write between them --
- * and that write is what `writtenHash` recognises when the browser fires the event for it.
+ * It always ENDS in a write. What was typed may be a shorthand (`#z=0`), or may name a mode
+ * this machine cannot draw and got `plain` instead; either way the address bar would go on
+ * asserting something the page is not doing. `reload()` writes the fragment itself, so the
+ * branches are one write between them -- and that write is what `writtenHash` recognises.
  */
 function apply(hash: string): void {
   if (hash === writtenHash()) return; // the page's own handwriting; see writtenHash
@@ -107,8 +97,8 @@ function apply(hash: string): void {
   // coming before the flight.
   var floored = applyFloorFragment(asked.floor);
   var mode = askedMode(asked.mode);
-  // `false`: not because a typed mode is unpinned, but because the write it would do here is
-  // the write two lines down, and one normalising write beats two.
+  // `false` because the write it would do here is the write two lines down, and one
+  // normalising write beats two.
   if (mode && mode !== state.mode) setMode(mode, false);
   // Not while the floor half is still moving: `enterFloors` is a fetch and a flight, and it
   // writes the fragment itself when it lands. Applying a stale `z` and `c` over it would

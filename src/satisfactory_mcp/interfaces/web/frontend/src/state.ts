@@ -3,54 +3,34 @@
  * One mutable object rather than module-level variables spread over the drawing modules,
  * because a world switch has to change all of it at once: the selection, the epoch that
  * makes a late reply from the old world droppable, and the layer registry the redraw writes
- * into. Modules read and write it directly, exactly as the single-file page did.
+ * into.
  *
- * This module imports NOTHING, and that is load-bearing: `map.ts` reads `BOOT` while it is
- * building the map, so anything this file imported would have to be evaluated before the map
- * exists. Keeping it at the bottom of the graph is what makes that safe rather than lucky.
- * Both imports below are `import type`, which is erased: nothing is evaluated by either.
+ * This module imports NOTHING at runtime, and that is load-bearing: `map.ts` reads `BOOT`
+ * while it is building the map, so anything this file imported would have to be evaluated
+ * before the map exists. Both imports below are `import type`, which is erased. The same
+ * constraint is why a type belonging to one feature's view -- `PanelState`, `BaseMode`,
+ * `FloorAddress` -- is declared here rather than beside the module that draws it.
  */
 
 import type * as L from "leaflet";
 
-/* `WorldRow` and `SaveRow` used to be DECLARED here -- the one payload the server did not
- * describe, written down by the module that stores it, off observed bytes. The server
- * describes them now: `/api/worlds` grew a `response_model`, made as the body change
- * routers/world.py had always said it would be (a response model FILTERS, so declaring
- * the five fields the picker reads deleted the other eight header keys from every row on
- * the wire), and the rows are re-exports from the generated schema in api-shapes.ts like
- * every other payload on the page.
- *
- * All `import type`s in this module are erased, so the sentence above about importing
- * nothing at runtime still holds -- api-shapes.ts is itself types all the way down. */
-
 import type { WorldRow } from "./api-shapes";
 
-/* The panel's fold state, which layercontrol.ts owns and sets. It is declared here rather
- * than there because it belongs to the same object as everything else that has to survive a
- * world switch -- and it survives one for the same reason the checkboxes do: a switch
- * replaces layer CONTENTS without rebuilding the control or these flags. */
+/* The panel's fold state, which layercontrol.ts owns and sets. It survives a world switch for
+ * the same reason the checkboxes do: a switch replaces layer CONTENTS without rebuilding the
+ * control or these flags. */
 export interface PanelState {
   open: boolean;
   sections: Record<string, boolean>;
 }
 
-/* Which picture of this world the base map is: the modes tiles.ts offers, as radio
- * semantics -- exactly one, and `plain` is a real answer rather than the absence of one.
- *
- * The union is declared HERE rather than beside the tile layers that draw it, for the same
- * reason `PanelState` is: it is part of what the page is currently showing, so it belongs to
- * the object a world switch has to change all at once -- and declaring it there would make
- * this file, which imports nothing, import the module that fetches tiles. */
+/* Which picture of this world the base map is: the modes tiles.ts offers, as radio semantics
+ * -- exactly one, and `plain` is a real answer rather than the absence of one. */
 export type BaseMode = "artwork" | "terrain" | "satellite" | "plain";
 
-/* Which storey of which platform the page is slicing, and nothing else about it.
- *
- * The ADDRESS lives here and the floor decomposition itself does not, which is the same
- * split `mode` makes: this file holds what the page is currently showing so that a world
- * switch can change all of it at once, and `map.ts` can write the fragment without importing
- * the module that fetches. Everything else about the view -- which ids are on which band,
- * which runs leave it -- is `floors.ts`'s, because it is a payload rather than a selection.
+/* Which storey of which platform the page is slicing, and nothing else about it: everything
+ * else about the view -- which ids are on which band, which runs leave it -- is floors.ts's,
+ * because that is a payload rather than a selection.
  *
  * `band` is a band's ordinal as a string, or "ground": the pseudo-floor for what the
  * decomposition measured as standing on no band at all. A string because those are one
@@ -87,35 +67,31 @@ export interface PageState {
 
 export var state: PageState = {
   world: "",
-  save: "", // a pinned save's path; "" means "the newest, refetched on save events"
+  save: "",
   worlds: [],
   layers: {},
-  layerName: {}, // Leaflet's layer stamp -> the name its control row carries
+  layerName: {},
   control: null,
   map: null,
   epoch: 0,
   opened: Date.now(),
-  // Replaced wholesale by layercontrol.ts as it builds the control, which is where the
-  // section keys are decided and where the reasoning for them lives. This is a placeholder
-  // so that the field is never undefined, not a second declaration of the defaults.
+  // A placeholder so the field is never undefined, not a second declaration of the defaults:
+  // layercontrol.ts replaces it wholesale as it builds the control.
   panel: { open: true, sections: {} },
   // "" and false until loadBaseMap has probed: the page has not chosen a mode yet, and
   // writeHash must not pin one it has not chosen.
   mode: "",
   imagery: false,
-  // Whole world until somebody asks for a storey; the fragment can ask for one at boot.
   floor: null,
 };
 
-/* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a
- * bookmark or a pasted link lands on the same world, save and viewport instead of
- * silently teleporting to the newest world at the whole-world zoom. replaceState, not
- * assignment: panning must not grow the browser history by one entry per drag.
+/* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a bookmark
+ * or a pasted link lands on the same world, save and viewport.
  *
- * The parse is a FUNCTION and not just the constant below it, because the fragment is read
- * more than once: `BOOT` is the one the page opened on, and fragment.ts re-reads it whenever
- * the address bar changes under an open tab. One parser, so a hand-typed fragment is read
- * exactly the way a bookmarked one is. */
+ * A function and not just the constant below it, because the fragment is read more than once:
+ * `BOOT` is the one the page opened on, and fragment.ts re-reads it whenever the address bar
+ * changes under an open tab. One parser, so a hand-typed fragment is read exactly the way a
+ * bookmarked one is. */
 export function parseHash(hash: string): Record<string, string> {
   var out: Record<string, string> = {};
   hash

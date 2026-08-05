@@ -1,9 +1,10 @@
 /* The right-click inspector: "what is here?", answered where the question is asked.
  *
- * Its own module because it is the one thing on this page that is not a layer. It draws
+ * Its own module because it is the one thing on this page that is not a layer: it draws
  * nothing, owns no group, appears in no checkbox, and answers about a point the player picked
- * rather than about anything the save contains -- so it has no business inside a drawing
- * module, and every drawing module would otherwise be a plausible home for it.
+ * rather than about anything the save contains. /api/inspect answers the three things a site
+ * starts with -- the named region, the measured elevation, the nearest nodes -- so the only
+ * work here is turning a latlng back into game coordinates and laying the answer out.
  */
 
 import { get } from "./api";
@@ -17,37 +18,20 @@ import type { Elevation, InspectResponse } from "./api-shapes";
 import type { Row } from "./dom";
 import type { InspectedEvent } from "./leaflet-private";
 
-/* Right-click anywhere: "what is here?" answered where the question is asked.
- *
- * The map is drawn from a save and a node table, and until now it could show WHERE things
- * are and nothing about the ground they stand on. /api/inspect answers the three things a
- * site starts with -- the named region, the measured elevation, the nearest nodes -- and
- * all three come from the domain layer, so the only work below is turning a latlng back
- * into game coordinates and laying the answer out.
- *
- * The inverse of the page's one coordinate rule: a point plotted at [-y, x] reads back as
- * x = lng, y = -lat. Rounded to a decimetre because the popup prints the same numbers it
- * asked with, and a coordinate you cannot retype is not a copyable coordinate.
- */
-
 function elevationRows(e: Elevation): Row[] {
   // The extracted heightfield goes first when there is one, because it is the only answer
-  // measured AT the point rather than near it. Which layer of the field answered rides
-  // along with it: a landscape texel and a fill texel are both "the terrain" and they are
-  // a metre and four metres good respectively, so quoting one number for both would be
-  // the same overclaim as one median over nodes and foundations.
+  // measured AT the point rather than near it. Which layer of the field answered rides along
+  // with it: a landscape texel is a metre good and a fill texel four, so quoting one number
+  // for both would be the same overclaim as one median over nodes and foundations.
   var rows: Row[] = [];
   var measured = e.terrain_m !== null && e.terrain_m !== undefined;
   if (measured) {
     var acc = e.terrain_accuracy_m === null ? "" : " ±" + e.terrain_accuracy_m + " m";
     rows.push(["terrain", e.terrain_m + " m (" + e.terrain_source + acc + ")"]);
-    // Water is information, never a correction: the field's own generator measured that
-    // gating terrain on it makes the terrain worse, so it is shown beside the ground and
-    // never instead of it. The level and the DEPTH are separate claims and the depth is
-    // the weaker one -- over the fill layer the ground under a sea surface is a 3.9 m
-    // raster, so there is no depth to state and the server says so instead of sending a
-    // zero. A "0 m deep" that means "not measured" is exactly the invented number the
-    // whole panel is built to avoid.
+    // Water is information, never a correction: gating terrain on it makes the terrain
+    // worse, so it is shown beside the ground and never instead of it. The level and the
+    // DEPTH are separate claims and the depth is the weaker one -- over the fill layer there
+    // is no depth to state, and the server says so instead of sending a zero.
     if (e.terrain_water_m !== null && e.terrain_water_m !== undefined) {
       var depth =
         e.terrain_water_depth_m !== null && e.terrain_water_depth_m !== undefined
@@ -57,16 +41,14 @@ function elevationRows(e: Elevation): Row[] {
     }
   } else if (e.terrain_note) {
     // A missing terrain is printed as the REASON it is missing, exactly as a missing fill is
-    // below, and the reason is the useful half: one of the server's two notes tells the reader
-    // to run tools/gen_world_heightmap.py and the other says this coordinate is open ocean or
-    // a cave mouth. The page used to throw both away and print nothing, which reads as the
-    // ground being unremarkable rather than as never having been looked at.
+    // below: one of the server's two notes tells the reader to run tools/gen_world_heightmap.py
+    // and the other says this coordinate is open ocean or a cave mouth. Printing nothing reads
+    // as the ground being unremarkable rather than as never having been looked at.
     rows.push(["terrain", e.terrain_note]);
   }
-  // Unsurveyed ground gets one line, not three saying the same nothing. With no field and
-  // nothing standing nearby, "nothing known" is a real answer and the honest one -- and it
-  // is still owed even when the note above explains the field's silence, because the two say
-  // different things: why there is no texel, and that nothing is standing here either.
+  // Unsurveyed ground gets one line, not three saying the same nothing -- and it is still
+  // owed even when the note above explains the field's silence, because the two say different
+  // things: why there is no texel, and that nothing is standing here either.
   if (!e.ground_count && !e.built_count) {
     if (measured) return rows;
     return rows.concat([["elevation", "nothing known within " + e.radius_m + " m"]]);
@@ -93,15 +75,10 @@ function inspectHtml(d: InspectResponse): string {
   var rows: Row[] = ([["region", regionLine(d.region)]] as Row[]).concat(
     elevationRows(d.elevation)
   );
-  /* Each nearest node carries the same `node:` selector its own dot's popup prints, and it is
-   * the row this panel existed without: the whole point of the inspector is that a player
-   * right-clicks a spot and asks what is here, and the answer's next step is an MCP tool call
-   * naming one of these nodes. Without the selector the reader had a resource and a distance
-   * and no way to say WHICH node -- a world has 44 impure copper nodes -- so the copyable
-   * name had to be hunted for by clicking the dot the inspector had just told them about.
-   *
-   * On the same line rather than a row of its own: five nodes are five rows already, and the
-   * selector is what the reader copies out of the line they have decided on. */
+  /* Each nearest node carries the same `node:` selector its own dot's popup prints, because
+   * the answer's next step is an MCP tool call naming one of these nodes and a resource plus
+   * a distance cannot say WHICH one -- a world has dozens of impure copper nodes. On the same
+   * line rather than a row of its own: five nodes are five rows already. */
   d.nearest.forEach(function (n, i) {
     rows.push([
       i ? "" : "nearest",
@@ -124,19 +101,19 @@ function inspectHtml(d: InspectResponse): string {
   return popup(rows);
 }
 
-/* The right-click handler itself, named rather than registered here: main.ts wires every
- * map listener in one block, in the order the single-file page registered them, because
- * Leaflet fires listeners in registration order and that order is now the only thing a
- * reader cannot see by looking at one module. */
+/** The right-click handler, named rather than registered here: main.ts wires every map
+ *  listener in one block, because Leaflet fires them in registration order. */
 export function inspect(e: L.LeafletMouseEvent): void {
-  // One right-click can reach this twice -- Leaflet fires at the layer under the cursor
-  // and the event propagates to the map -- so the DOM event carries a mark. Two fetches
-  // and two popups for one click is the bug this one line removes.
+  // One right-click can reach this twice -- Leaflet fires at the layer under the cursor and
+  // the event propagates to the map -- so the DOM event carries a mark.
   var dom = e.originalEvent as InspectedEvent | undefined;
   if (dom) {
     if (dom._inspected) return;
     dom._inspected = true;
   }
+  // The inverse of the page's one coordinate rule: a point plotted at [-y, x] reads back as
+  // x = lng, y = -lat. Rounded to a decimetre because the popup prints the same numbers it
+  // asked with, and a coordinate you cannot retype is not a copyable coordinate.
   var x = Math.round(e.latlng.lng * 10) / 10;
   var y = Math.round(-e.latlng.lat * 10) / 10;
   // Opened before the fetch, so the click has a visible effect on a slow answer and the
