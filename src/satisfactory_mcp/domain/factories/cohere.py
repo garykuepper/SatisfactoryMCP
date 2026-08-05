@@ -366,11 +366,11 @@ def propose(
             for b in ids[x + 1 :]:
                 for name in fired.get((min(a, b), max(a, b)), ()):
                     evidence[name] += 1
-        link = next((v for c, v in weakest.items() if c <= held), math.inf)
+        inner = next((v for c, v in weakest.items() if c <= held), math.inf)
         out.append(
             Proposal(
                 machines=sorted(members),
-                cohesion=0.0 if math.isinf(link) else link,
+                cohesion=0.0 if math.isinf(inner) else inner,
                 evidence=evidence,
                 seeded_by=next((s for c, s in seeds.items() if c <= held), ""),
                 parts=parts,

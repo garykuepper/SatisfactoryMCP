@@ -62,11 +62,10 @@ def _empty_platform(select: list[str], structures) -> str:
     An empty string when the selector is anything else, so the caller's own "matched no
     machines" still speaks for every other way of picking nothing.
     """
-    terms = [t.strip() for t in select if t.strip().casefold().startswith("slab:")]
-    if len(terms) != 1 or len(select) != 1:
+    if len(select) != 1 or not select[0].strip().casefold().startswith("slab:"):
         return ""
     try:
-        slab = structures.slabs[int(terms[0].split(":", 1)[1])]
+        slab = structures.slabs[int(select[0].strip().split(":", 1)[1])]
     except (ValueError, IndexError):
         return ""
     box, z, floors = _slab_shape(slab)
@@ -272,11 +271,12 @@ def factory_map(
         else:
             chunks.append("## bare platforms (no machines): none")
 
-        notes.append(
-            "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
-            "about half a tile past the box quoted"
-        )
         shown = [sx.slabs[sx.slab_of[g[0]]] for g in sx.groups()[:n]] + listed[:n]
+        if shown:
+            notes.append(
+                "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
+                "about half a tile past the box quoted"
+            )
         if any(slab.storeys > 1 for slab in shown):
             notes.append(
                 "floors is the z span counted in 4 m storeys, so a slab poured UP A "
