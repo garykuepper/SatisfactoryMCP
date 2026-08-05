@@ -1,14 +1,9 @@
 """A parser for Satisfactory .sav files, covering what this project reads.
 
-Written to replace a vendored GPL-3.0 parser whose licence would otherwise reach the whole
-project. It implements the FILE FORMAT -- a fact about what the game writes -- rather than
-reproducing that library's code, and it is verified black-box against it: same file in,
-same values out, across every save on disk.
-
-Scope is deliberately narrow. The old library parses everything; this parses the parts the
-projection actually uses, which is three entry points' worth. Anything it does not
-understand is skipped by length rather than guessed at, so an unknown property costs that
-property and not the save.
+The scope is the parts the projection uses, which is three entry points' worth:
+``read_info`` for the header, ``read_body`` for the object walk, ``read_full_save`` for both
+plus decoded properties. Anything it does not understand is skipped by its declared length
+rather than guessed at, so an unknown property costs that property and not the save.
 """
 
 from .chunks import CHUNK_TAG, OLD_CHUNK_TAG, decompress_body
