@@ -401,14 +401,21 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
 
     budget = st.sloop_budget()
     gate = st.research_gate("production_boost")
+    holders = budget["holders"]
     rows = [
         (
             h["name"],
             h["instance"][-18:],
             f"{h['sloops']:.0f}",
             f"{h['boost']:g}x" if h["boost"] else "",
+            f"{h['boost_in_save']:g}x" if h["boost_in_save"] else "-",
         )
-        for h in budget["holders"][:20]
+        for h in holders[:20]
+    ]
+    disagree = [
+        h
+        for h in holders
+        if h["boost"] and h["boost_in_save"] and abs(h["boost"] - h["boost_in_save"]) > 1e-6
     ]
     notes = []
     if gate is not None:
@@ -434,6 +441,20 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
         "Mercer Spheres share the WAT prefix and do nothing for production, so they are "
         "reported apart and never added in"
     )
+    notes.append(
+        "boost is what the plan model says those slots are worth; boost_in_save is "
+        "mPendingProductionBoost, the multiplier the save itself carries. They are read "
+        "from different places on purpose, so the two agreeing is the cross-check"
+    )
+    if disagree:
+        notes.append(
+            f"THEY DISAGREE on {len(disagree)} building(s), which is a finding: "
+            + "; ".join(
+                f"{h['name']} {h['instance'][-18:]} computed {h['boost']:g}x, "
+                f"save says {h['boost_in_save']:g}x"
+                for h in disagree[:3]
+            )
+        )
     return render.envelope(
         f"# {st.age_note}\n"
         + render.kv(
@@ -445,7 +466,11 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
                 ("mercer_spheres", f"{budget['mercer_spheres']:.0f}"),
             ]
         ),
-        render.table(("building", "instance", "sloops", "boost"), rows),
+        render.table(
+            ("building", "instance", "sloops", "boost", "boost_in_save"),
+            rows,
+            total=len(holders),
+        ),
         notes,
     )
 
