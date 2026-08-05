@@ -8,6 +8,14 @@ with both citations. Parked FEATURES are not here — they are docs/parked.md §
 Every line names the smallest change that closes it. Verified items were reproduced by
 reading the code cited, not taken on the auditor's word.
 
+**The one structural finding, which explains a third of this list.** The projection's richest
+recent additions — storage (15), floors, crates (18), the crate inventory bucket (19) — went
+to the web map and never to the LLM. The MCP surface is largely frozen at schema ~11, so an
+assistant cannot ask what the map draws: what is in the boxes, what a factory's storeys hold,
+what was in the crate where you died. Items 15 and 20-23 below are all instances of it, and
+the general fix is one habit rather than one commit: a projection key is not finished until
+both interfaces read it.
+
 ---
 
 ## P0 — answers that are wrong or crash
@@ -25,6 +33,10 @@ These produce a false belief in the reader. Nothing else outranks them.
 | 7 | Belt length disagrees between halves: the map draws the true Hermite spline (its own note: chords are out by up to **16.4 m on one piece**), `search_conduits` sums chords. Same source data. | `routers/routes_layer.py:204`; `domain/world/conduits.py:142` | Integrate the spans where `seg.spans` exists |
 | 8 | `list_regions` prints a raw centroid; the web side already fixed this because a concave region's mean lands in its neighbour ("Titan Forest's sits in the Swamp"). The assistant can send a player to a coordinate the map paints as somewhere else. | `tools/spatial.py:52`; fix exists at `routers/regions.py:84` | Move `_label_anchor` into `domain/spatial/regions.py`, use it both sides |
 | 9 | Three different "already named" filters over one clusterer, so map and tool disagree about which proposals exist. | `routers/factories.py:112` vs `tools/factories.py:658` | One predicate in `domain/factories`, called by both |
+| 9b | **`/api/factories` publishes `score: 0.0` for every proposal.** The merge loop computes real per-cluster cohesion and the constructor hardcodes `cohesion=0.0`, so the map ranks every proposal identically and no test notices. | computed `domain/factories/cohere.py:336`, discarded `:364`, emitted `routers/factories.py:122` | Key the cohesion dict by `frozenset` beside `seeds` (`:344`) and look it up by `held`, exactly as `seeded_by` does |
+| 9c | `mam_research` prints that cost is checked against "carried, **crates** and the Dimensional Depot" — schema 19 deliberately took crates OUT of spendable stock. The tool states the opposite of what it computes. | note `tools/progression.py:287`, behaviour `domain/world/inventory.py:44`; same stale wording in `docs/save-projection.md:575` | Correct both sentences |
+| 9d | `mam_research` ignores `research["unlocked_trees"]` and `research["ongoing"]`, so a node in an unopened tree reads `READY` and research already underway reads `todo`. | `tools/progression.py:250`; data at `extract.py:657`, `:661` | Filter by tree; mark in-flight nodes with their remaining seconds |
+| 9e | `trace_upstream` carries `Trace.ambiguous` and `Trace.truncated` and reports a possibly over-counted, depth-truncated walk as if it were complete. | `domain/factories/trace.py:77` | Print both flags |
 
 ## P1 — instructions the client cannot follow, and dead ends
 
@@ -44,6 +56,12 @@ These produce a false belief in the reader. Nothing else outranks them.
 | 16 | The map says `OreIron`, the assistant says `Iron Ore` — `/api/nodes` is the only payload that does not resolve a display name, though the same handler resolves the occupant's two lines later. | `routers/nodes.py:38`, `:117`; `frontend/src/format.ts:11` | Add `resource_name` to `NodeRow` |
 | 17 | The map has no `LOCKED` state: a node the text surface excludes as unreachable is drawn as an ordinary free dot a player may plan around. | `routers/nodes.py`; cf. `tools/spatial.py:463` | Carry `reachable` on `NodeRow`, grey the dot |
 | 18 | `name_factory` and `site_plan` write to the labels/plans directories; the live watcher globs `*.sav` only, so the one collaborative moment — name it, then look at the map — is the one the map misses. | `interfaces/web/watch.py:90`; `frontend/src/sse.ts:36` | Watch those directories, emit a second event type |
+| 20 | **No tool can name an item you own or where it is.** 151 container rows (130 non-empty), crate contents, and four inventory buckets are read by the web routers and by zero MCP tools; `stock()` is computed on every plan and consumed only as a pass/fail affordability test, so "short by 40 Circuit Board" never prints the numbers behind it. `machine_buffers()` has no consumer at all. | `extract.py:853`, `:854`; `domain/world/inventory.py:28`, `:58` | One `stock(item=None, where=False)` tool; `where=True` joins storage/crate rows to `regions.label_for` for a place name |
+| 21 | **The only measured numbers in the project survive as two scalars.** Every machine's rated draw is weighted by its own 300 s productivity monitor (408 of 438 carry one) and each per-machine figure is destroyed at the moment it is computed; three scalars come out. `factory_query(of="power")` re-iterates the same records, reads `clock` and `recipe`, and never reads `uptime` — so "which factory is actually burning the grid" is unanswerable. | `domain/power/report.py:79`; loop at `domain/factories/query.py:139` | Accumulate `rated * produce_s/window_s` in the loop already running; one column |
+| 22 | `phase_requirements` prints what a phase still needs and stops; `mam_research` does the stock join 150 lines away in the same file. "Can I deliver Phase 4 now, and what am I short of" is one `stock.get()` per row from being answered. | `tools/progression.py:20` vs `:243` | Add `have` / `short by` columns using the existing expression |
+| 23 | `tapped_by` and `tapped_clock` are computed for every node on every call and rendered as the bare word "tapped" — so "which miner is on that node, at what clock, is it worth reclaiming" is thrown away each time. `occupancy()` also drops `paused` and `pos` before the presenter sees them. | computed `domain/spatial/nodes.py:556`, rendered `tools/spatial.py:507` | One column |
+| 24 | Truncation without an envelope: `somersloops` slices to 20 holders and calls `render.table` **without** `total`, so no count, no hint, no "N more" — the reader cannot tell the list was cut. Same in `diff_vs_save`'s cost table and `factory_health`'s `blocked_on`/`starved_of`. | `tools/progression.py:341`, `:378`; `presenters/text/diff.py:370`; `tools/factories.py:594` | Pass `total` |
+| 25 | 3-D positions rendered as 2-D throughout: `MachineRow.pos` never printed, `factory_sites` drops centroid z, and occupied slabs lose the bbox/z-span/storeys that bare slabs now get. | `domain/factories/query.py:57`; `tools/world.py:221`; `tools/factories.py:150` vs `:186` | Print what is already carried |
 | 19 | Every popup prints an MCP selector and nothing on the page can copy one: `grep clipboard` across the frontend returns nothing, so the last step is retyping `BP_ResourceNode26_99` by hand. (A generated "ask about this" sentence is NOT wanted — the selectors are already the interchange format.) | `frontend/src/dom.ts:44` | Click-to-copy in `code()`; ~15 lines, upgrades every popup at once |
 
 ## P3 — convention drift
@@ -67,6 +85,28 @@ Cheap individually, worth one pass together. Each costs a client a retry.
 - Sitings: `list_plans` shows `x,y` only — yaw and footprint need a second call.
 - `factory_sites` rows carry no identifier at all, so a "site" cannot be named to any other tool.
 - `maplink.COLLECTIBLES` is dead code: "where are the hard drives" gets no map link from either map.
+
+## P5 — dead code and unused capability, worth one deletion-or-wiring pass
+
+Each of these was built deliberately and reaches nothing. Either wire it up or delete it; both
+are cheap, and leaving it is how the next reader learns to distrust the tree.
+
+- `research["ongoing"]` (seconds remaining) — no consumer anywhere in `src/`.
+- `FactoryView.internal()` — "the mark of a self-contained line", rendered by no aspect.
+- `UnlockDelta.unlocked_by` / `.ok` — `rank_unlocks` says an alternate is worth 14,540 MW and
+  never says which schematic grants it; an infeasible solve reports `gain=0`, which reads
+  identical to worthless.
+- `Structures.machines_on()` / `.summary()`, `progression["last_active_schematic"]`,
+  `research["last_used_hard_drive_id"]`, top-level `pipe_networks` (19 rows) — no consumers.
+- `load_collectibles(strict=True)` and `CollectiblesUnreadable` exist to tell "you never ran
+  the generator" from "what it wrote is broken"; zero callers pass `strict=True`.
+- `_solve(drop_actor=, cuts=, one_way=)` ablation knobs in the flow inference — never passed.
+- `flow.py`'s `basis` (`BASIS_PORT`/`DEVICE`/`NETWORK`) — the *why* the module is built around
+  — reaches `/api/pipes` only; `search_conduits` prints `->` vs `--` and can never say why.
+- `list_pending_hard_drive_choices` holds each option's granted recipe list and uses it only to
+  decide whether to append "(nothing new)".
+- `somersloops` reads `boost_in_save` specifically so a caller can cross-check it, and never
+  prints it.
 
 ## Not doing, and why
 
