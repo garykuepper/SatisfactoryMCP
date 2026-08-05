@@ -1002,10 +1002,21 @@ def trace_upstream(
         ),
         (
             "direction comes from each edge's connector role, and from the machine's own "
-            "nature where the role does not say. Segments with neither are walked both "
-            "ways, which can over-report a feeder but never miss one"
+            "nature where the role does not say. "
+            + (
+                f"{result.ambiguous} edge(s) have neither -- belt-to-belt and pipe-to-pipe "
+                "segments, which are walked BOTH ways, so this list can over-report a "
+                "feeder but never miss one"
+                if result.ambiguous
+                else "Every edge here states its direction"
+            )
         ),
     ]
+    if result.truncated:
+        notes.append(
+            "the walk stopped at its hop limit, so this is a FLOOR: machines further along "
+            "the chain exist and are not listed"
+        )
     mw, gens, running = power_at_risk(st, g, seeds)
     if gens:
         notes.append(

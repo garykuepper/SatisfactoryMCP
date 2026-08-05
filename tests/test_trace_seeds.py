@@ -15,14 +15,23 @@ from satisfactory_mcp.domain.world.state import WorldState
 from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
 
 SMELTER = "Build_SmelterMk1_C_1"
-BELT = "Build_ConveyorBeltMk1_C_1"
 CONSTRUCTOR = "Build_ConstructorMk1_C_1"
 
 
-def _projection() -> dict:
-    """A smelter belted into a constructor, with the connector roles that orient it."""
-    actors = [SMELTER, BELT, CONSTRUCTOR]
+def _projection(belts: int = 1) -> dict:
+    """A smelter belted into a constructor, with the connector roles that orient it.
+
+    More than one belt puts a belt-to-belt segment in the chain, and a segment between two
+    belts states no direction at either end -- which is the case the walk has to take both
+    ways and the answer has to own up to.
+    """
+    run = [f"Build_ConveyorBeltMk1_C_{i}" for i in range(1, belts + 1)]
+    actors = [SMELTER, *run, CONSTRUCTOR]
     roles = ["Output1", "Input0", "ConveyorAny0", "ConveyorAny1"]
+    material = [[0, 1, 0, 2]]
+    for i in range(1, belts):
+        material.append([i, i + 1, 3, 2])
+    material.append([belts, belts + 1, 3, 1])
     return {
         "header": {"save_identifier": "TEST-trace-seeds", "session_name": "t"},
         "machines": [
@@ -44,7 +53,7 @@ def _projection() -> dict:
         "graph": {
             "actors": actors,
             "roles": roles,
-            "material": [[0, 1, 0, 2], [1, 2, 3, 1]],
+            "material": material,
             "power": [],
         },
     }
@@ -82,3 +91,23 @@ def test_the_example_ids_it_prints_resolve_as_selectors(traced):
     """Cut to their last ten characters they named nothing, anywhere in the MCP."""
     assert SMELTER in ftools.trace_upstream(CONSTRUCTOR)
     assert not ftools.factory_query(f"machine:{SMELTER}").startswith("! ")
+
+
+def test_a_walk_that_may_over_report_says_how_much(traced, game, monkeypatch):
+    """``Trace.ambiguous`` was carried and never printed, so a walk over undirected
+    segments read exactly like one where every edge stated its direction."""
+    assert "Every edge here states its direction" in ftools.trace_upstream(CONSTRUCTOR)
+    st = WorldState(projection=_projection(belts=3), game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    assert "2 edge(s) have neither" in ftools.trace_upstream(CONSTRUCTOR)
+
+
+def test_a_walk_cut_short_says_it_is_a_floor(traced, monkeypatch):
+    """``Trace.truncated`` too: a depth-limited walk reported as complete tells the reader
+    a feeder does not exist when it was merely out of reach."""
+    from satisfactory_mcp.domain.factories import trace as trace_mod
+
+    monkeypatch.setattr(trace_mod, "MAX_HOPS", 1)
+    out = ftools.trace_upstream(CONSTRUCTOR)
+    assert "FLOOR" in out
+    assert "Smelter" not in out, "the fixture must actually be cut short for this to mean it"
