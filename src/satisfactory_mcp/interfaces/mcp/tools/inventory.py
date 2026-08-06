@@ -27,7 +27,7 @@ def _place(rm, holding: Holding) -> tuple[str, str]:
     if holding.pos is None:
         return "-", "-"
     x, y, _ = holding.pos
-    return rm.label_for(x, y).name or "ocean/off-map", f"{x / 100:.0f},{y / 100:.0f}"
+    return rm.label_for(x, y).name or regions_mod.OFF_MAP, f"{x / 100:.0f},{y / 100:.0f}"
 
 
 def _contents(game, holding: Holding, kinds: int = CONTENTS_KINDS) -> str:
@@ -189,7 +189,7 @@ def storage(
         Field(description="centre: 'x,y' in metres, 'me', or a named factory"),
     ] = None,
     radius_m: float = 500.0,
-    kind: Annotated[str | None, Field(description="solid | fluid")] = None,
+    kind: Annotated[str | None, Field(description="solid | fluid | all")] = None,
     empty: Annotated[bool, Field(description="include containers with nothing in them")] = False,
     save: str | None = None,
     world: str | None = None,
@@ -219,8 +219,10 @@ def storage(
         if wanted is None:
             return f"no item matches {item!r}"
     want_kind = (kind or "").strip().casefold() or None
+    if want_kind in ("all", "any", "both"):
+        want_kind = None
     if want_kind not in (None, "solid", "fluid"):
-        return f"! unknown kind {kind!r}. Choose from: solid, fluid"
+        return f"! unknown kind {kind!r}. Choose from: solid, fluid, all"
 
     origin, at = None, ""
     if near is not None:

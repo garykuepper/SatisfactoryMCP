@@ -642,6 +642,7 @@ def plan_layout(
     exports: list[str] | None = None,
     export_minimums: dict[str, float] | None = None,
     detail: str = "floors",
+    show: Annotated[str | None, Field(description="alias for detail=")] = None,
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
     exclude_recipes: list[str] | None = None,
@@ -708,6 +709,7 @@ def plan_layout(
     chain depth, with a logistics deck between each pair of production floors.
     """
     g = game()
+    detail = show or detail
     try:
         st = _state(save, world)
     except Exception as exc:
@@ -1125,6 +1127,7 @@ def rank_unlocks(
     search: Annotated[
         str | None, Field(description="only test alternates whose name matches")
     ] = None,
+    query: Annotated[str | None, Field(description="alias for search=")] = None,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
@@ -1181,6 +1184,7 @@ def rank_unlocks(
         )
 
     pool = st.locked_alternates
+    search = search or query
     if search:
         needle = search.strip().casefold()
         pool = [r for r in pool if needle in r.name.casefold()]

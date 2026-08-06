@@ -254,6 +254,8 @@ def mam_research(
         str, Field(description="all | todo | affordable -- todo hides finished research")
     ] = "todo",
     search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
+    query: Annotated[str | None, Field(description="alias for search=")] = None,
+    show: Annotated[str | None, Field(description="alias for status=")] = None,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 25,
@@ -279,7 +281,8 @@ def mam_research(
     g = st.game
     done = st.purchased_schematic_ids
     stock = st.stock()
-    wanted = (status or "todo").strip().casefold()
+    search = search or query
+    wanted = (show or status or "todo").strip().casefold()
     if wanted not in ("all", "todo", "affordable"):
         return f"! unknown status {status!r}. Choose from: all, todo, affordable"
 
@@ -500,6 +503,7 @@ def collected_from_world(
         str,
         Field(description="census | collected | remaining | nearest"),
     ] = "census",
+    show: Annotated[str | None, Field(description="alias for mode=")] = None,
     near: Annotated[
         str | None,
         Field(
@@ -536,4 +540,5 @@ def collected_from_world(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    return render_collectibles(st, collect_view(st, group, mode, near), limit, offset=offset)
+    view = collect_view(st, group, show or mode, near)
+    return render_collectibles(st, view, limit, offset=offset)

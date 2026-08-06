@@ -330,6 +330,7 @@ def factory_query(
     of: Annotated[
         str, Field(description="comma-separated: " + ", ".join(QUERY_ASPECTS))
     ] = "summary",
+    show: Annotated[str | None, Field(description="alias for of=")] = None,
     limit: Limit = 15,
     offset: int = 0,
     save: str | None = None,
@@ -372,7 +373,7 @@ def factory_query(
         return f"! {factory!r} resolved to no machines that still exist in this save"
 
     view = build_view(name, machines, st.graph, st.game, st.projection, st.labels)
-    asked = [a.strip().casefold() for a in of.split(",") if a.strip()]
+    asked = [a.strip().casefold() for a in (show or of).split(",") if a.strip()]
     unknown = [a for a in asked if a not in QUERY_ASPECTS]
     if unknown:
         return f"! unknown aspect(s) {unknown}. Choose from: {', '.join(QUERY_ASPECTS)}"

@@ -336,7 +336,7 @@ def search_conduits(
     to_radius_m: Annotated[
         float | None, Field(description="radius around `to`, defaults to radius_m")
     ] = None,
-    kind: Annotated[str | None, Field(description="belt | pipe")] = None,
+    kind: Annotated[str | None, Field(description="belt | pipe | all")] = None,
     show: Annotated[str, Field(description="runs | networks")] = "runs",
     save: str | None = None,
     world: str | None = None,
@@ -374,8 +374,13 @@ def search_conduits(
         return f"could not read save: {exc} (conduits are read from the save)"
 
     want = (kind or "").strip().casefold() or None
+    # "all" is what a caller writes when it means no filter, and it is spelled that way in
+    # list_buildings and search_recipes. Refusing it here made the same word mean "every
+    # kind" on one tool and "an error" on the next.
+    if want in ("all", "any", "both"):
+        want = None
     if want not in (None, "belt", "pipe"):
-        return f"! unknown kind {kind!r}. Choose from: belt, pipe"
+        return f"! unknown kind {kind!r}. Choose from: belt, pipe, all"
     view = (show or "runs").strip().casefold()
     if view not in ("runs", "networks"):
         return f"! unknown show {show!r}. Choose from: runs, networks"
@@ -560,6 +565,7 @@ def search_resource_nodes(
         Field(description="origin for mode=nearest: 'x,y' in metres, 'me', or a factory name"),
     ] = None,
     group: Annotated[str | None, Field(description="deprecated alias for mode")] = None,
+    show: Annotated[str | None, Field(description="alias for mode=")] = None,
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 25,
@@ -595,7 +601,7 @@ def search_resource_nodes(
 
     # `group` predates `mode` and meant the same thing. Accepted rather than broken,
     # since a stored call using it should keep working.
-    mode = (group or mode or "fields").strip().casefold()
+    mode = (show or group or mode or "fields").strip().casefold()
     mode = {"field": "fields", "node": "nodes"}.get(mode, mode)
     if mode not in ("fields", "nodes", "nearest"):
         return f"! unknown mode {mode!r}. Choose from: fields, nodes, nearest"
@@ -728,7 +734,7 @@ def search_resource_nodes(
             c_free = sum(m["rate"] for m in c.members if not m["tapped"] and m["reachable"])
             crows.append(
                 (
-                    label.name or "ocean/off-map",
+                    label.name or regions_mod.OFF_MAP,
                     geo.grid_cell(cx, cy),
                     geo.direction_of(cx, cy),
                     f"{int(cx / 100)},{int(cy / 100)}",
@@ -978,7 +984,7 @@ def rank_build_sites(
         out_rows.append(
             (
                 render.num(sc.score),
-                rm.label_for(cx, cy).name or "ocean/off-map",
+                rm.label_for(cx, cy).name or regions_mod.OFF_MAP,
                 geo.grid_cell(cx, cy),
                 f"{int(cx / 100)},{int(cy / 100)}",
                 raw["nodes"],

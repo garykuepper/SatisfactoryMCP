@@ -137,6 +137,12 @@ def _by_near(
     graph: FactoryGraph, projection: dict, store: LabelStore | None, spec: str
 ) -> set[str]:
     body, _, radius_txt = spec.partition("@")
+    # `x,y,r` is the node selectors' spelling of the same circle. Both are accepted on both
+    # sides, because a caller who has just read a radius out of one tool's help writes it
+    # the way that tool wrote it.
+    parts = [p.strip() for p in body.split(",")]
+    if not radius_txt and len(parts) == 3:
+        body, radius_txt = ",".join(parts[:2]), parts[2]
     try:
         radius_m = float(radius_txt) if radius_txt else 150.0
     except ValueError as exc:

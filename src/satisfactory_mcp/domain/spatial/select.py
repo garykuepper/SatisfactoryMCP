@@ -218,6 +218,11 @@ def select_nodes(
 
         # ---- circle ----------------------------------------------------
         if prefix == "near":
+            # `x,y@r` is the machine selectors' spelling of the same circle, accepted here
+            # so a radius copied out of either tool's help parses on both sides.
+            head, at, tail = value.partition("@")
+            if at:
+                value = f"{head.strip()},{tail.strip()}"
             parts = [x.strip() for x in value.split(",")]
             if parts and parts[0].casefold() == "me":
                 # "where I am standing" is the most natural scope a player has, and

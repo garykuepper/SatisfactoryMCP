@@ -18,9 +18,14 @@ from dataclasses import dataclass
 from ... import config
 from . import geo
 
-__all__ = ["Label", "RegionMap", "load_regions"]
+__all__ = ["OFF_MAP", "Label", "RegionMap", "load_regions"]
 
 VOID = "."
+
+#: What a coordinate the map names nothing at is called, in every response on both
+#: interfaces. It was spelled three ways, and a reader cannot tell three wordings for one
+#: fact from three different facts.
+OFF_MAP = "off-map or ocean"
 
 #: Confidence codes, worst to best. ``void`` is off the grid, or the game names nothing here
 #: and no known static object stands within a kilometre. ``unnamed`` is the game's own
@@ -49,7 +54,7 @@ class Label:
 
     def describe(self) -> str:
         if self.name is None:
-            return "off-map or ocean"
+            return OFF_MAP
         if self.confidence == "interior":
             return self.name
         return f"{self.name} (~{self.accuracy_m}m accuracy, {self.confidence})"
