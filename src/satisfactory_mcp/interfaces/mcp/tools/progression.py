@@ -405,7 +405,7 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
     rows = [
         (
             h["name"],
-            h["instance"][-18:],
+            h["instance"],
             f"{h['sloops']:.0f}",
             f"{h['boost']:g}x" if h["boost"] else "",
             f"{h['boost_in_save']:g}x" if h["boost_in_save"] else "-",
@@ -450,7 +450,7 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
         notes.append(
             f"THEY DISAGREE on {len(disagree)} building(s), which is a finding: "
             + "; ".join(
-                f"{h['name']} {h['instance'][-18:]} computed {h['boost']:g}x, "
+                f"{h['name']} {h['instance']} computed {h['boost']:g}x, "
                 f"save says {h['boost_in_save']:g}x"
                 for h in disagree[:3]
             )
