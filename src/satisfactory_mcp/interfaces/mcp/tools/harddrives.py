@@ -60,7 +60,7 @@ def _grants(option: dict, game) -> str:
 
 @mcp.tool(structured_output=False)
 def list_pending_hard_drive_choices(
-    save: str | None = None, world: str | None = None, limit: Limit = 25
+    save: str | None = None, world: str | None = None, limit: Limit = 25, offset: int = 0
 ) -> str:
     """The pending hard-drive choices stored in the save, with rerolls left."""
     try:
@@ -70,7 +70,9 @@ def list_pending_hard_drive_choices(
     g = st.game
     offers = st.hard_drive_offers
     rows = []
-    for o in offers[: render.clamp(limit, default=25)]:
+    start = max(0, offset)
+    n = render.clamp(limit, default=25)
+    for o in offers[start : start + n]:
         opts = [f"{opt['name']} ({_grants(opt, g)})" for opt in o.options]
         rows.append((o.hard_drive_id, o.rerolls_left, " | ".join(opts)))
     last = st.harddrive_desk.last_used_hard_drive_id
@@ -79,7 +81,7 @@ def list_pending_hard_drive_choices(
         f"# {len(offers)} unclaimed hard drive(s), each a live choice; "
         f"{st.spare_hard_drives()} unanalysed drive(s) on hand"
         + (f"; drive {last} was the last one spent" if last is not None else ""),
-        render.table(("id", "rerolls", "options"), rows, total=len(offers), limit=limit),
+        render.table(("id", "rerolls", "options"), rows, total=len(offers), offset=start, limit=n),
         [
             "use advise_hard_drive_pick(hard_drive_id=N) to rank one drive's options",
             "an option shows what its recipes MAKE and where; recipe_detail has the inputs",

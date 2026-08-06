@@ -53,7 +53,9 @@ def _holds(row: dict, g) -> str:
     return "unlooted, cost unknown" if row.get("looted") is False else ""
 
 
-def _placement_table(rows: list[dict], g, distance: bool, total: int, limit: int) -> str:
+def _placement_table(
+    rows: list[dict], g, distance: bool, total: int, limit: int, offset: int
+) -> str:
     """One row per placement, with the empty optional columns dropped.
 
     Names are never truncated: ``(cell, name)`` is the only identity a placement has, and
@@ -86,7 +88,7 @@ def _placement_table(rows: list[dict], g, distance: bool, total: int, limit: int
         "z",
         *(head for head, _values in shown),
     )
-    return render.table(headers, body, total=total, limit=limit)
+    return render.table(headers, body, total=total, offset=offset, limit=limit)
 
 
 #: Census columns beyond the four every save has, rendered only when some row is non-zero:
@@ -98,7 +100,7 @@ _CONDITIONAL_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _census(st, view: CollectiblesView, limit: int) -> str:
+def _census(st, view: CollectiblesView, limit: int, offset: int) -> str:
     """The per-category table: placed, collected, remaining, and how much is observed.
 
     ``group`` narrows the table to one category and takes its notes with it; the summary line
@@ -198,9 +200,15 @@ def _census(st, view: CollectiblesView, limit: int) -> str:
         body.append(
             render.table(
                 ("name_stem", "destroyed", "why the map table has no row for it"),
-                [(k, v, why[:96]) for k, v, why in stems[: render.clamp(limit, default=25)]],
+                [
+                    (k, v, why[:96])
+                    for k, v, why in stems[
+                        max(0, offset) : max(0, offset) + render.clamp(limit, 25)
+                    ]
+                ],
                 total=len(stems),
-                limit=limit,
+                offset=max(0, offset),
+                limit=render.clamp(limit, default=25),
             )
         )
     body.append(render.ids_footer([(r["category"], r["cls"]) for r in census], "classes"))
@@ -223,14 +231,16 @@ def _census(st, view: CollectiblesView, limit: int) -> str:
     )
 
 
-def _listing(st, view: CollectiblesView, limit: int) -> str:
+def _listing(st, view: CollectiblesView, limit: int, offset: int) -> str:
     """Individual placements: collected, remaining, or remaining by distance."""
     g = st.game
     table, group, mode = view.table, view.group, view.mode
     rows, origin, where = view.rows or [], view.origin, view.where
     pedestals, hidden, counts = view.pedestals, view.hidden, view.counts
 
-    shown = render.clamp(limit, default=25)
+    n = render.clamp(limit, default=25)
+    start = max(0, offset)
+    page = rows[start : start + n]
 
     notes = []
     if mode == "collected":
@@ -248,7 +258,7 @@ def _listing(st, view: CollectiblesView, limit: int) -> str:
             f"distance is planar metres from {where}, straight-line and not a walk: nothing "
             "here knows about cliffs, and a slug 80 m away can be 80 m up"
         )
-    if any(r["hazard"] for r in rows[:shown]):
+    if any(r["hazard"] for r in page):
         notes.append(
             "the hazard column is INFERENCE, not placement: geometry between this placement "
             "and other map actors, plus the radii those actors' own classes declare. Gas is "
@@ -274,12 +284,12 @@ def _listing(st, view: CollectiblesView, limit: int) -> str:
         + (f" from {where}" if origin else "")
         + "\n"
         + render.kv([("rows", len(rows)), *sorted(counts.items())]),
-        _placement_table(rows[:shown], g, origin is not None, total=len(rows), limit=limit),
+        _placement_table(page, g, origin is not None, total=len(rows), limit=n, offset=start),
         notes,
     )
 
 
-def _save_only(st, view: CollectiblesView, limit: int) -> str:
+def _save_only(st, view: CollectiblesView, limit: int, offset: int) -> str:
     """The census a save can build alone: collected counts by name prefix, and wrong.
 
     Reached only when ``data/world_collectibles.json`` is absent, which a fresh clone is,
@@ -321,11 +331,17 @@ def _save_only(st, view: CollectiblesView, limit: int) -> str:
         render.table(("group", "collected"), [(k, str(v)) for k, v in removed["groups"].items()])
     ]
     if group is not None:
-        rows = [
-            (a["name"], a["cell"]) for a in removed["actors"][: render.clamp(limit, default=25)]
-        ]
+        n = render.clamp(limit, default=25)
+        start = max(0, offset)
+        rows = [(a["name"], a["cell"]) for a in removed["actors"][start : start + n]]
         body.append(
-            render.table(("actor", "cell"), rows, total=len(removed["actors"]), limit=limit)
+            render.table(
+                ("actor", "cell"),
+                rows,
+                total=len(removed["actors"]),
+                offset=start,
+                limit=n,
+            )
         )
     return render.envelope(
         f"# {st.age_note}\n"
@@ -335,12 +351,12 @@ def _save_only(st, view: CollectiblesView, limit: int) -> str:
     )
 
 
-def render_collectibles(st, view: CollectiblesView, limit: int) -> str:
+def render_collectibles(st, view: CollectiblesView, limit: int, offset: int = 0) -> str:
     """The one entry point: a refusal, the degraded census, the census, or a listing."""
     if view.error:
         return view.error
     if view.save_only:
-        return _save_only(st, view, limit)
+        return _save_only(st, view, limit, offset)
     if view.mode == "census":
-        return _census(st, view, limit)
-    return _listing(st, view, limit)
+        return _census(st, view, limit, offset)
+    return _listing(st, view, limit, offset)

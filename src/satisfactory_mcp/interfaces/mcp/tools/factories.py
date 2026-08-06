@@ -105,6 +105,7 @@ def factory_map(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 12,
+    offset: int = 0,
     show: Annotated[
         str, Field(description="candidates | named | slabs | unlabelled | all")
     ] = "all",
@@ -135,6 +136,8 @@ def factory_map(
     labelled = store.assigned()
     machines = set(gr.machines())
     n = render.clamp(limit)
+    start = max(0, offset)
+    end = start + n
 
     want = show.casefold()
     chunks: list[str] = []
@@ -166,24 +169,26 @@ def factory_map(
             )
 
     if want in ("all", "candidates"):
-        rows = [_cand_row(c, store, labelled) for c in base_c[:n]]
+        rows = [_cand_row(c, store, labelled) for c in base_c[start:end]]
         chunks.append(
             "## power islands (bases)\n"
             + render.table(
                 ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
                 rows,
                 total=len(base_c),
+                offset=start,
                 limit=n,
             )
         )
         fresh = [c for c in line_c if not store.covers(c.machines)]
-        rows = [_cand_row(c, store, labelled) for c in fresh[:n]]
+        rows = [_cand_row(c, store, labelled) for c in fresh[start:end]]
         chunks.append(
             "## belt components (lines), unnamed first\n"
             + render.table(
                 ("src", "n", "x,y(m)", "spread", "named", "labels", "makes"),
                 rows,
                 total=len(fresh),
+                offset=start,
                 limit=n,
             )
         )
@@ -191,7 +196,7 @@ def factory_map(
     if want in ("all", "slabs"):
         sx = st.structures
         rows = []
-        for group in sx.groups()[:n]:
+        for group in sx.groups()[start:end]:
             index = sx.slab_of[group[0]]
             slab = sx.slabs[index]
             cand = identity.describe(group, gr, st.game, st.projection, "structure")
@@ -227,6 +232,7 @@ def factory_map(
                 ),
                 rows,
                 total=len(sx.groups()),
+                offset=start,
                 limit=n,
             )
         )
@@ -250,7 +256,7 @@ def factory_map(
                     f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
                     *_slab_shape(slab),
                 )
-                for slab in listed[:n]
+                for slab in listed[start:end]
             ]
             header = (
                 f"## bare platforms (no machines): {len(bare)}, {sum(s.tiles for s in bare)} tiles"
@@ -259,6 +265,7 @@ def factory_map(
                 ("slab", "tiles", "x,y(m)", "extent", "bbox(m)", "z(m)", "floors"),
                 brows,
                 total=len(listed),
+                offset=start,
                 limit=n,
             )
             if pads:
@@ -271,7 +278,7 @@ def factory_map(
         else:
             chunks.append("## bare platforms (no machines): none")
 
-        shown = [sx.slabs[sx.slab_of[g[0]]] for g in sx.groups()[:n]] + listed[:n]
+        shown = [sx.slabs[sx.slab_of[g[0]]] for g in sx.groups()[start:end]] + listed[start:end]
         if shown:
             notes.append(
                 "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
@@ -324,12 +331,15 @@ def factory_query(
         str, Field(description="comma-separated: " + ", ".join(QUERY_ASPECTS))
     ] = "summary",
     limit: Limit = 15,
+    offset: int = 0,
     save: str | None = None,
     world: str | None = None,
 ) -> str:
     """Ask one thing about one factory: what it makes, needs, draws, or touches.
 
-    `of` accepts several at once, e.g. "balance,power,links".
+    `of` accepts several at once, e.g. "balance,power,links". `offset` pages every
+    table in the answer at once, so asking for one aspect at a time is what you want
+    when a factory has more machines than fit.
 
     - **summary** size, position, top recipes, net power
     - **balance** per-item produced vs consumed vs net -- the sign is the point
@@ -368,6 +378,8 @@ def factory_query(
         return f"! unknown aspect(s) {unknown}. Choose from: {', '.join(QUERY_ASPECTS)}"
 
     n = render.clamp(limit)
+    start = max(0, offset)
+    end = start + n
     chunks: list[str] = []
     g = st.game
 
@@ -414,7 +426,11 @@ def factory_query(
             chunks.append(
                 "## balance (items/min at saved clocks)\n"
                 + render.table(
-                    ("item", "made", "used", "net", ""), rows[:n], total=len(rows), limit=n
+                    ("item", "made", "used", "net", ""),
+                    rows[start:end],
+                    total=len(rows),
+                    offset=start,
+                    limit=n,
                 )
             )
         elif aspect in ("outputs", "inputs"):
@@ -423,8 +439,9 @@ def factory_query(
                 f"## {aspect}\n"
                 + render.table(
                     ("item", "per min"),
-                    [(k, render.num(v)) for k, v in data[:n]],
+                    [(k, render.num(v)) for k, v in data[start:end]],
                     total=len(data),
+                    offset=start,
                     limit=n,
                 )
             )
@@ -433,8 +450,9 @@ def factory_query(
             body = (
                 render.table(
                     ("item", "per min"),
-                    [(k, render.num(v)) for k, v in data[:n]],
+                    [(k, render.num(v)) for k, v in data[start:end]],
                     total=len(data),
+                    offset=start,
                     limit=n,
                 )
                 if data
@@ -461,8 +479,9 @@ def factory_query(
                 "## machines\n"
                 + render.table(
                     ("instance", "building", "recipe", "clock", "x,y,z(m)", ""),
-                    rows[:n],
+                    rows[start:end],
                     total=len(rows),
+                    offset=start,
                     limit=n,
                 )
             )
@@ -471,8 +490,9 @@ def factory_query(
                 "## recipes\n"
                 + render.table(
                     ("recipe", "machines"),
-                    view.recipes.most_common(n),
+                    view.recipes.most_common()[start:end],
                     total=len(view.recipes),
+                    offset=start,
                     limit=n,
                 )
             )
@@ -481,8 +501,9 @@ def factory_query(
                 "## buildings\n"
                 + render.table(
                     ("building", "count"),
-                    [(bname(c), v) for c, v in view.buildings.most_common(n)],
+                    [(bname(c), v) for c, v in view.buildings.most_common()[start:end]],
                     total=len(view.buildings),
+                    offset=start,
                     limit=n,
                 )
             )
@@ -509,9 +530,10 @@ def factory_query(
                     ("node", "resource", "purity", "extractor", "clock", "left"),
                     [
                         (a, b, c, bname(d), f"{e:.0%}", f if f is not None else "-")
-                        for a, b, c, d, e, f in view.nodes[:n]
+                        for a, b, c, d, e, f in view.nodes[start:end]
                     ],
                     total=len(view.nodes),
+                    offset=start,
                     limit=n,
                 )
             )
@@ -522,13 +544,14 @@ def factory_query(
                 "# nature, since the first machine of a small set blocks the rest\n"
                 + render.table(
                     ("other side", "machines reached"),
-                    view.links.most_common(n),
+                    view.links.most_common()[start:end],
                     total=len(view.links),
+                    offset=start,
                     limit=n,
                 )
             )
         elif aspect == "issues":
-            body = render.bullets(view.issues[:n]) if view.issues else "none"
+            body = render.bullets(view.issues[start:end]) if view.issues else "none"
             chunks.append(f"## issues ({len(view.issues)})\n{body}")
 
     notes = []
@@ -562,6 +585,7 @@ def factory_health(
         str, Field(description="a label name, any selector, or 'all' for every named factory")
     ] = "all",
     limit: Limit = 15,
+    offset: int = 0,
     save: str | None = None,
     world: str | None = None,
 ) -> str:
@@ -578,6 +602,8 @@ def factory_health(
     **Blocked is not automatically a fault.** A base whose output nobody consumes fills
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
+
+    `offset` pages every table in the answer at once, worst first throughout.
     """
     from ....domain.factories.health import STATES, assess, summarise
     from ....domain.factories.select import SelectorError
@@ -589,6 +615,8 @@ def factory_health(
 
     alive = set(st.graph.machines())
     n = render.clamp(limit)
+    start = max(0, offset)
+    end = start + n
 
     if factory.strip().casefold() in ("all", "*"):
         if not st.labels.labels:
@@ -650,8 +678,9 @@ def factory_health(
                     "paused",
                     "todo",
                 ),
-                rows[:n],
+                rows[start:end],
                 total=len(rows),
+                offset=start,
                 limit=n,
             ),
             notes,
@@ -667,7 +696,7 @@ def factory_health(
     report = assess(name, machines, st.game, st.projection)
     chunks = [summarise(report)]
 
-    worst = report.worst(n)
+    worst = report.worst(end)[start:]
     if worst:
         chunks.append(
             "## needs attention\n"
@@ -684,18 +713,31 @@ def factory_health(
                     for m in worst
                 ],
                 total=sum(1 for m in report.machines if m.needs_attention),
+                offset=start,
                 limit=n,
             )
         )
     if report.blocked_on:
         chunks.append(
             "## output backing up\n"
-            + render.table(("item", "machines blocked"), report.blocked_on.most_common(n))
+            + render.table(
+                ("item", "machines blocked"),
+                report.blocked_on.most_common()[start:end],
+                total=len(report.blocked_on),
+                offset=start,
+                limit=n,
+            )
         )
     if report.starved_of:
         chunks.append(
             "## inputs not arriving\n"
-            + render.table(("ingredient", "machines starved"), report.starved_of.most_common(n))
+            + render.table(
+                ("ingredient", "machines starved"),
+                report.starved_of.most_common()[start:end],
+                total=len(report.starved_of),
+                offset=start,
+                limit=n,
+            )
         )
 
     notes = []
@@ -728,6 +770,7 @@ def propose_factories(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 15,
+    offset: int = 0,
     max_span_m: Annotated[float, Field(description="cap on a proposal's diameter, metres")] = 250.0,
     unnamed_only: bool = False,
 ) -> str:
@@ -739,7 +782,8 @@ def propose_factories(
     every fold -- it never merges two factories, it only ever splits one.
 
     Use `name_factory` on what it proposes. `unnamed_only=True` answers "what have I
-    built and not named".
+    built and not named". The `#` column is the `proposal:<n>` selector every other tool
+    takes, and it counts over ALL proposals -- so it does not shift when you page.
     """
     try:
         st = _state(save, world)
@@ -753,6 +797,8 @@ def propose_factories(
         if max_span_m == cohere.MAX_SPAN_M
         else cohere.propose(st.graph, st.game, st.projection, st.structures, max_span_m=max_span_m)
     )
+    n = render.clamp(limit)
+    start = max(0, offset)
     rows = []
     shown = 0
     for k, pr in enumerate(proposals):
@@ -760,7 +806,7 @@ def propose_factories(
         if unnamed_only and store.covers(pr.machines):
             continue
         shown += 1
-        if shown > render.clamp(limit):
+        if not start < shown <= start + n:
             continue
         cand = identity.describe(pr.machines, st.graph, st.game, st.projection, "proposal")
         rows.append(
@@ -784,7 +830,8 @@ def propose_factories(
             ("#", "machines", "x,y(m)", "spread", "parts", "evidence", "labels", "makes"),
             rows,
             total=total,
-            limit=limit,
+            offset=start,
+            limit=n,
         ),
         [
             (
@@ -1132,7 +1179,11 @@ def trace_upstream(
     return render.envelope(
         f"# {st.age_note}\n# {'what feeds' if way == 'up' else 'what is fed by'} {subject}",
         render.table(
-            ("building", "kind", "count", "hops", "examples"), rows, total=len(rows), limit=limit
+            ("building", "kind", "count", "hops", "examples"),
+            rows,
+            total=len(rows),
+            limit=render.clamp(limit, default=20),
+            hint="raise limit -- one row per building class, biggest first, and no offset",
         ),
         notes,
     )

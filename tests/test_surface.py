@@ -91,6 +91,28 @@ def test_every_declared_default_lies_inside_its_own_bound():
             assert hi is None or default <= hi, (tool.name, name, default, hi)
 
 
+def test_no_response_names_an_offset_the_schema_would_reject():
+    """Fifteen tools printed "call again with offset=N" and took no offset, so the one
+    instruction the envelope gives was an error every time it was followed.
+
+    The guard is at the primitive rather than per tool: ``render.table`` only writes that
+    sentence when the caller passes ``offset=``, and passing it from a tool without the
+    parameter is the mistake this catches. A truncated table that cannot page says how to
+    narrow instead, so this test does not forbid truncation -- only lying about it."""
+    import inspect
+
+    for tool in _run(srv.mcp.list_tools()):
+        fn = getattr(srv, tool.name, None)
+        if fn is None:
+            continue
+        src = inspect.getsource(inspect.unwrap(fn))
+        if "offset=" not in src:
+            continue
+        assert "offset" in (tool.inputSchema.get("properties") or {}), (
+            f"{tool.name} pages a table but publishes no offset parameter"
+        )
+
+
 def test_tool_descriptions_stay_short():
     """Tool descriptions are always resident, so their first line is the budget that
     matters. Procedure belongs in prompts."""

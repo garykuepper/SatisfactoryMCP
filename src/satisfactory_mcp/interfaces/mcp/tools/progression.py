@@ -16,6 +16,10 @@ from ....presenters.text.collectibles import render_collectibles
 from ..app import Limit, _state, mcp
 
 
+def _start(offset: int) -> int:
+    return max(0, offset)
+
+
 @mcp.tool(structured_output=False)
 def phase_requirements(save: str | None = None, world: str | None = None) -> str:
     """What the Space Elevator still wants, live record and deprecated record apart.
@@ -140,6 +144,7 @@ def power_shards(
     plan_machines: int = 0,
     plan_clock: float = 2.5,
     limit: Limit = 10,
+    offset: int = 0,
 ) -> str:
     """Power Shards held, committed and free, plus what an overclock plan would cost.
 
@@ -218,7 +223,7 @@ def power_shards(
 
     rows = [
         (h["cls"], render.num(h["clock"]), h["slotted"], h["needed"], h["idle"] or "")
-        for h in budget["holders"][: render.clamp(limit, default=10)]
+        for h in budget["holders"][_start(offset) : _start(offset) + render.clamp(limit, 10)]
     ]
     return render.envelope(
         f"# {st.age_note}\n"
@@ -236,7 +241,8 @@ def power_shards(
             ("building", "clock", "slotted", "needed", "idle"),
             rows,
             total=len(budget["holders"]),
-            limit=limit,
+            offset=_start(offset),
+            limit=render.clamp(limit, default=10),
         ),
         notes,
     )
@@ -251,6 +257,7 @@ def mam_research(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
     """MAM research: what is left, what it costs, and what you can afford right now.
 
@@ -374,16 +381,22 @@ def mam_research(
         + f", showing status={wanted}",
         render.table(
             ("status", "research", "capability", "cost", "short by", "blocked by"),
-            rows[: render.clamp(limit, default=25)],
+            rows[_start(offset) : _start(offset) + render.clamp(limit, 25)],
             total=len(rows),
-            limit=limit,
+            offset=_start(offset),
+            limit=render.clamp(limit, default=25),
         ),
         notes,
     )
 
 
 @mcp.tool(structured_output=False)
-def somersloops(save: str | None = None, world: str | None = None) -> str:
+def somersloops(
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 20,
+    offset: int = 0,
+) -> str:
     """Somersloops held, slotted and owned -- the sibling of power_shards.
 
     `sloop_budget` has existed since sloops became spendable and nothing exposed it, so
@@ -410,7 +423,7 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
             f"{h['boost']:g}x" if h["boost"] else "",
             f"{h['boost_in_save']:g}x" if h["boost_in_save"] else "-",
         )
-        for h in holders[:20]
+        for h in holders[_start(offset) : _start(offset) + render.clamp(limit, 20)]
     ]
     disagree = [
         h
@@ -470,6 +483,8 @@ def somersloops(save: str | None = None, world: str | None = None) -> str:
             ("building", "instance", "sloops", "boost", "boost_in_save"),
             rows,
             total=len(holders),
+            offset=_start(offset),
+            limit=render.clamp(limit, default=20),
         ),
         notes,
     )
@@ -495,6 +510,7 @@ def collected_from_world(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
     """Map collectibles: how many exist, how many you took, what is left and what is closest.
 
@@ -520,4 +536,4 @@ def collected_from_world(
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    return render_collectibles(st, collect_view(st, group, mode, near), limit)
+    return render_collectibles(st, collect_view(st, group, mode, near), limit, offset=offset)

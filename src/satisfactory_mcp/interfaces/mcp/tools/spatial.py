@@ -563,6 +563,7 @@ def search_resource_nodes(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
     """Resource nodes, in one of three modes.
 
@@ -585,6 +586,9 @@ def search_resource_nodes(
     `near` accepts a coordinate in metres, `me` for the player, or the name of a
     labelled factory -- "the nearest free coal to the coal powerplant" needs no
     coordinates. Giving `near` in any mode adds a distance column.
+
+    All three modes page with `offset=`; the ranking is stable, so the tail of 127 iron
+    nodes is reachable 25 at a time.
     """
     g = game()
     table = nodes_mod.load_nodes()
@@ -670,6 +674,8 @@ def search_resource_nodes(
             [r["instance"] for r in rows_all],
         )
 
+    start = max(0, offset)
+    n = render.clamp(limit, default=25)
     if mode in ("nodes", "nearest"):
         if mode == "nearest":
             rows_all.sort(key=lambda r: r["_d"])
@@ -693,7 +699,7 @@ def search_resource_nodes(
                 _occupant(r, g),
                 rm.label_for_node(r).name or "-",
             )
-            for r in rows_all[: render.clamp(limit, default=25)]
+            for r in rows_all[start : start + n]
         ]
         headers = (
             "node_id",
@@ -707,7 +713,7 @@ def search_resource_nodes(
             "occupant",
             "region",
         )
-        body = render.table(headers, rows, total=len(rows_all), limit=limit)
+        body = render.table(headers, rows, total=len(rows_all), offset=start, limit=n)
         notes.append("node_id doubles as a source selector: node:<id>")
         notes.append(
             "occupant is the extractor standing on the node at its saved clock; OFF means "
@@ -716,7 +722,7 @@ def search_resource_nodes(
     else:
         clusters = geo.cluster(rows_all, link_m=200.0)
         crows = []
-        for c in clusters[: render.clamp(limit, default=25)]:
+        for c in clusters[start : start + n]:
             cx, cy, _cz = c.centroid
             label = rm.label_for(cx, cy)
             c_free = sum(m["rate"] for m in c.members if not m["tapped"] and m["reachable"])
@@ -746,7 +752,7 @@ def search_resource_nodes(
             "spread",
             "note",
         )
-        body = render.table(headers, crows, total=len(clusters), limit=limit)
+        body = render.table(headers, crows, total=len(clusters), offset=start, limit=n)
         notes.append('mode="nodes" lists individual nodes; mode="nearest" ranks by distance')
 
     # Elevation matters for fluids and nothing else: a pipe running downhill is free and
@@ -909,7 +915,8 @@ def show_on_map(
 def rank_build_sites(
     resource: str,
     sources: list[str] | None = None,
-    top: int = 5,
+    limit: Limit = 5,
+    top: Annotated[int | None, Field(description="deprecated alias for limit")] = None,
     save: str | None = None,
     world: str | None = None,
 ) -> str:
@@ -921,12 +928,16 @@ def rank_build_sites(
 
     ``sources`` narrows the search area using the same selectors as
     search_resource_nodes; omit it to search the whole map.
+
+    A ranking does not page: the rows below the cut score worse by construction, so raise
+    `limit` or narrow `sources` rather than looking for an offset.
     """
     g = game()
     rid = _item_id(resource)
     if rid is None:
         return f"no resource matching {resource!r}"
     table = nodes_mod.load_nodes()
+    n = render.clamp(top if top is not None else limit, default=5)
 
     try:
         st = _state(save, world)
@@ -960,7 +971,7 @@ def rank_build_sites(
     rm = regions_mod.load_regions()
     unit = "m3/min" if g.items[rid].is_fluid else "/min"
     out_rows = []
-    for sc in scored[: render.clamp(top, default=5)]:
+    for sc in scored[:n]:
         cx, cy, _cz = sc.centroid
         raw = sc.raw
         alt = raw["altitude_vs_consumer_m"]
@@ -1017,7 +1028,8 @@ def rank_build_sites(
             ),
             out_rows,
             total=len(scored),
-            limit=top,
+            limit=n,
+            hint="raise limit, or narrow with sources= -- a ranking has no offset",
         ),
         notes,
     )
@@ -1108,7 +1120,11 @@ def whereami(
             ("resource", "purity", "rate", "dist", "dir", "status"),
             rows,
             total=len(near),
-            limit=limit,
+            limit=render.clamp(limit, default=8),
+            hint=(
+                "raise limit or shrink radius_m; for the whole tail use "
+                "search_resource_nodes(mode='nearest', near='me'), which pages"
+            ),
         ),
         notes,
     )

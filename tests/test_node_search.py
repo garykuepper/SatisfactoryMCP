@@ -267,3 +267,39 @@ def test_no_pump_count_is_invented(game):
     header = out[: out.index("node_id")]
     assert "pumps needed" not in header
     assert "1 pump" not in header
+
+
+def _node_ids(out: str) -> list[str]:
+    return [line.split("\t")[0] for line in out.splitlines() if line.startswith("BP_")]
+
+
+def test_the_iron_tail_is_reachable(game):
+    """127 iron nodes behind a 25-row cap, and the envelope's "call again with offset=N"
+    named a parameter the schema did not have -- so the tail could not be read at all.
+
+    Pinned on the ids rather than the count: a page that repeated the first page's rows
+    would satisfy a length check and still answer the wrong question."""
+    first = srv.search_resource_nodes(resource="Iron Ore", mode="nodes", limit=5)
+    second = srv.search_resource_nodes(resource="Iron Ore", mode="nodes", limit=5, offset=5)
+    assert "showing 5 from offset 0." in first
+    assert "call again with offset=5" in first
+    assert "showing 5 from offset 5." in second
+    assert _node_ids(first) and _node_ids(second)
+    assert not set(_node_ids(first)) & set(_node_ids(second))
+
+
+def test_a_ranking_says_what_it_can_do_instead_of_naming_an_offset(game):
+    """rank_build_sites orders candidates by score, so paging it would hand back the
+    fields it already judged worse. The envelope has to offer what the tool actually
+    takes rather than an argument it would reject."""
+    out = srv.rank_build_sites(resource="Iron Ore", limit=1)
+    assert "call again with offset" not in out
+    assert "raise limit, or narrow with sources=" in out
+
+
+def test_top_still_means_limit(game):
+    """`top=` was this tool's private spelling of the row cap. Renaming it outright would
+    break every stored call, so it is still accepted and still wins where both are given."""
+    assert srv.rank_build_sites(resource="Iron Ore", top=1) == srv.rank_build_sites(
+        resource="Iron Ore", limit=1
+    )

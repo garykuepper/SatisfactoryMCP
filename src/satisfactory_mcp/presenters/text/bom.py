@@ -8,7 +8,7 @@ from . import primitives as render
 __all__ = ["render_bom"]
 
 
-def render_bom(bom: BOM, limit: int = 20) -> str:
+def render_bom(bom: BOM, limit: int = 20, offset: int = 0) -> str:
     if bom.status == "raw":
         return render.envelope(f"# BOM {render.num(bom.qty)} {bom.item_name}/min", "", bom.notes)
     if not bom.ok:
@@ -52,7 +52,9 @@ def render_bom(bom: BOM, limit: int = 20) -> str:
         "only_recipes/exclude_recipes for an arithmetic answer"
     )
 
-    page = bom.rows[: render.clamp(limit, default=20)]
+    start = max(0, offset)
+    n = render.clamp(limit, default=20)
+    page = bom.rows[start : start + n]
     rows = [
         (
             r.name,
@@ -68,7 +70,8 @@ def render_bom(bom: BOM, limit: int = 20) -> str:
         ("item", "made", "used", "recipe", "machines", "building"),
         rows,
         total=len(bom.rows),
-        limit=limit,
+        offset=start,
+        limit=n,
     )
     ids = render.ids_footer(
         (r.name, r.recipe_ids[0]) for r in page if r.recipe_ids and len(r.recipe_ids) == 1

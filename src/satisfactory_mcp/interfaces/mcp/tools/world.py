@@ -142,21 +142,26 @@ def unlocked_recipes(
     world: str | None = None,
     only_alternates: bool = True,
     limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
-    """Which recipes this world has. Defaults to alternates, never all 872."""
+    """Which recipes this world has. Defaults to alternates, never all 872.
+
+    Sorted by name and paged with `offset=`, so the whole list is reachable."""
     try:
         st = _state(save, world)
     except Exception as exc:
         return f"could not read save: {exc}"
     picks = st.unlocked_alternates if only_alternates else st.unlocked_recipes("part")
     picks = sorted(picks, key=lambda r: r.name)
-    page = picks[: render.clamp(limit, default=25)]
+    start = max(0, offset)
+    n = render.clamp(limit, default=25)
+    page = picks[start : start + n]
     rows = [(r.name, st.game.machine(r).name if st.game.machine(r) else "-") for r in page]
     return render.envelope(
         f"# {st.age_note}\n"
         f"# {len(st.unlocked_alternates)} of {len(st.game.alternates())} alternates unlocked; "
         f"{len(st.unlocked_recipes('part'))} automatable recipes total",
-        render.table(("recipe", "building"), rows, total=len(picks), limit=limit),
+        render.table(("recipe", "building"), rows, total=len(picks), offset=start, limit=n),
     )
 
 
@@ -216,7 +221,9 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
 
 
 @mcp.tool(structured_output=False)
-def factory_sites(save: str | None = None, world: str | None = None, limit: Limit = 10) -> str:
+def factory_sites(
+    save: str | None = None, world: str | None = None, limit: Limit = 10, offset: int = 0
+) -> str:
     """Built production buildings clustered into sites, largest first."""
     try:
         st = _state(save, world)
@@ -225,7 +232,9 @@ def factory_sites(save: str | None = None, world: str | None = None, limit: Limi
     g = st.game
     sites = st.sites()
     rows = []
-    for s in sites[: render.clamp(limit)]:
+    start = max(0, offset)
+    n = render.clamp(limit)
+    for s in sites[start : start + n]:
         top = sorted(s["buildings"].items(), key=lambda kv: -kv[1])[:4]
         x_m, y_m, z_m = (int(v / 100) for v in s["centroid"])
         rows.append(
@@ -251,7 +260,8 @@ def factory_sites(save: str | None = None, world: str | None = None, limit: Limi
             ("dir", "grid", "x,y,z(m)", "buildings", "spread", "selector", "contents"),
             rows,
             total=len(sites),
-            limit=limit,
+            offset=start,
+            limit=n,
         ),
         [
             (

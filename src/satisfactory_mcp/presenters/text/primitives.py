@@ -19,6 +19,7 @@ from collections.abc import Iterable, Sequence
 from ...core.text import num, plural
 
 __all__ = [
+    "NARROW_HINT",
     "bullets",
     "envelope",
     "ids_footer",
@@ -39,17 +40,30 @@ def rate(value: float | None, unit: str = "") -> str:
     return f"{num(value)}{unit}"
 
 
+#: What a truncated table says when it cannot page. Deliberately not a parameter name: the
+#: envelope naming one the tool does not accept is the defect this replaces.
+NARROW_HINT = "narrow the query, or raise limit"
+
+
 def table(
     headers: Sequence[str],
     rows: Iterable[Sequence[object]],
     total: int | None = None,
-    offset: int = 0,
+    offset: int | None = None,
     limit: int | None = None,
     hint: str = "",
 ) -> str:
     """Tab-separated table with a truncation envelope. ``total`` is the number of MATCHES,
-    not the number of lines emitted; the header and any footer are never counted."""
+    not the number of lines emitted; the header and any footer are never counted.
+
+    Passing ``offset`` is the DECLARATION THAT THE CALLER PAGES, and the only thing that
+    lets the envelope say "call again with offset=N". A tool without an ``offset``
+    parameter must not pass one: it would be telling the reader to send an argument the
+    schema rejects. Such a table gets ``hint`` instead, or ``NARROW_HINT``.
+    """
     body = [list(r) for r in rows]
+    if limit is not None:
+        body = body[: max(0, limit)]
     shown = len(body)
     lines = ["\t".join(headers)]
     lines += ["\t".join("" if c is None else str(c) for c in r) for r in body]
@@ -58,13 +72,16 @@ def table(
     if total is None or total <= shown:
         return out
 
-    remaining = total - offset - shown
-    parts = [f"# {total} match(es), showing {shown} from offset {offset}."]
+    start = offset or 0
+    remaining = total - start - shown
+    parts = [f"# {total} match(es), showing {shown} from offset {start}."]
     if remaining > 0:
-        nxt = offset + shown
-        parts.append(f"{remaining} more: call again with offset={nxt}")
-        if hint:
-            parts.append(hint)
+        if offset is None:
+            parts.append(f"{remaining} more: {hint or NARROW_HINT}")
+        else:
+            parts.append(f"{remaining} more: call again with offset={start + shown}")
+            if hint:
+                parts.append(hint)
     return out + "\n" + " ".join(parts)
 
 

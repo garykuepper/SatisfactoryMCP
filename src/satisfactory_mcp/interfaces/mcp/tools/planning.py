@@ -992,6 +992,7 @@ def bom(
     save: str | None = None,
     world: str | None = None,
     limit: Limit = 20,
+    offset: int = 0,
 ) -> str:
     """Flattened bill of materials: total raw and intermediate rates for qty/min of an item.
 
@@ -1018,7 +1019,7 @@ def bom(
         )
     except ValueError as exc:
         return str(exc)
-    return render_bom(result, limit=render.clamp(limit, default=20))
+    return render_bom(result, limit=render.clamp(limit, default=20), offset=max(0, offset))
 
 
 @mcp.tool(structured_output=False)
@@ -1212,6 +1213,7 @@ def rank_unlocks(
         )
         for r in movers[: render.clamp(limit, default=15)]
     ]
+    # A ranking, so no offset: what falls off the bottom is what changed this plan least.
     notes = [*plan_notes]
     if plan_name:
         notes.insert(0, f"recalled saved plan {plan_name!r}")
@@ -1282,7 +1284,8 @@ def rank_unlocks(
             ),
             rows,
             total=len(movers),
-            limit=limit,
+            limit=render.clamp(limit, default=15),
+            hint="raise limit, or narrow with search= -- a ranking has no offset",
         ),
         notes,
     )

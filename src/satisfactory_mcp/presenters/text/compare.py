@@ -56,7 +56,12 @@ def render_comparison(cmp: RouteComparison, limit: int = 10) -> str:
         row.append(_with(r.upstream))
         rows.append(row)
 
-    body = render.table(headers, rows, total=len(cmp.routes))
+    body = render.table(
+        headers,
+        rows,
+        total=len(cmp.routes),
+        hint="raise limit -- the routes are ranked, so there is no offset",
+    )
     footer = render.ids_footer(
         (_short(r.name), r.recipe) for r in cmp.routes[: render.clamp(limit)]
     )
