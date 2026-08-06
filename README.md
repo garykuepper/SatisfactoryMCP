@@ -4,7 +4,8 @@ Ask Claude about **your** Satisfactory world — and get answers read straight f
 save files. This is an MCP server plus a local web map: the server plans factories with a real
 optimizer over the game's own recipe data and your actual progress, and the map renders your
 world in the browser — terrain, factories, belts and pipes, power wiring, floors, crates.
-Everything runs locally; nothing is fetched from the network.
+Everything runs locally: your saves, the recipe data and the map artwork are all read off
+this machine, and nothing about your world is sent anywhere.
 
 ![The world map: factories, power wiring, resource nodes and region names over the game's own artwork](docs/media/map-overview.webp)
 
@@ -25,23 +26,27 @@ Phrased however you like — the model picks the tools:
 - *"What's still missing for Phase 3, and which factory is the bottleneck?"*
 - *"Trace my Reinforced Iron Plates upstream and tell me where the chain is thinnest."*
 - *"Compare the alternate recipes for Computers against what I'm running today."*
-- *"Show the coal powerplant on the map."* — answers with a link that opens the web map
-  zoomed to it.
+- *"How much Quartz do I actually have, and which container is it in?"*
+- *"What was in the crate where I died?"*
+- *"Show the coal powerplant on the map."* — answers with a link that opens the local web map
+  above, zoomed to it. A satisfactory-calculator.com link comes second, for the vanilla world
+  it knows; only the local one can draw what you built.
 
 Plans balance every item honestly — a setup that would silently strand Heavy Oil Residue is
 reported infeasible instead of overstated — and every answer names the save file it read and
 how old it is. The server only ever *reads* your saves; it never writes them.
 
 <details>
-<summary><b>The full tool list</b> (42 tools, 3 slash-command prompts)</summary>
+<summary><b>The full tool list</b> (49 tools, 3 slash-command prompts)</summary>
 
 | Area | Tools |
 | --- | --- |
 | Game data | `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings` |
 | Your world | `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`, `phase_requirements`, `power_shards`, `collected_from_world`, `mam_research`, `somersloops` |
-| Your factories | `list_factories`, `name_factory`, `forget_factory`, `factory_health`, `factory_map`, `factory_query`, `propose_factories`, `select_machines`, `trace_upstream` |
-| Map | `list_regions`, `describe_location`, `search_resource_nodes`, `rank_build_sites`, `show_on_map` |
-| Planning | `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `explain_byproducts`, `compare_recipe_options`, `rank_unlocks`, `list_plans`, `forget_plan` |
+| What you own | `stock`, `storage`, `crates` |
+| Your factories | `list_factories`, `name_factory`, `forget_factory`, `factory_health`, `factory_map`, `factory_query`, `factory_floors`, `propose_factories`, `select_machines`, `trace_upstream` |
+| Map | `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`, `show_on_map` |
+| Planning | `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `explain_byproducts`, `compare_recipe_options`, `rank_unlocks`, `list_plans`, `site_plan`, `rename_plan`, `forget_plan` |
 | Hard drives | `list_pending_hard_drive_choices`, `advise_hard_drive_pick` |
 
 Plus MCP resources (`satisfactory://docs/summary`, `satisfactory://save/current`,
