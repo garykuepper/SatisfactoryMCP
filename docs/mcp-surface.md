@@ -19,7 +19,8 @@ testing contract. Section numbers are continuous with the rest of the spec;
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`, `phase_requirements`, `power_shards`, `collected_from_world`
-**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`
+**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`, `factory_floors`
+**Inventory:** `stock`, `storage`, `crates`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`
 **Layout:** `plan_layout`
 **Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `site_plan`, `explain_byproducts`, `compare_recipe_options`
@@ -400,6 +401,52 @@ probes by hand**. Bare (machine-less) slabs are now their own table: tile count,
   `BARE_TILE_FLOOR = 12` tiles (a 3×4 pour of 8 m foundations — below that it is a tile under
   a power pole or a jump-pad landing) collapse to one count line that names the threshold, so
   a summarised pad is a known omission instead of a blind spot.
+
+### 10.1h `stock`, `storage`, `crates`, `factory_floors` — the keys the map read and no tool did
+
+Storage (schema 15), crates (18), the crate inventory bucket (19) and the floor
+decomposition all went to the web map and never to the LLM, so an assistant could be told
+"short 500 Quartz" with no way to ask what was in the boxes: 151 container rows, 130 of
+them holding something, read by two routers and by zero tools. `WorldState.stock()` was
+reachable from exactly one place — an affordability check — and `machine_buffers()` from
+none at all.
+
+```
+stock(item=None, where=False, save, world, limit=25, offset=0)
+  -> per item: spendable | carried | storage | depot | buffers | crates
+     where=True: one row per container or crate holding it, with a region and a coordinate
+
+storage(item=None, near=None, radius_m=500, kind=None, empty=False, limit=15, offset=0)
+  -> per container: region, coordinate, fill, used/slots (or m3/capacity), contents
+
+crates(limit=25, offset=0)          -> what you lost, what kind of crate, and where it is
+factory_floors(factory=None, platform=None, limit=10, offset=0)
+  -> per platform: floors, minor bands, area, centre, top span, machines
+     one platform: per floor -- top, area, tiles, machines and what they are
+```
+
+**The four piles stay four columns.** Spendable is carried + storage + Depot, the set every
+cost check spends; buffer material and crate contents are printed beside it and never added
+in, which is the rule `stock()` and schema 19 already encode and no response had ever
+stated. Measured on the reference world: 61,941 Concrete spendable, 9,551 more inside
+machines, 7 in a crate.
+
+**`fill` is computed here, not read.** The projection carries a slot count and a total, and
+the fraction between them is the answer to "is this box backing up" — used slots over slots
+at each item's own stack size for a container, m3 over the class's capacity for a fluid
+buffer, and `-` where either number is unknown rather than a fraction of a guess.
+
+**A census counts the world; filters decide only which rows are shown.** `storage(item=…)`
+still opens with all 151 containers, because a header that moved with the filter would
+answer "how many containers have I got" with the number holding concrete. Empty containers
+are hidden by default and the note names the count and the way back.
+
+**`factory_floors` prints the measured decomposition, and says so.** `factory_map
+show=slabs` counts storeys as a slab's z span over 4 m, on slabs welded through ramps;
+`domain/factories/floors.py` clusters foundation tops per platform with no assumed pitch.
+The two disagree wherever a ramp climbs, so the answer names which measurement it is. Pours
+with no band at all — 62 of 132 on the reference world, the largest 7 tiles — are counted
+in a note rather than listed or silently dropped.
 
 ### 10.2 Context budget
 

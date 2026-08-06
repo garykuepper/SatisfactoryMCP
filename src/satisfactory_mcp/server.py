@@ -44,6 +44,7 @@ from .interfaces.mcp.tools.factories import (
     select_machines,
     trace_upstream,
 )
+from .interfaces.mcp.tools.floors import factory_floors
 from .interfaces.mcp.tools.gamedata import (
     alternates_for_item,
     list_buildings,
@@ -52,6 +53,7 @@ from .interfaces.mcp.tools.gamedata import (
     search_recipes,
 )
 from .interfaces.mcp.tools.harddrives import advise_hard_drive_pick, list_pending_hard_drive_choices
+from .interfaces.mcp.tools.inventory import crates, stock, storage
 from .interfaces.mcp.tools.planning import (
     PLAN_DEFAULTS,
     _plan_kwargs,
@@ -105,12 +107,14 @@ __all__ = [
     "collected_from_world",
     "commission_plan",
     "compare_recipe_options",
+    "crates",
     "current_save",
     "describe_location",
     "design_factory",
     "diff_vs_save",
     "docs_summary",
     "explain_byproducts",
+    "factory_floors",
     "factory_health",
     "factory_labels",
     "factory_map",
@@ -150,6 +154,8 @@ __all__ = [
     "show_on_map",
     "site_plan",
     "somersloops",
+    "stock",
+    "storage",
     "trace_upstream",
     "unlocked_recipes",
     "whereami",

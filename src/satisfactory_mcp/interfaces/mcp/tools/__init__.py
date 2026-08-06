@@ -7,8 +7,10 @@ noqa -- a linter pruning these would silently empty the server.
 
 from . import (
     factories,
+    floors,
     gamedata,
     harddrives,
+    inventory,
     planning,
     progression,
     prompts,
@@ -19,8 +21,10 @@ from . import (
 
 __all__ = [
     "factories",
+    "floors",
     "gamedata",
     "harddrives",
+    "inventory",
     "planning",
     "progression",
     "prompts",
