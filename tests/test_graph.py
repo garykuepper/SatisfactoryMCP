@@ -206,6 +206,20 @@ def test_selectors_explain_themselves_when_they_fail(graph, game, projection):
         _sel(["-product:Concrete"], graph, game, projection)
 
 
+def test_a_machine_selector_takes_ids_and_refuses_the_ones_that_do_not_exist(
+    graph, game, projection
+):
+    """It used to return whatever string it was handed, so a typo, a stale id and a
+    machine standing right there all produced the same "0 machines" answer."""
+    from satisfactory_mcp.domain.factories.select import SELECTOR_HELP
+
+    picked = _sel([f"machine:{STEEL[0]},{STEEL[1]}"], graph, game, projection)
+    assert set(picked) == set(STEEL[:2])
+    with pytest.raises(SelectorError, match="no machine"):
+        _sel(["machine:Build_FoundryMk1_C_9999"], graph, game, projection)
+    assert "machine:" in SELECTOR_HELP, "a selector nothing documents is a selector nobody uses"
+
+
 def test_label_and_near_label_resolve_through_the_store(graph, game, projection):
     store = LabelStore(world_id="TESTWORLD")
     store.put("steel factory", STEEL)
@@ -231,6 +245,21 @@ def test_recall_degrades_gracefully_as_machines_are_removed():
     assert label.recall(set(STEEL[:3])) == 0.75
     assert label.recall(set(STEEL[:1])) == 0.25
     assert label.recall(set()) == 0.0
+
+
+def test_one_predicate_decides_whether_a_cluster_is_already_named():
+    """The map, factory_map and propose_factories each had their own rule -- majority,
+    all, any -- so the same cluster was a proposal on one surface and not on the other.
+    A majority is what survives both edits the other two get wrong: a new cluster that
+    swallowed one named neighbour, and a factory the player named all but one machine of.
+    """
+    store = LabelStore(world_id="TESTWORLD")
+    store.put("steel factory", STEEL)
+    assert store.covers(STEEL)
+    assert store.covers([*STEEL, *BASE_CONCRETE]), "named all but one is still named"
+    assert not store.covers([STEEL[0], *IRON]), "one named neighbour does not claim a cluster"
+    assert not store.covers([*STEEL, *IRON]), "exactly half is not a majority"
+    assert not store.covers([])
 
 
 def test_review_reports_shrinkage_without_acting_on_it():
@@ -481,6 +510,78 @@ def test_factory_map_lists_bare_platforms_and_summarises_pads_by_a_stated_thresh
     assert "-500,-500" not in out
 
 
+def test_a_bare_platform_answers_a_slab_selector_instead_of_refusing_it(game, monkeypatch):
+    """factory_map lists bare platforms by index and the selector that index feeds
+    refused exactly that case, so the table added to retire a nine-probe workflow
+    dead-ended into an error. A poured platform is a place; the answer is to describe it.
+    """
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    platform = [[0, 40000 + (i % 4) * 800, 100000 + (i // 4) * 800, 0] for i in range(16)]
+    carrying = [[0, x * 800, 0, 0] for x in range(3)]
+    projection = {
+        "header": {"save_identifier": "TEST-bare-selector", "session_name": "t"},
+        "structures": {
+            "classes": ["Build_Foundation_8x1_01_C"],
+            "instances": [*platform, *carrying],
+        },
+        "machines": [
+            {
+                "instance": "L:P.Build_SmelterMk1_C_1",
+                "cls": "Build_SmelterMk1_C",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [800, 0, 100],
+            }
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    assert st.structures.machines_on(0) == [], "slab 0 is the big empty one"
+    assert _sel(["slab:0"], st.graph, game, projection, structures=st.structures) == []
+
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.select_machines(["slab:0"])
+    assert "nothing stands on this platform yet" in out
+    assert "tiles=16" in out
+    # The occupied one still answers the same question with what is standing on it.
+    assert "1x Smelter" in ftools.select_machines(["slab:1"])
+
+
+def test_an_occupied_slab_reports_the_shape_a_bare_one_does(game, monkeypatch):
+    """The half of the table you can already build against was the half with no
+    footprint: bare platforms got a bounding box, a z span and a storey count, and a
+    platform carrying machines got a mean and a width. Both are places on a map."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    deck = [[0, x * 800, 0, 0] for x in range(4)]
+    upper = [[0, x * 800, 0, 400] for x in range(4)]
+    projection = {
+        "header": {"save_identifier": "TEST-occupied-slab", "session_name": "t"},
+        "structures": {"classes": ["Build_Foundation_8x1_01_C"], "instances": [*deck, *upper]},
+        "machines": [
+            {
+                "instance": "L:P.Build_SmelterMk1_C_1",
+                "cls": "Build_SmelterMk1_C",
+                "recipe": "Recipe_IngotIron_C",
+                "pos": [800, 0, 100],
+            }
+        ],
+        "extractors": [],
+        "generators": [],
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+
+    out = ftools.factory_map(show="slabs")
+    assert "extent\tbbox(m)\tz(m)\tfloors\tlabels" in out
+    # One 8-tile pour over two decks: 24 m of box, 4 m of climb, two storeys.
+    assert "0,0..24,0\t0..4\t2" in out
+    assert "8 tiles" in out, "the census on the heading comes from Structures.summary()"
+
+
 def test_slab_selector_uses_the_index_factory_map_prints():
     """Slabs are numbered by tile count; groups() is ordered by machine count. Indexing
     into the wrong one silently returns a different platform -- it once re-anchored the
@@ -579,6 +680,27 @@ def test_weakening_the_weights_only_ever_refines(graph, game, projection):
         assert any(set(p.machines) <= b for b in base), (
             f"{sorted(p.machines)} is not contained in any strongly-weighted cluster"
         )
+
+
+def test_a_proposal_publishes_the_weakest_link_holding_it_together(graph, game, projection):
+    """The merge loop computed a real cohesion per cluster and the constructor threw it
+    away for a literal 0.0, so every proposal scored the same and nothing ranked them.
+    The steel site -- one product, one place -- has to outscore the cluster that only
+    collects what is left over, or the number is not measuring cohesion."""
+    import math
+
+    from satisfactory_mcp.domain.factories import cohere
+    from satisfactory_mcp.domain.factories.structure import build_structures
+
+    props = cohere.propose(graph, game, projection, build_structures(projection))
+    by_size = {p.size: p for p in props}
+    tight = next(p for p in props if set(STEEL) <= set(p.machines))
+    loose = next(p for p in props if ORPHAN in p.machines)
+    assert all(math.isfinite(p.cohesion) for p in props), "a score the map cannot serialise"
+    assert tight.cohesion > loose.cohesion
+    assert len({p.cohesion for p in props if p.size > 1}) > 1, "one score for all is no ranking"
+    # A single machine has no internal link, so it has no weakest one and ranks last.
+    assert by_size[1].cohesion == 0.0
 
 
 def test_proposals_carry_the_evidence_that_made_them(graph, game, projection):

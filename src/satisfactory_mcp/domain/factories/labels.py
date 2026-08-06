@@ -34,7 +34,15 @@ from pathlib import Path
 from ... import config
 from ...core import atomic
 
-__all__ = ["MATCH_THRESHOLD", "REANCHOR_THRESHOLD", "Label", "LabelStore"]
+__all__ = ["MATCH_THRESHOLD", "NAMED_SHARE", "REANCHOR_THRESHOLD", "Label", "LabelStore"]
+
+#: Above this share of a machine set covered by labels, the set is something the player has
+#: already named rather than something to offer them. The clusterer runs over the whole
+#: world and so rediscovers every named factory; the two obvious alternatives both misfire
+#: on that. "Any anchor" hides a genuinely new cluster that happens to have swallowed one
+#: neighbouring machine, and "every anchor" re-offers a factory the player named all but one
+#: machine of. A majority is the only rule that survives both edits.
+NAMED_SHARE = 0.5
 
 #: Below this a label is not considered present in a candidate at all.
 MATCH_THRESHOLD = 0.5
@@ -181,6 +189,19 @@ class LabelStore:
 
     def assigned(self) -> set[str]:
         return {m for label in self.labels for m in label.anchors}
+
+    def covers(self, machines, share: float = NAMED_SHARE) -> bool:
+        """Whether the player has already named this machine set.
+
+        The one home for that question. The map, ``propose_factories`` and ``factory_map``
+        each grew their own version -- majority, any, all -- so the same cluster was a
+        proposal on one surface and not on the other, and neither said which it was.
+        """
+        held = list(machines)
+        if not held:
+            return False
+        assigned = self.assigned()
+        return sum(1 for m in held if m in assigned) > share * len(held)
 
     def match(self, machines: set[str]) -> list[tuple[Label, float]]:
         """Labels present in a machine set, best recall first."""

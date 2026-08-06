@@ -7,7 +7,8 @@ projection taken.
 Rates are **nameplate at the machine's saved clock**, never measured. A Foundry running
 Solid Steel Ingot at 150% is reported at 1.5x its recipe rate whether or not it has ever
 had iron. Uptime is a separate question that needs the productivity fields, and conflating
-the two would make a starved factory look healthy.
+the two would make a starved factory look healthy -- so power is reported on both sides at
+once, never blended into one number.
 
 The one derived view worth more than the rest is ``balance``: per-item production minus
 consumption across the set. Its sign is the interesting part --
@@ -42,6 +43,7 @@ ASPECTS = (
     "balance",
     "inputs",
     "outputs",
+    "internal",
     "power",
     "nodes",
     "links",
@@ -70,6 +72,11 @@ class FactoryView:
     #: item -> {"produced": ipm, "consumed": ipm}. Net is produced - consumed.
     flows: dict[str, dict[str, float]] = field(default_factory=dict)
     draw_mw: float = 0.0
+    #: Draw weighted per machine by its own 300 s productivity monitor -- the only measured
+    #: number here. A machine carrying no monitor is charged in FULL, so an unreadable one
+    #: can only make this figure conservative; ``unmonitored`` says how many those are.
+    measured_draw_mw: float = 0.0
+    unmonitored: int = 0
     generation_mw: float = 0.0
     #: (node instance, resource, purity, extractor class, clock, resources_left)
     nodes: list[tuple] = field(default_factory=list)
@@ -137,6 +144,17 @@ def build_view(
 
     points: list[tuple[float, float]] = []
 
+    def charge(rated: float, record: dict) -> None:
+        """One machine's draw, on both the nameplate and the measured side."""
+        view.draw_mw += rated
+        uptime = record.get("uptime") or {}
+        window = uptime.get("window_s") or 0.0
+        if window > 0:
+            view.measured_draw_mw += rated * ((uptime.get("produce_s") or 0.0) / window)
+        else:
+            view.unmonitored += 1
+            view.measured_draw_mw += rated
+
     for record in projection.get("machines", ()):
         short = _short(record["instance"])
         if short not in wanted:
@@ -176,7 +194,7 @@ def build_view(
                 f"{short}: unknown building {record.get('cls')!r}, power not counted"
             )
         else:
-            view.draw_mw += game.recipe_power_mw(recipe, clock)
+            charge(game.recipe_power_mw(recipe, clock), record)
 
     for record in projection.get("extractors", ()):
         short = _short(record["instance"])
@@ -222,7 +240,7 @@ def build_view(
             view.issues.append(f"{short}: paused extractor")
             continue
         if building is not None:
-            view.draw_mw += building.power_at(clock)
+            charge(building.power_at(clock), record)
             if resource and purity == "n/a (water volume)":
                 # Water volumes have no purity multiplier: extraction is the flat rate.
                 flows[game.item_name(resource)]["produced"] += building.extract_rate(

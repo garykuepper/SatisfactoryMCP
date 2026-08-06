@@ -39,6 +39,53 @@ def _z_range(slab) -> str:
     return f"{lo:.0f}" if round(lo) == round(hi) else f"{lo:.0f}..{hi:.0f}"
 
 
+def _slab_shape(slab) -> tuple:
+    """Bounding box, elevation and storeys -- what a build plan needs past the centre.
+
+    The same three columns for a slab carrying machines as for a bare one. They were only
+    ever printed for bare platforms, so the ones you could actually build against were the
+    ones that reported a footprint.
+    """
+    return (
+        (
+            f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
+            f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}"
+        ),
+        _z_range(slab),
+        slab.storeys,
+    )
+
+
+def _empty_platform(select: list[str], structures) -> str:
+    """The platform a lone ``slab:`` term names, when nothing stands on it yet.
+
+    An empty string when the selector is anything else, so the caller's own "matched no
+    machines" still speaks for every other way of picking nothing.
+    """
+    if len(select) != 1 or not select[0].strip().casefold().startswith("slab:"):
+        return ""
+    try:
+        slab = structures.slabs[int(select[0].strip().split(":", 1)[1])]
+    except (ValueError, IndexError):
+        return ""
+    box, z, floors = _slab_shape(slab)
+    return (
+        render.kv(
+            [
+                ("slab", slab.index),
+                ("machines", 0),
+                ("tiles", slab.tiles),
+                ("at", f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}"),
+                ("extent", f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m"),
+                ("bbox(m)", box),
+                ("z(m)", z),
+                ("floors", floors),
+            ]
+        )
+        + "\nnothing stands on this platform yet -- it is poured ground, not a factory"
+    )
+
+
 def _cand_row(c, store, labelled: set[str]) -> tuple:
     named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
     covered = sum(1 for m in c.machines if m in labelled)
@@ -129,7 +176,7 @@ def factory_map(
                 limit=n,
             )
         )
-        fresh = [c for c in line_c if not set(c.machines) <= labelled]
+        fresh = [c for c in line_c if not store.covers(c.machines)]
         rows = [_cand_row(c, store, labelled) for c in fresh[:n]]
         chunks.append(
             "## belt components (lines), unnamed first\n"
@@ -156,18 +203,30 @@ def factory_map(
                     slab.tiles,
                     f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
                     f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
+                    *_slab_shape(slab),
                     ", ".join(names)[:34] or "-",
                     cand.name_hint()[:38],
                 )
             )
-        total = len(sx.groups())
+        census = sx.summary()
         chunks.append(
-            f"## foundation slabs ({len(sx.slabs)} platforms, "
-            f"{len(sx.slab_of)} machines on one)\n"
+            f"## foundation slabs ({census['slabs']} platforms, {census['tiles']} tiles, "
+            f"{census['machines_on_slabs']} machines on one)\n"
             + render.table(
-                ("slab", "machines", "tiles", "x,y(m)", "extent", "labels", "makes"),
+                (
+                    "slab",
+                    "machines",
+                    "tiles",
+                    "x,y(m)",
+                    "extent",
+                    "bbox(m)",
+                    "z(m)",
+                    "floors",
+                    "labels",
+                    "makes",
+                ),
                 rows,
-                total=total,
+                total=len(sx.groups()),
                 limit=n,
             )
         )
@@ -189,12 +248,7 @@ def factory_map(
                     slab.tiles,
                     f"{int(slab.centre[0] / 100)},{int(slab.centre[1] / 100)}",
                     f"{int(slab.extent[0] / 100)}x{int(slab.extent[1] / 100)}m",
-                    (
-                        f"{int(slab.bbox[0] / 100)},{int(slab.bbox[1] / 100)}"
-                        f"..{int(slab.bbox[2] / 100)},{int(slab.bbox[3] / 100)}"
-                    ),
-                    _z_range(slab),
-                    slab.storeys,
+                    *_slab_shape(slab),
                 )
                 for slab in listed[:n]
             ]
@@ -214,18 +268,21 @@ def factory_map(
                     "by that threshold"
                 )
             chunks.append(f"{header}\n{body}")
+        else:
+            chunks.append("## bare platforms (no machines): none")
+
+        shown = [sx.slabs[sx.slab_of[g[0]]] for g in sx.groups()[:n]] + listed[:n]
+        if shown:
             notes.append(
                 "extent and bbox span tile CENTRES, so a platform's poured edge reaches "
                 "about half a tile past the box quoted"
             )
-            if any(slab.storeys > 1 for slab in listed[:n]):
-                notes.append(
-                    "floors is the z span counted in 4 m storeys, so a slab poured UP A "
-                    "HILLSIDE counts its climb as decks -- read it beside z(m) rather "
-                    "than as a tower"
-                )
-        else:
-            chunks.append("## bare platforms (no machines): none")
+        if any(slab.storeys > 1 for slab in shown):
+            notes.append(
+                "floors is the z span counted in 4 m storeys, so a slab poured UP A "
+                "HILLSIDE counts its climb as decks -- read it beside z(m) rather "
+                "than as a tower"
+            )
 
         ground = len(machines) - len(sx.slab_of)
         if ground:
@@ -278,15 +335,18 @@ def factory_query(
     - **balance** per-item produced vs consumed vs net -- the sign is the point
     - **outputs** net surplus: it leaves the factory, or it backs up
     - **inputs** net deficit: it has to be fed in from outside
+    - **internal** made and eaten inside the set -- the mark of a self-contained line
     - **machines** every machine with its building, recipe and clock
     - **recipes** / **buildings** counts
-    - **power** draw vs generation at saved clocks
+    - **power** draw vs generation, nameplate AND measured -- which factory is really
+      burning the grid, rather than which could
     - **nodes** resource nodes its extractors sit on
     - **links** which other factories it exchanges material with
     - **issues** paused, recipe-less, or unresolved machines
 
     Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
-    starved factory still reports its full rate.
+    starved factory still reports its full rate. Power is the one exception, and it
+    prints both figures side by side rather than blending them.
     """
     from ....domain.factories.query import build_view
 
@@ -332,7 +392,8 @@ def factory_query(
             )
             makes = ", ".join(f"{k} {v:.0f}/min" for k, v in view.outputs()[:5]) or "-"
             needs = ", ".join(f"{k} {v:.0f}/min" for k, v in view.inputs()[:5]) or "-"
-            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}")
+            keeps = ", ".join(f"{k} {v:.0f}/min" for k, v in view.internal()[:5]) or "-"
+            chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}\nkeeps: {keeps}")
         elif aspect == "balance":
             rows = []
             for item in sorted(view.flows, key=lambda k: -abs(view.net(k))):
@@ -367,6 +428,23 @@ def factory_query(
                     limit=n,
                 )
             )
+        elif aspect == "internal":
+            data = view.internal()
+            body = (
+                render.table(
+                    ("item", "per min"),
+                    [(k, render.num(v)) for k, v in data[:n]],
+                    total=len(data),
+                    limit=n,
+                )
+                if data
+                else "none: every item this factory touches crosses its boundary"
+            )
+            chunks.append(
+                "## internal (made and consumed inside this factory, at saved clocks)\n"
+                "# nothing on this list crosses the boundary: it neither needs feeding\n"
+                f"# nor leaves, which is what a finished line looks like\n{body}"
+            )
         elif aspect == "machines":
             rows = [
                 (
@@ -374,6 +452,7 @@ def factory_query(
                     bname(m.building),
                     m.recipe or "-",
                     f"{m.clock:.0%}",
+                    f"{m.pos[0] / 100:.0f},{m.pos[1] / 100:.0f},{m.pos[2] / 100:.0f}",
                     "paused" if m.paused else "",
                 )
                 for m in sorted(view.machines, key=lambda x: (x.building, x.recipe))
@@ -381,7 +460,7 @@ def factory_query(
             chunks.append(
                 "## machines\n"
                 + render.table(
-                    ("instance", "building", "recipe", "clock", ""),
+                    ("instance", "building", "recipe", "clock", "x,y,z(m)", ""),
                     rows[:n],
                     total=len(rows),
                     limit=n,
@@ -409,12 +488,17 @@ def factory_query(
             )
         elif aspect == "power":
             chunks.append(
-                "## power (nameplate at saved clocks)\n"
+                "## power\n"
                 + render.kv(
                     [
-                        ("draw", f"{view.draw_mw:.1f} MW"),
+                        ("draw (nameplate)", f"{view.draw_mw:.1f} MW"),
+                        ("draw (measured)", f"{view.measured_draw_mw:.1f} MW"),
                         ("generation", f"{view.generation_mw:.1f} MW"),
-                        ("net", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                        ("net (nameplate)", f"{view.generation_mw - view.draw_mw:+.1f} MW"),
+                        (
+                            "net (measured)",
+                            f"{view.generation_mw - view.measured_draw_mw:+.1f} MW",
+                        ),
                     ]
                 )
             )
@@ -455,6 +539,12 @@ def factory_query(
     notes += nodes_mod.identity_notes(
         nodes_mod.skew_for_save(st.header), [row[0] for row in view.nodes]
     )
+    if "power" in asked:
+        notes.append(
+            "measured weights each machine's draw by its own 300s productivity window. "
+            f"{view.unmonitored} machine(s) here keep no monitor and are charged in FULL, "
+            "since unknown utilisation must not read as idle"
+        )
     loose = view.links.get("(unlabelled)")
     if loose:
         notes.append(
@@ -503,20 +593,25 @@ def factory_health(
     if factory.strip().casefold() in ("all", "*"):
         if not st.labels.labels:
             return "! nothing named yet -- run propose_factories, then name_factory"
+        from ....domain.factories.query import build_view
+
         rows, notes = [], []
+        blocked_total = 0
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
-            report = assess(
-                label.name, [m for m in label.anchors if m in alive], st.game, st.projection
-            )
+            standing = [m for m in label.anchors if m in alive]
+            report = assess(label.name, standing, st.game, st.projection)
+            view = build_view(label.name, standing, st.graph, st.game, st.projection, st.labels)
             mean = report.mean_uptime
             actionable = sum(
                 report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
             )
+            blocked_total += report.by_state["blocked"]
             rows.append(
                 (
                     label.name,
                     len(report.machines),
                     "-" if mean is None else f"{mean:.0%}",
+                    f"{view.measured_draw_mw:.0f}",
                     report.by_state["blocked"] or "",
                     report.by_state["starved"] or "",
                     report.by_state["stalled"] or "",
@@ -529,7 +624,10 @@ def factory_health(
         # Sort on the accumulated values, not on a column position: inserting a column
         # once silently reordered this table by the wrong field.
         rows.sort(key=lambda r: (-(r[-1] or 0), r[2]))
-        blocked_total = sum(r[3] or 0 for r in rows)
+        notes.append(
+            "measured MW is each machine's rated draw weighted by its own 300s productivity "
+            "window -- what the factory is actually taking off the grid, not what it could"
+        )
         if blocked_total:
             notes.append(
                 f"{blocked_total} machine(s) are blocked -- their output stack is full. "
@@ -543,6 +641,7 @@ def factory_health(
                     "factory",
                     "n",
                     "uptime",
+                    "measured MW",
                     "blocked",
                     "starved",
                     "stalled",
@@ -658,7 +757,7 @@ def propose_factories(
     shown = 0
     for k, pr in enumerate(proposals):
         names = sorted({lbl.name for m in pr.machines if (lbl := store.label_for(m))})
-        if unnamed_only and names:
+        if unnamed_only and store.covers(pr.machines):
             continue
         shown += 1
         if shown > render.clamp(limit):
@@ -717,6 +816,9 @@ def select_machines(
     Worth running first on anything product-based: 17 machines make Concrete on the
     reference save, but 15 of them are a construction feed inside the steel site and
     only one is the player's "concrete setup".
+
+    `slab:<n>` answers "what stands on this platform", and answers it for an empty one
+    too: a poured platform with nothing on it yet is described rather than refused.
     """
     try:
         st = _state(save, world)
@@ -740,6 +842,9 @@ def select_machines(
     except gsel.SelectorError as exc:
         return f"! {exc}"
     if not picked:
+        empty = _empty_platform(select, st.structures)
+        if empty:
+            return render.envelope(f"# {st.age_note}", empty)
         return "! that selector matched no machines"
 
     cand = identity.describe(picked, st.graph, st.game, st.projection, "selector")
@@ -970,7 +1075,9 @@ def trace_upstream(
                 name, machines = resolve_factory(st, what)
             except SelectorError as exc:
                 return f"! {exc}"
-            seeds = [m["instance"].rsplit(".", 1)[-1] for m in machines]
+            # resolve_factory hands back machine ids, already shortened. Indexing them as
+            # records raised TypeError for every label and every selector.
+            seeds = list(machines)
             subject = f"factory {name!r} ({len(seeds)} machines)"
     if not seeds:
         return f"! nothing matches {seed!r} -- give a machine instance, a building name, or a factory label"
@@ -989,7 +1096,7 @@ def trace_upstream(
                 group[0].kind,
                 len(group),
                 f"{min(hops)}..{max(hops)}" if min(hops) != max(hops) else str(min(hops)),
-                ", ".join(r.instance[-10:] for r in group[:3]),
+                ", ".join(r.instance for r in group[:3]),
             )
         )
     notes = [
@@ -1000,10 +1107,21 @@ def trace_upstream(
         ),
         (
             "direction comes from each edge's connector role, and from the machine's own "
-            "nature where the role does not say. Segments with neither are walked both "
-            "ways, which can over-report a feeder but never miss one"
+            "nature where the role does not say. "
+            + (
+                f"{result.ambiguous} edge(s) have neither -- belt-to-belt and pipe-to-pipe "
+                "segments, which are walked BOTH ways, so this list can over-report a "
+                "feeder but never miss one"
+                if result.ambiguous
+                else "Every edge here states its direction"
+            )
         ),
     ]
+    if result.truncated:
+        notes.append(
+            "the walk stopped at its hop limit, so this is a FLOOR: machines further along "
+            "the chain exist and are not listed"
+        )
     mw, gens, running = power_at_risk(st, g, seeds)
     if gens:
         notes.append(

@@ -121,6 +121,68 @@ def test_power_draw_accumulates_over_the_set(game):
     assert view.generation_mw == 0.0
 
 
+def test_measured_draw_weights_each_machine_by_its_own_window(game):
+    """Every machine's rated draw is weighted by its own 300 s monitor and the whole
+    per-machine figure used to be destroyed where it was computed, so "which factory is
+    burning the grid" -- as against which one could -- had no answer anywhere."""
+    projection = _projection()
+    projection["machines"][0]["uptime"] = {"window_s": 300.0}  # monitored, never produced
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
+    # ROD_B carries no monitor at all, and is charged in full for it.
+    view = _view(game, projection)
+    rod = game.recipe_power_mw(game.recipes["Recipe_IronRod_C"], 1.0)
+    assert view.unmonitored == 1
+    assert view.measured_draw_mw == pytest.approx(rod * 1.5)
+    assert view.measured_draw_mw < view.draw_mw
+
+
+def test_the_internal_aspect_names_what_never_crosses_the_boundary(game, monkeypatch):
+    """``FactoryView.internal`` was written, documented as "the mark of a self-contained
+    line", and rendered by nothing. The fixture is balanced on purpose: 30 Iron Ingot
+    made, 30 consumed, so the ingots appear in neither outputs nor inputs and the only
+    place they can be seen at all is here."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-internal", "session_name": "t"}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="internal,summary")
+    assert "## internal" in out
+    assert "Iron Ingot\t30" in out
+    assert "keeps: Iron Ingot 30/min" in out
+
+
+def test_the_machines_aspect_says_where_each_machine_stands(game, monkeypatch):
+    """MachineRow has carried a 3-D position since it was written and no aspect printed
+    it, so the one table that names individual machines could not place any of them."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-pos", "session_name": "t"}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{ROD_A}", of="machines")
+    assert "x,y,z(m)" in out
+    assert "10,0,0" in out, "1000 cm east of the origin, in metres, with its elevation"
+
+
+def test_the_power_aspect_prints_both_figures(game, monkeypatch):
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-power", "session_name": "t"}
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="power")
+    assert "draw (nameplate)" in out
+    assert "draw (measured)" in out
+
+
 def test_a_machine_with_no_recipe_is_an_issue_not_a_silent_zero(game):
     projection = _projection()
     projection["machines"][1].pop("recipe")
