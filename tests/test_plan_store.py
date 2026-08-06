@@ -87,6 +87,131 @@ def test_plans_do_not_live_in_the_cache():
     assert config.plans_dir() != config.labels_dir()
 
 
+def test_a_file_written_before_siting_and_provenance_still_loads(tmp_path, monkeypatch):
+    """Both keys arrived as defaulted fields on purpose, and the discipline only holds if
+    a file that predates them still opens. A plan is not regenerable: this is the one
+    failure that loses something the player typed."""
+    import json
+
+    from satisfactory_mcp.domain.planning import store as store_mod
+
+    monkeypatch.setattr(store_mod.config, "plans_dir", lambda: tmp_path)
+    (tmp_path / "OLDWORLD.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "world_id": "OLDWORLD",
+                "session_name": "before",
+                "plans": [
+                    {
+                        "name": "ancient",
+                        "args": {"objective": "min_power", "sources": ["north"]},
+                        "notes": "typed by hand",
+                        "plan_id": "old123",
+                        "factory": "",
+                        "created": "some.sav",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan = PlanStore.load("OLDWORLD").plans[0]
+    assert plan.kwargs() == {"objective": "min_power", "sources": ["north"]}
+    assert plan.notes == "typed by hand"
+    assert plan.provenance == {} and plan.siting == {}
+
+
+# ---------------------------------------------------------------- renaming
+
+
+@pytest.fixture
+def live_plans(tmp_path, monkeypatch):
+    """One stored plan in a scratch plans dir, reached through the real state loader.
+
+    Written through the store rather than through plan_factory: a rename must not need a
+    solve, so the test that proves it must not pay for one either.
+    """
+    from satisfactory_mcp.domain.planning import store as store_mod
+
+    monkeypatch.setattr(store_mod.config, "plans_dir", lambda: tmp_path)
+    st = srv._state()
+    st.plans.put(
+        "north oil",
+        {"objective": "max_mw", "sources": ["north"]},
+        plan_id="abc123",
+        notes="the coast",
+        factory="oil setup",
+    )
+    st.plans.save()
+    return st
+
+
+def test_a_plan_can_be_renamed_and_keeps_everything_else(live_plans):
+    """A name was the one thing a player picked and the one thing they could not correct:
+    the workaround was to save the plan again under a second name and forget the first,
+    which pays an LP solve and drops the siting and the field record on the floor."""
+    out = srv.rename_plan(name="north oil", to="coast oil")
+    assert "renamed plan 'north oil' to 'coast oil'" in out
+
+    again = PlanStore.load(live_plans.plans.world_id)
+    assert [p.name for p in again.plans] == ["coast oil"]
+    assert again.plans[0].plan_id == "abc123"
+    assert again.plans[0].notes == "the coast"
+    assert again.plans[0].factory == "oil setup"
+
+
+def test_a_rename_onto_an_existing_name_is_refused(live_plans):
+    """`find` matches case-insensitively, so two plans differing only in case would make
+    every later recall ambiguous."""
+    live_plans.plans.put("coast oil", {"objective": "max_mw"}, plan_id="x")
+    live_plans.plans.save()
+    assert "already has a plan named" in srv.rename_plan(name="north oil", to="COAST OIL")
+    assert PlanStore.load(live_plans.plans.world_id).find("north oil") is not None
+
+
+def test_a_rename_of_an_unknown_plan_lists_what_exists(live_plans):
+    out = srv.rename_plan(name="nope", to="whatever")
+    assert out.startswith("! no saved plan named 'nope'")
+    assert "north oil" in out
+
+
+def test_a_blank_new_name_is_refused(live_plans):
+    assert "cannot be blank" in srv.rename_plan(name="north oil", to="   ")
+
+
+# ------------------------------------------------------------ the detail view
+
+
+def test_one_plan_reads_back_as_the_request_that_was_stored(live_plans):
+    """The only way to read a stored plan's arguments was plan_factory(plan=...), which
+    pays a full LP solve and then prints what the request RESOLVED to. The question
+    "what did I ask for" is answerable from the file alone."""
+    out = srv.list_plans(name="north oil")
+    assert "# plan 'north oil'" in out
+    assert "plan_id=abc123" in out
+    assert "objective\tmax_mw" in out
+    assert "sources\tnorth" in out
+    assert "nothing was solved here" in out
+
+
+def test_an_unknown_plan_name_lists_what_exists(live_plans):
+    assert srv.list_plans(name="nope").startswith("! no saved plan named 'nope'")
+
+
+def test_the_list_marks_a_cell_it_had_to_cut(live_plans):
+    """A silently clipped source list reads as the whole list, and a plan's sources are
+    the argument that decides what it plans over."""
+    live_plans.plans.put(
+        "wide",
+        {"objective": "max_mw", "sources": [f"node:BP_ResourceNode{i}" for i in range(9)]},
+        plan_id="y",
+    )
+    live_plans.plans.save()
+    row = next(line for line in srv.list_plans().splitlines() if line.startswith("wide\t"))
+    assert "~" in row
+
+
 # ----------------------------------------------------------------- recall
 
 

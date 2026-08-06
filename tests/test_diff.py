@@ -36,8 +36,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("game")]
 
 #: A diff answers a strictly larger question than plan_factory (1,669 chars measured)
 #: and replaces a plan_factory + world_summary + power_report + factory_sites sequence
-#: of ~3,500. It must still never grow into a machine dump.
-DIFF_BUDGET = 2600
+#: of ~3,500. It must still never grow into a machine dump: the ids it prints are the
+#: ones an ACTION applies to, three per row, and never the row's whole matched set.
+DIFF_BUDGET = 2900
 
 SPIRE = {
     "objective": "max_mw",
@@ -227,6 +228,43 @@ def test_paused_machines_count_as_built_and_are_unpaused_not_rebuilt(spire):
     assert "then BUILD 8..27" in row.note
 
 
+def test_an_action_names_the_machines_it_applies_to(spire, state):
+    """The row said "UNPAUSE 3, have 23" and named none of them, and the three are not
+    the first three matched -- rendering `have_instances[:3]` would have sent the player
+    to three pumps that are already running. SETRECIPE is worse: the idle machines it
+    takes are not in the matched set at all."""
+    _req, _sol, rep = spire
+    paused = {r["instance"].rsplit(".", 1)[-1] for r in state._all_records() if r.get("paused")}
+
+    water = _row(rep, "normal Water")
+    assert len(water.act_instances) == water.count == 3
+    assert set(water.act_instances) <= paused
+    assert set(water.act_instances) <= set(water.have_instances)
+    assert water.act_instances != water.have_instances[:3], "the paused ones are not the first"
+
+    coal = _row(rep, "Alternate: Compacted Coal")
+    assert len(coal.act_instances) == coal.reuse == 4
+    assert not set(coal.act_instances) & set(coal.have_instances)
+
+    assert all(not r.act_instances for r in rep.rows if r.verb in ("OK", "BUILD"))
+
+
+def test_the_ids_of_an_action_reach_the_reader(game, state):
+    """The same reusable-footer pattern the build targets already use, per row: an id in
+    a row would crowd every other column off it, and a pooled list would lose which verb
+    it belongs to."""
+    from satisfactory_mcp.domain.planning.diff_service import build_diff_report
+    from satisfactory_mcp.presenters.text.diff import render_diff
+
+    report = build_diff_report(game, state, dict(SPIRE), objective="max_mw")
+    out = render_diff(game, state, report, objective="max_mw", limit=20)
+    water = _row(report.rep, "normal Water")
+    assert "# machines to act on, reusable as machine: selectors" in out
+    assert f"#   UNPAUSE normal Water: {' '.join(water.act_instances)}" in out
+    # Four idle Assemblers, three named, and the fourth is counted rather than dropped.
+    assert "(+1 more)" in out
+
+
 def test_an_idle_machine_is_only_reused_once(game, state):
     """Idle machines are a shared pool. Allocating the same Assembler to two plan rows
     would under-count the build twice over."""
@@ -375,6 +413,35 @@ def test_one_scenario_path_serves_every_planning_tool(game, state):
     req = build_scenario(game, state, **SPIRE)
     assert req.scenario.exports == ("__MW__", "Desc_Plastic_C", "Desc_Rubber_C")
     assert req.node_rows and all(r["reachable"] for r in req.node_rows)
+
+
+def test_the_cost_table_says_when_it_hid_rows(game, state):
+    """A five-row slice with no envelope reads as the whole bill. The slice is right --
+    the list is ranked by shortfall, so the gate on the build is at its head -- but the
+    reader has to be able to tell that a sixth shortfall exists. The fixture world has
+    only three, so the rows are fabricated: this pins the envelope, not the bill."""
+    from satisfactory_mcp.domain.planning.diff import CostLine
+    from satisfactory_mcp.domain.planning.diff_service import build_diff_report
+    from satisfactory_mcp.presenters.text.diff import COST_ROWS, render_diff
+
+    report = build_diff_report(game, state, dict(SPIRE), objective="max_mw")
+    assert len(report.rep.cost) <= COST_ROWS, "this world stopped being the short case"
+    report.rep.cost = [
+        CostLine(item=f"Desc_{i}_C", name=f"Item {i}", need=100.0, stock=1.0, lines=0)
+        for i in range(COST_ROWS + 3)
+    ]
+    out = render_diff(game, state, report, objective="max_mw", limit=20)
+    assert f"{COST_ROWS + 3} match(es), showing {COST_ROWS}" in out
+
+
+def test_both_tools_print_the_id_they_tell_the_reader_to_compare():
+    """diff_vs_save's own docstring says two responses carrying the same id are provably
+    the same plan -- and plan_factory printed the id only when the plan was SAVED, so the
+    cross-check it advertises could not be performed on an unsaved one."""
+    plan = srv.plan_factory(**SPIRE)
+    diff = srv.diff_vs_save(**SPIRE)
+    plan_id = plan.split("[plan ", 1)[1].split("]")[0]
+    assert f"[plan {plan_id}/save " in diff
 
 
 # ----------------------------------------------------------------- the surface

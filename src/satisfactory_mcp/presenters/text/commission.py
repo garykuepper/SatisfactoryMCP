@@ -70,7 +70,7 @@ def render_commission(
     offset = max(0, offset)
     body = render.table(
         ("wave", "chain", "on", "cum", "process", "MW", "free after"),
-        rows[offset : offset + render.clamp(limit, default=40)],
+        rows[offset : offset + render.clamp(limit, default=25)],
         total=len(rows),
         offset=offset,
         limit=limit,

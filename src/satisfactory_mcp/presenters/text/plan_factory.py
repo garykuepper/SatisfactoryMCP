@@ -279,7 +279,10 @@ def render_plan_factory(
         [
             (
                 f"# {objective} over {sel.description} "
-                f"({'free nodes only' if only_free_nodes else 'all nodes'})"
+                f"({'free nodes only' if only_free_nodes else 'all nodes'}) "
+                # Spelled exactly as diff_vs_save spells it, because the cross-check it
+                # documents is the reader comparing the two strings.
+                f"[plan {req.plan_id}]"
             ),
             f"# {st.age_note}",
             render.kv(

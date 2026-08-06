@@ -64,7 +64,17 @@ class UnlockSweep:
 
     @property
     def movers(self) -> list[UnlockDelta]:
-        return [r for r in self.rows if abs(r.gain) > self.tolerance]
+        return [r for r in self.rows if r.ok and abs(r.gain) > self.tolerance]
+
+    @property
+    def unsolved(self) -> list[UnlockDelta]:
+        """Candidates whose counterfactual did not solve.
+
+        Their gain is UNKNOWN. It is stored as zero because there is no other number to
+        store, and that files them silently with the ones measured worthless -- so they
+        come out of ``movers`` and are reported as themselves.
+        """
+        return [r for r in self.rows if not r.ok]
 
     @property
     def tolerance(self) -> float:
