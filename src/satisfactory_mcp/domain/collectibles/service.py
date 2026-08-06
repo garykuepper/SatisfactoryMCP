@@ -14,9 +14,13 @@ from dataclasses import dataclass, field
 
 from ..spatial.origin import resolve_origin
 from ..world.state import WorldState
-from .table import CollectibleTable
+from .table import CollectiblesUnreadable, CollectibleTable, load_collectibles
 
-__all__ = ["RETIRED_GROUPS", "CollectiblesView", "collect_view"]
+__all__ = ["GENERATOR_COMMAND", "RETIRED_GROUPS", "CollectiblesView", "collect_view"]
+
+#: What to run when the table is not there. Said in full, because "regenerate it" is not a
+#: command and the reader is an assistant relaying it to somebody at a prompt.
+GENERATOR_COMMAND = "uv run python tools/gen_world_collectibles.py"
 
 #: Group names this tool used to accept, and what to say instead. Every one of them was a
 #: name-prefix bucket; the map's placement table resolves the classes those buckets guessed
@@ -91,6 +95,22 @@ def collect_view(
         )
 
     table = st.collectibles
+    if table is None:
+        # ``st.collectibles`` degrades silently for both, and the two need different
+        # answers: a fresh clone has never generated the file and a half-written one has
+        # to be deleted first. Asking again strictly is what separates them.
+        try:
+            load_collectibles(strict=True)
+        except CollectiblesUnreadable as exc:
+            return CollectiblesView(
+                mode=wanted,
+                group=group,
+                error=(
+                    f"! the map's placement table is CORRUPT, not missing: {exc}. Delete it "
+                    f"and run {GENERATOR_COMMAND} -- until then nothing here knows how many "
+                    "collectibles exist or where they are"
+                ),
+            )
     if group:
         # Category names are lowercase snake_case, so folding the argument is a
         # normalisation and not a guess. A retired bucket is renamed where the map has the
@@ -114,9 +134,9 @@ def collect_view(
             group=group,
             error=(
                 f"! mode={wanted!r} needs the map's own placement table and "
-                "data/world_collectibles.json is absent, so nothing here knows how many "
-                "collectibles exist or where they are. Only mode=census and mode=collected "
-                "work from a save alone. Regenerate with tools/gen_world_collectibles.py"
+                "data/world_collectibles.json has never been generated, so nothing here "
+                "knows how many collectibles exist or where they are. Only mode=census and "
+                f"mode=collected work from a save alone. Generate it with {GENERATOR_COMMAND}"
             ),
         )
 
