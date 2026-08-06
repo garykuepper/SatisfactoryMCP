@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from satisfactory_mcp.domain.factories.select import select_machines
 from satisfactory_mcp.interfaces.mcp.tools import world as world_tools
 
 pytestmark = pytest.mark.integration
@@ -47,3 +48,31 @@ def test_a_save_naming_neither_prints_neither(state, game, monkeypatch):
     out = world_tools.world_summary()
     assert "working_on" not in out
     assert "last_hard_drive_spent" not in out
+
+
+# ------------------------------------------------------------------- sites
+
+
+def test_a_site_row_carries_a_selector_the_other_tools_accept(tools, state, game):
+    """A site had no identifier of any kind, so "plan around that cluster" meant reading a
+    coordinate off one tool and inventing a radius for the next. The row now prints the
+    selector, and this test hands it to the selector parser rather than eyeballing it.
+    """
+    out = tools.factory_sites(limit=3)
+    assert "x,y,z(m)" in out and "selector" in out
+    rows = [line.split("\t") for line in out.splitlines() if "\t" in line][1:]
+    biggest = rows[0]
+    selector = biggest[5]
+    assert selector.startswith("near:") and "@" in selector
+    hits = select_machines([selector], state.graph, game, state.projection)
+    # The site holds 461 machines and a circle is not a cluster, so this is "most of it",
+    # not "all of it" -- which is what the row's own note tells the reader to check.
+    assert len(hits) > 0.9 * int(biggest[3])
+
+
+def test_the_centroid_keeps_its_altitude(tools):
+    """The z was computed and dropped at the last step, which made a site on a cliff and a
+    site at sea level print the same row."""
+    rows = [line for line in tools.factory_sites(limit=1).splitlines() if "\t" in line]
+    x, y, z = rows[1].split("\t")[2].split(",")
+    assert (int(x), int(y), int(z)) == (-674, -1446, 31)
