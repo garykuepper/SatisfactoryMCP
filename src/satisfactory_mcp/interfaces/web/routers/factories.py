@@ -105,11 +105,9 @@ def factories(request: Request, save: str | None = None, world: str | None = Non
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors))
     ]
 
-    labelled = {anchor for label in st.labels.labels for anchor in label.anchors}
-
     proposals = []
     for index, pr in enumerate(st.proposals):
-        if pr.machines and 2 * sum(1 for m in pr.machines if m in labelled) > len(pr.machines):
+        if st.labels.covers(pr.machines):
             continue  # already named by the player; the label speaks for it
         cand = fidentity.describe(pr.machines, st.graph, st.game, st.projection, "proposal")
         proposals.append(
