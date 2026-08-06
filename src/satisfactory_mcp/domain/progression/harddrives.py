@@ -30,6 +30,17 @@ class HardDriveDesk:
     game: GameData
     unlocks: UnlockSet
 
+    @property
+    def last_used_hard_drive_id(self) -> int | None:
+        """The id of the drive whose choice was settled most recently.
+
+        mLastUsedHardDriveID, which the game keeps to number the next one. Continuity for
+        a reader resuming a session, never an index into the pending offers: a settled
+        drive is gone from that list.
+        """
+        raw = self.projection.get("research", {}).get("last_used_hard_drive_id")
+        return raw if isinstance(raw, int) else None
+
     @cached_property
     def hard_drive_offers(self) -> list[HardDriveOffer]:
         """The player's live pending choices, straight from the save."""

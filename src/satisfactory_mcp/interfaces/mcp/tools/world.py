@@ -89,13 +89,16 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
         )
     if st.paused:
         notes.append(f"{len(st.paused)} building(s) paused by the player")
+    working_on = st.unlocks.last_active_schematic
+    last_drive = st.harddrive_desk.last_used_hard_drive_id
     gen_rows = [
         (v["name"], v["count"], render.num(v["mw"]))
         for v in sorted(pw["by_generator"].values(), key=lambda v: -v["mw"])
     ]
     return render.envelope(
         "\n".join(
-            [
+            line
+            for line in [
                 f"# {st.age_note}",
                 render.kv(
                     [
@@ -105,6 +108,15 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
                         ("recipes", p["available_recipes"]),
                         ("alternates", len(st.unlocked_alternates)),
                         ("hard_drives_pending", len(st.hard_drive_offers)),
+                    ]
+                ),
+                # Where the player left off, which is the one thing a resuming assistant
+                # cannot work out from counts: the HUB's own active pick, and the drive
+                # whose choice was settled last.
+                render.kv(
+                    [
+                        ("working_on", working_on.name if working_on else ""),
+                        ("last_hard_drive_spent", last_drive),
                     ]
                 ),
                 render.kv(
@@ -117,6 +129,7 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
                 "milestones/tier: "
                 + " ".join(f"T{t}:{v}" for t, v in p["milestones_by_tier"].items()),
             ]
+            if line
         ),
         render.table(("generator", "count", "MW"), gen_rows),
         notes,

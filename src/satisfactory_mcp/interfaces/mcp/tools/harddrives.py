@@ -73,10 +73,12 @@ def list_pending_hard_drive_choices(
     for o in offers[: render.clamp(limit, default=25)]:
         opts = [f"{opt['name']} ({_grants(opt, g)})" for opt in o.options]
         rows.append((o.hard_drive_id, o.rerolls_left, " | ".join(opts)))
+    last = st.harddrive_desk.last_used_hard_drive_id
     return render.envelope(
         f"# {st.age_note}\n"
         f"# {len(offers)} unclaimed hard drive(s), each a live choice; "
-        f"{st.spare_hard_drives()} unanalysed drive(s) on hand",
+        f"{st.spare_hard_drives()} unanalysed drive(s) on hand"
+        + (f"; drive {last} was the last one spent" if last is not None else ""),
         render.table(("id", "rerolls", "options"), rows, total=len(offers), limit=limit),
         [
             "use advise_hard_drive_pick(hard_drive_id=N) to rank one drive's options",
@@ -137,10 +139,12 @@ def advise_hard_drive_pick(
             )
         )
     base = res["baseline"]
+    last = st.harddrive_desk.last_used_hard_drive_id
     return render.envelope(
         "\n".join(
             [
-                f"# hard drive {res['hard_drive_id']}, rerolls left {res['rerolls_left']}",
+                f"# hard drive {res['hard_drive_id']}, rerolls left {res['rerolls_left']}"
+                + (f" (drive {last} was the last one spent)" if last is not None else ""),
                 f"# {st.age_note}",
                 f"# sources: {res['basket']}",
                 "# baseline: " + render.kv([(k, render.num(v)) for k, v in base.items()]),

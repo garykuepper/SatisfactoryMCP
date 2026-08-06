@@ -32,6 +32,17 @@ class UnlockSet:
     def purchased_schematic_ids(self) -> set[str]:
         return set(self.projection.get("progression", {}).get("purchased_schematics", ()))
 
+    @property
+    def last_active_schematic(self) -> Schematic | None:
+        """The schematic the player last set as their active goal, where the save names one.
+
+        mLastActiveSchematic is what the HUB tracks, so it is "what you were working on"
+        and not "what you last bought". ``None`` when the save carries no such pick or the
+        dump has no schematic under that class.
+        """
+        cls = self.projection.get("progression", {}).get("last_active_schematic")
+        return self.game.schematics.get(cls or "")
+
     @cached_property
     def unresolved_recipe_ids(self) -> set[str]:
         """Available recipes with no FGRecipe in Docs.json.
