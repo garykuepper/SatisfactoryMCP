@@ -1,7 +1,7 @@
 """``/api/regions``: the biome raster the base map is drawn from.
 
 The raster is re-derived from the game's own ``FGMapAreaTexture`` whenever the map changes,
-and every re-derivation moves the numbers the label anchor below is written against.
+and every re-derivation moves the numbers ``RegionMap.label_anchor`` is written against.
 
 WARNING: the function name is the operation_id -- renaming it churns the committed schema.
 
@@ -34,7 +34,7 @@ class RegionExtent(TypedDict):
     the page can index without a length guard.
 
     ``label_m`` is never null and is often different from ``centroid_m``, which is the whole
-    reason it exists; see ``_label_anchor``.
+    reason it exists; see ``RegionMap.label_anchor``.
     """
 
     centroid_m: tuple[float, float]
@@ -79,38 +79,9 @@ def regions() -> Any:
     except FileNotFoundError as exc:
         return _fail(str(exc), 404)
 
-    letters = {name: ch for ch, name in rmap.legend.items()}
-
-    def _label_anchor(name: str, centroid: tuple[float, float]) -> list[float | None]:
-        """Where to print a region's name: a cell that provably belongs to it.
-
-        A centroid is a mean, and the mean of a concave region can land on a neighbour's
-        ground -- Titan Forest's sits in the Swamp. So the centroid is used only when its
-        own cell carries the region's letter, and otherwise the anchor moves to the centre
-        of the nearest cell that does.
-
-        Measured against the PUBLISHED grid, never against ``label_for``: that reads the
-        finer 64 m grid, and answering at that resolution would put a label on a cell this
-        payload paints as somebody else's.
-        """
-        cx, cy = centroid
-        ch = letters.get(name)
-        at = rmap.cell_of(cx, cy)
-        if at is not None and rmap.grid[at[1]][at[0]] == ch:
-            return [_m(cx), _m(cy)]
-        best: tuple[float, float, float] | None = None
-        for j, row in enumerate(rmap.grid):
-            for i, cell_ch in enumerate(row):
-                if cell_ch != ch:
-                    continue
-                px = rmap.x0 + (i + 0.5) * rmap.cell
-                py = rmap.y0 + (j + 0.5) * rmap.cell
-                d = (px - cx) ** 2 + (py - cy) ** 2
-                if best is None or d < best[0]:
-                    best = (d, px, py)
-        if best is None:
-            return [_m(cx), _m(cy)]
-        return [_m(best[1]), _m(best[2])]
+    def _label_m(name: str, centroid: tuple[float, float]) -> list[float]:
+        anchor = rmap.label_anchor(name) or centroid
+        return [_m(anchor[0]), _m(anchor[1])]
 
     payload = {
         "grid": list(rmap.grid),
@@ -122,7 +93,7 @@ def regions() -> Any:
             name: {
                 "centroid_m": [_m(entry["centroid"][0]), _m(entry["centroid"][1])],
                 "bbox_m": [_m(v) for v in entry["bbox"]],
-                "label_m": _label_anchor(name, entry["centroid"]),
+                "label_m": _label_m(name, entry["centroid"]),
             }
             for name, entry in rmap.regions.items()
         },
