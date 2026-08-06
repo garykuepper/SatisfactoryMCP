@@ -15,10 +15,20 @@ from typing import Any, TypedDict
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from ...core.gamedata.model import GameData, pretty_class
 from ...domain.spatial import regions as spatial_regions
 from ...domain.world.state import WorldState
 
-__all__ = ["Region", "_fail", "_label_json", "_m", "_state", "_xyz", "_yaw"]
+__all__ = [
+    "Region",
+    "_fail",
+    "_label_json",
+    "_m",
+    "_resource_name",
+    "_state",
+    "_xyz",
+    "_yaw",
+]
 
 
 class Region(TypedDict):
@@ -76,6 +86,20 @@ def _fail(message: str, status: int = 400) -> JSONResponse:
 def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     """The world a request is asking about. Raises whatever the loader raises."""
     return request.app.state.load_state(save, world)
+
+
+def _resource_name(game: GameData, cls: str) -> str:
+    """A node's resource class as the words the MCP tools use: ``Desc_OreIron_C`` ->
+    ``Iron Ore``.
+
+    Here rather than in a router because ``/api/nodes`` and ``/api/inspect`` both name a
+    resource, and two spellings for one fact is the page contradicting itself at two clicks.
+
+    ``Desc_Geyser_C`` is a placement target rather than an item, so the docs dump has no entry
+    for it and ``item_name`` would hand the class id back; ``pretty_class`` is the same last
+    resort ``building_name`` already applies.
+    """
+    return game.item_name(cls) if cls in game.items else (pretty_class(cls) or cls)
 
 
 def _label_json(label: spatial_regions.Label) -> Region | None:

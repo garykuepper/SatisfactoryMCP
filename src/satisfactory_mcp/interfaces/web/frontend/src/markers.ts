@@ -92,16 +92,31 @@ export function drawNodes(data: NodesResponse): void {
       var name = "node: " + short;
       var group = layer(name, true, colour, [BAND.node, 0, name]);
       byResource[resource]!.forEach(function (n) {
+        // Null is "no save read", which is not a claim either way; only false is LOCKED.
+        var locked = n.reachable === false;
         L.circleMarker(xy(n), {
           radius: PURITY_RADIUS[n.purity] || 4,
           color: colour,
           weight: n.occupied ? 2 : 1,
-          opacity: 1,
-          fillOpacity: n.occupied ? 0.15 : 0.75,
+          // A locked dot is faded and hollow rather than grey: every neutral grey is within
+          // dE 15 of a biome ground or the belt steel, so a grey here would be a colour that
+          // cannot be told from the ground under it. See palette.ts. Keeping the ore colour
+          // also keeps the dot inside the layer whose name says what it is.
+          opacity: locked ? 0.35 : 1,
+          fillOpacity: locked ? 0 : n.occupied ? 0.15 : 0.75,
+          dashArray: locked ? "2 3" : undefined,
         })
           .bindPopup(
             popup([
-              ["node", short + " (" + n.purity + ")"],
+              // The server's word, not the class id the layer key is cut from: the popup is
+              // read next to an assistant that says "Iron Ore".
+              ["node", n.resource_name + " (" + n.purity + ")"],
+              // Only when it is locked: "free" is already said by the occupancy row below,
+              // and a row saying "reachable: yes" on 600 dots is noise.
+              [
+                "status",
+                locked ? "LOCKED — no extractor this world has unlocked can work it" : null,
+              ],
               // Joined server-side: the raster and its orientation trap stay on one side.
               ["region", regionLine(n.region)],
               // Always present, because the absence of a row cannot be told apart from a

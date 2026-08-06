@@ -17,6 +17,7 @@ fastapi = pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
+from satisfactory_mcp.domain.spatial import nodes as spatial_nodes
 from satisfactory_mcp.interfaces.web.app import create_app
 
 
@@ -61,11 +62,62 @@ def test_nodes_resolve_their_occupant_to_a_display_name(client):
     assert all(r["occupant_name"] is None for r in rows if not r["occupied"])
 
 
+def test_nodes_resolve_their_resource_to_the_word_the_tools_use(client):
+    """One vocabulary across both surfaces: 'Iron Ore', not OreIron and not Desc_OreIron_C.
+
+    The class id stays beside it, because it is what the layer keys and the ore colours are
+    keyed by -- the page needs both and must not have to cut one out of the other.
+
+    ``Desc_Geyser_C`` is the case that makes this more than a lookup: a geyser is a placement
+    target rather than an item, so the docs dump has no entry for it and ``item_name`` alone
+    would hand the class id straight back into the popup.
+    """
+    rows = client.get("/api/nodes").json()["nodes"]
+    names = {r["resource"]: r["resource_name"] for r in rows}
+    assert names["Desc_OreIron_C"] == "Iron Ore"
+    assert names["Desc_OreGold_C"] == "Caterium Ore"
+    assert names["Desc_Geyser_C"] == "Geyser"
+    assert not any(n.startswith("Desc_") for n in names.values()), names
+
+
 def test_nodes_can_be_filtered_by_resource(client):
     body = client.get("/api/nodes", params={"resource": "Desc_OreIron_C"}).json()
     assert body["resource"] == "Desc_OreIron_C"
     assert body["nodes"]
     assert {r["resource"] for r in body["nodes"]} == {"Desc_OreIron_C"}
+
+
+def test_nodes_say_which_of_them_this_world_cannot_work_yet(client, state):
+    """The LOCKED state the text surface has and the map did not.
+
+    ``search_resource_nodes`` prints ``LOCKED`` and leaves these out of free capacity, so a
+    map that drew them as ordinary free dots was inviting a plan onto a node nothing the
+    player has researched can extract from. Checked against the domain predicate rather than
+    against a hardcoded count: which nodes are locked is a fact about this save's research,
+    and it changes as the reference save advances.
+    """
+    rows = client.get("/api/nodes").json()["nodes"]
+    table = {n["instance"]: n for n in spatial_nodes.load_nodes().nodes}
+    unlocked = state.unlocked_building_ids
+    for row in rows:
+        assert row["reachable"] == spatial_nodes.reachable(table[row["id"]], unlocked), row
+    # Both states are present on this save -- an agreement over one answer is not agreement.
+    assert any(r["reachable"] is False for r in rows)
+    assert any(r["reachable"] is True for r in rows)
+
+
+def test_a_save_that_cannot_be_read_leaves_reachability_unknown_rather_than_true(game):
+    """Null, never true: reachability is a claim about what this world has researched.
+
+    The node table needs no ``.sav`` and the unlock set is nothing but ``.sav``, so the two
+    halves of a row part company here. ``reachable`` defaults to true one layer down -- which
+    is right for a capacity sum over no world and wrong for a dot somebody plans around.
+    """
+    app = create_app(state_loader=_explode, game_loader=lambda: game)
+    with TestClient(app) as c:
+        rows = c.get("/api/nodes").json()["nodes"]
+    assert rows
+    assert all(row["reachable"] is None for row in rows)
 
 
 def test_nodes_carry_the_region_they_sit_in(client):

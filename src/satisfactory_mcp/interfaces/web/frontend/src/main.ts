@@ -18,6 +18,7 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 
+import { listenForCopies } from "./copy";
 import { applyFloorFragment, escapeLeavesFloorMode, noteFloorChoice } from "./floors";
 import { listenToFragment } from "./fragment";
 import { inspect } from "./inspector";
@@ -103,13 +104,16 @@ onSettled(declutter);
 
 map.on("contextmenu", inspect);
 
-/* The two listeners that are not the map's: the address bar, and the one key this page binds.
- * The fragment one is registered BEFORE the loaders below, so a fragment edited during the
- * first fetch is not dropped on the floor. ESC goes on the document rather than on the map,
- * because floor mode is a state of the PAGE and the key has to work with the keyboard in the
- * layer control's floor picker. */
+/* The listeners that are not the map's: the address bar, the one key this page binds, and the
+ * click that copies a selector. The fragment one is registered BEFORE the loaders below, so a
+ * fragment edited during the first fetch is not dropped on the floor. ESC goes on the document
+ * rather than on the map, because floor mode is a state of the PAGE and the key has to work
+ * with the keyboard in the layer control's floor picker. */
 listenToFragment();
 document.addEventListener("keydown", escapeLeavesFloorMode);
+/* ...and the third: one delegated click for every selector on the page, which is why it is
+ * here and not in whatever module last built a popup. */
+listenForCopies();
 
 /* -------------------------------------------------------------------- boot */
 

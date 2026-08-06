@@ -100,9 +100,14 @@ export interface paths {
          *     the grid for the page to index into would put the orientation trap (row 0 is the north
          *     edge) in two places. It is ``null`` for a node the raster calls void.
          *
+         *     **A free node is not always a usable one.** ``reachable`` is the same test the text
+         *     surface marks ``LOCKED`` and leaves out of free capacity -- a resource well satellite
+         *     with no Pressurizer researched is not somewhere a plan can go.
+         *
          *     **A failed save is not a failed answer.** The node table is static and needs no ``.sav``,
          *     so a world whose save will not load still gets its geography; what it loses is the
-         *     occupancy join, and ``save_error`` says so with ``occupied`` null beside it.
+         *     occupancy join and the unlock set, and ``save_error`` says so with ``occupied`` and every
+         *     row's ``reachable`` null beside it.
          */
         get: operations["nodes_api_nodes_get"];
         put?: never;
@@ -661,10 +666,14 @@ export interface paths {
         };
         /**
          * Events
-         * @description Server-sent events: one ``save`` event per observed write, plus keepalives.
+         * @description Server-sent events: one event per observed write, plus keepalives.
          *
-         *     The stream carries the trigger, never the payload. A save event says which file moved
-         *     and when; the page decides what to refetch, so a browser that missed one is a refetch
+         *     Two event names, because two trees move under a player using both halves at once.
+         *     ``save`` is the game writing a ``.sav``; ``notes`` is this project writing a factory
+         *     label or a stored plan. A browser listens for the one it can act on.
+         *
+         *     The stream carries the trigger, never the payload. An event says which file moved and
+         *     when; the page decides what to refetch, so a browser that missed one is a refetch
          *     behind rather than a resync behind.
          */
         get: operations["events_api_events_get"];
@@ -1353,12 +1362,22 @@ export interface components {
          *     ``occupant_cls`` and ``occupant_name`` are nullable because the occupancy join resolves
          *     only the extractors whose target is a node key. ``region`` is null for the handful of
          *     nodes the raster calls void.
+         *
+         *     ``resource`` is the class id, which is what the layer keys and the colour table are keyed
+         *     by; ``resource_name`` is the word a reader reads, and is the same word the MCP tools use.
+         *
+         *     ``reachable`` is false for a node no unlocked extractor can work -- the state the text
+         *     surface prints as ``LOCKED`` and excludes from free capacity. It is null, never true, when
+         *     the save could not be read: reachability is a fact about what this world has researched,
+         *     and with no world there is nothing to have researched it.
          */
         NodeRow: {
             /** Id */
             id: string;
             /** Resource */
             resource: string;
+            /** Resource Name */
+            resource_name: string;
             /** Name */
             name: string;
             /** Kind */
@@ -1377,6 +1396,8 @@ export interface components {
             occupant_cls: string | null;
             /** Occupant Name */
             occupant_name: string | null;
+            /** Reachable */
+            reachable: boolean | null;
             region: components["schemas"]["Region"] | null;
         };
         /**
