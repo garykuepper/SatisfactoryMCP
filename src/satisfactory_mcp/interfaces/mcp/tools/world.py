@@ -89,13 +89,16 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
         )
     if st.paused:
         notes.append(f"{len(st.paused)} building(s) paused by the player")
+    working_on = st.unlocks.last_active_schematic
+    last_drive = st.harddrive_desk.last_used_hard_drive_id
     gen_rows = [
         (v["name"], v["count"], render.num(v["mw"]))
         for v in sorted(pw["by_generator"].values(), key=lambda v: -v["mw"])
     ]
     return render.envelope(
         "\n".join(
-            [
+            line
+            for line in [
                 f"# {st.age_note}",
                 render.kv(
                     [
@@ -105,6 +108,15 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
                         ("recipes", p["available_recipes"]),
                         ("alternates", len(st.unlocked_alternates)),
                         ("hard_drives_pending", len(st.hard_drive_offers)),
+                    ]
+                ),
+                # Where the player left off, which is the one thing a resuming assistant
+                # cannot work out from counts: the HUB's own active pick, and the drive
+                # whose choice was settled last.
+                render.kv(
+                    [
+                        ("working_on", working_on.name if working_on else ""),
+                        ("last_hard_drive_spent", last_drive),
                     ]
                 ),
                 render.kv(
@@ -117,6 +129,7 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
                 "milestones/tier: "
                 + " ".join(f"T{t}:{v}" for t, v in p["milestones_by_tier"].items()),
             ]
+            if line
         ),
         render.table(("generator", "count", "MW"), gen_rows),
         notes,
@@ -214,22 +227,43 @@ def factory_sites(save: str | None = None, world: str | None = None, limit: Limi
     rows = []
     for s in sites[: render.clamp(limit)]:
         top = sorted(s["buildings"].items(), key=lambda kv: -kv[1])[:4]
+        x_m, y_m, z_m = (int(v / 100) for v in s["centroid"])
         rows.append(
             (
                 s["direction"],
                 s["grid"],
-                f"{int(s['centroid'][0] / 100)},{int(s['centroid'][1] / 100)}",
+                f"{x_m},{y_m},{z_m}",
                 s["count"],
                 f"{s['diameter_m']}m",
+                # A site is a cluster, not a stored thing, so it has no id of its own to
+                # print. The selector every machine-taking tool already accepts is one:
+                # the centroid, with a radius of 0.6x the spread. Jung's bound says a set
+                # of diameter d fits in a circle of radius d/0.577; half the spread is the
+                # tempting number and it measurably clips members (432 of 461 on the
+                # reference world's main site, against 438 at 0.6).
+                f"near:{x_m},{y_m}@{max(50, round(s['diameter_m'] * 0.6))}",
                 ", ".join(f"{n}x {g.buildings[c].name if c in g.buildings else c}" for c, n in top),
             )
         )
     return render.envelope(
         f"# {st.age_note}\n# {len(sites)} site(s); coords in metres",
         render.table(
-            ("dir", "grid", "x,y(m)", "buildings", "spread", "contents"),
+            ("dir", "grid", "x,y,z(m)", "buildings", "spread", "selector", "contents"),
             rows,
             total=len(sites),
             limit=limit,
         ),
+        [
+            (
+                "the selector is a circle round the centroid, and is what plan_factory, "
+                "factory_query and name_factory take as sources=. A circle is not a cluster: "
+                "a sprawling site can leave a straggler outside it, so compare the machine "
+                "count the other tool reports against 'buildings' here and widen the @radius "
+                "if it comes back short"
+            ),
+            (
+                "z is the centroid's altitude, the mean of the members' -- a site on two "
+                "levels has no single one"
+            ),
+        ],
     )

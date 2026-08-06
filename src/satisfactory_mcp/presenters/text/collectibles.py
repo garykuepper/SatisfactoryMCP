@@ -7,7 +7,7 @@ with their hazards, and the degraded save-only answer is a name-prefix guess.
 
 from __future__ import annotations
 
-from ...domain.collectibles.service import CollectiblesView
+from ...domain.collectibles.service import GENERATOR_COMMAND, CollectiblesView
 from ...domain.spatial import geo
 from . import primitives as render
 
@@ -288,11 +288,11 @@ def _save_only(st, view: CollectiblesView, limit: int) -> str:
     removed, group = view.removed, view.group
     notes = [
         (
-            "DEGRADED: data/world_collectibles.json is absent, so there is no map table to "
-            "join against. Groups below come from a name-prefix rule over the destroyed "
-            "actors' instance names, which is measurably wrong -- on the reference save it "
-            "misfiles 51 of 713 (40 yellow slugs read as blue) and leaves 65 undecidable. "
-            "Regenerate the table with tools/gen_world_collectibles.py"
+            "DEGRADED: data/world_collectibles.json has never been generated, so there is "
+            "no map table to join against. Groups below come from a name-prefix rule over "
+            "the destroyed actors' instance names, which is measurably wrong -- on the "
+            "reference save it misfiles 51 of 713 (40 yellow slugs read as blue) and leaves "
+            f"65 undecidable. Generate the table with {GENERATOR_COMMAND}"
         ),
         (
             "collected, not remaining: without the map table nothing here knows how many of "

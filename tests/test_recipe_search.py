@@ -160,6 +160,29 @@ def test_an_unknown_item_is_refused_not_silently_empty(game):
     assert srv.search_recipes(consumes="Rubbr Concrte").startswith("no item matching")
 
 
+def test_both_gated_tools_answer_about_the_world_they_were_asked_about(game, monkeypatch):
+    """HAVE/LOCKED is world state, and both tools took `save` and not `world`.
+
+    On a one-world install the two arguments pick the same file and the omission is
+    invisible; on a multi-world install `world=` was accepted nowhere and the answer came
+    silently from the default world -- a confident unlock table about somebody else's
+    factory. `list_buildings`, in the same module and with the same column, has always
+    taken it.
+    """
+    from satisfactory_mcp.interfaces.mcp.tools import gamedata
+
+    seen = []
+
+    def spy(save=None, world=None):
+        seen.append((save, world))
+        raise RuntimeError("no such world")
+
+    monkeypatch.setattr(gamedata, "_state", spy)
+    gamedata.search_recipes(consumes="Rubber", world="Other Save")
+    gamedata.alternates_for_item(item="Plastic", world="Other Save")
+    assert seen == [(None, "Other Save"), (None, "Other Save")]
+
+
 def test_the_response_fits_the_context_budget(game):
     for kwargs in ({"consumes": "Rubber"}, {"consumes": "Rubber", "kind": "all", "limit": 25}):
         out = srv.search_recipes(**kwargs)

@@ -100,6 +100,7 @@ def recipe_detail(recipe_id: str) -> str:
 def alternates_for_item(
     item: str,
     save: str | None = None,
+    world: str | None = None,
     include_locked: bool = True,
 ) -> str:
     """Every automatable recipe that makes an item, alternates first.
@@ -117,7 +118,7 @@ def alternates_for_item(
     have: set[str] | None = None
     save_error: str | None = None
     try:
-        have = _state(save).available_recipe_ids
+        have = _state(save, world).available_recipe_ids
     except Exception as exc:
         save_error = str(exc)
     producers.sort(key=lambda r: (not r.is_alternate, r.name))
@@ -160,6 +161,7 @@ def search_recipes(
     only_alternates: bool = False,
     include_events: bool = False,
     save: str | None = None,
+    world: str | None = None,
     limit: Limit = 10,
     offset: int = 0,
 ) -> str:
@@ -186,7 +188,7 @@ def search_recipes(
 
     have: set[str] | None = None
     try:
-        have = _state(save).available_recipe_ids
+        have = _state(save, world).available_recipe_ids
     except Exception as exc:
         notes.append(_no_save_note(str(exc)))
 

@@ -36,6 +36,9 @@ import copy
 
 import pytest
 
+from satisfactory_mcp.domain.collectibles import service
+from satisfactory_mcp.domain.collectibles.service import GENERATOR_COMMAND
+from satisfactory_mcp.domain.collectibles.table import CollectiblesUnreadable
 from satisfactory_mcp.domain.spatial import geo
 from satisfactory_mcp.domain.world import state as state_mod
 from satisfactory_mcp.domain.world.state import WorldState, _name_stem, load_collectibles
@@ -639,19 +642,47 @@ def test_without_the_map_table_the_census_degrades_to_names_and_says_so(save_onl
 
 def test_the_degraded_tool_labels_itself_and_refuses_what_it_cannot_do(monkeypatch, save_only):
     """It must not answer a narrower question quietly: mode=remaining and mode=nearest are
-    refused outright, because without the map nothing knows how many exist."""
+    refused outright, because without the map nothing knows how many exist.
+
+    Both the label and the refusal name the command that fixes it. "Regenerate it" is not
+    something a player can type, and this answer's whole job is to end the dead end.
+    """
     monkeypatch.setattr(progression, "_state", lambda save, world: save_only)
     census = collected_from_world()
-    assert "DEGRADED: data/world_collectibles.json is absent" in census
+    assert "DEGRADED: data/world_collectibles.json has never been generated" in census
     assert "misfiles 51 of 713" in census
     assert "collected, not remaining" in census
     assert "slug_blue\t163" in census
     assert "'dropped_pickup' is loot the player dropped" in census
+    assert GENERATOR_COMMAND in census
 
     for mode in ("remaining", "nearest"):
         refused = collected_from_world(mode=mode)
         assert refused.startswith(f"! mode={mode!r} needs the map's own placement table")
+        assert GENERATOR_COMMAND in refused
         assert "total_removed" not in refused
+
+
+def test_a_corrupt_table_says_so_instead_of_reading_as_never_generated(monkeypatch, save_only):
+    """The two states the strict loader exists to separate, at the one place a player meets
+    them. A half-written file is fixed by deleting it and running the generator; a missing
+    one is fixed by running the generator. Told apart, each answer is actionable; told as
+    one, the reader is left to guess which of the two they are in.
+    """
+    monkeypatch.setattr(progression, "_state", lambda save, world: save_only)
+
+    def unreadable(*, strict: bool = False):
+        """The loader's answer for a file that is there and will not parse."""
+        if strict:
+            raise CollectiblesUnreadable("data/world_collectibles.json exists but will not read")
+
+    monkeypatch.setattr(service, "load_collectibles", unreadable)
+    out = collected_from_world()
+    assert out.startswith("! the map's placement table is CORRUPT, not missing")
+    assert "will not read" in out
+    assert GENERATOR_COMMAND in out
+    # No census under it: a corrupt table is a refusal, not a degraded answer.
+    assert "total_removed" not in out
 
 
 def test_the_degraded_census_still_refuses_to_guess_an_artifact(save_only):

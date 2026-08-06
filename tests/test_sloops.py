@@ -157,10 +157,15 @@ def test_generators_are_still_never_counted_as_capacity(game, state):
 
 
 def test_held_sloops_come_from_everywhere_they_can_be_spent(game, state):
-    """Same pooling as shards: carried, crates and the Dimensional Depot."""
+    """Same pooling as shards: carried, storage containers and the Dimensional Depot.
+
+    The place names are the buckets `stock` spends, and 'storage' is one of them while
+    'crate' is not: the crates on the ground are recoverable but excluded, so a place
+    named for them here would claim spendable sloops in a bucket nothing spends.
+    """
     budget = state.sloop_budget()
     assert budget["free"] == sum(budget["by_place"].values())
-    assert set(budget["by_place"]) <= {"carried", "crates", "depot"}
+    assert set(budget["by_place"]) <= {"carried", "storage", "depot"}
 
 
 def test_mercer_spheres_are_never_counted_as_somersloops(game, state):
