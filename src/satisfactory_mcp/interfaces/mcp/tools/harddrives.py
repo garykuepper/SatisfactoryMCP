@@ -55,7 +55,7 @@ def _grants(option: dict, game) -> str:
     kept: list[str] = []
     while out and len(", ".join([*kept, out[0]])) <= _GRANT_CHARS:
         kept.append(out.pop(0))
-    return ", ".join(kept + ([f"+{len(out)} more"] if out else [])) or f"+{len(out)} recipes"
+    return ", ".join(kept + ([f"+{len(out)} more"] if out else []))
 
 
 @mcp.tool(structured_output=False)
