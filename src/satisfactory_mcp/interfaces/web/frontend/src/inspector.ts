@@ -9,7 +9,7 @@
 
 import { get } from "./api";
 import { code, esc, html, popup } from "./dom";
-import { regionLine, shortResource } from "./format";
+import { regionLine } from "./format";
 import { L } from "./leaflet";
 import { map } from "./map";
 import { friendly } from "./toast";
@@ -83,7 +83,7 @@ function inspectHtml(d: InspectResponse): string {
     rows.push([
       i ? "" : "nearest",
       html(
-        esc(shortResource(n.resource) + " " + n.purity) +
+        esc(n.resource_name + " " + n.purity) +
           " &middot; " +
           esc(n.distance_m + " m") +
           (n.occupied ? " (occupied)" : "") +

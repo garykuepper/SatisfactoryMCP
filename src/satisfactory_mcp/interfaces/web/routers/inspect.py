@@ -21,7 +21,7 @@ from ....domain.spatial import nodes as spatial_nodes
 from ....domain.spatial import regions as spatial_regions
 from ....domain.world.state import WorldState
 from .. import terrain
-from ..serial import Region, _fail, _label_json, _state, _xyz
+from ..serial import Region, _fail, _label_json, _resource_name, _state, _xyz
 
 __all__ = ["INSPECT_NEAREST", "INSPECT_RADIUS_M", "router"]
 
@@ -86,11 +86,16 @@ class NearestNode(TypedDict):
     The coordinates are the static node table's own three floats and are not nullable.
     ``occupant_cls`` is null wherever the occupancy join found nothing, and null for ALL
     five whenever the save could not be read, which ``save_error`` says out loud.
+
+    ``resource`` is the class id and ``resource_name`` the word a reader reads, from the same
+    helper ``/api/nodes`` uses -- the inspector and the node dot must not name one fact two
+    ways.
     """
 
     id: str
     name: str
     resource: str
+    resource_name: str
     kind: str
     purity: str
     x_m: float
@@ -200,7 +205,9 @@ def _elevation_json(near: spatial_elevation.Elevation) -> Elevation:
     }
 
 
-def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[NearestNode]:
+def _nearest_nodes(
+    table, taken: dict, game, x: float, y: float, limit: int
+) -> list[NearestNode]:
     """The closest ``limit`` nodes to a point, centimetres in, metres out."""
     ranked = sorted(
         ((geo.distance_m((x, y), (n["x"], n["y"])), n) for n in table.nodes),
@@ -214,6 +221,7 @@ def _nearest_nodes(table, taken: dict, x: float, y: float, limit: int) -> list[N
                 "id": n["instance"],
                 "name": str(n["instance"]).rsplit(".", 1)[-1],
                 "resource": n["resource"],
+                "resource_name": _resource_name(game, n["resource"]),
                 "kind": n["kind"],
                 "purity": n["purity"],
                 **_xyz((n["x"], n["y"], n["z"])),
@@ -279,6 +287,6 @@ def inspect(
         "at": {"x_m": round(x_m, 1), "y_m": round(y_m, 1)},
         "region": _label_json(rmap.label_for(x, y)),
         "elevation": _elevation_json(near),
-        "nearest": _nearest_nodes(table, taken, x, y, INSPECT_NEAREST),
+        "nearest": _nearest_nodes(table, taken, request.app.state.game(), x, y, INSPECT_NEAREST),
         "save_error": save_error,
     }

@@ -88,7 +88,7 @@ def _state(request: Request, save: str | None, world: str | None) -> WorldState:
     return request.app.state.load_state(save, world)
 
 
-def _resource_name(game: GameData, cls: str) -> str:
+def _resource_name(game: GameData | None, cls: str) -> str:
     """A node's resource class as the words the MCP tools use: ``Desc_OreIron_C`` ->
     ``Iron Ore``.
 
@@ -97,9 +97,12 @@ def _resource_name(game: GameData, cls: str) -> str:
 
     ``Desc_Geyser_C`` is a placement target rather than an item, so the docs dump has no entry
     for it and ``item_name`` would hand the class id back; ``pretty_class`` is the same last
-    resort ``building_name`` already applies.
+    resort ``building_name`` already applies -- and it is also the answer with no game data
+    at all, so a machine without the install still gets a readable word rather than a 500.
     """
-    return game.item_name(cls) if cls in game.items else (pretty_class(cls) or cls)
+    if game is None or cls not in game.items:
+        return pretty_class(cls) or cls
+    return game.item_name(cls)
 
 
 def _label_json(label: spatial_regions.Label) -> Region | None:

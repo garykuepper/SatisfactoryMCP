@@ -160,5 +160,19 @@ def test_inspect_still_answers_when_the_save_cannot_be_read(game):
     assert body["nearest"] and all(n["occupied"] is False for n in body["nearest"])
 
 
+def test_the_inspector_names_a_resource_the_same_way_a_node_dot_does(client):
+    """format.ts says the node popup and the right-click card must not name one fact two
+    ways, and the card said "OreIron impure" while the dot beside it said "Iron Ore".
+
+    Both now read the server's own ``resource_name``, from the one helper in ``serial``."""
+    body = client.get("/api/inspect", params={"x_m": IN_THE_FIELD[0], "y_m": IN_THE_FIELD[1]})
+    nearest = body.json()["nearest"]
+    assert nearest
+    assert not any(n["resource_name"].startswith("Desc_") for n in nearest), nearest
+    dots = {r["resource"]: r["resource_name"] for r in client.get("/api/nodes").json()["nodes"]}
+    for n in nearest:
+        assert n["resource_name"] == dots[n["resource"]]
+
+
 def test_inspect_needs_a_coordinate(client):
     assert client.get("/api/inspect").status_code == 422

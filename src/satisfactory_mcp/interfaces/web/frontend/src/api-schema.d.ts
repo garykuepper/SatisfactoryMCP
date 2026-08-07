@@ -1326,6 +1326,10 @@ export interface components {
          *     The coordinates are the static node table's own three floats and are not nullable.
          *     ``occupant_cls`` is null wherever the occupancy join found nothing, and null for ALL
          *     five whenever the save could not be read, which ``save_error`` says out loud.
+         *
+         *     ``resource`` is the class id and ``resource_name`` the word a reader reads, from the same
+         *     helper ``/api/nodes`` uses -- the inspector and the node dot must not name one fact two
+         *     ways.
          */
         NearestNode: {
             /** Id */
@@ -1334,6 +1338,8 @@ export interface components {
             name: string;
             /** Resource */
             resource: string;
+            /** Resource Name */
+            resource_name: string;
             /** Kind */
             kind: string;
             /** Purity */
@@ -1734,7 +1740,7 @@ export interface components {
          *     the page can index without a length guard.
          *
          *     ``label_m`` is never null and is often different from ``centroid_m``, which is the whole
-         *     reason it exists; see ``_label_anchor``.
+         *     reason it exists; see ``RegionMap.label_anchor``.
          */
         RegionExtent: {
             /** Centroid M */
