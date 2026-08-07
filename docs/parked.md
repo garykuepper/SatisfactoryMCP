@@ -981,6 +981,47 @@ piece, not the polyline. If the measured port-coverage comes out low, the honest
 partial graph that says what it could not join — never a confident wrong edge, which is the
 one failure mode worse than the silence we have today.
 
+### 21a. Spiked 2026-08-06: the join needs no geometry, and geometry would have been wrong
+
+**The premise above is wrong in the reader's favour.** A conduit end does sit at a connector
+rather than a machine origin, but the join never has to reach for it: `graph["material"]`
+names BOTH ACTORS of every coupling, and every belt piece, lift and pipe is in that list —
+3,094 belt actors against the 3,085 rows of the belt table, 503 pipes against 503. So
+contracting the conduit actors out of the material layer leaves node-to-node links the save
+STATES. `domain/world/logistics.py` does that in 19 ms over the reference projection.
+
+Measured on the committed fixture: 3,597 conduit actors contract into 2,200 runs, of which
+**2,174 (98.8%) name a thing at both ends**, 24 end at nothing and 2 float free. Direction
+resolves for 2,065 of them from the connector role or the device's nature; the 128 that stay
+undirected are every one of them a pipe between two fittings, which has no direction without
+the rates. Of the 426 machines with a recipe set, **423 have a physical feeder for every
+ingredient** and 421 a drain for every product. 651 of 848 attachments join exactly three
+ways. The live save agrees: 2,199 of 2,255 runs two-ended, 54 dangling — 20 of them stubs on
+Oil Refineries mid-build.
+
+**The proximity join was measured against that truth and it is not close.** A pipe segment
+carries `actorIndex`, so for pipes the geometric guess and the save's own record can be held
+end for end — 503 pipes, 1,006 endpoints, `conduits._plug` at its shipped tolerance, charged
+only for things it could name at all. It agrees at 717 and is wrong at **289 (28.7%)**: 191
+connections invented, 63 named as the wrong building, 35 real ones missed. Belts are worse
+placed to guess: **71% of belt-chain endpoints have two or more placements inside reach**, so
+the tie-break decides the edge. This is exactly the confident wrong edge §21 named.
+
+**What the graph does NOT buy.** `trace_upstream` already walks the same identity graph, and
+over 80 sampled machines the physical upstream set and its reached set are identical, 815
+against 815. The reachable machines were never the gap. What was missing is the STRUCTURE it
+drops on purpose: which run, of how many pieces, in which medium, through which splitter
+dividing three ways, with the direction's basis stated and the dead ends named.
+
+**Demonstrated.** On the live save `factory_health` reports 22 starved and 3 dead-node as
+unrelated rows. Walking the physical graph up from one starved Quickwire Constructor reaches
+23 nodes and terminates in the whole answer: six Caterium Smelters, all stalled, fed by one
+Miner Mk.2 whose resource node is gone.
+
+**Left undone.** Nothing consumes the module yet — `trace_upstream`'s physical mode and
+`factory_health`'s evidence line are the next commits, and the 128 undirected pipe runs would
+mostly resolve by taking `world/flow.py`'s per-segment inference into the contraction.
+
 ## 22. Parked: the world as a time series
 
 Recorded 2026-08-02. Every tool answers "how is my world now" from one save. The reference

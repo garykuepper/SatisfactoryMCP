@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections import defaultdict
 
 from ...core.saveio import rows as saverows
+from ...core.saveio.ports import PIPE as _PIPE
+from ...core.saveio.ports import medium as _medium
 
 __all__ = ["FORWARD", "REVERSE", "UNKNOWN", "pipe_flow"]
 
@@ -24,25 +26,6 @@ __all__ = ["FORWARD", "REVERSE", "UNKNOWN", "pipe_flow"]
 FORWARD = "forward"
 REVERSE = "reverse"
 UNKNOWN = "unknown"
-
-#: The connector role names that belong to FLUID plumbing. Listed rather than matched on
-#: ``Pipe``, which would drag in ``PipeHyperConnection0`` -- a hypertube moves a player and no
-#: fluid.
-_FLUID_ROLES = frozenset(
-    {
-        "PipelineConnection0",
-        "PipelineConnection1",
-        "FGPipeConnectionFactory",
-        "PipeInputFactory",
-        "PipeOutputFactory",
-        "ConnectionAny0",
-        "ConnectionAny1",
-        "Connection0",
-        "Connection1",
-        "Connection2",
-        "Connection3",
-    }
-)
 
 #: A junction and a buffer are ONE volume of fluid: what arrives at any port can leave by any
 #: other, so their ports collapse into a single node.
@@ -103,7 +86,7 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
     graph = projection.get("graph") or {}
     actors = list(graph.get("actors") or ())
     roles = list(graph.get("roles") or ())
-    fluid_role = {i for i, name in enumerate(roles) if name in _FLUID_ROLES}
+    fluid_role = {i for i, name in enumerate(roles) if _medium(name) == _PIPE}
     role_name = {i: name for i, name in enumerate(roles)}
 
     joins = _Union()

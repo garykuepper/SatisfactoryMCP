@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...core.saveio import ports
 from .model import Edge, FactoryGraph, kind_of
 
 __all__ = ["build_graph", "class_of"]
@@ -46,9 +47,13 @@ def build_graph(projection: dict) -> FactoryGraph:
         ra = role(row[2]) if len(row) > 2 else ""
         rb = role(row[3]) if len(row) > 3 else ""
         edge = Edge(a=a, b=b, role_a=ra, role_b=rb)
+        # A hypertube moves the PLAYER, so it is not material flow and must never merge two
+        # factories that share nothing but a commute.
+        if ports.is_hypertube_edge(ra, rb):
+            graph.hyper.append(edge)
         # A transport station's connection is a factory BOUNDARY, not internal flow,
         # so it goes on its own layer rather than silently merging two factories.
-        if kind_of(cls.get(a, "")) == "transport" or kind_of(cls.get(b, "")) == "transport":
+        elif kind_of(cls.get(a, "")) == "transport" or kind_of(cls.get(b, "")) == "transport":
             graph.transport.append(edge)
         else:
             graph.material.append(edge)

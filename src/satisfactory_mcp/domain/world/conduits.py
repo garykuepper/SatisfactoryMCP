@@ -40,6 +40,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from ...core.saveio import ports
 from ...core.saveio import rows as saverows
 from ..spatial import geo
 
@@ -287,9 +288,16 @@ def build_runs(projection: dict, game, pipe_flow: list[dict] | None = None) -> l
     networks = list((projection.get("pipes") or {}).get("networks") or ())
     graph = projection.get("graph") or {}
     actors = graph.get("actors") or []
+    roles = graph.get("roles") or []
+
+    def _role(index: int) -> str:
+        return roles[index] if isinstance(index, int) and 0 <= index < len(roles) else ""
+
     adjacency: dict[int, set[int]] = {}
     for edge in graph.get("material") or ():
         if isinstance(edge, (list, tuple)) and len(edge) >= 2:
+            if len(edge) >= 4 and ports.is_hypertube_edge(_role(edge[2]), _role(edge[3])):
+                continue
             try:
                 ai, bi = int(edge[0]), int(edge[1])
             except (TypeError, ValueError):
