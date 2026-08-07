@@ -27,6 +27,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from ...core.gamedata.model import GameData
+from ..power.report import measured_share
 from ..spatial import geo
 from ..spatial import nodes as nodes_mod
 from .model import FactoryGraph
@@ -147,13 +148,10 @@ def build_view(
     def charge(rated: float, record: dict) -> None:
         """One machine's draw, on both the nameplate and the measured side."""
         view.draw_mw += rated
-        uptime = record.get("uptime") or {}
-        window = uptime.get("window_s") or 0.0
-        if window > 0:
-            view.measured_draw_mw += rated * ((uptime.get("produce_s") or 0.0) / window)
-        else:
+        share = measured_share(record)
+        if share is None:
             view.unmonitored += 1
-            view.measured_draw_mw += rated
+        view.measured_draw_mw += rated if share is None else rated * share
 
     for record in projection.get("machines", ()):
         short = _short(record["instance"])

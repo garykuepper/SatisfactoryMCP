@@ -6,7 +6,21 @@ from dataclasses import dataclass
 
 from ...core.gamedata.model import GameData
 
-__all__ = ["PowerLedger"]
+__all__ = ["PowerLedger", "measured_share"]
+
+
+def measured_share(record: dict) -> float | None:
+    """How much of a machine's rated draw the save says it is really taking, 0..1.
+
+    ``None`` where the machine keeps no productivity monitor. Every caller must charge such
+    a machine IN FULL: no monitor is not evidence of idleness, and treating it as idle would
+    make the measured figure optimistic in exactly the case nothing can check it.
+    """
+    uptime = record.get("uptime") or {}
+    window = uptime.get("window_s") or 0.0
+    if window <= 0:
+        return None
+    return (uptime.get("produce_s") or 0.0) / window
 
 
 @dataclass
@@ -71,17 +85,13 @@ class PowerLedger:
             """Add one machine to both totals, weighting the measured one by uptime."""
             nonlocal draw, measured, monitored, unmonitored
             draw += rated
-            uptime = record.get("uptime") or {}
-            window = uptime.get("window_s") or 0.0
-            produced = uptime.get("produce_s") or 0.0
-            if window > 0:
-                monitored += 1
-                measured += rated * (produced / window)
-            else:
-                # No monitor is NOT evidence of idleness: charged in full, so an unreadable
-                # machine can only make the measured figure conservative.
+            share = measured_share(record)
+            if share is None:
                 unmonitored += 1
                 measured += rated
+            else:
+                monitored += 1
+                measured += rated * share
 
         for m in self.projection.get("machines", ()):
             if m.get("paused"):
