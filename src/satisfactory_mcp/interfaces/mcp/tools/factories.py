@@ -27,6 +27,10 @@ from ..app import Limit, _state, game, mcp
 #: omission rather than a blind spot.
 BARE_TILE_FLOOR = 12
 
+#: factory_query aspects that print an items/min rate, and therefore owe the reader the
+#: sentence saying which window "measured" was measured over.
+FLOW_ASPECTS = frozenset({"summary", "balance", "outputs", "inputs", "internal"})
+
 
 def _z_range(slab) -> str:
     """A slab's elevation in metres -- both ends of it where they differ.
@@ -355,9 +359,12 @@ def factory_query(
     - **links** which other factories it exchanges material with
     - **issues** paused, recipe-less, or unresolved machines
 
-    Rates are NAMEPLATE at each machine's saved clock, not measured throughput. A
-    starved factory still reports its full rate. Power is the one exception, and it
-    prints both figures side by side rather than blending them.
+    Every rate is printed twice. NAMEPLATE is the machine's recipe rate at its saved clock,
+    which a starved factory still reports in full. MEASURED is that rate scaled by the share
+    of its own productivity window each machine spent producing -- the window that ended
+    when the save was written, so a line idle at that moment measures 0 and is not broken.
+    A machine keeping no monitor is left out of measured entirely and shown separately,
+    because counting it in full there would invent output.
     """
     from ....domain.factories.query import build_view
 
@@ -390,6 +397,31 @@ def factory_query(
         # different names whenever the dump had no entry for the class.
         return g.building_name(cls) or cls
 
+    def measured_cells(item: str, side: str) -> tuple[str, str]:
+        """The measured rate for one item, and the nameplate rate no monitor can see.
+
+        "?" rather than 0 when nothing readable touches the item that way: unknown and
+        stopped are different claims, and printing zero makes the second.
+        """
+        f = view.flows[item]
+        blind = f[f"unmonitored_{side}"]
+        return (
+            render.num(f[f"measured_{side}"]) if view.measurable(item, side) else "?",
+            render.num(blind) if blind > 1e-9 else "",
+        )
+
+    def brief(pairs, side: str) -> str:
+        out = []
+        for k, v in pairs:
+            f = view.flows[k]
+            seen = (
+                f"measured {f[f'measured_{side}']:.0f}"
+                if view.measurable(k, side)
+                else "no monitor"
+            )
+            out.append(f"{k} {v:.0f}/min ({seen})")
+        return ", ".join(out) or "-"
+
     for aspect in asked:
         if aspect == "summary":
             head = render.kv(
@@ -403,9 +435,9 @@ def factory_query(
                     ("issues", len(view.issues) or ""),
                 ]
             )
-            makes = ", ".join(f"{k} {v:.0f}/min" for k, v in view.outputs()[:5]) or "-"
-            needs = ", ".join(f"{k} {v:.0f}/min" for k, v in view.inputs()[:5]) or "-"
-            keeps = ", ".join(f"{k} {v:.0f}/min" for k, v in view.internal()[:5]) or "-"
+            makes = brief(view.outputs()[:5], "produced")
+            needs = brief(view.inputs()[:5], "consumed")
+            keeps = brief(view.internal()[:5], "produced")
             chunks.append(f"## summary\n{head}\nmakes: {makes}\nneeds: {needs}\nkeeps: {keeps}")
         elif aspect == "balance":
             rows = []
@@ -415,19 +447,21 @@ def factory_query(
                 verdict = (
                     "surplus" if net > 1e-6 else "needs feeding" if net < -1e-6 else "internal"
                 )
+                readable = view.measurable(item, "produced") or view.measurable(item, "consumed")
                 rows.append(
                     (
                         item,
                         render.num(f["produced"]),
                         render.num(f["consumed"]),
                         f"{net:+.1f}",
+                        f"{view.measured_net(item):+.1f}" if readable else "?",
                         verdict,
                     )
                 )
             chunks.append(
                 "## balance (items/min at saved clocks)\n"
                 + render.table(
-                    ("item", "made", "used", "net", ""),
+                    ("item", "made", "used", "net", "net (measured)", ""),
                     rows[start:end],
                     total=len(rows),
                     offset=start,
@@ -436,11 +470,12 @@ def factory_query(
             )
         elif aspect in ("outputs", "inputs"):
             data = view.outputs() if aspect == "outputs" else view.inputs()
+            side = "produced" if aspect == "outputs" else "consumed"
             chunks.append(
                 f"## {aspect}\n"
                 + render.table(
-                    ("item", "per min"),
-                    [(k, render.num(v)) for k, v in data[start:end]],
+                    ("item", "per min", "per min (measured)", "no monitor"),
+                    [(k, render.num(v), *measured_cells(k, side)) for k, v in data[start:end]],
                     total=len(data),
                     offset=start,
                     limit=n,
@@ -450,8 +485,11 @@ def factory_query(
             data = view.internal()
             body = (
                 render.table(
-                    ("item", "per min"),
-                    [(k, render.num(v)) for k, v in data[start:end]],
+                    ("item", "per min", "per min (measured)", "no monitor"),
+                    [
+                        (k, render.num(v), *measured_cells(k, "produced"))
+                        for k, v in data[start:end]
+                    ],
                     total=len(data),
                     offset=start,
                     limit=n,
@@ -569,6 +607,24 @@ def factory_query(
             f"{view.unmonitored} machine(s) here keep no monitor and are charged in FULL, "
             "since unknown utilisation must not read as idle"
         )
+    if FLOW_ASPECTS.intersection(asked):
+        notes.append(
+            "measured is each machine's rate scaled by the share of its own ~300s "
+            "productivity window it spent producing -- the window that ENDED when this save "
+            "was written, not a live reading. A line idle at that moment measures 0 and is "
+            "not broken"
+        )
+        notes.append(
+            f"{view.producing_now} of {view.producers} machine(s) here were mid-production "
+            "at the instant the save was written, which is the sharper check on a 0"
+        )
+        if view.unmonitored_producers:
+            notes.append(
+                f"{view.unmonitored_producers} machine(s) here keep no monitor. Their rate "
+                "stands in 'no monitor' and is NOT in measured, so measured is a FLOOR; '?' "
+                "marks a row where every machine is one of them and measured is unknown "
+                "rather than zero"
+            )
     loose = view.links.get("(unlabelled)")
     if loose:
         notes.append(
