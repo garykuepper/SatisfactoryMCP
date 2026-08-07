@@ -291,7 +291,7 @@ def site_plan(
         str,
         Field(
             description="site origin (the footprint's CENTRE): 'x,y[,z]' in metres, "
-            "'me', or a factory name. Blank keeps the stored origin"
+            "'me', a factory name, 'slab:<n>' or a run id. Blank keeps the stored origin"
         ),
     ] = "",
     yaw_deg: Annotated[
@@ -345,7 +345,7 @@ def site_plan(
     if not at and existing is None:
         return (
             f"! plan {stored.name!r} has no siting yet, so there is no origin to keep -- "
-            "pass at='x,y[,z]' in metres, 'me', or a factory name"
+            "pass at='x,y[,z]' in metres, 'me', a factory name, 'slab:<n>' or a run id"
         )
 
     when = str(st.header.get("save_datetime") or st.header.get("filename") or "")
@@ -458,7 +458,7 @@ def plan_factory(
         str | None,
         Field(
             description="with save_as: record where this plan will STAND -- 'x,y[,z]' in "
-            "metres, 'me', or a factory name (the footprint's centre)"
+            "metres, 'me', a factory name, 'slab:<n>' or a run id (the footprint's centre)"
         ),
     ] = None,
     site_yaw_deg: Annotated[
