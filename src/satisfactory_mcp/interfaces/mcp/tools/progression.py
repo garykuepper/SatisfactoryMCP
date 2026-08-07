@@ -16,10 +16,6 @@ from ....presenters.text.collectibles import render_collectibles
 from ..app import Limit, _state, mcp
 
 
-def _start(offset: int) -> int:
-    return max(0, offset)
-
-
 @mcp.tool(structured_output=False)
 def phase_requirements(save: str | None = None, world: str | None = None) -> str:
     """What the Space Elevator still wants, live record and deprecated record apart.
@@ -221,9 +217,11 @@ def power_shards(
                 f"{render.num(need - budget['potential'])} short"
             )
 
+    start = max(0, offset)
+    n = render.clamp(limit, default=10)
     rows = [
         (h["cls"], render.num(h["clock"]), h["slotted"], h["needed"], h["idle"] or "")
-        for h in budget["holders"][_start(offset) : _start(offset) + render.clamp(limit, 10)]
+        for h in budget["holders"][start : start + n]
     ]
     return render.envelope(
         f"# {st.age_note}\n"
@@ -241,8 +239,8 @@ def power_shards(
             ("building", "clock", "slotted", "needed", "idle"),
             rows,
             total=len(budget["holders"]),
-            offset=_start(offset),
-            limit=render.clamp(limit, default=10),
+            offset=start,
+            limit=n,
         ),
         notes,
     )
@@ -282,6 +280,8 @@ def mam_research(
     done = st.purchased_schematic_ids
     stock = st.stock()
     search = search or query
+    start = max(0, offset)
+    n = render.clamp(limit, default=25)
     wanted = (show or status or "todo").strip().casefold()
     if wanted not in ("all", "todo", "affordable"):
         return f"! unknown status {status!r}. Choose from: all, todo, affordable"
@@ -384,10 +384,10 @@ def mam_research(
         + f", showing status={wanted}",
         render.table(
             ("status", "research", "capability", "cost", "short by", "blocked by"),
-            rows[_start(offset) : _start(offset) + render.clamp(limit, 25)],
+            rows[start : start + n],
             total=len(rows),
-            offset=_start(offset),
-            limit=render.clamp(limit, default=25),
+            offset=start,
+            limit=n,
         ),
         notes,
     )
@@ -418,6 +418,8 @@ def somersloops(
     budget = st.sloop_budget()
     gate = st.research_gate("production_boost")
     holders = budget["holders"]
+    start = max(0, offset)
+    n = render.clamp(limit, default=20)
     rows = [
         (
             h["name"],
@@ -426,7 +428,7 @@ def somersloops(
             f"{h['boost']:g}x" if h["boost"] else "",
             f"{h['boost_in_save']:g}x" if h["boost_in_save"] else "-",
         )
-        for h in holders[_start(offset) : _start(offset) + render.clamp(limit, 20)]
+        for h in holders[start : start + n]
     ]
     disagree = [
         h
@@ -486,8 +488,8 @@ def somersloops(
             ("building", "instance", "sloops", "boost", "boost_in_save"),
             rows,
             total=len(holders),
-            offset=_start(offset),
-            limit=render.clamp(limit, default=20),
+            offset=start,
+            limit=n,
         ),
         notes,
     )
