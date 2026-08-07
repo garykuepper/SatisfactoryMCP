@@ -594,6 +594,16 @@ gate a feature rather than merely adding a recipe. Costs are checked against spe
 stock only — carried, storage containers and the Depot — never machine buffers and never
 the crates on the ground, per § 6.
 
+**The HUB ladder is the same walk, and `milestones` is it.** Status, bill, shortfall and
+prerequisites over `EST_Milestone` instead of `EST_MAM`, from one `SchematicLadder` priced
+against one stock pool, so a status means the same thing in both — a second vocabulary for
+the same four facts is the failure this avoided. It is a tool rather than a mode because
+the surface names tools after what they answer, and `mam_research(track=…)` would have
+been a tool whose name was false for half its arguments. One thing it deliberately cannot
+say: a HUB **tier** is opened by delivering to the Space Elevator, and no milestone
+schematic in Docs.json carries a dependency of any kind, so `READY` is a statement about
+the bill and the note under it points at `phase_requirements` for the other half.
+
 ### 6.10 Pushing back on "not modelled"
 
 Four claims of unknowability were audited after three of them turned out false in one

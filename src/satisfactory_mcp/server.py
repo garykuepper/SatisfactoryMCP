@@ -73,6 +73,7 @@ from .interfaces.mcp.tools.planning import (
 from .interfaces.mcp.tools.progression import (
     collected_from_world,
     mam_research,
+    milestones,
     phase_requirements,
     power_shards,
     somersloops,
@@ -132,6 +133,7 @@ __all__ = [
     "main",
     "mam_research",
     "map_regions",
+    "milestones",
     "mcp",
     "name_factory",
     "phase_requirements",
