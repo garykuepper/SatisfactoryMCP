@@ -187,3 +187,56 @@ def test_the_response_fits_the_context_budget(game):
     for kwargs in ({"consumes": "Rubber"}, {"consumes": "Rubber", "kind": "all", "limit": 25}):
         out = srv.search_recipes(**kwargs)
         assert len(out) < 5000, f"{kwargs} returned {len(out)} chars"
+
+
+# ------------------------------------------------- what grants a locked recipe
+
+
+def test_a_locked_row_says_which_schematic_would_grant_it(game):
+    """LOCKED on its own is a dead end: it tells a player the recipe exists and gives
+    them nowhere to go. "hard drive" and "milestone: Particle Enrichment" are completely
+    different work, and which one it is decides the next hour of play."""
+    out = srv.search_recipes(produces="Nuclear Pasta")
+    row = next(r for r in out.splitlines() if r.startswith("Nuclear Pasta\t"))
+    assert "granted by" in out
+    assert row.endswith("milestone: Particle Enrichment")
+
+
+def test_the_column_appears_only_where_something_is_locked(game):
+    """A column of blanks costs every reader of every fully-unlocked page. Aluminum
+    Ingot's two recipes are both HAVE on this world."""
+    assert "granted by" not in srv.search_recipes(produces="Aluminum Ingot")
+
+
+def test_a_hard_drive_alternate_does_not_repeat_its_own_name(game):
+    """The schematic that grants an alternate is usually named after it, and the row
+    already prints that name in its first column. Saying "hard drive: Alternate: Cheap
+    Silica" beside "Alternate: Cheap Silica" spends 25 characters on nothing."""
+    out = srv.alternates_for_item("Silica")
+    cheap = next(r for r in out.splitlines() if r.startswith("Alternate: Cheap Silica\t"))
+    assert cheap.endswith("\thard drive")
+
+
+def test_a_chained_sub_schematic_names_the_purchase_a_player_can_actually_make(game):
+    """Distilled Silica is granted by a schematic called "Alternate: Distilled Silica",
+    which is not a thing anyone can buy: it is chained off the hard drive "Alternate:
+    Quartz Purification". Printing the sub-schematic answers with the question."""
+    from satisfactory_mcp.core.gamedata.unlocks import granted_by
+
+    r = game.recipes["Recipe_Alternate_Silica_Distilled_C"]
+    assert r.unlocked_by == ("Schematic_Alternate_Silica_Distilled_C",)
+    assert granted_by(game, r) == ["hard drive: Alternate: Quartz Purification"]
+
+
+def test_more_than_one_grant_is_counted_rather_than_silently_reduced(game):
+    """30 recipes have two or more sources -- Silica comes from a MAM node AND a
+    milestone -- and quoting the first as if it were the only one tells the player to do
+    work they may not need. The cell says how many it is standing in for."""
+    from satisfactory_mcp.core.gamedata.unlocks import granted_by, granted_by_label
+
+    silica = game.recipes["Recipe_Silica_C"]
+    sources = granted_by(game, silica)
+    # The MAM node is itself called "Silica", so it names the currency and stops there.
+    assert sources == ["MAM research", "milestone: Bauxite Refinement"]
+    assert granted_by_label(game, silica) == "; ".join(sources)
+    assert granted_by_label(game, silica, width=20) == "MAM research (first of 2)"

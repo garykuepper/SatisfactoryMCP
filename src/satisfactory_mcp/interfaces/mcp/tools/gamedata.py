@@ -5,6 +5,7 @@ Read-only over the normalized dump. Nothing here touches a save."""
 from __future__ import annotations
 
 from ....core.gamedata import search
+from ....core.gamedata.unlocks import granted_by_label
 from ....presenters.text import primitives as render
 from ....presenters.text.search import render_search
 from ..app import Limit, _item_id, _state, game, mcp
@@ -105,7 +106,8 @@ def alternates_for_item(
 ) -> str:
     """Every automatable recipe that makes an item, alternates first.
 
-    When a save is readable, each row is marked HAVE or LOCKED.
+    When a save is readable, each row is marked HAVE or LOCKED, and a LOCKED one says
+    which schematic would grant it -- a hard drive and a milestone are different work.
     """
     g = game()
     iid = _item_id(item)
@@ -122,23 +124,29 @@ def alternates_for_item(
     except Exception as exc:
         save_error = str(exc)
     producers.sort(key=lambda r: (not r.is_alternate, r.name))
+    shown = [r for r in producers if include_locked or have is None or r.cls in have]
+    # Only when something is locked: on a page where everything is HAVE the column would
+    # be a row of blanks.
+    granted = have is not None and any(r.cls not in have for r in shown)
     rows = []
-    for r in producers:
+    for r in shown:
         status = "-" if have is None else ("HAVE" if r.cls in have else "LOCKED")
-        if not include_locked and status == "LOCKED":
-            continue
         b = g.machine(r)
-        rows.append(
-            (
-                r.name,
-                f"{b.name} {render.num(g.recipe_power_mw(r))}MW" if b else "-",
-                render.flows((g.item_name(f.item), f.per_min, False) for f in r.ingredients),
-                render.flows((g.item_name(f.item), f.per_min, False) for f in r.products),
-                status,
-            )
-        )
+        row = [
+            r.name,
+            f"{b.name} {render.num(g.recipe_power_mw(r))}MW" if b else "-",
+            render.flows((g.item_name(f.item), f.per_min, False) for f in r.ingredients),
+            render.flows((g.item_name(f.item), f.per_min, False) for f in r.products),
+            status,
+        ]
+        if granted:
+            row.append("" if status == "HAVE" else granted_by_label(g, r, width=60))
+        rows.append(row)
     n_alt = sum(1 for r in producers if r.is_alternate)
-    body = render.table(("recipe", "building", "in/min", "out/min", "status"), rows)
+    headers = ["recipe", "building", "in/min", "out/min", "status"]
+    if granted:
+        headers.append("granted by")
+    body = render.table(headers, rows)
     footer = render.ids_footer((r.name, r.cls) for r in producers)
     # The blank status column is the WHOLE point of this tool for a player deciding what to
     # build, and a blank that means "could not read your save" reads exactly like a blank
