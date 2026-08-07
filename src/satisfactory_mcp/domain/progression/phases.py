@@ -71,6 +71,20 @@ class PhaseLedger:
         "EGP_FoodCourt": "GP_Project_Assembly_Phase_4",
     }
 
+    @staticmethod
+    def _subtractable(snapshot: dict, complete: list[str], paid: dict) -> bool:
+        """Whether the live paid-off record may be taken off this frozen row.
+
+        Sound only where the row froze before ANY delivery, since a snapshot taken after one
+        has the delivery in it already and would charge it twice. Two things prove a row
+        froze late and both are checked: an item sitting at zero in it, and an item the live
+        record says more has been paid into than the row still bills for. Neither can happen
+        to a full cost. A partial payment smaller than the remainder is undetectable, which
+        is why the surviving case is labelled and why what it yields is a LOWER bound on what
+        is still owed -- the true cost is at least the frozen figure.
+        """
+        return not complete and all(v <= snapshot.get(i, 0.0) for i, v in paid.items())
+
     def phase_requirements(self) -> dict:
         """Space Elevator deliveries, live record first and deprecated record labelled.
 
@@ -80,9 +94,10 @@ class PhaseLedger:
         ``mGamePhaseCosts`` is deprecated and **frozen** -- byte-identical across 29 saves of
         the reference world spanning the session that finished Phase 3, which it still bills
         for -- but it is the only source of per-phase item lists, since the UFGGamePhase
-        assets holding ``mCosts`` do not ship in Docs.json. It is trustworthy for one row
-        only, the phase never targeted, so every row carries a ``stale`` flag rather than
-        being silently filtered.
+        assets holding ``mCosts`` do not ship in Docs.json. It is trustworthy for the TARGET
+        row alone: untouched it is still that phase's full cost, and once deliveries start
+        the live record is subtracted from it where ``_subtractable`` allows rather than the
+        row being written off. Every row carries a ``stale`` flag rather than being filtered.
         """
         p = self.projection.get("progression", {}) or {}
         current = p.get("game_phase") or ""
@@ -94,13 +109,24 @@ class PhaseLedger:
         rows = []
         for egp, costs in (p.get("phase_costs_remaining") or {}).items():
             phase = self.EGP_TO_PHASE.get(egp)
-            outstanding = {i: a for i, a in costs.items() if a}
+            snapshot = {i: a for i, a in costs.items() if a}
+            outstanding = snapshot
+            applied: dict[str, float] = {}
             done = sorted(i for i, a in costs.items() if not a)
             if phase is None:
                 stale = "unmapped"
             elif phase == target and not paid:
                 # Never delivered into, so the frozen snapshot is still the true cost.
                 stale = "usable"
+            elif phase == target and self._subtractable(snapshot, done, paid):
+                applied = {i: v for i, v in paid.items() if i in snapshot}
+                outstanding = {
+                    i: a - applied.get(i, 0.0)
+                    for i, a in snapshot.items()
+                    if a - applied.get(i, 0.0) > 0
+                }
+                done = sorted(set(done) | (set(snapshot) - set(outstanding)))
+                stale = "derived"
             elif not outstanding:
                 # All zeros. Frozen or not, "nothing outstanding" is what the live
                 # pointers say too for any phase at or below the current one.
@@ -112,6 +138,8 @@ class PhaseLedger:
                     "egp": egp,
                     "phase": phase,
                     "outstanding": outstanding,
+                    "snapshot": snapshot,
+                    "paid_applied": applied,
                     "complete": done,
                     "stale": stale,
                 }

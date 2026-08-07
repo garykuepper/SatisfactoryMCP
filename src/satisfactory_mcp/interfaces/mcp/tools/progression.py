@@ -83,7 +83,8 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
         (
             "stale=usable means the phase has never been delivered into "
             "(mTargetGamePhasePaidOffCosts is empty), so its untouched snapshot is still "
-            "its true full cost. That is the only row safe to plan against."
+            "its true full cost. The first delivery turns that row into stale=derived, "
+            "not into stale=stale."
         ),
         (
             "[UNVERIFIED for MidGame/LateGame/FoodCourt] the EGP_* -> GP_Project_Assembly_"
@@ -94,6 +95,15 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
             "key's single settled item. The rest follow by enum order from that anchor."
         ),
     ]
+    if any(r["stale"] == "derived" for r in req["phases"]):
+        notes.append(
+            "stale=derived is that row's frozen snapshot MINUS the live "
+            "mTargetGamePhasePaidOffCosts. Only the TARGET row is ever subtracted -- it is "
+            "the only phase deliveries can reach, so it is the only row with a live counter "
+            "to take off -- and the result is a LOWER bound on what is owed: were the "
+            "snapshot itself frozen after some earlier delivery the real bill would be "
+            "bigger, so a derived 0 means 'nothing left that this can see'"
+        )
     notes.append(
         "have and short by join each phase's outstanding items to spendable stock -- "
         "carried, storage containers and the Dimensional Depot, the same pool mam_research "
