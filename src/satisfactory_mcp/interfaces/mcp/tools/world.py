@@ -173,6 +173,10 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
     machine by the 300 s productivity monitor the save already carries, which on a factory
     with idle blocks is a very different number -- and it is the one that says what is free
     right now. Both are shown because they answer different questions.
+
+    Generation is capacity on both figures, with one exception the answer names: a generator
+    whose fuel or supplemental water has run dry AND whose own monitor read zero is listed as
+    starved, because those MW will not arrive when the grid asks for them.
     """
     try:
         st = _state(save, world)
@@ -203,11 +207,30 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
     ]
     if pw["unmodellable"]:
         notes.append(f"not in game data, excluded: {', '.join(pw['unmodellable'])}")
+
+    starved = pw["starved_generators"]
+    body = render.table(("generator", "count", "MW"), rows)
+    if starved:
+        body += "\n\n## starved generators\n" + render.table(
+            ("generator", "building", "MW", "out of"),
+            [
+                (s["instance"], s["name"], render.num(s["mw"]), ", ".join(s["missing"]))
+                for s in starved
+            ],
+            total=len(starved),
+        )
+        notes.append(
+            f"{render.num(pw['starved_generation_mw'])} MW of the generation above stands on "
+            f"{len(starved)} generator(s) whose input has run dry and which produced nothing "
+            "in their own window. Subtract it before planning against headroom -- that "
+            "capacity is a pipe or a belt away, not a build away"
+        )
     return render.envelope(
         f"# {st.age_note}\n"
         + render.kv(
             [
                 ("generation_MW", render.num(pw["generation_mw"])),
+                ("generation_MW_starved", render.num(pw["starved_generation_mw"])),
                 ("draw_MW_nameplate", render.num(pw["draw_mw"])),
                 ("draw_MW_measured", render.num(pw["measured_draw_mw"])),
                 ("headroom_MW_nameplate", render.num(pw["headroom_mw"])),
@@ -215,7 +238,7 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
                 ("paused", pw["paused_count"]),
             ]
         ),
-        render.table(("generator", "count", "MW"), rows),
+        body,
         notes,
     )
 

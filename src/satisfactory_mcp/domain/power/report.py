@@ -6,21 +6,55 @@ from dataclasses import dataclass
 
 from ...core.gamedata.model import GameData
 
-__all__ = ["PowerLedger", "measured_share"]
+__all__ = ["PowerLedger", "dry_inputs", "measured_share"]
+
+#: Stands in for a fuel class where the save records none -- a hand-fed burner sitting
+#: empty. Not an item name; it is printed as it reads.
+NO_FUEL = "(no fuel)"
 
 
 def measured_share(record: dict) -> float | None:
     """How much of a machine's rated draw the save says it is really taking, 0..1.
 
-    ``None`` where the machine keeps no productivity monitor. Every caller must charge such
-    a machine IN FULL: no monitor is not evidence of idleness, and treating it as idle would
-    make the measured figure optimistic in exactly the case nothing can check it.
+    ``None`` where the machine keeps no productivity monitor. A caller weighting a machine's
+    DRAW must charge such a machine IN FULL: no monitor is not evidence of idleness, and
+    treating it as idle would make the measured figure optimistic in exactly the case
+    nothing can check it. The safe direction inverts for output -- see
+    ``domain/factories/query.py`` -- so a caller weighting production must not copy that
+    rule across.
     """
     uptime = record.get("uptime") or {}
     window = uptime.get("window_s") or 0.0
     if window <= 0:
         return None
     return (uptime.get("produce_s") or 0.0) / window
+
+
+def dry_inputs(game: GameData, record: dict) -> tuple[str, ...]:
+    """Which of a generator's inputs its fuel inventory has run out of, by item name.
+
+    Empty when it holds everything it burns, and empty when the record carries no fuel
+    inventory at all -- an absent buffer is not an empty one.
+
+    A coal plant's fuel inventory holds its coal AND its supplemental water, so asking
+    whether that inventory is empty cannot see the failure worth catching: a full hopper
+    behind a broken water pipe. Each class the generator needs is tested by name instead.
+    """
+    fuel = (record.get("buffers") or {}).get("fuel")
+    if fuel is None:
+        return ()
+    held = fuel.get("items") or {}
+    building = game.buildings.get(record.get("cls", ""))
+    burning = record.get("fuel")
+    spec = None
+    if building is not None and burning:
+        spec = next((f for f in building.fuels if f.fuel_class == burning), None)
+    if spec is None:
+        return () if any(v > 0 for v in held.values()) else (NO_FUEL,)
+    wanted = [spec.fuel_class]
+    if building.requires_supplemental and spec.supplemental_class:
+        wanted.append(spec.supplemental_class)
+    return tuple(game.item_name(cls) for cls in wanted if not held.get(cls))
 
 
 @dataclass
@@ -56,10 +90,16 @@ class PowerLedger:
         unknown utilisation must not read as idle. Generators are capacity either way,
         since they burn to meet demand rather than at a rate of their own. Paused buildings
         are excluded from both sides.
+
+        ``starved_generators`` is the exception to "generation is capacity": a plant with a
+        dry input is not capacity, it is a number that will not appear when the grid asks
+        for it. It names each one, since knowing WHICH plant is the whole value.
         """
         gen: dict[str, dict] = {}
         total_mw = 0.0
         variable: list[str] = []
+        starved: list[dict] = []
+        starved_mw = 0.0
         for g in self.projection.get("generators", ()):
             if g.get("paused"):
                 continue
@@ -75,6 +115,21 @@ class PowerLedger:
             entry["count"] += 1
             entry["mw"] += mw
             total_mw += mw
+            # The DRY INPUT decides; uptime only corroborates. A generator load-follows, so
+            # it legitimately reads below 1.0 with full tanks and calling that starved would
+            # condemn every healthy plant on a quiet grid. Zero is the corroboration, and a
+            # plant with no monitor gets none -- so it is left alone rather than accused.
+            missing = dry_inputs(self.game, g)
+            if missing and measured_share(g) == 0.0:
+                starved.append(
+                    {
+                        "instance": g["instance"].rsplit(".", 1)[-1],
+                        "name": b.name,
+                        "mw": mw,
+                        "missing": list(missing),
+                    }
+                )
+                starved_mw += mw
 
         draw = 0.0
         measured = 0.0
@@ -123,4 +178,6 @@ class PowerLedger:
             "by_generator": gen,
             "unmodellable": sorted(set(variable)),
             "paused_count": self.paused_count,
+            "starved_generators": sorted(starved, key=lambda s: -s["mw"]),
+            "starved_generation_mw": starved_mw,
         }

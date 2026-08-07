@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from ...core.gamedata.constants import STACK_SIZE
 from ...core.gamedata.model import GameData
+from ..power.report import dry_inputs
 
 __all__ = ["OK", "STATES", "MachineHealth", "assess", "summarise"]
 
@@ -101,7 +102,7 @@ def _stack_limit(game: GameData, item_cls: str) -> int:
     return STACK_SIZE.get(getattr(item, "stack_size", ""), 0)
 
 
-def _buffer_state(game: GameData, buffers: dict, recipe) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _buffer_state(game: GameData, record: dict, recipe) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Returns (items backed up in the output, ingredients missing from the input).
 
     Starvation is **a required ingredient at zero**, not an empty input: an assembler on
@@ -110,6 +111,7 @@ def _buffer_state(game: GameData, buffers: dict, recipe) -> tuple[tuple[str, ...
     empty one either -- a miner draws from its node and has no InputInventory at all, so
     it yields no starvation evidence rather than a false positive.
     """
+    buffers = record.get("buffers") or {}
     backed: list[str] = []
     out = (buffers.get("out") or {}).get("items") or {}
     for item_cls, count in out.items():
@@ -123,12 +125,9 @@ def _buffer_state(game: GameData, buffers: dict, recipe) -> tuple[tuple[str, ...
         missing = [game.item_name(f.item) for f in recipe.ingredients if not held.get(f.item)]
         return tuple(sorted(backed)), tuple(sorted(missing))
 
-    # No recipe to check against: a generator is starved when its fuel buffer is empty.
-    fuel = buffers.get("fuel")
-    if fuel is not None:
-        empty = not any(v > 0 for v in (fuel.get("items") or {}).values())
-        return tuple(sorted(backed)), (("(no fuel)",) if empty else ())
-    return tuple(sorted(backed)), ()
+    # No recipe to check against: a generator is starved of whatever its fuel inventory has
+    # run out of, which for a coal plant includes the supplemental water.
+    return tuple(sorted(backed)), dry_inputs(game, record)
 
 
 def assess(
@@ -155,7 +154,7 @@ def assess(
             # absent produce_s is a real zero, since UE omits properties equal to their
             # default -- a monitored idle machine is 0.0 uptime, not unmonitored.
             uptime = (live.get("produce_s", 0.0) / window) if window else None
-            backed, missing = _buffer_state(game, record.get("buffers") or {}, recipe)
+            backed, missing = _buffer_state(game, record, recipe)
 
             if record.get("paused"):
                 state, cause = "paused", ()
