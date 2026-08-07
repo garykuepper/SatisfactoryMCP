@@ -1177,14 +1177,27 @@ def trace_upstream(
             f"in the last 300s window, worth {mw:,.0f} MW. Cutting this feed stops that "
             "power -- idle generators are not counted, since they are already not producing"
         )
-    return render.envelope(
-        f"# {st.age_note}\n# {'what feeds' if way == 'up' else 'what is fed by'} {subject}",
-        render.table(
+    # An empty table is a real answer here and has to say which one it is. Seeding from a
+    # whole label is the common way to get one: a self-contained factory owns its own chain,
+    # so everything upstream of it is already inside the selection.
+    if not rows:
+        body = (
+            "nothing outside this selection "
+            + ("feeds it" if way == "up" else "is fed by it")
+            + f" -- the walk crossed {result.visited} belt/pipe node(s) and reached no other "
+            "machine. Narrow the seed (a product: or a single instance) to see the chain "
+            "INSIDE it."
+        )
+    else:
+        body = render.table(
             ("building", "kind", "count", "hops", "examples"),
             rows,
             total=len(rows),
             limit=render.clamp(limit, default=20),
             hint="raise limit -- one row per building class, biggest first, and no offset",
-        ),
+        )
+    return render.envelope(
+        f"# {st.age_note}\n# {'what feeds' if way == 'up' else 'what is fed by'} {subject}",
+        body,
         notes,
     )

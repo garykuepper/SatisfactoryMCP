@@ -82,6 +82,19 @@ def test_a_factory_label_is_a_seed(traced):
     assert "Smelter" in out
 
 
+def test_a_self_contained_selection_says_so_instead_of_printing_an_empty_table(traced):
+    """A whole label is the usual way to reach this: a factory that owns its own chain has
+    nothing outside it upstream, and the walk crosses hundreds of belts to find that out.
+
+    A bare header with no rows under it cannot be told from a broken tool, which is the
+    reading the live 108-machine steel factory got."""
+    traced.labels.put("the whole line", [SMELTER, CONSTRUCTOR])
+    out = ftools.trace_upstream("the whole line")
+    assert "nothing outside this selection feeds it" in out
+    assert "belt/pipe node(s)" in out
+    assert "building\tkind\tcount" not in out
+
+
 def test_an_instance_and_a_building_name_still_seed_it(traced):
     assert "Smelter" in ftools.trace_upstream(CONSTRUCTOR)
     assert "Smelter" in ftools.trace_upstream("Constructor")
