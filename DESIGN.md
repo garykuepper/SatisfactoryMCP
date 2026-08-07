@@ -28,6 +28,7 @@ resolves through this table wherever it is written, in a document or in a docstr
 | §8, §9 | [docs/planning.md](docs/planning.md) | the LP/MILP formulation, layout, commissioning, diffing against the save, and the hard-drive advisor |
 | §10, §11, §12 | [docs/mcp-surface.md](docs/mcp-surface.md) | the tools with their transcripts, the context budget, caching, and the testing contract |
 | §14, §15, §15b, §16, §16b, §19 | [docs/parked.md](docs/parked.md) | open questions, parked work with the measurements that would otherwise be redone, and finished work kept as a record |
+| §23 | [docs/residency.md](docs/residency.md) | what an autosave costs the two processes, and why the answer is a pre-warming watcher rather than a resident daemon |
 
 Older than the split and unchanged by it: [docs/savparse-notes.md](docs/savparse-notes.md) is the save
 format as derived, byte by byte, and [docs/commissioning-questions.md](docs/commissioning-questions.md)

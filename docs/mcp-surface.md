@@ -464,10 +464,29 @@ tree. Key: `sha256(abspath | st_mtime_ns | st_size | schema_version)[:16]`. Two-
 front of a pickle at `%LOCALAPPDATA%\satisfactory-mcp\cache\` (via `platformdirs.user_cache_dir` —
 `LOCALAPPDATA`, not `APPDATA`; regenerable data must not roam).
 
+**But a call to `load_projection()` is not 1 ms — it is ~90 ms, and the difference is a subprocess.**
+The memo hit is 1 ms; the `resolve_save` in front of it runs `scan_saves`, which is a `--list` sidecar
+over the save directory, on every call that passes no explicit path. That is the floor on every warm
+read on both surfaces. It is a subprocess because header decoding belongs to the parser and
+`core/saveio/projection.py` is the only module allowed to know one exists.
+
 **Pruned on write, not on startup.** Autosaves rotate every ~5 minutes and each rotation is a new
 cache key, so a long session grows the directory by ~500 kB per autosave — and startup pruning would
 never fire during the session causing the growth. Globbing a dozen files costs nothing next to the 4 s
 parse that just completed. Keeps the 12 newest.
+
+**Concurrent misses collapse into one computation** (`core/singleflight.py`). An autosave is a new key
+for the file every reader resolves to, and the map page fetches eleven layers at once, so a miss is
+eleven simultaneous misses. Three things are flighted: the parse and the scan in
+`core/saveio/projection.py`, and the five expensive views over a projection —
+`graph`, `structures`, `pipe_flow`, `conduit_runs`, `proposals`, ~0.8 s together — in
+`domain/world/state.py`, which are shared by every `WorldState` built over the same projection and
+game data rather than rebuilt per request. The scan is flighted but deliberately **not** stored: it is
+what notices the save the player wrote a moment ago. `plans` and `labels` are not shared at all — the
+tools write through them. Measured on the reference world, 11 concurrent GETs after one autosave:
+**24 parser subprocesses → 2**, cold **8.40 s → 4.19 s**, warm **1.21 s → 0.36 s** (medians of five
+reps alternated against the unpatched tree). See [§23](residency.md) for what is left after that and
+why there is no resident daemon.
 
 ---
 
