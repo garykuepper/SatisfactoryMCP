@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field
 
 from ....domain.spatial import elevation, geo
+from ....domain.spatial import heightfield as heightfield_mod
 from ....domain.spatial import nodes as nodes_mod
 from ....domain.spatial import ranking as ranking_mod
 from ....domain.spatial import regions as regions_mod
@@ -743,10 +744,12 @@ def rank_build_sites(
 
     rows = nodes_mod.annotate(sel.nodes, g, st.projection, st.unlocked_building_ids)
     clusters = geo.cluster(rows, link_m=200.0)
+    terrain = heightfield_mod.load_field()
     scored = ranking_mod.rank_sites(
         clusters,
         infra=st.infra_points(),
         consumer_z=st.consumer_z(),
+        terrain=terrain,
     )
     if not scored:
         return render.envelope(
@@ -779,18 +782,34 @@ def rank_build_sites(
                 else f"{render.num(raw['distance_to_infra_m'])}m",
                 render.num(raw["purity_quality"]),
                 "-" if alt is None else f"{alt:+.0f}m",
+                "-" if raw["pad_roughness_m"] is None else f"{raw['pad_roughness_m']:.1f}m",
+                "-" if raw["pad_slope_deg"] is None else f"{raw['pad_slope_deg']:.0f}deg",
+                "-" if raw["pad_submerged_pct"] is None else f"{raw['pad_submerged_pct']:.0f}%",
             )
         )
 
     notes = [*sel.errors]
     notes.append(
-        "weights: throughput 1.00, spread -0.35, distance -0.25, purity +0.20 "
-        "(min-max normalised across these candidates only)"
+        "weights: throughput 1.00, spread -0.35, distance -0.25, purity +0.20, "
+        "roughness -0.10 (min-max normalised across these candidates only)"
     )
     notes.append(
         "alt is the field's height above your refineries: POSITIVE means fluid flows "
         "downhill to them and needs no pipeline pumps"
     )
+    if terrain is None:
+        notes.append(
+            "no terrain field on this machine, so rough/slope/wet are blank -- run "
+            "tools/gen_world_heightmap.py against your game install to fill them"
+        )
+    else:
+        notes.append(
+            f"rough/slope/wet describe a {ranking_mod.SITE_PAD_M:.0f} m square at the "
+            f"field's centre and are DESCRIPTIONS, not a verdict -- steep and wet sites are "
+            f"built on foundations every day, which is why roughness carries the smallest "
+            f"weight here. rough is bump height off a best-fit plane, so a clean ramp reads "
+            f"near zero however steep it is"
+        )
     if st.consumer_z() is None:
         notes.append("no refineries found, so altitude is not shown")
     # `alt` is a node z minus a refinery z, and it decides whether a fluid run needs pumps.
@@ -815,6 +834,9 @@ def rank_build_sites(
                 "to_infra",
                 "purity",
                 "alt",
+                "rough",
+                "slope",
+                "wet",
             ),
             out_rows,
             total=len(scored),

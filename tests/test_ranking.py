@@ -9,7 +9,8 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp.domain.spatial import geo
-from satisfactory_mcp.domain.spatial.ranking import WEIGHTS, rank_sites
+from satisfactory_mcp.domain.spatial import heightfield as hf
+from satisfactory_mcp.domain.spatial.ranking import SITE_PAD_M, WEIGHTS, rank_sites
 
 
 def _node(x, y, z=0, rate=120.0, purity="normal", tapped=False, reachable=True):
@@ -83,6 +84,98 @@ def test_raw_components_are_always_returned():
     ):
         assert key in scored.raw, key
     assert set(scored.normalised) == set(WEIGHTS)
+
+
+class _FakeTerrain:
+    """A field that answers by x: everything east of 0 is a cliff, everything west a lawn."""
+
+    def __init__(self):
+        self.asked = []
+
+    def window(self, x0_cm, y0_cm, x1_cm, y1_cm, max_texels=1_000_000):
+        self.asked.append((x0_cm, y0_cm, x1_cm, y1_cm))
+        steep = (x0_cm + x1_cm) / 2 >= 0
+        return hf.Area(
+            x0_cm=x0_cm,
+            y0_cm=y0_cm,
+            x1_cm=x1_cm,
+            y1_cm=y1_cm,
+            stride=1,
+            requested_texels=40_401,
+            texels=40_401,
+            nodata_pct=0.0,
+            z_min_m=0.0,
+            z_max_m=90.0 if steep else 2.0,
+            roughness_m=38.0 if steep else 0.4,
+            slope_mean_deg=41.0 if steep else 1.5,
+            submerged_pct=0.0,
+        )
+
+
+def test_terrain_never_vetoes_a_richer_field():
+    """The study's warning, pinned. Buildable is not flat -- stilts are ordinary play and a
+    cliff is sometimes the point -- so a 38 m-rough site with twice the ore must still win.
+    A weight large enough to reverse this would be a veto wearing a weight's clothes."""
+    cliff_rich = _cluster([_node(50_000, 0, rate=480.0)])
+    lawn_poor = _cluster([_node(-50_000, 0, rate=240.0)])
+    ranked = rank_sites([cliff_rich, lawn_poor], infra=[(0.0, 0.0)], terrain=_FakeTerrain())
+    assert ranked[0].cluster is cliff_rich
+    assert ranked[0].raw["pad_roughness_m"] == 38.0
+    assert ranked[1].raw["pad_roughness_m"] == 0.4
+
+
+def test_terrain_breaks_a_tie_and_reads_a_pad_at_the_centroid():
+    rough = _cluster([_node(50_000, 0, rate=240.0)])
+    smooth = _cluster([_node(-50_000, 0, rate=240.0)])
+    terrain = _FakeTerrain()
+    ranked = rank_sites([rough, smooth], infra=[(0.0, 0.0)], terrain=terrain)
+    assert ranked[0].cluster is smooth
+    half = SITE_PAD_M * 100 / 2
+    assert (-50_000 - half, -half, -50_000 + half, half) in terrain.asked
+
+
+def test_without_a_field_the_terrain_columns_are_absent_and_not_zero():
+    """Most machines have no heightfield. A missing pad must read as unknown, because 0 m
+    of roughness is a claim that the ground is perfectly flat."""
+    c = _cluster([_node(0, 0)])
+    (scored,) = rank_sites([c], infra=[(0.0, 0.0)])
+    assert scored.raw["pad_roughness_m"] is None
+    assert scored.raw["pad_submerged_pct"] is None
+
+
+def test_an_unmeasured_pad_does_not_outrank_a_measured_one():
+    """A field off the edge of the heightmap scores as the middle of what is known. As 0 it
+    would be the flattest site on the map; as the worst it would be rejected for being
+    unmapped, and both are inventions."""
+
+    class _Partial(_FakeTerrain):
+        def window(self, x0_cm, y0_cm, x1_cm, y1_cm, max_texels=1_000_000):
+            area = super().window(x0_cm, y0_cm, x1_cm, y1_cm, max_texels)
+            if x0_cm > 100_000:
+                return hf.Area(
+                    x0_cm=x0_cm,
+                    y0_cm=y0_cm,
+                    x1_cm=x1_cm,
+                    y1_cm=y1_cm,
+                    stride=1,
+                    requested_texels=40_401,
+                    texels=0,
+                    nodata_pct=100.0,
+                )
+            return area
+
+    off_map = _cluster([_node(500_000, 0, rate=240.0)])
+    lawn = _cluster([_node(-50_000, 0, rate=240.0)])
+    cliff = _cluster([_node(50_000, 0, rate=240.0)])
+    ranked = rank_sites([off_map, lawn, cliff], infra=[(0.0, 0.0)], terrain=_Partial())
+    by_cluster = {id(s.cluster): s for s in ranked}
+    assert by_cluster[id(off_map)].raw["pad_roughness_m"] is None
+    unknown = by_cluster[id(off_map)].normalised["roughness"]
+    assert (
+        by_cluster[id(lawn)].normalised["roughness"]
+        <= unknown
+        <= by_cluster[id(cliff)].normalised["roughness"]
+    )
 
 
 def test_missing_infrastructure_does_not_score_as_zero_distance():

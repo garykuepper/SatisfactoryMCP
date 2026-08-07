@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ __all__ = [
     "WATER_NAME",
     "WATER_QUALITY_NAME",
     "WATER_QUALITY_NAMES",
+    "Area",
     "Field",
     "Reading",
     "decode_i16",
@@ -237,6 +238,115 @@ class Reading:
         return max(self.water_m - self.z_m, 0.0)
 
 
+@dataclass(frozen=True)
+class Area:
+    """What a rectangle of the field is like, as separate measurements.
+
+    Not a buildability score, and no term here may be combined into one. Flat is not the
+    same as buildable -- stilts are ordinary play and a cliff is sometimes the point -- so
+    every term stays a raw number in its own units and the caller decides what it is worth.
+
+    Nothing here is a placement claim. An area states that water covers 40% of a pad and how
+    far below the rim it stands; it cannot state how many extractors fit, because a water
+    volume's shape is level geometry this field does not carry.
+
+    ``texels`` counts what was actually read after ``stride``; ``requested_texels`` counts
+    the full 1 m rectangle asked for. The percentages are over ``requested_texels``, so a
+    pad half off the grid reads as half no-data rather than as a confident answer about
+    its other half.
+    """
+
+    x0_cm: float
+    y0_cm: float
+    x1_cm: float
+    y1_cm: float
+    stride: int
+    requested_texels: int
+    texels: int
+    nodata_pct: float
+    z_min_m: float | None = None
+    z_max_m: float | None = None
+    z_mean_m: float | None = None
+    z_median_m: float | None = None
+    #: Mean and 90th-percentile gradient magnitude, in degrees from horizontal.
+    slope_mean_deg: float | None = None
+    slope_p90_deg: float | None = None
+    #: RMS deviation from the least-squares plane through the pad, in metres. This is the
+    #: term that separates "steep" from "lumpy": a clean 20 deg ramp has a large slope and
+    #: near-zero roughness, and a boulder field has the reverse.
+    roughness_m: float | None = None
+    submerged_pct: float = 0.0
+    #: Median surface level of whatever water stands in the rectangle, and how far that is
+    #: below the dry ground's median. A negative drop means the water is ABOVE the ground
+    #: median, which is what a pad that is mostly lake looks like. One rectangle, one water
+    #: body: over a rim with the sea on one side and a hill lake on the other the median
+    #: lands between two real surfaces and is neither of them.
+    water_level_m: float | None = None
+    water_below_ground_m: float | None = None
+    #: Share of the rectangle each source layer answered, by ``PROV_NAMES`` key. The fill
+    #: layer is a 3.9 m-quantised stand-in, so a pad that is mostly fill has numbers whose
+    #: error bars swamp the roughness they report -- that is what this is for.
+    provenance_pct: dict[int, float] = field(default_factory=dict)
+
+    @property
+    def z_range_m(self) -> float | None:
+        if self.z_min_m is None or self.z_max_m is None:
+            return None
+        # Re-rounded: the difference of two 1-dp floats is not one, and a raw subtraction
+        # prints 21.099999999999994 into an answer a player reads.
+        return round(self.z_max_m - self.z_min_m, 1)
+
+    @property
+    def coarse_pct(self) -> float:
+        """Share answered by a layer whose accuracy is worse than the roughness scale."""
+        return self.provenance_pct.get(PROV_FILL, 0.0)
+
+
+def _area_shape(z: np.ndarray, good: np.ndarray, spacing_m: float) -> dict[str, float | None]:
+    """Slope and roughness over a window, kept apart because they answer different questions.
+
+    Slope is the gradient magnitude per texel; roughness is the RMS residual from the
+    least-squares plane through the whole window, so a uniform ramp -- steep, and perfectly
+    buildable on stilts -- comes out rough 0. Reporting one number for both would hide
+    exactly the distinction a player makes by eye.
+
+    ``None`` for a window too small or too empty to have the shape: a single row has no
+    gradient across it, and three points always fit a plane exactly.
+    """
+    out: dict[str, float | None] = {
+        "slope_mean_deg": None,
+        "slope_p90_deg": None,
+        "roughness_m": None,
+    }
+    if z.shape[0] >= 2 and z.shape[1] >= 2:
+        masked = np.where(good, z, np.float32(np.nan))
+        dy, dx = np.gradient(masked, spacing_m)
+        mag = np.hypot(dx, dy)
+        finite = np.isfinite(mag)
+        if finite.any():
+            deg = np.degrees(np.arctan(mag[finite]))
+            out["slope_mean_deg"] = round(float(deg.mean()), 1)
+            out["slope_p90_deg"] = round(float(np.percentile(deg, 90)), 1)
+
+    rows, cols = np.nonzero(good)
+    if rows.size >= 4:
+        # Coordinates centred before the normal equations: uncentred, the 3x3 is dominated
+        # by the constant term at map-scale offsets and solves badly.
+        xs = cols.astype(np.float64) * spacing_m
+        ys = rows.astype(np.float64) * spacing_m
+        xs -= xs.mean()
+        ys -= ys.mean()
+        zs = z[good].astype(np.float64)
+        design = np.column_stack([np.ones_like(xs), xs, ys])
+        try:
+            coefficients = np.linalg.solve(design.T @ design, design.T @ zs)
+            residual = zs - design @ coefficients
+        except np.linalg.LinAlgError:
+            residual = zs - zs.mean()
+        out["roughness_m"] = round(float(np.sqrt(float((residual**2).mean()))), 2)
+    return out
+
+
 class Field:
     """A loaded heightmap: its rasters, a georeference, and the accuracy it measured.
 
@@ -357,6 +467,157 @@ class Field:
             water_m=water_m,
             water_quality=quality,
         )
+
+    def _rows_cols(
+        self, x0_cm: float, y0_cm: float, x1_cm: float, y1_cm: float
+    ) -> tuple[int, int, int, int]:
+        """Half-open ``(row_lo, row_hi, col_lo, col_hi)`` clipped to the grid.
+
+        Rounded like ``texel``, because the grid is vertex-aligned; the bounds may come out
+        empty (``lo >= hi``) for a rectangle entirely off the grid, and every caller must
+        cope with that rather than assume an overlap.
+        """
+        lo_x, hi_x = (x0_cm, x1_cm) if x0_cm <= x1_cm else (x1_cm, x0_cm)
+        lo_y, hi_y = (y0_cm, y1_cm) if y0_cm <= y1_cm else (y1_cm, y0_cm)
+        col_lo = round((lo_x - self.x0_cm) / self.spacing_cm)
+        col_hi = round((hi_x - self.x0_cm) / self.spacing_cm) + 1
+        row_lo = round((lo_y - self.y0_cm) / self.spacing_cm)
+        row_hi = round((hi_y - self.y0_cm) / self.spacing_cm) + 1
+        return (
+            max(row_lo, 0),
+            min(row_hi, self.height),
+            max(col_lo, 0),
+            min(col_hi, self.width),
+        )
+
+    def window(
+        self,
+        x0_cm: float,
+        y0_cm: float,
+        x1_cm: float,
+        y1_cm: float,
+        max_texels: int = 1_000_000,
+    ) -> Area:
+        """The terrain over a rectangle, as the facts a build decision reads.
+
+        Always an ``Area``, never ``None``: a rectangle off the grid is 100% no-data, which
+        is an answer, and returning ``None`` there would make "nothing is known" and "you
+        asked wrong" the same result. Every statistic is over the texels that HAVE data, and
+        ``nodata_pct`` is what says how much of the pad they speak for.
+
+        Reads a strided numpy view, never a per-texel loop: at 1 m over a 750 km2 world a
+        200 m pad is 40k texels and a kilometre pad is a million, and ``at()`` costs ~1.2 us
+        a texel. Beyond ``max_texels`` the view is decimated by an integer ``stride``, which
+        is reported -- decimation lowers roughness and slope, because it cannot see detail
+        finer than the new spacing, so a caller comparing two areas must compare their
+        strides too.
+        """
+        row_lo, row_hi, col_lo, col_hi = self._rows_cols(x0_cm, y0_cm, x1_cm, y1_cm)
+        span_cols = round(abs(x1_cm - x0_cm) / self.spacing_cm) + 1
+        span_rows = round(abs(y1_cm - y0_cm) / self.spacing_cm) + 1
+        requested = span_rows * span_cols
+        empty = Area(
+            x0_cm=x0_cm,
+            y0_cm=y0_cm,
+            x1_cm=x1_cm,
+            y1_cm=y1_cm,
+            stride=1,
+            requested_texels=requested,
+            texels=0,
+            nodata_pct=100.0,
+        )
+        if row_lo >= row_hi or col_lo >= col_hi:
+            return empty
+
+        stride = 1
+        inside = (row_hi - row_lo) * (col_hi - col_lo)
+        if max_texels > 0 and inside > max_texels:
+            stride = int(np.ceil(np.sqrt(inside / max_texels)))
+        cut = (slice(row_lo, row_hi, stride), slice(col_lo, col_hi, stride))
+
+        raw = self._height_dm[cut]
+        good = raw != NODATA
+        n_good = int(good.sum())
+        # The percentages are over the REQUESTED rectangle, so a pad hanging off the grid
+        # edge reports the part nobody measured instead of a confident answer about the
+        # rest. Scaled by stride^2 because a decimated view stands for the whole area.
+        seen = float(raw.size) * stride * stride
+        outside = max(requested - seen, 0.0)
+        denom = float(requested) if requested else 1.0
+        nodata_pct = 100.0 * ((raw.size - n_good) * stride * stride + outside) / denom
+        if n_good == 0:
+            return replace(empty, stride=stride)
+
+        z = np.where(good, raw, 0).astype(np.float32) / np.float32(DM_PER_M)
+        z_valid = z[good]
+
+        prov = self._prov[cut]
+        counts = np.bincount(prov.ravel(), minlength=PROV_CLIFF_DIRECT + 1)
+        provenance_pct = {
+            int(code): round(100.0 * float(counts[code]) * stride * stride / denom, 1)
+            for code in range(len(counts))
+            if counts[code]
+        }
+
+        submerged, water_level, water_drop = self._area_water(cut, z, good, z_valid, stride, denom)
+
+        return Area(
+            x0_cm=x0_cm,
+            y0_cm=y0_cm,
+            x1_cm=x1_cm,
+            y1_cm=y1_cm,
+            stride=stride,
+            requested_texels=requested,
+            texels=n_good,
+            nodata_pct=round(nodata_pct, 1),
+            z_min_m=round(float(z_valid.min()), 1),
+            z_max_m=round(float(z_valid.max()), 1),
+            z_mean_m=round(float(z_valid.mean()), 1),
+            z_median_m=round(float(np.median(z_valid)), 1),
+            **_area_shape(z, good, self.spacing_cm * stride / 100.0),
+            submerged_pct=round(submerged, 1),
+            water_level_m=water_level,
+            water_below_ground_m=water_drop,
+            provenance_pct=provenance_pct,
+        )
+
+    def _area_water(
+        self,
+        cut: tuple[slice, slice],
+        z: np.ndarray,
+        good: np.ndarray,
+        z_valid: np.ndarray,
+        stride: int,
+        denom: float,
+    ) -> tuple[float, float | None, float | None]:
+        """Submerged share, water surface level, and its drop below the dry ground.
+
+        Vectorises ``Reading.submerged``, including its fallback: with a quality plane, wet
+        is ``quality != WATER_DRY``; without one -- a field written before that plane -- all
+        there is to go on is ``water > ground``, which over the fill layer reads the open
+        ocean as dry. The fallback stays because a pre-quality field is still readable, not
+        because the comparison is sound.
+        """
+        water = self._water_raster()
+        if water is None:
+            return 0.0, None, None
+        wet_dm = water[cut]
+        has_water = wet_dm != NODATA
+        grades = self._water_quality_raster()
+        if grades is not None:
+            wet = has_water & (grades[cut] != WATER_DRY)
+        else:
+            wet = has_water & good & ((wet_dm.astype(np.float32) / DM_PER_M) > z)
+        n_wet = int(wet.sum())
+        if n_wet == 0:
+            return 0.0, None, None
+        level = float(np.median(wet_dm[wet].astype(np.float32))) / DM_PER_M
+        dry_z = z[good & ~wet]
+        # `water_below_ground_m` is measured against the DRY ground, not the pad median: on
+        # a pad that is mostly lake the pad median IS the lake bed, and the drop would come
+        # out near zero for a pond 40 m below a plateau rim.
+        drop = None if dry_z.size == 0 else round(float(np.median(dry_z)) - level, 1)
+        return 100.0 * n_wet * stride * stride / denom, round(level, 1), drop
 
 
 #: Loaded fields, keyed by the directory and its sidecar's mtime, so a regenerated field is
