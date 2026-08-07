@@ -223,3 +223,26 @@ def test_the_water_warning_reports_the_bodies_and_the_level(game):
     assert "sea level" in line
     # What is genuinely unknown is still said plainly.
     assert "shape is level geometry and is not in the save" in line
+
+
+def test_asking_for_water_nodes_does_not_report_water_as_absent(live):
+    """The tool answered "0 free and reachable" for the resource that decides aluminium and
+    nuclear, on a map ringed by lakes. Every row it CAN return is a fracking satellite, so
+    the number was true and the answer was not: no node is free because open water has no
+    node, and the bodies already being pumped are what was actually asked for."""
+    if not live.water_volumes()["pumps"]:
+        pytest.skip("no water extractors built")
+    out = srv.search_resource_nodes(resource="Water", limit=4)
+    assert "open water carries NO NODE" in out
+    assert "fracking satellite" in out
+    assert "## open water" in out
+    assert "pumps built=" in out and "sea level=" in out
+    # The one thing that is genuinely unknown stays unknown.
+    assert "SHAPE is level geometry and is not in the save" in out
+
+
+def test_a_dry_land_resource_gets_no_water_block(live):
+    """Water is an exception to the node table, not a preamble on every answer."""
+    out = srv.search_resource_nodes(resource="Coal", limit=4)
+    assert "## open water" not in out
+    assert "NO NODE" not in out
