@@ -44,6 +44,8 @@ def test_machines_split_by_kind_and_name_their_buildings(client, state):
         "recipe_name",
         "clock",
         "paused",
+        "state",
+        "uptime",
         "yaw",
         "w_m",
         "l_m",
@@ -66,6 +68,63 @@ def test_a_machine_carries_the_height_a_top_down_map_cannot_draw(client):
     # The case the floor view exists for: taller than this world's 12 m storey module, so
     # it is physically through the deck above and only the deck below can say so.
     assert tall.get("Refinery") == 15.0, tall
+
+
+def test_every_machine_carries_the_state_the_health_report_would_give_it(client, state):
+    """The map's states and ``factory_health``'s are the SAME assessment, not two.
+
+    Asserted against ``health.assess`` re-run over the same records rather than against a
+    table of expected words, because the value of the field is that the map and the tool
+    cannot disagree about a machine. Totality is asserted too: a row whose state fell
+    through would be a rectangle the page draws with no verdict at all.
+    """
+    from satisfactory_mcp.domain.factories import health
+
+    body = client.get("/api/machines").json()
+    rows = {row["instance_leaf"]: row for kind in body for row in body[kind]}
+    report = health.assess("t", list(rows), state.game, state.projection)
+    assert len(report.machines) == len(rows), "assess did not see every row the map is sent"
+    for m in report.machines:
+        assert rows[m.instance]["state"] == m.state
+        if m.uptime is None:
+            assert rows[m.instance]["uptime"] is None
+        else:
+            assert rows[m.instance]["uptime"] == pytest.approx(m.uptime, abs=5e-4)
+    assert {r["state"] for r in rows.values()} <= set(health.STATES)
+
+
+def test_a_blocked_machine_is_not_dressed_as_a_broken_one(client):
+    """The objection this field exists under: ``blocked`` is the commonest state on a mature
+    base and is a full output box, not a fault. The wire has to keep it TELLABLE from the
+    states that stop a machine against the player's wishes, or the page cannot weigh them
+    differently -- so the two must never be collapsed into one "unhealthy" flag."""
+    body = client.get("/api/machines").json()
+    counts: dict[str, int] = {}
+    for kind in body:
+        for row in body[kind]:
+            counts[row["state"]] = counts.get(row["state"], 0) + 1
+    assert counts["blocked"] > counts["starved"], counts
+    # And a paused machine keeps both spellings: the save's own field, and the assessment.
+    for kind in body:
+        for row in body[kind]:
+            assert row["paused"] == (row["state"] == "paused"), row
+
+
+def test_uptime_is_a_fraction_and_absent_rather_than_zero_where_unmeasured(client):
+    """The only measured number in the project. ``null`` is "no productivity monitor on this
+    building"; ``0.0`` is "monitored, and it produced nothing" -- and a page that drew those
+    the same would report every belt-side buffer as a stopped machine."""
+    rows = [row for kind in client.get("/api/machines").json().values() for row in kind]
+    measured = [r["uptime"] for r in rows if r["uptime"] is not None]
+    assert measured and len(measured) < len(rows), "both branches exist on the fixture world"
+    for value in measured:
+        assert 0.0 <= value <= 1.0
+    assert any(r["uptime"] == 0.0 for r in rows), "a monitored idle machine reads 0, not null"
+    # One-way, not an equivalence: a machine can be paused or on a dead node AND unmonitored,
+    # and those states are named for the stronger fact rather than for the missing window.
+    for row in rows:
+        if row["state"] == "unmonitored":
+            assert row["uptime"] is None, row
 
 
 def test_machine_popup_rows_never_degrade_to_engine_ids(client):

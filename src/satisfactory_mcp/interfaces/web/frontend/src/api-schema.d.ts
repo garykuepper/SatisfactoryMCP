@@ -308,7 +308,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Machines */
+        /**
+         * Machines
+         * @description Every placed actor, with the reason it is or is not running.
+         *
+         *     ``health.assess`` is asked once for the whole world rather than per row. Over the
+         *     reference projection's 570 actors: 1.3 ms to build these rows without it, 2.5 ms with.
+         *
+         *     195 of those 570 are ``blocked``, which on a mature base is a full output box and not a
+         *     fault. What the map does with that is STOPPED in ``frontend/src/placements.ts``.
+         */
         get: operations["machines_api_machines_get"];
         put?: never;
         post?: never;
@@ -1515,6 +1524,11 @@ export interface components {
          *     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
          *     -- for the buildings whose ``mClearanceData`` yields no box (belts, pipes, rails, poles)
          *     and for any class the docs dump does not carry.
+         *
+         *     ``state`` is one of ``health.STATES`` and never null; ``paused`` is the save's own field
+         *     beside it, where ``state`` is a reading of the buffers. ``uptime`` is the fraction of the
+         *     machine's own ~300 s window it spent producing, null for a building carrying no monitor
+         *     at all -- a different claim from zero.
          */
         PlacementRow: {
             /** Instance Leaf */
@@ -1537,6 +1551,10 @@ export interface components {
             clock: number | null;
             /** Paused */
             paused: boolean;
+            /** State */
+            state: string;
+            /** Uptime */
+            uptime: number | null;
             /** Yaw */
             yaw: number | null;
             /** W M */
