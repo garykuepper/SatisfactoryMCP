@@ -13,7 +13,7 @@ from pydantic import Field
 
 from ....domain.spatial import regions as regions_mod
 from ....domain.spatial.origin import resolve_origin
-from ....domain.world.inventory import Holding
+from ....domain.world.inventory import CRATE_KIND_TEXT, Holding
 from ....presenters.text import primitives as render
 from ..app import Limit, _item_id, _state, mcp
 
@@ -360,9 +360,10 @@ def crates(
             "crate contents are recoverable but never spendable: mam_research, plan_factory "
             "and every other cost check ignore them deliberately"
         ),
-        (
-            "kind='none' means the crate predates the game's death/dismantle distinction, "
-            "not that this one is unknown for some other reason"
+        *(
+            f"kind={kind!r}: {gloss}"
+            for kind, gloss in CRATE_KIND_TEXT.items()
+            if any(h.crate_kind == kind for h in holdings)
         ),
     ]
     return render.envelope(

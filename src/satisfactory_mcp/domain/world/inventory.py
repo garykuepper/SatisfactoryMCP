@@ -13,7 +13,17 @@ from math import ceil
 from ...core.gamedata.constants import STACK_SIZE
 from ...core.gamedata.model import GameData
 
-__all__ = ["BUCKETS", "SPENDABLE", "Holding", "Inventory"]
+__all__ = ["BUCKETS", "CRATE_KIND_TEXT", "SPENDABLE", "Holding", "Inventory"]
+
+#: What each ``crate_kind`` means, in the words a reader wants rather than the enum's.
+#: ``none`` is the game's own ``CT_None``: ``mCrateType`` arrived in build 433351, so a crate
+#: made before that carries no type and never will. Here rather than in the web router
+#: because the map popup and the ``crates`` tool both gloss the same three words.
+CRATE_KIND_TEXT = {
+    "death": "dropped where a pioneer died",
+    "dismantle": "overflow from dismantling with a full inventory",
+    "none": "kind not recorded -- this crate predates the game's death/dismantle distinction",
+}
 
 #: The piles ``breakdown`` reports. ``depot`` is the uploaded Dimensional Depot pool, which
 #: is a top-level projection key rather than one of ``sources``.

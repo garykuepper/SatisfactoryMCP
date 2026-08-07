@@ -15,6 +15,7 @@ from typing import Any, TypedDict
 
 from fastapi import APIRouter, Request
 
+from ....domain.world.inventory import CRATE_KIND_TEXT
 from ....domain.world.state import WorldState
 from ..serial import _fail, _state, _xyz, _yaw
 
@@ -24,16 +25,6 @@ router = APIRouter(prefix="/api")
 
 
 # --------------------------------------------------------------------- crates
-
-
-#: What each ``kind`` means, in the words a reader wants rather than the enum's. ``none`` is
-#: the game's own ``CT_None``: ``mCrateType`` arrived in build 433351, so a crate made before
-#: that carries no type and never will.
-CRATE_KIND_TEXT = {
-    "death": "dropped where a pioneer died",
-    "dismantle": "overflow from dismantling with a full inventory",
-    "none": "kind not recorded -- this crate predates the game's death/dismantle distinction",
-}
 
 
 class CrateItem(TypedDict):
