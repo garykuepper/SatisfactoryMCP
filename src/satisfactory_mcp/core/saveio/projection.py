@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ... import config
 from .. import atomic
+from ..singleflight import Singleflight
 from ..text import ago, stamp
 
 #: Bumped whenever the projection's shape changes, and part of the disk cache key below, so
@@ -45,9 +46,14 @@ from ..text import ago, stamp
 #: filed with the smelter buffers as material that cannot be spent, and they are recoverable
 #: stock, so they move to their own ``inventories["crate"]`` bucket.
 SCHEMA_VERSION = 19
-_MEM: dict[str, dict] = {}
-_MEM_ORDER: list[str] = []
-_MEM_MAX = 3
+
+#: The in-process projection memo, and the single-flight around its misses. An autosave is a
+#: new cache key for a file every reader resolves to at once, so without the flight the map
+#: page's eleven layers spawn eleven parser sidecars for the same bytes.
+_MEM = Singleflight(maxsize=3)
+
+#: Concurrent directory scans, collapsed but never stored. See ``scan_saves``.
+_SCANS = Singleflight(maxsize=0)
 
 #: .NET ticks at the Unix epoch, for converting saveDateTimeInTicks.
 _TICKS_AT_EPOCH = 621_355_968_000_000_000
@@ -191,11 +197,16 @@ def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
 
 
 def scan_saves(root: str | Path | None = None) -> dict:
-    """Header-only scan of the save tree. One subprocess, ~0.17 s for 63 files."""
+    """Header-only scan of the save tree. One subprocess, ~90 ms for 63 files.
+
+    Never memoised: this is what notices the save the player wrote a moment ago, and every
+    call that passes no explicit path runs it. Only the simultaneous ones are collapsed --
+    eleven map layers arriving together used to be eleven scan subprocesses of one directory.
+    """
     r = Path(root) if root else config.saves_root()
     if not r.exists():
         return {"root": str(r), "saves": [], "unsupported": [], "missing_root": True}
-    return _run_sidecar(["--list", str(r)])
+    return _SCANS.call(str(r), lambda: _run_sidecar(["--list", str(r)]))
 
 
 def list_worlds(root: str | Path | None = None) -> tuple[list[World], list[dict]]:
@@ -317,45 +328,30 @@ def _cache_key(header: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def load_projection(
-    path: str | Path | None = None,
-    world: str | None = None,
-    prefer_manual: bool = False,
-    refresh: bool = False,
-) -> dict:
-    """Return the projection for a save, using the two-tier cache.
+def _read_disk_cache(key: str) -> dict | None:
+    disk = config.cache_dir() / f"save-{key}.pkl"
+    if not disk.is_file():
+        return None
+    try:
+        return pickle.loads(disk.read_bytes())
+    except Exception:
+        # Corrupt, or a stale pickle format, or a file another process's `prune_cache`
+        # deleted between the `is_file` above and the read. The unlink is best-effort
+        # for the same reason: on Windows it raises `PermissionError` while any other
+        # process holds the file open, and nothing in a read path may die over a cache.
+        try:
+            disk.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
-    Parsing costs ~4 s; a cache hit is ~1 ms.
-    """
-    header = resolve_save(path, world, prefer_manual)
-    key = _cache_key(header)
 
-    if not refresh:
-        hit = _MEM.get(key)
-        if hit is not None:
-            return hit
-        disk = config.cache_dir() / f"save-{key}.pkl"
-        if disk.is_file():
-            try:
-                payload = pickle.loads(disk.read_bytes())
-                _remember(key, payload)
-                return payload
-            except Exception:
-                # Corrupt, or a stale pickle format, or a file another process's `prune_cache`
-                # deleted between the `is_file` above and the read. The unlink is best-effort
-                # for the same reason: on Windows it raises `PermissionError` while any other
-                # process holds the file open, and nothing in a read path may die over a cache.
-                try:
-                    disk.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
+def _parse(header: dict, key: str) -> dict:
     payload = _run_sidecar([header["path"]])
     if payload.get("schema_version") != SCHEMA_VERSION:
         payload.setdefault("warnings", []).append(
             f"sidecar schema {payload.get('schema_version')} != expected {SCHEMA_VERSION}"
         )
-    _remember(key, payload)
     try:
         # `atomic.write_bytes`, not `Path.write_bytes`: this directory has more than one
         # writer -- the web server, any CLI invocation and, under `pytest-xdist`, a test
@@ -370,13 +366,28 @@ def load_projection(
     return payload
 
 
-def _remember(key: str, payload: dict) -> None:
-    _MEM[key] = payload
-    if key in _MEM_ORDER:
-        _MEM_ORDER.remove(key)
-    _MEM_ORDER.append(key)
-    while len(_MEM_ORDER) > _MEM_MAX:
-        _MEM.pop(_MEM_ORDER.pop(0), None)
+def load_projection(
+    path: str | Path | None = None,
+    world: str | None = None,
+    prefer_manual: bool = False,
+    refresh: bool = False,
+) -> dict:
+    """Return the projection for a save, using the two-tier cache.
+
+    Parsing costs ~4 s; a memo hit is ~1 ms, and the ``resolve_save`` above it is a sidecar
+    of its own at ~90 ms, which is the floor on every call that passes no explicit path.
+    """
+    header = resolve_save(path, world, prefer_manual)
+    key = _cache_key(header)
+
+    def build() -> dict:
+        if not refresh:
+            cached = _read_disk_cache(key)
+            if cached is not None:
+                return cached
+        return _parse(header, key)
+
+    return _MEM.get(key, build, refresh=refresh)
 
 
 def prune_cache(keep: int = 12) -> int:

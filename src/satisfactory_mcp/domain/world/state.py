@@ -10,12 +10,14 @@ module-level names alike.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ...core.gamedata.model import GameData, Recipe, Schematic
 from ...core.saveio import projection as proj
+from ...core.singleflight import Singleflight
 from ..collectibles.removed import RemovedActors
 from ..collectibles.table import CollectibleTable, _name_stem, load_collectibles
 from ..power.report import PowerLedger
@@ -37,6 +39,13 @@ __all__ = ["CollectibleTable", "HardDriveOffer", "WorldState", "load_collectible
 #: Re-exported rather than used: the collectibles tests import ``_name_stem`` from here.
 _ = (_name_stem,)
 
+#: The five expensive views that are pure functions of ``(projection, game)``, shared by every
+#: state built over the same pair -- a request builds its own ``WorldState`` and the whole
+#: ~0.8 s of graph, structures, pipe flow, conduit runs and proposals was being paid per
+#: request per layer. Five names times three projections, matching the projection memo's own
+#: depth, and ~7 MB of views per projection on the reference world beside its own ~13 MB.
+_DERIVED = Singleflight(maxsize=15)
+
 
 @dataclass
 class WorldState:
@@ -44,6 +53,22 @@ class WorldState:
 
     projection: dict
     game: GameData
+
+    def _derived(self, name: str, build: Callable[[], Any]) -> Any:
+        """A view shared by every state over this same projection and game data.
+
+        Only for views that are pure functions of that pair and that no caller mutates: two
+        requests hold the same object, so an in-place edit by one is an answer change for the
+        other. ``plans`` and ``labels`` are the counter-example and are deliberately not here
+        -- they are disk-backed stores the MCP tools write THROUGH (``st.plans.put(...)``
+        then ``st.plans.save()``), so sharing them would hide one process's rename from the
+        other until the next autosave.
+
+        The stored entry holds the projection and the game data, and must keep doing so:
+        the key is their ``id()``, and a freed object's address is reused.
+        """
+        key = (id(self.projection), id(self.game), name)
+        return _DERIVED.get(key, lambda: (self.projection, self.game, build()))[2]
 
     # ---- facets ---------------------------------------------------------
     #
@@ -122,40 +147,49 @@ class WorldState:
 
     @cached_property
     def graph(self):
-        """The factory graph. Built once per state, since identity, health and layout
-        all want it."""
+        """The factory graph, ~50 ms. Identity, health and layout all want it.
+
+        Shared, so ``FactoryGraph.adjacency``'s lazy index is built under concurrency: it
+        publishes a fully built dict in one assignment, and two threads racing lose only the
+        duplicated work.
+        """
         from ..factories.build import build_graph
 
-        return build_graph(self.projection)
+        return self._derived("graph", lambda: build_graph(self.projection))
 
     @cached_property
     def pipe_flow(self) -> list[dict]:
-        """Which way each pipe carries fluid. Cached like ``graph``: it walks the plumbing
-        once per pipe, and every caller wants the whole answer rather than one row."""
-        return world_flow.pipe_flow(self.projection)
+        """Which way each pipe carries fluid, ~13 ms. It walks the plumbing once per pipe,
+        and every caller wants the whole answer rather than one row."""
+        return self._derived("pipe_flow", lambda: world_flow.pipe_flow(self.projection))
 
     @cached_property
     def conduit_runs(self):
-        """Belt and pipe runs as queryable geometry. Cached like ``graph``: ~70 ms to
-        group and join on the reference world, and describe_location and the conduit
-        search both want the whole set."""
+        """Belt and pipe runs as queryable geometry, ~170 ms. describe_location and the
+        conduit search both want the whole set."""
         from . import conduits
 
-        return conduits.build_runs(self.projection, self.game, self.pipe_flow)
+        return self._derived(
+            "conduit_runs",
+            lambda: conduits.build_runs(self.projection, self.game, self.pipe_flow),
+        )
 
     @cached_property
     def structures(self):
-        """Foundation slabs -- what was physically built as one platform."""
+        """Foundation slabs -- what was physically built as one platform. ~85 ms."""
         from ..factories.structure import build_structures
 
-        return build_structures(self.projection)
+        return self._derived("structures", lambda: build_structures(self.projection))
 
     @cached_property
     def proposals(self):
-        """Coherence-scored factory proposals. ~0.3 s, so built once per state."""
+        """Coherence-scored factory proposals. ~0.5 s, the most expensive view here."""
         from ..factories.cohere import propose
 
-        return propose(self.graph, self.game, self.projection, self.structures)
+        return self._derived(
+            "proposals",
+            lambda: propose(self.graph, self.game, self.projection, self.structures),
+        )
 
     @cached_property
     def plans(self):
