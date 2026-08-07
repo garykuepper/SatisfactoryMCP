@@ -113,6 +113,13 @@ export type FactoryRow = Schema["FactoryRow"];
 export type ProposalRow = Schema["ProposalRow"];
 export type FactoriesResponse = Body<"FactoriesResponse">;
 
+/* ------------------------------------------------------------------ /api/plans */
+
+/** A stored plan's pad. Its coordinates are METRES already -- the siting is a statement the
+ *  player typed, not a save reading -- so nothing on either side divides by 100. */
+export type PlanSiting = Schema["PlanSiting"];
+export type PlansResponse = Body<"PlansResponse">;
+
 /* ---------------------------------------------------------- /api/collectibles */
 
 export type CollectibleRow = Schema["CollectibleRow"];

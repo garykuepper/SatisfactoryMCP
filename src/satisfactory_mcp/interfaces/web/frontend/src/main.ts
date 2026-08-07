@@ -52,6 +52,7 @@ import "./header";
 import "./labels";
 import "./markers";
 import "./placements";
+import "./plans";
 import "./power";
 import "./routes";
 

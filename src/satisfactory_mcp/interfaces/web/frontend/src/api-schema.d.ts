@@ -768,6 +768,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plans
+         * @description Every stored plan that has been sited, as the rectangle it claims.
+         *
+         *     A world with plans and no sitings answers ``{"plans": [], "stored": 3}``, which is why
+         *     ``stored`` is here: an empty layer over three stored plans means "none of them has been
+         *     sited yet", and an empty layer over no plans at all means the feature is unused.
+         *
+         *     A siting with no footprint is NOT sent. ``site_plan`` always records one -- given or
+         *     derived from the layout -- so a footprintless record is a hand-edited file, and an
+         *     origin alone bounds nothing this layer could draw.
+         */
+        get: operations["plans_api_plans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1563,6 +1591,51 @@ export interface components {
             l_m: number | null;
             /** H M */
             h_m: number | null;
+        };
+        /**
+         * PlanSiting
+         * @description One stored plan's pad: centre, facing and extent, all in metres on save axes.
+         *
+         *     NOT centimetres, and this is the one payload on this surface where that is not a bug.
+         *     ``Siting`` records metres because a player typed them, so ``serial._m`` has nothing to
+         *     do here -- see ``domain/planning/siting.py``.
+         *
+         *     ``z_m`` is null wherever the origin was named by something with no height (a factory
+         *     centroid, a bare ``x,y``); the pad is still a rectangle on the ground. ``source`` is
+         *     ``"given"`` for a footprint the player measured and ``"layout"`` for the square
+         *     ``plan_layout`` budgeted, which is the difference between a pad and an estimate.
+         */
+        PlanSiting: {
+            /** Name */
+            name: string;
+            /** X M */
+            x_m: number;
+            /** Y M */
+            y_m: number;
+            /** Z M */
+            z_m: number | null;
+            /** Yaw Deg */
+            yaw_deg: number;
+            /** Width M */
+            width_m: number;
+            /** Depth M */
+            depth_m: number;
+            /** Source */
+            source: string;
+            /** Origin Label */
+            origin_label: string;
+            /** Factory */
+            factory: string;
+        };
+        /**
+         * PlansResponse
+         * @description What ``/api/plans`` sends on a 200. An error is a 4xx with ``{"error": ...}``.
+         */
+        PlansResponse: {
+            /** Plans */
+            plans: components["schemas"]["PlanSiting"][];
+            /** Stored */
+            stored: number;
         };
         /**
          * PlayerPosition
@@ -2826,6 +2899,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plans_api_plans_get: {
+        parameters: {
+            query?: {
+                save?: string | null;
+                world?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlansResponse"];
                 };
             };
             /** @description Validation Error */
