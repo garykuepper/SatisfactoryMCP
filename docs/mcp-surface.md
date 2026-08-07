@@ -18,12 +18,11 @@ testing contract. Section numbers are continuous with the rest of the spec;
 ### 10.1 Tools
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
-**Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `node_occupancy`, `factory_sites`, `phase_requirements`, `power_shards`, `collected_from_world`
-**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`, `factory_floors`
+**Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`, `phase_requirements`, `power_shards`, `collected_from_world`, `mam_research`, `somersloops`
+**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`, `factory_floors`, `trace_upstream`
 **Inventory:** `stock`, `storage`, `crates`
-**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`
-**Layout:** `plan_layout`
-**Planning:** `plan_factory`, `plan_layout`, `diff_vs_save`, `bom`, `list_plans`, `forget_plan`, `site_plan`, `explain_byproducts`, `compare_recipe_options`
+**Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`, `show_on_map`
+**Planning:** `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `rank_unlocks`, `list_plans`, `site_plan`, `rename_plan`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -36,15 +35,20 @@ plan_factory(objective="max_mw", target_item=None, sources=[...],
      + a logistics table of `limit` flows, plus any logistics_items pinned
 
 search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
-                      only_free=False, group="field"|"node", limit=25)
+                      only_free=False, mode="fields"|"nodes"|"nearest", near=None,
+                      limit=25, offset=0)
   -> per-field clusters (region, grid, centre, purity mix, total/free, spread)
      or per-node rows whose ids feed straight back in as node: selectors
 
 search_recipes(query="", consumes=None, produces=None, kind="part"|"building"|"manual"|"all",
-               only_alternates=False, include_events=False, save=None, limit=10, offset=0)
+               only_alternates=False, include_events=False, save=None, world=None,
+               limit=10, offset=0)
   -> a census over ALL 872 recipes broken down by kind and HAVE/LOCKED, then rows
+  -> `world` matters: HAVE/LOCKED is a fact about one world, and without it a
+     multi-world install was silently answered against the default
 
-bom(item, qty=60, allow_sinks=True, outlets=[], exclude_recipes=[], only_recipes=[], limit=20)
+bom(item, qty=60, allow_sinks=True, outlets=[], exclude_recipes=[], only_recipes=[],
+    limit=20, offset=0)
   -> raw totals + one row per item: made/min, used/min, the recipe chosen, machines, building
 ```
 
@@ -460,7 +464,10 @@ may be able to return its full table.**
 4. Summary/detail split; never ship cycle time + power + unlock in a list.
 5. Precompute `/min`; pre-divide fluids.
 6. **Truncation envelope counting data rows only** — a header/footer miscount produced "showing 7" for 5
-   recipes, which actively misleads the model.
+   recipes, which actively misleads the model. The envelope says "call again with `offset=N`"
+   **only when the tool takes an `offset`** — `render.table` writes that sentence only for a
+   caller that passes `offset=`, and a table that cannot page says how to narrow instead.
+   Fifteen tools named a parameter their own schema rejected before that rule existed.
 7. Scoped aggregates before rows ([§7.3](spatial-and-map.md#73-source-selectors)).
 8. Round coordinates to metres.
 

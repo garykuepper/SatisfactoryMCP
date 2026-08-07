@@ -301,8 +301,13 @@ where the sign is the answer:
 A per-machine listing says a Foundry runs Solid Steel Ingot. Only the balance says the
 steel factory needs 975 Coal/min fed in.
 
-Aspects: `summary`, `balance`, `inputs`, `outputs`, `machines`, `recipes`, `buildings`,
-`power`, `nodes`, `links`, `issues`.
+Aspects: `summary`, `balance`, `inputs`, `outputs`, `internal`, `machines`, `recipes`,
+`buildings`, `power`, `nodes`, `links`, `issues`. `internal` is the third row of the list
+above given its own view — what a factory makes and eats entirely within itself, which is
+the difference between a finished line and one still on somebody else's belts. `power`
+prints nameplate **and** measured side by side, never blended: measured weights each
+machine's rated draw by its own 300 s productivity window, and the machines that keep no
+monitor are charged in full, because unknown utilisation must not read as idle.
 
 Two implementation notes that were both bugs first:
 
@@ -387,8 +392,10 @@ Persisted per world under `saveIdentifier` in `user_data_dir/labels/`, deliberat
 `cache_dir` (which `cache_prune` wipes) and **not** in the repo.
 
 Selection uses a small query language (`graph/select.py`): `product:`, `recipe:`, `building:`,
-`near:x,y@m` or `near:<label>@m`, `base:n`, `line:n`, `slab:n`, `proposal:n`, `label:`, `all`. Terms are ANDed, commas inside
-one term are ORed, a leading `-` excludes. Intersection rather than union because carving is
+`near:x,y@m` / `near:x,y,m` / `near:<label>@m`, `base:n`, `line:n`, `slab:n`, `proposal:n`, `label:`,
+`machine:<instance>`, `all`. Terms are ANDed, commas inside
+one term are ORed, a leading `-` excludes. `machine:` is checked against the graph, so an
+unknown id is an error rather than a selection of nothing. Intersection rather than union because carving is
 subtractive in practice — the player starts from something too big and narrows it.
 
 Two orthogonal modifiers, because a factory is delimited from either end:
