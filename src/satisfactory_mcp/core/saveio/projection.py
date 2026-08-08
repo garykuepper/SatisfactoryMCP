@@ -398,7 +398,7 @@ def _read_disk_cache(key: str) -> dict | None:
     if not disk.is_file():
         return None
     try:
-        return pickle.loads(disk.read_bytes())
+        payload = pickle.loads(disk.read_bytes())
     except Exception:
         # Corrupt, or a stale pickle format, or a file another process's `prune_cache`
         # deleted between the `is_file` above and the read. The unlink is best-effort
@@ -409,6 +409,16 @@ def _read_disk_cache(key: str) -> dict | None:
         except OSError:
             pass
         return None
+    # Touched on the way out, which is what makes ``prune_cache`` keep the twelve saves
+    # most recently READ rather than the twelve most recently written. The watcher parses
+    # every autosave now, so twelve writes is about an hour, and without this the save an
+    # LLM session has pinned is evicted by autosaves nobody ever asked about. Best-effort:
+    # another process may be pruning this very file, and a cache is never a requirement.
+    try:
+        os.utime(disk)
+    except OSError:
+        pass
+    return payload
 
 
 def _parse(header: dict, key: str) -> dict:
@@ -457,7 +467,7 @@ def load_projection(
 
 
 def prune_cache(keep: int = 12) -> int:
-    """Drop all but the newest ``keep`` cached projections.
+    """Drop all but the ``keep`` most recently used cached projections.
 
     Every filesystem call here is best-effort, including the ``stat`` inside the sort key,
     because another process is deleting the same files: the directory is shared by the
