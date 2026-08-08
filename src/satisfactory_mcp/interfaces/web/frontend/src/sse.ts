@@ -61,12 +61,13 @@ export function listen() {
     if (!state.save) loadLive();
   });
   /* The other write: a factory label or a stored plan, which the MCP tools put on disk while
-   * the page is open and no autosave goes near. /api/factories is the only payload built
-   * from them, so it is the only one refetched -- and a pinned save does not pin it, because
-   * a label belongs to the world rather than to one file in it. */
+   * the page is open and no autosave goes near. These two paths are the payloads built from
+   * those files and no others -- and a pinned save does not pin either, because a label and
+   * a siting belong to the world rather than to one file in it. */
   source.addEventListener("notes", function (event) {
     if (!isNews(event)) return;
     blink();
     loadOne("/api/factories");
+    loadOne("/api/plans");
   });
 }

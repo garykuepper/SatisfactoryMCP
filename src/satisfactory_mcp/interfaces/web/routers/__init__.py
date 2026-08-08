@@ -20,6 +20,7 @@ from . import (
     inspect,
     nodes,
     placements,
+    plans,
     power,
     regions,
     routes_layer,
@@ -50,4 +51,5 @@ ALL_ROUTERS: tuple[APIRouter, ...] = (
     events.router,
     crates.router,
     icons.router,
+    plans.router,
 )

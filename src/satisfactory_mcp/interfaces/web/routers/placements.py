@@ -26,12 +26,16 @@ from fastapi import APIRouter, Request
 from ....core.gamedata.footprint import FOUNDATION_M
 from ....core.gamedata.model import pretty_class
 from ....core.saveio import rows as saverows
+from ....domain.factories import health
 from ....domain.world.state import WorldState
 from ..serial import _fail, _m, _state, _xyz, _yaw
 
 __all__ = ["router"]
 
 router = APIRouter(prefix="/api")
+
+#: The three actor lists ``/api/machines`` sends, in wire order.
+MACHINE_KINDS = ("machines", "extractors", "generators")
 
 
 # --------------------------------------------------------------------- helpers
@@ -52,6 +56,11 @@ class PlacementRow(TypedDict):
     ``w_m``/``l_m``/``h_m`` go null TOGETHER -- one clearance box, read whole or not at all
     -- for the buildings whose ``mClearanceData`` yields no box (belts, pipes, rails, poles)
     and for any class the docs dump does not carry.
+
+    ``state`` is one of ``health.STATES`` and never null; ``paused`` is the save's own field
+    beside it, where ``state`` is a reading of the buffers. ``uptime`` is the fraction of the
+    machine's own ~300 s window it spent producing, null for a building carrying no monitor
+    at all -- a different claim from zero.
     """
 
     instance_leaf: str
@@ -64,6 +73,8 @@ class PlacementRow(TypedDict):
     recipe_name: str | None
     clock: float | None
     paused: bool
+    state: str
+    uptime: float | None
     yaw: float | None
     w_m: float | None
     l_m: float | None
@@ -106,7 +117,11 @@ class StructuresResponse(TypedDict):
     tile_m: float
 
 
-def _record_row(st: WorldState, row: dict) -> PlacementRow:
+def _leaf(row: dict) -> str:
+    return str(row.get("instance", "")).rsplit(".", 1)[-1]
+
+
+def _record_row(st: WorldState, row: dict, verdict: health.MachineHealth) -> PlacementRow:
     """One machine/extractor/generator, flattened for the map.
 
     ``w_m``/``l_m`` are the X and Y extent of the union of the building's clearance boxes,
@@ -125,7 +140,7 @@ def _record_row(st: WorldState, row: dict) -> PlacementRow:
     recipe_id = row.get("recipe")
     recipe = st.game.recipes.get(recipe_id) if recipe_id else None
     return {
-        "instance_leaf": str(row.get("instance", "")).rsplit(".", 1)[-1],
+        "instance_leaf": _leaf(row),
         "cls": row.get("cls"),
         # Readable words either way; the raw class stays in ``cls`` for anything that needs
         # the exact id, and the same holds for the recipe below.
@@ -135,6 +150,9 @@ def _record_row(st: WorldState, row: dict) -> PlacementRow:
         "recipe_name": recipe.name if recipe else pretty_class(recipe_id),
         "clock": row.get("clock"),
         "paused": bool(row.get("paused", False)),
+        "state": verdict.state,
+        # Three decimals: at two, 0.9994 rounds onto 1.0 and health.SATURATED's line vanishes.
+        "uptime": None if verdict.uptime is None else round(verdict.uptime, 3),
         "yaw": _yaw(row.get("yaw")),
         # Footprint is already metres; the projection's coordinates are not.
         "w_m": round(footprint.width_m, 1) if footprint else None,
@@ -148,14 +166,26 @@ def _record_row(st: WorldState, row: dict) -> PlacementRow:
 
 @router.get("/machines", response_model=MachinesResponse)
 def machines(request: Request, save: str | None = None, world: str | None = None) -> Any:
+    """Every placed actor, with the reason it is or is not running.
+
+    ``health.assess`` is asked once for the whole world rather than per row. Over the
+    reference projection's 570 actors: 1.3 ms to build these rows without it, 2.5 ms with.
+
+    195 of those 570 are ``blocked``, which on a mature base is a full output box and not a
+    fault. What the map does with that is STOPPED in ``frontend/src/placements.ts``.
+    """
     try:
         st = _state(request, save, world)
     except Exception as exc:
         return _fail(f"could not read save: {exc}", 404)
     p = st.projection
+    leaves = [_leaf(row) for kind in MACHINE_KINDS for row in p.get(kind, ())]
+    # Total by construction -- assess walks MACHINE_KINDS too -- and keyed on the leaf
+    # /api/floors and the frontend's `_floor.id` already join on, so the lookup cannot miss.
+    verdicts = {m.instance: m for m in health.assess("map", leaves, st.game, p).machines}
     return {
-        kind: [_record_row(st, row) for row in p.get(kind, ())]
-        for kind in ("machines", "extractors", "generators")
+        kind: [_record_row(st, row, verdicts[_leaf(row)]) for row in p.get(kind, ())]
+        for kind in MACHINE_KINDS
     }
 
 

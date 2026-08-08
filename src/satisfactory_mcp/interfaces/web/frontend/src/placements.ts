@@ -120,6 +120,30 @@ const MACHINE_SLOT: Record<(typeof MACHINE_KINDS)[number], number> = {
   generators: 60,
 };
 
+/* The states a machine is stopped in and did not choose.
+ *
+ * MARKS, NOT A COLOUR. The layer's three existing devices carry one more meaning each, and
+ * no fourth hue enters the palette:
+ *
+ *   hollow      nothing is coming out of this box
+ *   dashed      ...because you turned it off
+ *   thick ring  ...and you did not
+ *
+ * `blocked` is deliberately absent and draws exactly like a machine running flat out. It is
+ * 195 of this world's 570 actors, and it means a full OUTPUT box -- a fact about the belt
+ * leaving rather than about this rectangle -- so it names itself in the popup and nowhere
+ * else. `intermittent` is ordinary for the same reason: it is producing, and the popup
+ * carries the fraction.
+ *
+ * Every key is one of `health.STATES`. A state this table does not name draws ordinary.
+ */
+var STOPPED: Record<string, boolean> = {
+  "dead node": true,
+  "no recipe": true,
+  starved: true,
+  stalled: true,
+};
+
 export function drawMachines(data: MachinesResponse): void {
   MACHINE_KINDS.forEach(function (kind) {
     var group = layer(kind, kind !== "machines", KIND_COLOUR[kind], [
@@ -134,17 +158,29 @@ export function drawMachines(data: MachinesResponse): void {
       if (m.x_m === null) return;
       var w = (m.w_m || MACHINE_FALLBACK_M) / 2;
       var l = (m.l_m || MACHINE_FALLBACK_M) / 2;
+      // Read off `state` and not off `paused`, though the two agree: `paused` is first in
+      // health.STATES, so one field decides the whole mark and the two can never disagree
+      // about the same rectangle.
+      var stopped = STOPPED[m.state] === true;
+      var idle = stopped || m.state === "paused";
       var piece = L.polygon(footprintCorners(m.x_m, m.y_m!, w, l, m.yaw), {
         color: KIND_COLOUR[kind],
-        weight: 1,
-        fillOpacity: m.paused ? 0.15 : 0.65,
-        dashArray: m.paused ? "2,2" : undefined,
+        weight: stopped ? 3 : 1,
+        fillOpacity: idle ? 0.15 : 0.65,
+        dashArray: m.state === "paused" ? "2,2" : undefined,
       }).bindPopup(
         popup([
           ["building", m.name],
           ["recipe", m.recipe_name || m.recipe],
           ["clock", m.clock === null ? null : Math.round(m.clock * 100) + "%"],
-          ["paused", m.paused ? "yes" : null],
+          // The state replaces the old "paused: yes" row rather than joining it: they would
+          // be the same claim twice, and this one can also say why a machine nobody paused
+          // is standing still.
+          ["state", m.state],
+          // The only measured number in this whole project -- the fraction of the machine's
+          // own ~300 s window it spent producing. Absent, not "0%", for a building that
+          // carries no monitor: 46 of this world's 570 do not.
+          ["uptime", m.uptime === null ? null : Math.round(m.uptime * 100) + "%"],
           // All three sides of the clearance box: a Refinery being 15 m tall is why a floor
           // view can say it comes through the ceiling, and the reader looking at that ghost
           // should find the number here.
