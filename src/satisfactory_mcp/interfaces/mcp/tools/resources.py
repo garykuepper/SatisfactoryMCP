@@ -5,7 +5,7 @@ from __future__ import annotations
 from ....core.text import ago, stamp
 from ....domain.spatial import regions as regions_mod
 from ....presenters.text import primitives as render
-from ..app import _state, game, integrity_notes, mcp
+from ..app import _state, game, integrity_notes, mcp, stale_artifact_notes
 
 # Resources are CLIENT-PULLED, so they cost zero context until something asks for
 # them. That makes them right for stable orientation data and wrong for anything
@@ -33,7 +33,7 @@ def docs_summary() -> str:
                 ("warnings", len(g.warnings)),
             ]
         ),
-        notes=integrity_notes({}, g),
+        notes=integrity_notes({}, g) + list(stale_artifact_notes()),
     )
 
 
@@ -69,7 +69,7 @@ def current_save() -> str:
                 ("hard_drives_pending", len(st.hard_drive_offers)),
             ]
         ),
-        notes=integrity_notes(st.projection, st.game),
+        notes=integrity_notes(st.projection, st.game) + list(stale_artifact_notes()),
     )
 
 

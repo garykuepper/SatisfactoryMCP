@@ -50,6 +50,16 @@ def docs_path() -> Path:
     )
 
 
+def game_root() -> Path:
+    """The install directory, found through the dump that sits inside it.
+
+    Derived rather than probed for a second time: ``_DOCS_SUFFIX`` names the three levels
+    between them, so this cannot drift from ``docs_path`` and cannot answer for an install
+    the docs did not come from. Raises whatever ``docs_path`` raises.
+    """
+    return docs_path().parents[len(_DOCS_SUFFIX.parts) - 1]
+
+
 def saves_root() -> Path:
     """Root of the save directory tree (contains one folder per Steam account)."""
     env = os.environ.get("SATISFACTORY_SAVES")

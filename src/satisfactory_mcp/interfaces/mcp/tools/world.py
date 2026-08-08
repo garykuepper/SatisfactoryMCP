@@ -8,7 +8,7 @@ from .... import config
 from ....core.saveio import projection as proj
 from ....core.text import ago, stamp
 from ....presenters.text import primitives as render
-from ..app import AsOf, Limit, _state, integrity_notes, mcp
+from ..app import AsOf, Limit, _state, integrity_notes, mcp, stale_artifact_notes
 
 
 @mcp.tool(structured_output=False)
@@ -90,6 +90,7 @@ def world_summary(save: str | None = None, world: str | None = None, as_of: AsOf
     if st.paused:
         notes.append(f"{len(st.paused)} building(s) paused by the player")
     notes.extend(integrity_notes(st.projection, g))
+    notes.extend(stale_artifact_notes())
     working_on = st.unlocks.last_active_schematic
     last_drive = st.harddrive_desk.last_used_hard_drive_id
     gen_rows = [

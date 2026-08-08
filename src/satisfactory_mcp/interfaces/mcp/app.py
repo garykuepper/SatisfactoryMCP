@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ... import config
+from ...core.gameassets import provenance
 from ...core.gamedata.loader import load_docs
 from ...core.gamedata.model import GameData
 from ...core.gamedata.normalize import normalize
@@ -63,6 +64,24 @@ def _state(
 
 def _item_id(query: str) -> str | None:
     return resolve_item(game(), query)
+
+
+@lru_cache(maxsize=1)
+def stale_artifact_notes() -> tuple[str, ...]:
+    """Whether the generated tables under ``data/`` still describe the build installed here.
+
+    Cached for the process's life alongside ``game``, and for the same reason: neither the
+    install nor a generated table changes under a running server, and this reads six sidecars.
+
+    Not folded into `integrity_notes` next door, which is a pure function of what a caller
+    already holds; this one goes to disk. Both are notes and both surface together.
+    """
+    try:
+        return tuple(provenance.stale_artifacts(config.game_root(), config.data_dir()))
+    except (FileNotFoundError, OSError):
+        # No install to compare against is not drift. `docs_path` raises here on a machine
+        # with no game, which is a machine that cannot be told its tables are out of date.
+        return ()
 
 
 #: How many of a channel's warnings are quoted before the rest are counted. Both channels are

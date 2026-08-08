@@ -100,6 +100,63 @@ def read_str_path(sidecar: object, path: Iterable[str]) -> str | None:
     return node if isinstance(node, str) else None
 
 
+#: Every generated artifact that records the build it was cut from, as (what to call it in a
+#: sentence, its path under ``data/``, the key path holding the pin). The four spellings are
+#: not tidyable from here: each generator chose where in its own sidecar the pin lives, and the
+#: constants naming those places are in ``tools/`` beside the writers.
+#:
+#: The last three are under ``data/local/`` and are NOT in git, so a checkout that has never
+#: run the generators simply has none of them. Absent is not stale -- see `stale_artifacts`.
+PINNED_ARTIFACTS = (
+    ("the resource node table", ("resource_nodes.json",), ("_meta", "sources", "primary")),
+    ("the world node table", ("world_resource_nodes.json",), ("_meta",)),
+    ("the region names", ("region_names.json",), ("_meta",)),
+    ("the height field", ("local", "heightmap", "meta.json"), ("sources", "game")),
+    ("the map image", ("local", "map.json"), ("_meta", "sources", "map_slices")),
+    ("the item icons", ("local", "icons", "manifest.json"), ("_meta", "source")),
+)
+
+#: The leaf every one of them agrees on, whatever it is nested under.
+PIN_KEY = "game_version_pinned"
+
+
+def stale_artifacts(game: Path, data: Path) -> list[str]:
+    """Which pinned artifacts were cut from a build other than the one installed here.
+
+    The standing hazard is that a game update MOVES resource nodes, and every table under
+    ``data/`` is a photograph of one build. ``installed_build`` has stated the build the
+    machine has since the generators were written and nothing at runtime has ever asked it,
+    so the tables have been free to describe a world that is no longer there.
+
+    Silent about everything it cannot check, and that is the whole discipline of it: no
+    install, an unreadable sidecar, an artifact that was never generated and a sidecar too old
+    to carry a pin are all "no comparison", never "stale". Only two pins that exist and differ
+    are a finding.
+    """
+    try:
+        pin, _ = installed_build(game)
+    except (InstallNotFound, OSError, ValueError):
+        return []
+    drifted = []
+    for name, parts, where in PINNED_ARTIFACTS:
+        try:
+            sidecar = json.loads(data.joinpath(*parts).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        recorded = read_str_path(sidecar, (*where, PIN_KEY))
+        if recorded and recorded != pin:
+            # Quoted, because every pin this project writes ends "the installed build" -- true
+            # of the build it was written under and a lie about now, which is the whole finding.
+            drifted.append(f"{name} records {recorded!r}")
+    if not drifted:
+        return []
+    return [
+        f"the game installed here is {pin}, and {len(drifted)} generated table(s) describe a "
+        "different one, so positions and names taken from them may not be where the game now "
+        "puts them: " + "; ".join(drifted) + ". Re-run the generators in tools/"
+    ]
+
+
 def install_directory(out_dir: Path, payload: Mapping[str, bytes]) -> dict[str, int]:
     """Write a whole artifact directory into staging and rename it into place, so ``out_dir``
     appears complete or not at all.

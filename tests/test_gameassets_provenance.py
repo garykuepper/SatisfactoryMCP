@@ -19,6 +19,7 @@ The two that would ship quietly if they broke, and are asserted hardest:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -217,3 +218,103 @@ def test_what_an_interrupted_run_left_behind_is_cleared_rather_than_added_to(tmp
 
     assert sorted(p.name for p in out.iterdir()) == ["height.i16.z"]
     assert not staging.exists()
+
+
+# --------------------------------------------------------------------------------------
+# The forward check: do the artifacts on disk still describe the build installed here?
+# --------------------------------------------------------------------------------------
+#
+# The other staleness guard, ``skew_from_meta``, reads the node table's own cross-validation
+# block -- and ``check_projection`` in tools/gen_resource_nodes.py refuses to emit a block
+# whose deltas are past the rounding floor, so the shipped table can only ever hold a PIN and
+# that guard returns None unconditionally. It cannot fire on a game update moving nodes, which
+# is the event it exists for. This one can: it asks the install.
+
+#: The pin `fake_install`'s version JSON produces, spelled the way `installed_build` spells it.
+INSTALLED_PIN = (
+    "buildVersion 495413 (engine branch ++FactoryGame+rel-main-1.2.0), the installed build"
+)
+OTHER_PIN = "buildVersion 400000 (engine branch ++FactoryGame+rel-main-1.1.0), the installed build"
+
+
+def pinned_artifact(data, parts, where, pin):
+    """One generated sidecar, with its pin nested where its own generator puts it."""
+    path = data.joinpath(*parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar: dict = {}
+    node = sidecar
+    for key in where:
+        node = node.setdefault(key, {})
+    node[prov.PIN_KEY] = pin
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+
+def test_artifacts_cut_from_this_build_say_nothing(tmp_path):
+    game = fake_install(tmp_path / "game")
+    data = tmp_path / "data"
+    for _name, parts, where in prov.PINNED_ARTIFACTS:
+        pinned_artifact(data, parts, where, INSTALLED_PIN)
+    assert prov.stale_artifacts(game, data) == []
+
+
+def test_an_artifact_from_another_build_is_named_out_loud(tmp_path):
+    game = fake_install(tmp_path / "game")
+    data = tmp_path / "data"
+    name, parts, where = prov.PINNED_ARTIFACTS[0]
+    pinned_artifact(data, parts, where, OTHER_PIN)
+    (note,) = prov.stale_artifacts(game, data)
+    assert name in note
+    assert "400000" in note and "495413" in note
+    assert "may not be where the game now puts them" in note
+    assert "tools/" in note
+
+
+def test_every_pinned_artifact_is_actually_reached(tmp_path):
+    """A key path spelled wrong reads as "no pin", which reads as silence -- which is what
+    this guard must never be by accident. Each entry is exercised through its own nesting."""
+    game = fake_install(tmp_path / "game")
+    data = tmp_path / "data"
+    for _name, parts, where in prov.PINNED_ARTIFACTS:
+        pinned_artifact(data, parts, where, OTHER_PIN)
+    (note,) = prov.stale_artifacts(game, data)
+    assert f"{len(prov.PINNED_ARTIFACTS)} generated table(s)" in note
+    for name, _parts, _where in prov.PINNED_ARTIFACTS:
+        assert name in note
+
+
+def test_an_artifact_that_was_never_generated_is_not_stale(tmp_path):
+    """``data/local/`` is gitignored, so a fresh clone has three of the six and no drift."""
+    assert prov.stale_artifacts(fake_install(tmp_path / "game"), tmp_path / "data") == []
+
+
+def test_a_sidecar_too_old_to_carry_a_pin_is_not_stale(tmp_path):
+    game = fake_install(tmp_path / "game")
+    data = tmp_path / "data"
+    _name, parts, _where = prov.PINNED_ARTIFACTS[0]
+    (data / Path(*parts).parent).mkdir(parents=True, exist_ok=True)
+    data.joinpath(*parts).write_text(json.dumps({"_meta": {}}), encoding="utf-8")
+    assert prov.stale_artifacts(game, data) == []
+
+
+def test_no_install_means_no_comparison_rather_than_a_complaint(tmp_path):
+    data = tmp_path / "data"
+    _name, parts, where = prov.PINNED_ARTIFACTS[0]
+    pinned_artifact(data, parts, where, OTHER_PIN)
+    assert prov.stale_artifacts(tmp_path / "no-game", data) == []
+
+
+def test_a_truncated_sidecar_is_skipped_rather_than_raised(tmp_path):
+    game = fake_install(tmp_path / "game")
+    data = tmp_path / "data"
+    _name, parts, _where = prov.PINNED_ARTIFACTS[0]
+    (data / Path(*parts).parent).mkdir(parents=True, exist_ok=True)
+    data.joinpath(*parts).write_text("{ truncated", encoding="utf-8")
+    assert prov.stale_artifacts(game, data) == []
+
+
+@pytest.mark.integration
+def test_the_shipped_tables_match_the_build_installed_here():
+    """Green until a game update lands, and the whole point of it is the day it is not."""
+    from satisfactory_mcp import config
+
+    assert prov.stale_artifacts(config.game_root(), config.data_dir()) == []
