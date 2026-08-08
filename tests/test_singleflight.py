@@ -148,7 +148,10 @@ def test_one_autosave_starts_one_sidecar_not_eleven(monkeypatch, isolated_memos)
 
 
 def test_concurrent_scans_of_one_directory_run_one_subprocess(monkeypatch, tmp_path):
+    """What invalidates a stored scan is ``tests/test_scan_fingerprint.py``'s subject; this
+    is only that eleven layers arriving together do not become eleven subprocesses."""
     spawns: list[list[str]] = []
+    proj._SCANS.clear()
 
     def fake_sidecar(args, timeout=180.0):
         spawns.append(args)
@@ -158,9 +161,6 @@ def test_concurrent_scans_of_one_directory_run_one_subprocess(monkeypatch, tmp_p
     monkeypatch.setattr(proj, "_run_sidecar", fake_sidecar)
     _fan_out(11, lambda _i: proj.scan_saves(tmp_path))
     assert len(spawns) == 1
-
-    proj.scan_saves(tmp_path)
-    assert len(spawns) == 2, "a scan must never be served from a memo"
 
 
 def test_states_over_one_projection_share_the_expensive_views(projection, game, isolated_memos):

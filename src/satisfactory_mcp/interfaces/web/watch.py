@@ -1,4 +1,4 @@
-"""Notice that a save -- or a note written about one -- changed, and tell every browser.
+"""Notice that a save -- or a note written about one -- changed, tell every browser, parse it.
 
 Two trees, because two things move under a player who is using both halves at once: the game
 writes ``.sav`` files, and this project writes factory labels and stored plans beside them.
@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from ... import config
+from ...core.saveio.projection import load_projection
 
 __all__ = ["KINDS", "KIND_NOTES", "KIND_SAVE", "POLL_SECONDS", "SaveWatcher", "WatchEvent"]
 
@@ -62,6 +64,20 @@ class WatchEvent:
         return {"filename": self.filename, "mtime": self.mtime}
 
 
+def _warm_newest() -> None:
+    """Resolve and parse the newest save, discarding everything including the failures.
+
+    A failure here has to be invisible: the request that follows resolves the save itself
+    and parses it itself, so the only thing a pre-warm can cost is the parse it saved.
+    ``debug``, not ``warning``, because the ordinary reason this raises is a save the game
+    had not finished writing when the poll saw it, which the next poll fixes.
+    """
+    try:
+        load_projection()
+    except Exception:
+        log.debug("pre-warming the newest save failed", exc_info=True)
+
+
 class SaveWatcher:
     """Polls the watched trees and fans changes out to per-subscriber queues."""
 
@@ -70,6 +86,7 @@ class SaveWatcher:
         root: Path | None = None,
         notes: Iterable[Path] | None = None,
         interval: float = POLL_SECONDS,
+        prewarm: bool = False,
     ) -> None:
         #: ``None`` means "ask config every scan", so a test that repoints
         #: ``config.saves_root`` is obeyed without rebuilding the watcher.
@@ -77,6 +94,11 @@ class SaveWatcher:
         #: The same, for the label and plan directories.
         self._notes = None if notes is None else tuple(notes)
         self.interval = interval
+        #: Off unless asked for, because a watcher pointed at a directory of made-up
+        #: ``.sav`` files -- which is every watcher in the suite -- would spawn a parser
+        #: subprocess for one on its first poll.
+        self.prewarm = prewarm
+        self._warming: threading.Thread | None = None
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
         #: The newest event of each kind, replayed to every new subscriber.
@@ -145,6 +167,26 @@ class SaveWatcher:
         ]
         return [event for event in found if event is not None]
 
+    def _warm(self) -> None:
+        """Parse the save that just landed, so the reads after it do not have to.
+
+        Its own daemon thread, never the poll loop and never a request: this blocks for the
+        ~4 s the parser subprocess takes, and the loop it is started from is serving the
+        page. Nothing joins the thread and nothing reads its return value -- the projection
+        cache is the whole result, and a request that arrives while it is still parsing
+        joins the same flight rather than starting a second one, so the pre-warm is only
+        ever early and never extra work.
+
+        One at a time. A pre-warm still running when the next save lands is parsing a file
+        that is now one autosave out of date, but starting a second parse beside it puts
+        two 4 s subprocesses on the machine running the game, and the next poll -- three
+        seconds later, on a tree that has not moved since -- would start a third.
+        """
+        if self._warming is not None and self._warming.is_alive():
+            return
+        self._warming = threading.Thread(target=_warm_newest, name="save-prewarm", daemon=True)
+        self._warming.start()
+
     async def poll_once(self) -> list[WatchEvent]:
         """One scan; publishes and returns the events whose tree actually moved."""
         news: list[WatchEvent] = []
@@ -154,6 +196,8 @@ class SaveWatcher:
             self.latest[event.kind] = event
             self._publish(event)
             news.append(event)
+            if self.prewarm and event.kind == KIND_SAVE:
+                self._warm()
         return news
 
     async def _run(self) -> None:
