@@ -79,9 +79,15 @@ def test_the_prose_stays_inside_its_budget() -> None:
     if not over:
         return
     over.sort(reverse=True)
-    message = f"comment budget: {len(over)} file(s) over (docs/comments.md): " + "; ".join(
-        over[:10]
-    ) + ("" if len(over) <= 10 else f"; +{len(over) - 10} more")
+    message = (
+        f"comment budget: {len(over)} file(s) over (docs/comments.md). "
+        "The remedy is to split the file so each explanation sits beside the code it guards, "
+        "or to move a fact to its one home and delete the copy (rule 1) -- not to delete the "
+        "explanation. The caps are per directory, so raising one file's cap is not available; "
+        "raising a whole layer's cap needs its own argument. Over: "
+        + "; ".join(over[:10])
+        + ("" if len(over) <= 10 else f"; +{len(over) - 10} more")
+    )
     if ENFORCE:
         raise AssertionError(message)
     warnings.warn(message, stacklevel=1)
