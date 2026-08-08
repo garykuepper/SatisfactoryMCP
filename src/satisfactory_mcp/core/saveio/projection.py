@@ -13,6 +13,7 @@ import os
 import pickle
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,8 +53,10 @@ SCHEMA_VERSION = 19
 #: page's eleven layers spawn eleven parser sidecars for the same bytes.
 _MEM = Singleflight(maxsize=3)
 
-#: Concurrent directory scans, collapsed but never stored. See ``scan_saves``.
-_SCANS = Singleflight(maxsize=0)
+#: Directory scans, keyed on a fingerprint of the tree they describe. See ``scan_saves``.
+#: Small because one save root is the whole workload: the spare entries are there so that a
+#: rewrite does not immediately drop the scan a reader is still resolving names against.
+_SCANS = Singleflight(maxsize=4)
 
 #: .NET ticks at the Unix epoch, for converting saveDateTimeInTicks.
 _TICKS_AT_EPOCH = 621_355_968_000_000_000
@@ -196,17 +199,79 @@ def _run_sidecar(args: list[str], timeout: float = 180.0) -> dict:
     return payload
 
 
-def scan_saves(root: str | Path | None = None) -> dict:
-    """Header-only scan of the save tree. One subprocess, ~90 ms for 63 files.
+def _tree_fingerprint(root: Path) -> tuple:
+    """Every ``.sav`` under ``root`` with its size and modification time, from one walk.
 
-    Never memoised: this is what notices the save the player wrote a moment ago, and every
-    call that passes no explicit path runs it. Only the simultaneous ones are collapsed --
-    eleven map layers arriving together used to be eleven scan subprocesses of one directory.
+    ``DirEntry.stat`` rather than ``os.stat``: the values come from the directory
+    enumeration the walk is already doing, which is what makes this 0.5 ms for 72 files
+    against 4 ms of individual stats and 87 ms of sidecar. Measured prompt on NTFS even
+    against a handle the writer still holds open -- ``tests/test_scan_fingerprint.py``
+    pins that, because a fingerprint that lags is a save the player just wrote and this
+    server cannot see.
+
+    Unreadable entries are skipped rather than raising: a scan is how the save tree is
+    discovered, so it has to survive one folder it cannot open.
+    """
+    found: list[tuple] = []
+    stack = [str(root)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.name.casefold().endswith(".sav"):
+                            st = entry.stat()
+                            found.append((entry.path, st.st_mtime_ns, st.st_size))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    # Sorted, because directory order is not a property of the tree and two walks of one
+    # unchanged tree have to produce the same tuple.
+    return tuple(sorted(found))
+
+
+#: How recently a file may have been written before the fingerprint stops trusting itself.
+#: Windows stamps modification times from a system clock that advances in ~15.6 ms steps, so
+#: two writes landing in one step are stamped identically -- and a save rewritten in place at
+#: an unchanged size is then invisible to ``(name, size, mtime)``. Inside this window the scan
+#: is taken again rather than remembered, which is what the sidecar did on every call and is
+#: the only way this memo is not a weaker freshness test than the thing it replaced.
+_SETTLE_NS = 1_000_000_000
+
+
+def _unsettled(fingerprint: tuple) -> bool:
+    """Whether any file in the tree was stamped too recently to be told apart from its own
+    next rewrite. Absolute difference, so a save dated in the future -- copied off another
+    machine, or written across a clock adjustment -- settles instead of never being cached."""
+    now = time.time_ns()
+    return any(abs(now - mtime_ns) < _SETTLE_NS for _path, mtime_ns, _size in fingerprint)
+
+
+def scan_saves(root: str | Path | None = None) -> dict:
+    """Header-only scan of the save tree: one subprocess, ~90 ms, when the tree has moved.
+
+    This is what notices the save the player wrote a moment ago, so it is memoised on a
+    fingerprint of the tree rather than on time: the sidecar reads bytes out of each header
+    -- session name, play duration, ``save_identifier`` -- and those cannot change without
+    the file changing, which the fingerprint sees. The fingerprint IS the memo key, so two
+    callers who disagree about the state of the disk can never share an answer, and a caller
+    that joins a scan already in flight is one that already agreed with its leader.
     """
     r = Path(root) if root else config.saves_root()
     if not r.exists():
         return {"root": str(r), "saves": [], "unsupported": [], "missing_root": True}
-    return _SCANS.call(str(r), lambda: _run_sidecar(["--list", str(r)]))
+    fingerprint = _tree_fingerprint(r)
+    key = (str(r), fingerprint)
+
+    def build() -> dict:
+        return _run_sidecar(["--list", str(r)])
+
+    if _unsettled(fingerprint):
+        return _SCANS.call(key, build)
+    return _SCANS.get(key, build)
 
 
 def list_worlds(root: str | Path | None = None) -> tuple[list[World], list[dict]]:
@@ -374,8 +439,9 @@ def load_projection(
 ) -> dict:
     """Return the projection for a save, using the two-tier cache.
 
-    Parsing costs ~4 s; a memo hit is ~1 ms, and the ``resolve_save`` above it is a sidecar
-    of its own at ~90 ms, which is the floor on every call that passes no explicit path.
+    Parsing costs ~4 s, reading the pickle another process wrote ~15 ms, and a memo hit
+    ~1 ms. The ``resolve_save`` above it costs one directory walk while the save tree is
+    still, and a sidecar of its own the first time it moves.
     """
     header = resolve_save(path, world, prefer_manual)
     key = _cache_key(header)
