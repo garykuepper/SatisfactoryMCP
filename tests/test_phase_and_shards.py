@@ -217,7 +217,7 @@ def test_the_tool_says_the_subtraction_happened_and_what_it_is_worth(state, monk
     from satisfactory_mcp.interfaces.mcp.tools import progression as progression_tools
 
     st = _with(state, paid_off_target={"Desc_SpaceElevatorPart_7_C": 2500})
-    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None: st)
     out = progression_tools.phase_requirements()
     assert "\tderived\t" in out
     assert "1500 Assembly Director System" in out
@@ -271,7 +271,7 @@ def tool(state, monkeypatch):
     """
     from satisfactory_mcp.interfaces.mcp.tools import progression as progression_tools
 
-    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: state)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None: state)
     return progression_tools.phase_requirements
 
 

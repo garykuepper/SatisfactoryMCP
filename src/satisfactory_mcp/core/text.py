@@ -10,7 +10,28 @@ from __future__ import annotations
 
 import time
 
-__all__ = ["ago", "num", "plural", "stamp"]
+__all__ = ["ago", "num", "played", "plural", "span", "stamp"]
+
+
+def played(seconds: float | None) -> str:
+    """A playtime as hours and whole minutes: ``121h04m``.
+
+    Playtime, not wall clock, is the axis this project measures a world on, so it is
+    spelled one way wherever it appears.
+    """
+    s = int(seconds or 0)
+    return f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+
+def span(seconds: float | None) -> str:
+    """A gap between two moments, unsigned, in one or two coarse units: ``40s``, ``18m``,
+    ``2h05m``. For a gap of hours, the same shape ``played`` uses."""
+    s = int(abs(seconds or 0))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    return played(s)
 
 
 def num(value: float | None, places: int = 2) -> str:

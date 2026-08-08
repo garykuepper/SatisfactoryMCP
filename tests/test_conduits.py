@@ -248,7 +248,7 @@ def test_the_tool_pages_the_offset_its_truncation_line_promises(game, monkeypatc
         "generators": [],
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(stools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None, as_of=None: st)
 
     first = stools.search_conduits(near="0,0", radius_m=500, limit=2)
     assert "5 match(es), showing 2 from offset 0. 3 more: call again with offset=2" in first
@@ -330,7 +330,7 @@ def test_the_tool_takes_back_the_ids_it_prints(game, monkeypatch):
         **PIPE_PROJECTION,
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(stools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None, as_of=None: st)
 
     out = stools.search_conduits(near="pipe:0", radius_m=25)
     assert "midpoint of a 30m pipe" in out
@@ -361,7 +361,7 @@ def test_the_network_view_summarises_the_plumbing_systems(game, monkeypatch):
         "generators": [],
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(stools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None, as_of=None: st)
 
     out = stools.search_conduits(near="0,0", show="networks")
     assert "2 fluid network(s)" in out

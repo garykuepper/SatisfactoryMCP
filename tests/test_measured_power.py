@@ -176,7 +176,7 @@ def test_the_tool_names_which_plant_and_what_it_is_out_of(game, monkeypatch):
         "header": {"save_identifier": "TEST-starved", "session_name": "t"},
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(wtools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(wtools, "_state", lambda save=None, world=None, as_of=None: st)
     out = srv.power_report()
     assert "generation_MW_starved=75" in out
     assert "## starved generators" in out

@@ -17,6 +17,7 @@ from typing import Any, TypedDict
 from fastapi import APIRouter, Request
 
 from ....core.saveio import projection as proj
+from ....domain.world import pin
 from ..serial import _fail, _state, _xyz
 
 __all__ = ["router"]
@@ -188,6 +189,10 @@ class SummaryResponse(TypedDict):
     """
 
     header: dict[str, Any]
+    #: This world state's token, the same one the MCP tools print and take back as ``as_of=``.
+    #: On the wire beside ``age_note`` -- which already contains it -- so a client reads the
+    #: identity as a field rather than out of a sentence.
+    save_token: str
     age_note: str
     power: PowerSummary
     progression: ProgressionSummary
@@ -202,6 +207,10 @@ def summary(request: Request, save: str | None = None, world: str | None = None)
         return _fail(f"could not read save: {exc}", 404)
     return {
         "header": st.header,
+        # Recorded as well as sent: a token the page shows and the assistant is then handed
+        # has to be one the ledger recognises, or the pin refusal cannot tell "yours is
+        # stale" from "you invented it". See domain/world/pin.py.
+        "save_token": pin.remember(st.header),
         "age_note": st.age_note,
         "power": st.power_report(),
         "progression": st.progression(),

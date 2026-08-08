@@ -105,9 +105,15 @@ def test_a_written_save_becomes_a_save_event(game, tmp_path, monkeypatch):
     # current world instead of waiting for the next autosave.
     chunk = _first_sse_chunk(app).decode()
     assert chunk.startswith("event: save\ndata: ")
+    # ``save_token`` is null here and that is the branch worth pinning: the file written
+    # above is seventeen bytes of "not really a save", so the header read that would name
+    # the world state fails -- and the event still says a write happened, which is the half
+    # the page acts on. A stream that dropped the event over an unreadable file would leave
+    # the page presenting stale data as live.
     assert json.loads(chunk.split("data: ", 1)[1]) == {
         "filename": "Han Solo_autosave_0.sav",
         "mtime": event.mtime,
+        "save_token": None,
     }
 
 

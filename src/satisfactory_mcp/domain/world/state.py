@@ -142,6 +142,10 @@ class WorldState:
         return self.identity.world_id
 
     @property
+    def token(self) -> str:
+        return self.identity.token
+
+    @property
     def age_note(self) -> str:
         return self.identity.age_note
 

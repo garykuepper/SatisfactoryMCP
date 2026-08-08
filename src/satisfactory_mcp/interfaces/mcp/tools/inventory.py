@@ -15,7 +15,7 @@ from ....domain.spatial import regions as regions_mod
 from ....domain.spatial.origin import resolve_origin
 from ....domain.world.inventory import CRATE_KIND_TEXT, Holding
 from ....presenters.text import primitives as render
-from ..app import Limit, _item_id, _state, mcp
+from ..app import AsOf, Limit, _item_id, _state, mcp
 
 #: How many item kinds a place lists before the rest become "+N more". Three names and a
 #: count read as a box; twelve names read as a wall.
@@ -57,6 +57,7 @@ def stock(
     ] = False,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -72,7 +73,7 @@ def stock(
     place, so it is reported on the summary line instead. Fluids are in m3.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game
@@ -193,6 +194,7 @@ def storage(
     empty: Annotated[bool, Field(description="include containers with nothing in them")] = False,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 15,
     offset: int = 0,
 ) -> str:
@@ -208,7 +210,7 @@ def storage(
     class holds. It is ``-`` where either number is unknown.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game
@@ -317,7 +319,11 @@ def storage(
 
 @mcp.tool(structured_output=False)
 def crates(
-    save: str | None = None, world: str | None = None, limit: Limit = 25, offset: int = 0
+    save: str | None = None,
+    world: str | None = None,
+    as_of: AsOf = None,
+    limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
     """The crates lying on the ground: what is in each one and where to walk to get it.
 
@@ -330,7 +336,7 @@ def crates(
     so there is no owner, no timestamp and no cause to report.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game

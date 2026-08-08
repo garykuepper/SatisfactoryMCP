@@ -15,7 +15,7 @@ from ....domain.factories import floors as ffloors
 from ....domain.factories import select as fselect
 from ....domain.spatial import heightfield
 from ....presenters.text import primitives as render
-from ..app import Limit, _state, mcp
+from ..app import AsOf, Limit, _state, mcp
 
 #: How many building kinds a band names before the rest become "+N more".
 DECK_KINDS = 3
@@ -77,6 +77,7 @@ def factory_floors(
     ] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 10,
     offset: int = 0,
 ) -> str:
@@ -93,7 +94,7 @@ def factory_floors(
     platform is answered floor by floor instead.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 

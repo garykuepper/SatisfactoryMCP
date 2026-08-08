@@ -24,11 +24,19 @@ from ...domain.factories.resolve import resolve_factory as _resolve_factory
 from ...domain.planning.scenario import resolve_item
 from ...domain.spatial.origin import player_xy as _player_xy
 from ...domain.spatial.origin import resolve_origin as _origin_for
+from ...domain.world import pin
 from ...domain.world.state import WorldState, load_state
 
 mcp = FastMCP("satisfactory")
 
 Limit = Annotated[int, Field(default=10, ge=1, le=25, description="max rows (hard cap 25)")]
+
+#: The pin every save-reading tool accepts. The description is resident in 46 tool schemas,
+#: so it names the token's shape and nothing else; the contract is docs/mcp-surface.md 10.1i.
+AsOf = Annotated[
+    str | None,
+    Field(default=None, description="pin to one world state: a sav:… token from an earlier answer"),
+]
 
 
 @lru_cache(maxsize=1)
@@ -37,8 +45,20 @@ def game() -> GameData:
     return normalize(load_docs(config.docs_path()))
 
 
-def _state(save: str | None = None, world: str | None = None) -> WorldState:
-    return load_state(game(), path=save, world=world)
+def _state(
+    save: str | None = None, world: str | None = None, as_of: str | None = None
+) -> WorldState:
+    """The world a tool is asking about, checked against the caller's pin.
+
+    ``as_of`` is a CHECK on whatever ``save``/``world`` resolved to, never a selector of its
+    own: it is applied AFTER the save is picked, so the three arguments cannot compete. That
+    ordering is the useful one -- ``save=`` names a file and the game rewrites files, so a
+    pinned filename goes on resolving happily to a world state the caller has never seen,
+    which is the drift ``as_of`` exists to catch. See ``domain/world/pin.py``.
+    """
+    st = load_state(game(), path=save, world=world)
+    pin.check(st.header, as_of)
+    return st
 
 
 def _item_id(query: str) -> str | None:

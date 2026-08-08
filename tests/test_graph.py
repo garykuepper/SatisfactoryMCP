@@ -499,7 +499,7 @@ def test_factory_map_lists_bare_platforms_and_summarises_pads_by_a_stated_thresh
         "generators": [],
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
 
     out = ftools.factory_map(show="slabs")
     assert "## bare platforms (no machines): 2, 17 tiles" in out
@@ -541,7 +541,7 @@ def test_a_bare_platform_answers_a_slab_selector_instead_of_refusing_it(game, mo
     assert st.structures.machines_on(0) == [], "slab 0 is the big empty one"
     assert _sel(["slab:0"], st.graph, game, projection, structures=st.structures) == []
 
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.select_machines(["slab:0"])
     assert "nothing stands on this platform yet" in out
     assert "tiles=16" in out
@@ -573,7 +573,7 @@ def test_an_occupied_slab_reports_the_shape_a_bare_one_does(game, monkeypatch):
         "generators": [],
     }
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
 
     out = ftools.factory_map(show="slabs")
     assert "extent\tbbox(m)\tz(m)\tfloors\tlabels" in out

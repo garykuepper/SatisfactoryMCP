@@ -100,7 +100,7 @@ def locked(game, live, monkeypatch) -> WorldState:
     """
     st = _unresearched(game, live.projection)
     for module in (planning_tools, progression_tools):
-        monkeypatch.setattr(module, "_state", lambda save=None, world=None, _st=st: _st)
+        monkeypatch.setattr(module, "_state", lambda save=None, world=None, as_of=None, _st=st: _st)
     return st
 
 
@@ -321,7 +321,7 @@ def constructed(game, projection, monkeypatch):
         copy = deepcopy(projection)
         copy.setdefault("research", {}).update(research)
         st = WorldState(projection=copy, game=game)
-        monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, _st=st: _st)
+        monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None, _st=st: _st)
         return st
 
     return build
@@ -398,7 +398,7 @@ def test_an_older_projection_says_it_cannot_judge_the_trees(game, projection, mo
     copy = deepcopy(projection)
     copy["research"].pop("unlocked_trees", None)
     st = WorldState(projection=copy, game=game)
-    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None: st)
     assert not st.research.knows_trees
     assert not st.research.tree_locked("Research_XMas_1_C")
     assert "predates the unlocked-tree list" in srv.mam_research()

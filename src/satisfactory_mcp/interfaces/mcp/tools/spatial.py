@@ -14,6 +14,7 @@ from ....domain.spatial.origin import player_xy, resolve_origin
 from ....domain.spatial.select import SELECTOR_HELP, select_nodes
 from ....presenters.text import primitives as render
 from ..app import (
+    AsOf,
     Limit,
     _item_id,
     _state,
@@ -94,6 +95,7 @@ def describe_location(
     ] = 200.0,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Name the region at a place, sample its elevation, and count what runs through.
 
@@ -122,7 +124,7 @@ def describe_location(
     # what every `at=` form but a bare coordinate is resolved against.
     st = None
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception:
         pass
 
@@ -340,6 +342,7 @@ def search_conduits(
     show: Annotated[str, Field(description="runs | networks")] = "runs",
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 12,
     offset: int = 0,
 ) -> str:
@@ -369,7 +372,7 @@ def search_conduits(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc} (conduits are read from the save)"
 
@@ -568,6 +571,7 @@ def search_resource_nodes(
     show: Annotated[str | None, Field(description="alias for mode=")] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -617,7 +621,7 @@ def search_resource_nodes(
 
     st = None
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception:
         pass
 
@@ -853,6 +857,7 @@ def show_on_map(
     zoom: float = 4.75,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Map links centred on something: this project's own map, and the public one.
 
@@ -875,7 +880,7 @@ def show_on_map(
 
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception:
         st = None
 
@@ -978,6 +983,7 @@ def rank_build_sites(
     top: Annotated[int | None, Field(description="deprecated alias for limit")] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Rank candidate fields for a new extraction site, best first.
 
@@ -999,7 +1005,7 @@ def rank_build_sites(
     n = render.clamp(top if top is not None else limit, default=5)
 
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return (
             f"could not read save: {exc} (site ranking needs a save to know what is already built)"
@@ -1120,6 +1126,7 @@ def whereami(
     radius_m: float = 500.0,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 8,
 ) -> str:
     """Where the player is standing, and what is around them.
@@ -1131,7 +1138,7 @@ def whereami(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 

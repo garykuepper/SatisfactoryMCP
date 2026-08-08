@@ -173,7 +173,7 @@ def test_both_gated_tools_answer_about_the_world_they_were_asked_about(game, mon
 
     seen = []
 
-    def spy(save=None, world=None):
+    def spy(save=None, world=None, as_of=None):
         seen.append((save, world))
         raise RuntimeError("no such world")
 

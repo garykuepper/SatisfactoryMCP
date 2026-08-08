@@ -445,7 +445,7 @@ def tool(monkeypatch, state):
     The tool resolves its own state and the numbers here are exact, so the fixture is
     substituted for the autosave -- otherwise every count below would drift with play.
     """
-    monkeypatch.setattr(progression, "_state", lambda save, world: state)
+    monkeypatch.setattr(progression, "_state", lambda save, world, as_of=None: state)
     return collected_from_world
 
 
@@ -608,7 +608,7 @@ def test_an_empty_removed_key_is_called_unreadable_rather_than_none(monkeypatch,
     projection = copy.deepcopy(state.projection)
     projection["removed"] = {"cells": [], "instances": [], "counts": {}}
     older = WorldState(projection=projection, game=state.game)
-    monkeypatch.setattr(progression, "_state", lambda save, world: older)
+    monkeypatch.setattr(progression, "_state", lambda save, world, as_of=None: older)
     out = collected_from_world()
     assert "destroyed_records=0" in out
     assert "power_slug_blue\t596\t0\t596" in out
@@ -618,7 +618,7 @@ def test_an_unreadable_save_is_a_sentence_not_a_traceback(monkeypatch):
     """Every save-reading tool in this package answers that way, and a raise here would reach
     the MCP client as a protocol error instead of something the model can act on."""
 
-    def boom(save, world):
+    def boom(save, world, as_of=None):
         raise RuntimeError("no such save")
 
     monkeypatch.setattr(progression, "_state", boom)
@@ -647,7 +647,7 @@ def test_the_degraded_tool_labels_itself_and_refuses_what_it_cannot_do(monkeypat
     Both the label and the refusal name the command that fixes it. "Regenerate it" is not
     something a player can type, and this answer's whole job is to end the dead end.
     """
-    monkeypatch.setattr(progression, "_state", lambda save, world: save_only)
+    monkeypatch.setattr(progression, "_state", lambda save, world, as_of=None: save_only)
     census = collected_from_world()
     assert "DEGRADED: data/world_collectibles.json has never been generated" in census
     assert "misfiles 51 of 713" in census
@@ -669,7 +669,7 @@ def test_a_corrupt_table_says_so_instead_of_reading_as_never_generated(monkeypat
     one is fixed by running the generator. Told apart, each answer is actionable; told as
     one, the reader is left to guess which of the two they are in.
     """
-    monkeypatch.setattr(progression, "_state", lambda save, world: save_only)
+    monkeypatch.setattr(progression, "_state", lambda save, world, as_of=None: save_only)
 
     def unreadable(*, strict: bool = False):
         """The loader's answer for a file that is there and will not parse."""

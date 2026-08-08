@@ -19,7 +19,7 @@ from satisfactory_mcp.interfaces.mcp.tools import inventory as tool
 @pytest.fixture
 def tools(monkeypatch, state):
     """The tool module answering about the fixture world instead of the newest save."""
-    monkeypatch.setattr(tool, "_state", lambda save=None, world=None: state)
+    monkeypatch.setattr(tool, "_state", lambda save=None, world=None, as_of=None: state)
     return tool
 
 

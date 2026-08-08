@@ -210,7 +210,7 @@ def test_the_flow_aspects_print_both_rates_and_say_which_window(game, monkeypatc
     projection["header"] = {"save_identifier": "TEST-query-measured", "session_name": "t"}
     projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 60.0}
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="outputs,balance,summary")
     assert "per min (measured)" in out
     assert "net (measured)" in out
@@ -233,7 +233,7 @@ def test_the_internal_aspect_names_what_never_crosses_the_boundary(game, monkeyp
     projection = _projection()
     projection["header"] = {"save_identifier": "TEST-query-internal", "session_name": "t"}
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="internal,summary")
     assert "## internal" in out
     assert "Iron Ingot\t30" in out
@@ -249,7 +249,7 @@ def test_the_machines_aspect_says_where_each_machine_stands(game, monkeypatch):
     projection = _projection()
     projection["header"] = {"save_identifier": "TEST-query-pos", "session_name": "t"}
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.factory_query(f"machine:{ROD_A}", of="machines")
     assert "x,y,z(m)" in out
     assert "10,0,0" in out, "1000 cm east of the origin, in metres, with its elevation"
@@ -263,7 +263,7 @@ def test_the_power_aspect_prints_both_figures(game, monkeypatch):
     projection["header"] = {"save_identifier": "TEST-query-power", "session_name": "t"}
     projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
     st = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="power")
     assert "draw (nameplate)" in out
     assert "draw (measured)" in out

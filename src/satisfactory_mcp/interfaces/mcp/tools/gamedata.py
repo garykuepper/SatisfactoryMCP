@@ -8,7 +8,7 @@ from ....core.gamedata import search
 from ....core.gamedata.unlocks import granted_by_label
 from ....presenters.text import primitives as render
 from ....presenters.text.search import render_search
-from ..app import Limit, _item_id, _state, game, mcp
+from ..app import AsOf, Limit, _item_id, _state, game, mcp
 
 
 def _no_save_note(reason: str | None) -> str:
@@ -102,6 +102,7 @@ def alternates_for_item(
     item: str,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     include_locked: bool = True,
 ) -> str:
     """Every automatable recipe that makes an item, alternates first.
@@ -120,7 +121,7 @@ def alternates_for_item(
     have: set[str] | None = None
     save_error: str | None = None
     try:
-        have = _state(save, world).available_recipe_ids
+        have = _state(save, world, as_of).available_recipe_ids
     except Exception as exc:
         save_error = str(exc)
     producers.sort(key=lambda r: (not r.is_alternate, r.name))
@@ -170,6 +171,7 @@ def search_recipes(
     include_events: bool = False,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 10,
     offset: int = 0,
 ) -> str:
@@ -196,7 +198,7 @@ def search_recipes(
 
     have: set[str] | None = None
     try:
-        have = _state(save, world).available_recipe_ids
+        have = _state(save, world, as_of).available_recipe_ids
     except Exception as exc:
         notes.append(_no_save_note(str(exc)))
 
@@ -238,6 +240,7 @@ def list_buildings(
     kind: str = "production",
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -255,7 +258,7 @@ def list_buildings(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
         unlocked, built = st.unlocked_building_ids, st.built_counts
         save_error = None
     except Exception as exc:
