@@ -108,6 +108,83 @@ def test_a_bigger_headroom_really_does_mean_fewer_waves(game, live):
     assert waves(real) <= waves(safe)
 
 
+# ------------------------------------------------------------ starved generators
+
+
+def _coal_plant(n: int, coal: int, water: int, produce_s: float | None) -> dict:
+    """One coal generator holding a given hopper and pipe buffer.
+
+    The two are in the SAME inventory, which is the whole difficulty: a plant with coal and
+    no water is out of water, and nothing about "is this inventory empty" can see it.
+    """
+    record = {
+        "instance": f"L:P.Build_GeneratorCoal_C_{n}",
+        "cls": "Build_GeneratorCoal_C",
+        "fuel": "Desc_Coal_C",
+        "buffers": {"fuel": {"items": {"Desc_Coal_C": coal, "Desc_Water_C": water}, "slots": 2}},
+    }
+    if produce_s is not None:
+        record["uptime"] = {"window_s": 300.0, "produce_s": produce_s}
+    return record
+
+
+def _ledger(game, generators: list[dict]):
+    from satisfactory_mcp.domain.world.state import WorldState
+
+    return WorldState(projection={"generators": generators}, game=game).power_report()
+
+
+def test_a_dry_water_pipe_is_found_behind_a_full_coal_hopper(game):
+    """The failure this exists for. `power_report` counted a plant with a broken water pipe
+    as full capacity, and the empty-tank test it could have borrowed asks whether the fuel
+    inventory is empty -- which a hopper with 100 coal in it is not."""
+    pw = _ledger(game, [_coal_plant(1, coal=100, water=0, produce_s=0.0)])
+    assert pw["generation_mw"] == pytest.approx(75.0), "still counted as built capacity"
+    assert pw["starved_generation_mw"] == pytest.approx(75.0)
+    (row,) = pw["starved_generators"]
+    assert row["missing"] == ["Water"], "names the input, not just the plant"
+    assert row["instance"] == "Build_GeneratorCoal_C_1"
+
+
+def test_a_load_following_generator_is_not_called_starved(game):
+    """A generator burns to meet demand, so a full plant on a quiet grid legitimately reads
+    below 1.0. Leading with uptime would condemn every healthy plant on the map."""
+    pw = _ledger(game, [_coal_plant(1, coal=100, water=50000, produce_s=12.0)])
+    assert pw["starved_generators"] == []
+    assert pw["starved_generation_mw"] == 0.0
+
+
+def test_uptime_only_corroborates_and_never_accuses_on_its_own(game):
+    """Zero uptime with full tanks is a grid with nothing to power, not a supply fault; and
+    an empty tank with no monitor has no corroboration, so it is left alone rather than
+    accused. Both are the empty-tank test leading."""
+    quiet = _ledger(game, [_coal_plant(1, coal=100, water=50000, produce_s=0.0)])
+    unreadable = _ledger(game, [_coal_plant(2, coal=0, water=0, produce_s=None)])
+    assert quiet["starved_generators"] == []
+    assert unreadable["starved_generators"] == []
+
+
+def test_the_tool_names_which_plant_and_what_it_is_out_of(game, monkeypatch):
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import world as wtools
+
+    projection = {
+        "generators": [
+            _coal_plant(1, coal=100, water=0, produce_s=0.0),
+            _coal_plant(2, coal=100, water=50000, produce_s=300.0),
+        ],
+        "header": {"save_identifier": "TEST-starved", "session_name": "t"},
+    }
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(wtools, "_state", lambda save=None, world=None: st)
+    out = srv.power_report()
+    assert "generation_MW_starved=75" in out
+    assert "## starved generators" in out
+    assert "Build_GeneratorCoal_C_1" in out
+    assert "Build_GeneratorCoal_C_2" not in out, "the healthy one is not accused"
+    assert "Water" in out
+
+
 # ------------------------------------------------------------ water volumes
 
 
@@ -146,3 +223,26 @@ def test_the_water_warning_reports_the_bodies_and_the_level(game):
     assert "sea level" in line
     # What is genuinely unknown is still said plainly.
     assert "shape is level geometry and is not in the save" in line
+
+
+def test_asking_for_water_nodes_does_not_report_water_as_absent(live):
+    """The tool answered "0 free and reachable" for the resource that decides aluminium and
+    nuclear, on a map ringed by lakes. Every row it CAN return is a fracking satellite, so
+    the number was true and the answer was not: no node is free because open water has no
+    node, and the bodies already being pumped are what was actually asked for."""
+    if not live.water_volumes()["pumps"]:
+        pytest.skip("no water extractors built")
+    out = srv.search_resource_nodes(resource="Water", limit=4)
+    assert "open water carries NO NODE" in out
+    assert "fracking satellite" in out
+    assert "## open water" in out
+    assert "pumps built=" in out and "sea level=" in out
+    # The one thing that is genuinely unknown stays unknown.
+    assert "SHAPE is level geometry and is not in the save" in out
+
+
+def test_a_dry_land_resource_gets_no_water_block(live):
+    """Water is an exception to the node table, not a preamble on every answer."""
+    out = srv.search_resource_nodes(resource="Coal", limit=4)
+    assert "## open water" not in out
+    assert "NO NODE" not in out

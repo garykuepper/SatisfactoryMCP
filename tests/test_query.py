@@ -136,6 +136,92 @@ def test_measured_draw_weights_each_machine_by_its_own_window(game):
     assert view.measured_draw_mw < view.draw_mw
 
 
+def test_measured_output_weights_each_machine_by_its_own_window(game):
+    """A player could see what a factory COULD make and never what it IS making. Both rod
+    constructors are nameplate 15/min; only what each spent its window doing separates the
+    one that is fed from the one that is not."""
+    projection = _projection()
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 300.0}
+    projection["machines"][2]["uptime"] = {"window_s": 300.0, "produce_s": 60.0}
+    projection["machines"][0]["uptime"] = {"window_s": 300.0, "produce_s": 150.0}
+    view = _view(game, projection)
+    assert dict(view.outputs())["Iron Rod"] == pytest.approx(30.0)
+    rods = view.flows["Iron Rod"]
+    assert rods["measured_produced"] == pytest.approx(15.0 + 3.0)
+    assert rods["unmonitored_produced"] == 0.0
+    # The smelter ran a fifth of its window, and the ingots the rods ate are measured too.
+    assert view.measured_net("Iron Ingot") == pytest.approx(15.0 - (15.0 + 3.0))
+
+
+def test_an_unmonitored_machine_is_left_out_of_measured_output(game):
+    """The safe direction FLIPS between the two sides. Charging an unreadable machine in
+    full keeps a POWER figure conservative and would make an OUTPUT figure optimistic, so
+    the same record is counted in full on one side and not at all on the other."""
+    projection = _projection()
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 300.0}
+    # ROD_B and the smelter carry no monitor at all.
+    view = _view(game, projection)
+    rods = view.flows["Iron Rod"]
+    assert rods["produced"] == pytest.approx(30.0)
+    assert rods["measured_produced"] == pytest.approx(15.0), "only the readable one"
+    assert rods["unmonitored_produced"] == pytest.approx(15.0), "the other is not lost"
+    assert rods["measured_produced"] + rods["unmonitored_produced"] <= rods["produced"] + 1e-9
+    assert (view.producers, view.unmonitored_producers) == (3, 2)
+    # The draw side of the very same machines does the opposite, and must keep doing it.
+    assert view.measured_draw_mw > 0
+
+
+def test_an_item_no_monitor_can_see_is_unknown_rather_than_zero(game):
+    """Nothing readable makes the ingots, so their measured rate is not 0 -- there is no
+    measurement. Printing a zero there would report a factory the save cannot see as a
+    factory that has stopped."""
+    projection = _projection()
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 300.0}
+    view = _view(game, projection)
+    assert not view.measurable("Iron Ingot", "produced"), "only the unmonitored smelter"
+    assert view.measurable("Iron Ingot", "consumed"), "one rod constructor is readable"
+    assert view.measurable("Iron Rod", "produced")
+
+
+def test_producing_now_is_counted_from_the_flag_not_from_the_window(game):
+    """The window is a five-minute average and this is the snapshot at the moment of saving.
+    A machine that produced for half its window and had stopped by the save is both, and it
+    is the pair that explains a nameplate figure sitting beside a measured zero."""
+    projection = _projection()
+    projection["machines"][1]["uptime"] = {
+        "window_s": 300.0,
+        "produce_s": 150.0,
+        "producing": False,
+    }
+    projection["machines"][2]["uptime"] = {"window_s": 300.0, "produce_s": 0.0, "producing": True}
+    view = _view(game, projection)
+    assert view.producing_now == 1
+    assert view.producers == 3
+
+
+def test_the_flow_aspects_print_both_rates_and_say_which_window(game, monkeypatch):
+    """A true answer that reads as a broken tool is not shipped. 2.50/min nameplate against
+    0.00/min measured is only honest beside the sentence saying the measurement is of the
+    window that ended when the save was written."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as ftools
+
+    projection = _projection()
+    projection["header"] = {"save_identifier": "TEST-query-measured", "session_name": "t"}
+    projection["machines"][1]["uptime"] = {"window_s": 300.0, "produce_s": 60.0}
+    st = WorldState(projection=projection, game=game)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    out = ftools.factory_query(f"machine:{','.join(INSIDE)}", of="outputs,balance,summary")
+    assert "per min (measured)" in out
+    assert "net (measured)" in out
+    assert "no monitor" in out
+    assert "window that ENDED when this save was written" in out
+    assert "were mid-production at the instant the save was written" in out
+    assert "measured is a FLOOR" in out
+    # 30/min nameplate, of which one machine ran a fifth of its window and one is unreadable.
+    assert "Iron Rod\t30\t3\t15" in out
+
+
 def test_the_internal_aspect_names_what_never_crosses_the_boundary(game, monkeypatch):
     """``FactoryView.internal`` was written, documented as "the mark of a self-contained
     line", and rendered by nothing. The fixture is balanced on purpose: 30 Iron Ingot

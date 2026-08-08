@@ -132,10 +132,11 @@ class GeneratorTotal(TypedDict):
 
 
 class PowerSummary(TypedDict):
-    """``WorldState.power_report()`` verbatim: all eleven fields, though the page reads three.
+    """The eleven scalar fields of ``WorldState.power_report()``, though the page reads three.
 
-    Declaration order is the order ``domain/power/report.py`` returns them in, and this is a
-    transcription of that literal.
+    Declaration order is the order ``domain/power/report.py`` returns them in. The domain
+    also returns the starved-generator list, which rule 3 drops here: it is a text-surface
+    answer and the page has no place for it.
 
     ``utilisation`` is never null: it is ``measured / draw``, and ``1.0`` when nothing draws
     at all -- a factory with nothing built is fully utilised in the only sense the ratio has.

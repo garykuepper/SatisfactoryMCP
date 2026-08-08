@@ -595,6 +595,10 @@ def search_resource_nodes(
 
     All three modes page with `offset=`; the ranking is stable, so the tail of 127 iron
     nodes is reachable 25 at a time.
+
+    **Water is the exception to everything above.** Open water carries no node, so asking
+    for it returns only the fracking satellites; the bodies already being pumped, the pumps
+    on each and the measured sea level are printed beside them instead.
     """
     g = game()
     table = nodes_mod.load_nodes()
@@ -773,6 +777,55 @@ def search_resource_nodes(
             f"\n# elevation {low:.0f}..{high:.0f}m (span {high - low:.0f}m); fluid, so "
             "uphill runs need pumps and downhill runs do not"
         )
+
+    # Water is the one resource whose supply is not in the node table at all: every row this
+    # tool can return for it is a fracking satellite, so "0 free and reachable" is a fact
+    # about the satellites and says nothing about the lakes.
+    if "Desc_Water_C" in resources:
+        notes.insert(
+            0,
+            "open water carries NO NODE: a Water Extractor is placed on a shoreline, has no "
+            "purity and draws a flat rate, so there is no node cap for it to be free "
+            "against. Every row above is a fracking satellite, which does sit on a node",
+        )
+        if st is not None:
+            wv = st.water_volumes()
+            pump = g.buildings.get("Build_WaterPump_C")
+            level = wv["sea_level_m"]
+            body = (
+                "## open water\n"
+                + render.kv(
+                    [
+                        ("bodies drawn from", len(wv["volumes"])),
+                        ("pumps built", wv["pumps"]),
+                        (
+                            "per pump at 100%",
+                            f"{pump.extract_rate('normal', 1.0):.0f} m3/min" if pump else "",
+                        ),
+                        (
+                            "sea level",
+                            f"{level:.1f}m (pumps span {wv['sea_level_span_m']:.2f}m)"
+                            if level is not None
+                            else "",
+                        ),
+                    ]
+                )
+                + "\n"
+                + render.table(
+                    ("body", "pumps"),
+                    sorted(wv["volumes"].items(), key=lambda kv: -kv[1]),
+                    total=len(wv["volumes"]),
+                )
+                + "\n\n"
+                + body
+            )
+            notes.insert(
+                1,
+                "a body is the FGWaterVolume each pump's mExtractableResource names. Its "
+                "SHAPE is level geometry and is not in the save, so this says how many "
+                "separate shorelines are already worked, not how much is left in them -- "
+                "and sea level is measured off those pumps, not assumed",
+            )
 
     return render.envelope(
         f"# {sel.description}: {len(rows_all)} node(s), "

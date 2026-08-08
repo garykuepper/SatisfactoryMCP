@@ -4,11 +4,14 @@ One entry point rather than eight tools, because every question shares the same 
 steps: resolve a set of machines, then read something off it. What differs is only the
 projection taken.
 
-Rates are **nameplate at the machine's saved clock**, never measured. A Foundry running
-Solid Steel Ingot at 150% is reported at 1.5x its recipe rate whether or not it has ever
-had iron. Uptime is a separate question that needs the productivity fields, and conflating
-the two would make a starved factory look healthy -- so power is reported on both sides at
-once, never blended into one number.
+Every rate is carried twice, nameplate at the saved clock and measured over the productivity
+window that closed when the save was written, and the two are never blended: a Foundry on
+Solid Steel Ingot at 150% is nameplate 1.5x its recipe rate whether or not it has ever had
+iron, and the pair is what says which. The safe direction is **opposite on the two sides** --
+an unreadable machine charged in full makes a power figure conservative and an output figure
+optimistic -- so a machine with no monitor contributes nothing to the measured flows and its
+nameplate rate is parked in ``unmonitored_*``, leaving measured production a floor by
+construction.
 
 The one derived view worth more than the rest is ``balance``: per-item production minus
 consumption across the set. Its sign is the interesting part --
@@ -70,8 +73,20 @@ class FactoryView:
     machines: list[MachineRow] = field(default_factory=list)
     recipes: Counter = field(default_factory=Counter)
     buildings: Counter = field(default_factory=Counter)
-    #: item -> {"produced": ipm, "consumed": ipm}. Net is produced - consumed.
+    #: item -> six items/min figures, ``produced`` and ``consumed`` each in three flavours:
+    #: bare (nameplate), ``measured_`` (monitored machines, weighted by their own window)
+    #: and ``unmonitored_`` (nameplate rate of machines carrying no monitor at all). The
+    #: three sum: measured + unmonitored <= nameplate, with equality when nothing is idle.
     flows: dict[str, dict[str, float]] = field(default_factory=dict)
+    #: Machines that contributed any flow, and how many of those keep no productivity
+    #: monitor. The second is what makes the measured column readable: a factory where it
+    #: equals the first has no measured production, which is not the same as none.
+    producers: int = 0
+    unmonitored_producers: int = 0
+    #: Machines mid-production at the instant the save was written. The window figure is an
+    #: average over five minutes and this is the snapshot; on a factory that has just
+    #: stopped they disagree, and the disagreement is the finding.
+    producing_now: int = 0
     draw_mw: float = 0.0
     #: Draw weighted per machine by its own 300 s productivity monitor -- the only measured
     #: number here. A machine carrying no monitor is charged in FULL, so an unreadable one
@@ -97,6 +112,20 @@ class FactoryView:
     def net(self, item: str) -> float:
         f = self.flows.get(item, {})
         return f.get("produced", 0.0) - f.get("consumed", 0.0)
+
+    def measured_net(self, item: str) -> float:
+        f = self.flows.get(item, {})
+        return f.get("measured_produced", 0.0) - f.get("measured_consumed", 0.0)
+
+    def measurable(self, item: str, side: str) -> bool:
+        """Whether anything readable made (``produced``) or used (``consumed``) this item.
+
+        False means the measured figure for it is UNKNOWN and not zero -- every machine
+        touching it that way keeps no monitor. Printing a 0.00 there would report a factory
+        the save cannot see as a factory that has stopped.
+        """
+        f = self.flows.get(item, {})
+        return f.get(side, 0.0) - f.get(f"unmonitored_{side}", 0.0) > 1e-9
 
     def outputs(self, tol: float = 1e-6) -> list[tuple[str, float]]:
         """Items with a surplus: they leave, or they back up."""
@@ -132,7 +161,16 @@ def build_view(
     """Compute every aspect of one machine set in a single pass over the projection."""
     wanted = set(machines)
     view = FactoryView(name=name)
-    flows: dict[str, dict[str, float]] = defaultdict(lambda: {"produced": 0.0, "consumed": 0.0})
+    flows: dict[str, dict[str, float]] = defaultdict(
+        lambda: {
+            "produced": 0.0,
+            "consumed": 0.0,
+            "measured_produced": 0.0,
+            "measured_consumed": 0.0,
+            "unmonitored_produced": 0.0,
+            "unmonitored_consumed": 0.0,
+        }
+    )
 
     # resources_left is all the SAVE knows about a node. Resource and purity come from
     # the node table, which is why an unresolved extractor reports "?" rather than
@@ -152,6 +190,28 @@ def build_view(
         if share is None:
             view.unmonitored += 1
         view.measured_draw_mw += rated if share is None else rated * share
+
+    def flow(item: str, side: str, rate: float, share: float | None) -> None:
+        """One machine's contribution to one item, on both sides.
+
+        An unmonitored machine is NOT charged in full here, which is the reverse of what
+        ``charge`` above does with the same record: on this side charging it in full would
+        invent throughput. Its rate goes to the unmonitored column so it can be seen.
+        """
+        f = flows[item]
+        f[side] += rate
+        if share is None:
+            f[f"unmonitored_{side}"] += rate
+        else:
+            f[f"measured_{side}"] += rate * share
+
+    def census(record: dict, share: float | None) -> None:
+        """Count one machine that contributes flow, so the measured column can be read."""
+        view.producers += 1
+        if share is None:
+            view.unmonitored_producers += 1
+        if (record.get("uptime") or {}).get("producing"):
+            view.producing_now += 1
 
     for record in projection.get("machines", ()):
         short = _short(record["instance"])
@@ -182,10 +242,12 @@ def build_view(
         if paused:
             view.issues.append(f"{short}: paused ({recipe.name})")
             continue
-        for flow in recipe.products:
-            flows[game.item_name(flow.item)]["produced"] += flow.per_min * clock
-        for flow in recipe.ingredients:
-            flows[game.item_name(flow.item)]["consumed"] += flow.per_min * clock
+        share = measured_share(record)
+        census(record, share)
+        for f in recipe.products:
+            flow(game.item_name(f.item), "produced", f.per_min * clock, share)
+        for f in recipe.ingredients:
+            flow(game.item_name(f.item), "consumed", f.per_min * clock, share)
         if game.buildings.get(record.get("cls", "")) is None:
             # Silently contributing 0 MW would understate the whole factory's draw.
             view.issues.append(
@@ -239,13 +301,17 @@ def build_view(
             continue
         if building is not None:
             charge(building.power_at(clock), record)
-            if resource and purity == "n/a (water volume)":
+            share = measured_share(record)
+            if resource and purity:
+                census(record, share)
                 # Water volumes have no purity multiplier: extraction is the flat rate.
-                flows[game.item_name(resource)]["produced"] += building.extract_rate(
-                    "normal", clock
+                grade = "normal" if purity == "n/a (water volume)" else purity
+                flow(
+                    game.item_name(resource),
+                    "produced",
+                    building.extract_rate(grade, clock),
+                    share,
                 )
-            elif resource and purity:
-                flows[game.item_name(resource)]["produced"] += building.extract_rate(purity, clock)
             elif not node:
                 view.issues.append(f"{short}: extractor bound to no node, output unknown")
             else:
@@ -280,7 +346,9 @@ def build_view(
         view.generation_mw += building.power_production_mw * clock
         fuel = game.items.get(record.get("fuel") or "")
         if fuel is not None:
-            flows[fuel.name]["consumed"] += building.fuel_rate_per_min(fuel) * clock
+            share = measured_share(record)
+            census(record, share)
+            flow(fuel.name, "consumed", building.fuel_rate_per_min(fuel) * clock, share)
 
     view.flows = dict(flows)
 
