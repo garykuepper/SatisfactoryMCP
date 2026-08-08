@@ -129,8 +129,8 @@ Neither adds a process, a port, or a fallback path. Both keep every answer namin
 
 | | what | where | worth |
 |---|---|---|---|
-| 1 | Pre-warm on the watcher's edge: parse in a thread when the newest mtime moves. | `interfaces/web/watch.py:103` `poll_once` | the 4 s leaves the request path for anyone with the map open |
-| 2 | Fingerprint the save tree with one `os.scandir` and skip the `--list` sidecar when it is unchanged. | `core/saveio/projection.py` `scan_saves` | the last ~90 ms floor under every warm read, on both surfaces |
+| 1 | Pre-warm on the watcher's edge: parse in a thread when the newest mtime moves. | `interfaces/web/watch.py` `poll_once` | **built** — see §23.6 |
+| 2 | Fingerprint the save tree with one `os.scandir` and skip the `--list` sidecar when it is unchanged. | `core/saveio/projection.py` `scan_saves` | **built** — see §23.6 |
 | 3 | A cross-process lock file per cache key, `O_CREAT|O_EXCL`, with an mtime-based break for a stale one. | beside the pickle in `config.cache_dir()` | one duplicate 4 s parse per autosave, when both processes miss together |
 
 Item 2 outranks item 3 by measurement and is not one of the four arrangements at all — see below.
@@ -144,13 +144,42 @@ Item 2 outranks item 3 by measurement and is not one of the four arrangements at
 - **If the parse grows.** At 4 s a duplicate parse is waste; at 30 s, two of them on the machine
   running the game is a stutter the player feels, and the cross-process lock moves ahead of
   pre-warming.
-- **If `scan_saves` stays this expensive.** It is now the floor under every warm read — a subprocess to
-  list a directory, 87–190 ms — and §11's "1 ms" describes the memo, not the call. The cheapest fix is
-  not in this list at all: fingerprint the tree with one in-process `os.scandir` over `(name, mtime,
-  size)` and reuse the previous scan when the fingerprint is unchanged. That is a memo with a correct
-  invalidation key rather than a TTL, it costs well under a millisecond, and it would make a warm read
-  genuinely ~1 ms. Measured but not built here.
+- **If `scan_saves` stays this expensive.** It was the floor under every warm read — a subprocess to
+  list a directory, 87–190 ms — and §11's "1 ms" described the memo, not the call. The cheapest fix
+  was not in the list at all: fingerprint the tree with one in-process `os.scandir` over `(name,
+  mtime, size)` and reuse the previous scan when the fingerprint is unchanged. That is a memo with a
+  correct invalidation key rather than a TTL, and a warm read is now genuinely ~0.4 ms. Built; §23.6.
 - **If the cross-process handoff turns out to be narrower than it looks.** `prune_cache` keeps the 12
-  newest pickles and autosaves rotate every ~5 minutes, so the shared cache spans about an hour. That
-  is ample for the current save, which is the only one the handoff needs — but a workflow that reads
-  across many old saves would not get it.
+  most recently used pickles and autosaves rotate every ~5 minutes, so the shared cache spans about an
+  hour. That is ample for the current save, which is the only one the handoff needs — but a workflow
+  that reads across many old saves would not get it.
+
+## 23.6 What items 1 and 2 actually bought
+
+Same machine, same reference world, same method: one save rewritten under its own filename so
+`mtime_ns` moves, then eleven readers released together. Variants alternate inside one loop, medians
+of five, and the "before" side is the shipped code with the one function swapped back.
+
+| | before | after |
+|---|---|---|
+| **item 2** — warm `load_projection()`, single call | 98.8 ms | **0.44 ms** |
+| **item 2** — 11 concurrent warm GETs, whole map page | 0.361 s | **0.208 s** |
+| **item 1** — first read 8 s after the save, same process | 4.94 s | **0.15 s** |
+| **item 1** — first read 8 s after the save, a second cold process | 6.51 s | **0.20 s** |
+| **item 1** — 11 concurrent GETs 9 s after the save | 4.98 s | **0.85 s** |
+| **item 1** — 11 concurrent readers *at the same instant* as the poll | 4.27 s | 4.23 s |
+
+**The last row is the correction.** §23.4 said pre-warming moves the 4 s off the request path "for
+anyone with the map open", and for the browser's own refetch that is wrong: the SSE event and the
+pre-warm hang off the *same* poll, so the refetch arrives microseconds behind the parse and joins its
+flight rather than finding a cache. Single-flight had already taken that case. What pre-warming buys
+is every reader that arrives after the parse instead of during it — the MCP server on the next
+question, a page loaded a moment later, the browser's *next* request — and there it is a factor of
+30. The 0.85 s left in the 9-second row is the five derived views (§23.1), untouched by either item.
+
+Item 2's fingerprint is `(path, mtime_ns, size)` per `.sav` from one `os.scandir` walk, taken from the
+`DirEntry` the walk already produced: 0.49 ms for 72 files against 3.9 ms of individual `os.stat` and
+87 ms of sidecar. It is the memo *key*, not a TTL, so a caller that disagrees with another about the
+state of the disk can never be served its answer. Two writes inside one Windows clock tick share an
+`mtime_ns`, which the sidecar could tell apart and a fingerprint cannot, so a file stamped within
+`_SETTLE_NS` suspends the memo — one scan per save, where the old code paid one per call.
