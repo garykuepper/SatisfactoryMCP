@@ -924,36 +924,56 @@ are what the falsifier was written on.
 
 ---
 
-## 21. Parked: the physical logistics graph — what actually feeds what
+## 21. Part-built: the physical logistics graph — what actually feeds what
 
-Recorded 2026-08-02, from an audit of the tool surface. Nothing here needs new decoding; it is
-a join over data three separate features already produce, and the reason it is worth writing
-down is that each of those features was built without the others in view.
+Recorded 2026-08-02 from an audit of the tool surface; spiked, measured and half-built
+2026-08-06. Nothing here needs new decoding; it is a join over data three separate features
+already produce, and the reason it was worth writing down is that each of those features was
+built without the others in view.
 
-**The gap.** Three tools stand next to the question and none answers it. `factory_health` says
-a machine is starved. `trace_upstream` walks the RECIPE graph — what *should* feed a machine,
-by ingredient — and says so honestly. `search_conduits` finds runs near a point. What no tool
-can say is which belt actually terminates at *this* machine, and what stands at that belt's
-other end. The field tester met the same wall from the other side and twice told the player a
-build did not exist, because proximity is not connection.
+**The gap, which is still open.** Three tools stand next to the question and none answers it.
+`factory_health` says a machine is starved. `trace_upstream` walks the RECIPE graph — what
+*should* feed a machine, by ingredient — and says so honestly. `search_conduits` finds runs near
+a point. What no tool can say is which belt actually terminates at *this* machine, and what
+stands at that belt's other end. The field tester met the same wall from the other side and
+twice told the player a build did not exist, because proximity is not connection.
 
 **What already exists.** Belt chains carry their polylines and their attachments — splitters
 and mergers are in the projection and drawn on the map. Pipe runs carry an `FGPipeNetwork` id
 and an inferred flow direction (typed ports, pump orientation, propagation; 0 of 89 riser
 violations on the reference world). `domain/world/conduits.py` already turns both into runs
-with both ends and what stands at each. Machine footprints became real when the soft clearance
-boxes were read, so a machine is a box now, not a point.
+with both ends and what stands at each.
 
-**The missing piece is a port-level join, and its one hard lesson is already learned.** A
-conduit end is at a CONNECTOR, not at a machine origin — the same fact that broke floor mode's
-first cut on power wires, where an endpoint sits about 7 m above a Mk1 pole and 24 m above a
-tower. So the join is end-to-footprint with a measured tolerance, not point-to-point with a
-guessed one, and the tolerance is measured before anything is built on it: what fraction of
-machine ports on the reference world find a conduit end, how many chains end at nothing
-(dismantled, off the world, a lift's single top-down point), and how many attachments join
-three ways.
+**The join needs no geometry, because the save states it.** `graph["material"]` names BOTH
+ACTORS of every coupling, and every belt piece, lift and pipe is in that list — 3,094 belt
+actors against the 3,085 rows of the belt table, 503 pipes against 503. Contracting the conduit
+actors out of that layer therefore leaves node-to-node links the save asserts, not links a
+tolerance inferred, so the operation is EXACT rather than approximate.
+`domain/world/logistics.py` does it in 19 ms over the reference projection.
 
-**What it would enable, in order of value.**
+Measured on the committed fixture: 3,597 conduit actors contract into 2,200 runs, of which
+**2,174 (98.8%) name a thing at both ends**, 24 end at nothing and 2 float free. Direction
+resolves for 2,065 of them from the connector role or the device's nature; the 128 that stay
+undirected are every one of them a pipe between two fittings, which has no direction without the
+rates. Of the 426 machines with a recipe set, **423 have a physical feeder for every ingredient**
+and 421 a drain for every product. 651 of 848 attachments join exactly three ways. The live save
+agrees: 2,199 of 2,255 runs two-ended, 54 dangling — 20 of them stubs on Oil Refineries
+mid-build.
+
+**Struck: the port-level geometric join this section used to prescribe.** It read
+end-to-machine-footprint with a measured tolerance, on the true but irrelevant grounds that a
+conduit end sits at a CONNECTOR rather than at a machine origin. The tolerance was then measured
+against the save's own record, which is possible because a pipe segment carries `actorIndex` and
+so the geometric guess can be held end for end against the truth: 503 pipes, 1,006 endpoints,
+`conduits._plug` at its shipped tolerance, charged only for what it could name at all. It agrees
+at 717 and is **wrong at 289 (28.7%)** — 191 connections invented, 63 named as the wrong
+building, 35 real ones missed. Belts are worse placed to guess still: **71% of belt-chain
+endpoints have two or more placements inside reach**, so the tie-break rather than the geometry
+decides the edge. Do not build it, and do not reintroduce a tolerance anywhere in this join. It
+is exactly the confident wrong edge this section's own risk note named as the one failure worse
+than silence.
+
+**What it enables, in order of value.**
 
 1. *Causal health.* "Starved" becomes "starved because": the feeding chain's tier caps below
    demand, a splitter divides three ways, the upstream machine is paused or unpowered, the
@@ -967,66 +987,37 @@ three ways.
 4. *Throughput along a real route.* Rates exist per machine and per belt tier; the graph is
    what makes them a chain rather than two numbers.
 
-**Shape, smallest first cut.** One domain module joining conduit ends to machine footprints,
-returning a directed graph (belts are stored in travel order, proven folder-wide; pipes take
-their direction from the existing inference). Then `trace_upstream` gains a physical mode
-beside its recipe walk, and `factory_health` cites evidence instead of asserting a state. The
-graph is a derived artifact of one save, so it caches exactly like the other domain
-computations and needs no schema bump.
-
-**Risks worth stating before starting.** The join is a heuristic and must report its
-confidence rather than assert connection; a belt passing over a machine is not a belt feeding
-it; conveyor lifts are a single point from above and need their vertical extent from the
-piece, not the polyline. If the measured port-coverage comes out low, the honest answer is a
-partial graph that says what it could not join — never a confident wrong edge, which is the
-one failure mode worse than the silence we have today.
-
-### 21a. Spiked 2026-08-06: the join needs no geometry, and geometry would have been wrong
-
-**The premise above is wrong in the reader's favour.** A conduit end does sit at a connector
-rather than a machine origin, but the join never has to reach for it: `graph["material"]`
-names BOTH ACTORS of every coupling, and every belt piece, lift and pipe is in that list —
-3,094 belt actors against the 3,085 rows of the belt table, 503 pipes against 503. So
-contracting the conduit actors out of the material layer leaves node-to-node links the save
-STATES. `domain/world/logistics.py` does that in 19 ms over the reference projection.
-
-Measured on the committed fixture: 3,597 conduit actors contract into 2,200 runs, of which
-**2,174 (98.8%) name a thing at both ends**, 24 end at nothing and 2 float free. Direction
-resolves for 2,065 of them from the connector role or the device's nature; the 128 that stay
-undirected are every one of them a pipe between two fittings, which has no direction without
-the rates. Of the 426 machines with a recipe set, **423 have a physical feeder for every
-ingredient** and 421 a drain for every product. 651 of 848 attachments join exactly three
-ways. The live save agrees: 2,199 of 2,255 runs two-ended, 54 dangling — 20 of them stubs on
-Oil Refineries mid-build.
-
-**The proximity join was measured against that truth and it is not close.** A pipe segment
-carries `actorIndex`, so for pipes the geometric guess and the save's own record can be held
-end for end — 503 pipes, 1,006 endpoints, `conduits._plug` at its shipped tolerance, charged
-only for things it could name at all. It agrees at 717 and is wrong at **289 (28.7%)**: 191
-connections invented, 63 named as the wrong building, 35 real ones missed. Belts are worse
-placed to guess: **71% of belt-chain endpoints have two or more placements inside reach**, so
-the tie-break decides the edge. This is exactly the confident wrong edge §21 named.
-
 **What the graph does NOT buy.** `trace_upstream` already walks the same identity graph, and
 over 80 sampled machines the physical upstream set and its reached set are identical, 815
-against 815. The reachable machines were never the gap. What was missing is the STRUCTURE it
-drops on purpose: which run, of how many pieces, in which medium, through which splitter
+against 815. The reachable machines were never the gap. What was missing is the STRUCTURE that
+walk drops on purpose: which run, of how many pieces, in which medium, through which splitter
 dividing three ways, with the direction's basis stated and the dead ends named.
 
-**Demonstrated.** On the live save `factory_health` reports 22 starved and 3 dead-node as
-unrelated rows. Walking the physical graph up from one starved Quickwire Constructor reaches
-23 nodes and terminates in the whole answer: six Caterium Smelters, all stalled, fed by one
-Miner Mk.2 whose resource node is gone.
+**Landed on master, 2026-08-06.** The hypertube role tag (`core/saveio/ports.py`), which had to
+come first because 126 hypertube edges sit in `graph["material"]` indistinguishable from belts
+and any join would have inherited that lie; and the contraction itself
+(`domain/world/logistics.py`). The graph is a derived artifact of one save, so it caches exactly
+like the other domain computations and needed no schema bump.
 
-**Left undone.** Nothing consumes the module yet — `trace_upstream`'s physical mode and
+**Left to do.** Nothing consumes the module yet — `trace_upstream`'s physical mode and
 `factory_health`'s evidence line are the next commits, and the 128 undirected pipe runs would
-mostly resolve by taking `world/flow.py`'s per-segment inference into the contraction.
+mostly resolve by taking `world/flow.py`'s per-segment inference into the contraction. What that
+consumption is worth was demonstrated by hand on the live save: `factory_health` reports 22
+starved machines and 3 dead-node ones as unrelated rows, while walking the physical graph up
+from one starved Quickwire Constructor reaches 23 nodes and terminates in the whole answer — six
+Caterium Smelters, all stalled, fed by one Miner Mk.2 whose resource node is gone.
 
-## 22. Parked: the world as a time series
+**The rule that survives the spike.** A partial graph that says what it could not join beats a
+confident wrong edge, which is the one failure mode worse than the silence we have today. It now
+binds the 24 runs ending at nothing, the 2 floating free and the 128 with no resolvable
+direction: each is reported as unjoined or undirected, never guessed at.
 
-Recorded 2026-08-02. Every tool answers "how is my world now" from one save. The reference
-install holds 45 saves of that world and 67 across all worlds — a time series nothing reads.
-`diff_vs_save` compares a PLAN to reality; reality is never compared to its own past.
+## 22. Part-built: the world as a time series
+
+Recorded 2026-08-02; spiked, measured and half-built 2026-08-06. Every tool answers "how is my
+world now" from one save. The reference install holds 45 saves of that world and 67 across all
+worlds — a time series nothing reads. `diff_vs_save` compares a PLAN to reality; reality is
+never compared to its own past.
 
 **What it would enable.** What changed since yesterday, in machines built and removed and
 factories that appeared. When a machine stopped producing, found by bisecting the saves rather
@@ -1034,14 +1025,28 @@ than by memory. Growth curves that are already in the data: power draw against c
 machine count, stored stock, phase progress. How long a build actually took, from the first
 save its machines appear in.
 
-**Why it is affordable.** Instance ids are actor names and are stable across saves, so
-machine-level diffs are exact rather than fuzzy — that is the fact that makes "when did this
-stop" answerable at all. A full projection per save would be far too expensive to do eagerly,
-so the shape is a TIMELINE INDEX: one small row per save (playtime, mtime, machine count,
-power drawn and installed, phase, a few inventory totals, per-factory machine counts),
-computed once and cached beside the projection cache, with deep pairwise diffs only on demand
-between two chosen saves — sharing `domain/planning/diff.py`'s machinery rather than growing
-a second one.
+**Why it is affordable, now measured.** Instance ids are actor names, and their stability
+across saves is what makes "when did this stop" answerable at all. It was asserted here and is
+now measured: **98% of instances survive**, across four years of playtime and six game builds.
+The missing 2% is real and must be said in the answer — a rebuilt machine is a new actor, so a
+diff reports a removal and an addition rather than a move, and a machine-level history is a
+lower bound on how long a thing has stood.
+
+A full projection per save would be far too expensive to do eagerly, so the shape is a TIMELINE
+INDEX: one small row per save (playtime, mtime, machine count, power drawn and installed, phase,
+a few inventory totals, per-factory machine counts), computed once and cached beside the
+projection cache, with deep pairwise diffs only on demand between two chosen saves — sharing
+`domain/planning/diff.py`'s machinery rather than growing a second one. Measured on the reference
+install: **112 s to index 50 saves cold** — one parse each, and only ever once — for **101 kB**
+of index. Every later question is answered from the rows.
+
+**The build must not cost the player their warm save.** Indexing 50 saves walks 50 projections
+through a cache that holds twelve, so a naive builder evicts the save the live server and the
+LLM session are working on and makes the next ordinary question pay a 4 s parse. The projection
+cache is therefore LRU by READ rather than by write (`core/saveio/projection.py`, the `os.utime`
+on the cache-hit path), and the index builder is a reader like any other. This is a constraint on
+the builder, not an optimisation: an insurance feature that degrades the live surface will be
+turned off.
 
 **The trap that must be designed for on day one.** Autosave filenames rotate: `autosave_0`,
 `_1`, `_2` are recycled, so the same name is a different world state hours apart. The index
@@ -1058,3 +1063,7 @@ see, in the same voice the rest of the surface names the file it read.
 is new" is a question neither can answer alone. And `factory_health` gains a tense — starved
 *since* a moment, rather than starved as a timeless fact — which is the difference between a
 symptom and a lead.
+
+**Landed on master, 2026-08-06.** `domain/world/timeline.py`: the row, the identity key that
+survives autosave rotation, the index file and the pairwise comparison. Nothing consumes it yet
+— a tool and the window note it must print with every answer are the next commits.
