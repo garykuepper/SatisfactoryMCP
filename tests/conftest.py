@@ -109,7 +109,16 @@ REFERENCE_FIELD = ("bbox:-649.64,-3140.10,2465.03,-1080.29",)
 
 
 def _docs_available() -> bool:
-    return config.docs_path().is_file()
+    """Whether this machine has the game data, asked at COLLECTION time.
+
+    ``docs_path`` raises when it finds nothing, which is what a tool call wants and is the
+    one thing a skip predicate must not do: raising here fails the whole run at import
+    instead of skipping the tests that need an install.
+    """
+    try:
+        return config.docs_path().is_file()
+    except FileNotFoundError:
+        return False
 
 
 requires_docs = pytest.mark.skipif(

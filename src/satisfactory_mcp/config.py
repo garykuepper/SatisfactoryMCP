@@ -23,15 +23,31 @@ _DOCS_SUFFIX = Path("CommunityResources") / "Docs" / "en-US.json"
 
 
 def docs_path() -> Path:
-    """Locate Docs/en-US.json."""
+    """Locate Docs/en-US.json, or raise ``FileNotFoundError`` naming every place it looked.
+
+    Raises rather than returning a guess. A returned path that was never checked is a wrong
+    answer wearing the type of a right one: it travels to whichever loader opens it, and the
+    reader is then told the dump is missing from a drive letter this machine has never had.
+    """
     env = os.environ.get("SATISFACTORY_DOCS")
     if env:
-        return Path(env)
+        chosen = Path(env)
+        if not chosen.is_file():
+            raise FileNotFoundError(
+                f"SATISFACTORY_DOCS is set to {chosen}, which is not a file. It names the "
+                rf"dump itself, <install>\{_DOCS_SUFFIX}, not the install directory."
+            )
+        return chosen
     for base in _DOCS_CANDIDATES:
         candidate = Path(base) / _DOCS_SUFFIX
         if candidate.is_file():
             return candidate
-    return Path(_DOCS_CANDIDATES[0]) / _DOCS_SUFFIX
+    looked = ", ".join(_DOCS_CANDIDATES)
+    raise FileNotFoundError(
+        f"no game install found: looked for {_DOCS_SUFFIX} under {looked}. Set "
+        r"SATISFACTORY_DOCS to <install>\CommunityResources\Docs\en-US.json to say where "
+        "the game is."
+    )
 
 
 def saves_root() -> Path:
