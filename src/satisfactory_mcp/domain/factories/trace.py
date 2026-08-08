@@ -37,6 +37,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ...core.gamedata.model import GameData
+from ...core.saveio import ports
 
 __all__ = ["Reached", "Trace", "orient", "trace"]
 
@@ -111,8 +112,11 @@ def _adjacency(state, game: GameData) -> tuple[dict[str, set[str]], dict[str, se
     down: dict[str, set[str]] = {}
     ambiguous = 0
     for edge in graph.get("material") or ():
+        role_a, role_b = roles[edge[2]], roles[edge[3]]
+        if ports.is_hypertube_edge(role_a, role_b):
+            continue
         a, b = actors[edge[0]], actors[edge[1]]
-        side_a, side_b = orient(roles[edge[2]]), orient(roles[edge[3]])
+        side_a, side_b = orient(role_a), orient(role_b)
         # The connector name first; then the machine's own nature, which settles every
         # bare FGPipeConnectionFactory on this save because they all sit on an extractor
         # (only produces) or a generator (only consumes).

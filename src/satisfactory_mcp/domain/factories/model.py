@@ -75,6 +75,10 @@ class FactoryGraph:
     material: list[Edge] = field(default_factory=list)
     power: list[Edge] = field(default_factory=list)
     transport: list[Edge] = field(default_factory=list)
+    #: Hypertubes: a pedestrian network the save writes into the same edge list as the
+    #: belts. Kept rather than dropped so "is there a tube from here to there" stays
+    #: answerable; separate so no material question can traverse one.
+    hyper: list[Edge] = field(default_factory=list)
 
     _adj: dict[str, dict[str, list[Edge]]] = field(default_factory=dict, repr=False)
 
@@ -90,7 +94,12 @@ class FactoryGraph:
         return [n for n in self.cls if self.is_machine(n)]
 
     def edges(self, layer: str) -> list[Edge]:
-        return {"material": self.material, "power": self.power, "transport": self.transport}[layer]
+        return {
+            "material": self.material,
+            "power": self.power,
+            "transport": self.transport,
+            "hyper": self.hyper,
+        }[layer]
 
     def adjacency(self, layer: str) -> dict[str, list[Edge]]:
         """Neighbour index for one layer, built lazily and cached."""
@@ -162,5 +171,6 @@ class FactoryGraph:
             "material_edges": len(self.material),
             "power_edges": len(self.power),
             "transport_edges": len(self.transport),
+            "hyper_edges": len(self.hyper),
             "towers": len(self.towers()),
         }
