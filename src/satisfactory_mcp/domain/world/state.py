@@ -295,6 +295,9 @@ class WorldState:
     def water_volumes(self) -> dict:
         return world_water.water_volumes(self.projection)
 
+    def site_water(self, x_m: float, y_m: float, **kw) -> world_water.SiteWater | None:
+        return world_water.site_water(self.projection, x_m, y_m, **kw)
+
     # ---- progression ---------------------------------------------------
 
     EGP_TO_PHASE: ClassVar[dict[str, str]] = PhaseLedger.EGP_TO_PHASE

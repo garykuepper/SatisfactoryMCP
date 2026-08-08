@@ -529,10 +529,15 @@ def plan_factory(
     flow, as rows ADDED to the ``limit`` biggest by volume. Without it, a two-item
     question can fall off the bottom of a big plan's flow table.
 
-    ``site_at`` (with ``save_as``) records where the plan will STAND -- origin, yaw and
-    footprint -- so later calls can answer "does what stands there match it"
-    (diff_vs_save) and "show me" (show_on_map target='plan:<name>'). Recorded, never
-    solved against. Use site_plan to set or move the siting of an already-stored plan.
+    ``site_at`` says where the plan will STAND. On its own it makes the plan's water
+    assumption MEASURED rather than assumed: the terrain at that pad is read and the note
+    quotes how much of it is under water, at what level, and how far below the dry ground.
+    It never changes a number the LP produced -- how many extractors a body of water holds
+    is placement geometry no data here carries. With ``save_as`` it is also recorded, with
+    yaw and footprint, so later calls can answer "does what stands there match it"
+    (diff_vs_save) and "show me" (show_on_map target='plan:<name>'); a recalled plan that
+    was sited is measured at its own site without being told again. Use site_plan to set or
+    move the siting of an already-stored plan.
     """
     g = game()
     try:
@@ -563,7 +568,19 @@ def plan_factory(
     except KeyError as exc:
         return f"! {exc.args[0]}"
 
-    report = build_plan_report(g, st, plan_kwargs, logistics_items, objective=objective)
+    # Its own pair, never written back over the arguments: a recalled plan's site is
+    # measured here, and re-saving that plan must not turn its stored yaw and z into the
+    # defaults this call happens to carry.
+    measure_at, measure_pad = siting_mod.plan_site_args(st, plan, site_at or "", site_footprint)
+    report = build_plan_report(
+        g,
+        st,
+        plan_kwargs,
+        logistics_items,
+        objective=objective,
+        site_at=measure_at,
+        site_footprint=measure_pad,
+    )
 
     # Persistence is an interface side effect, not part of the answer: the plan is stored
     # here and the resulting sentence handed to the presenter like any other note.
@@ -617,9 +634,8 @@ def plan_factory(
         )
     elif site_at:
         save_as_note = (
-            "site_at was given without save_as, so nothing was recorded: a siting lives "
-            "on a STORED plan. Pass save_as=<name> here, or site an existing plan with "
-            "site_plan"
+            "site_at was measured but not RECORDED: a siting lives on a STORED plan. Pass "
+            "save_as=<name> here, or site an existing plan with site_plan"
         )
 
     return render_plan_factory(

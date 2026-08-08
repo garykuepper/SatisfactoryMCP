@@ -45,6 +45,7 @@ __all__ = [
     "WATER_QUALITY_NAMES",
     "Area",
     "Field",
+    "NearWater",
     "Reading",
     "decode_i16",
     "decode_u8",
@@ -300,6 +301,27 @@ class Area:
     def coarse_pct(self) -> float:
         """Share answered by a layer whose accuracy is worse than the roughness scale."""
         return self.provenance_pct.get(PROV_FILL, 0.0)
+
+
+@dataclass(frozen=True)
+class NearWater:
+    """How far the closest standing water is from a point, and what level it stands at.
+
+    A distance and a surface height, never a capacity: this says water is reachable, not
+    that anything may be built on it. ``distance_m is None`` means none was found inside
+    the searched box, which is only as strong a statement as ``covered_pct`` -- a box that
+    ran off the grid searched less than it was asked to.
+    """
+
+    radius_m: float
+    stride: int
+    #: Share of the requested box that was on the grid at all.
+    covered_pct: float
+    distance_m: float | None = None
+    level_m: float | None = None
+    #: ``WATER_QUALITY_NAMES`` at the texel found; ``WATER_LEVEL_ONLY`` means the bed under
+    #: it was never measured, so the level is sound and any depth read off it is not.
+    quality: int = WATER_DRY
 
 
 def _area_shape(z: np.ndarray, good: np.ndarray, spacing_m: float) -> dict[str, float | None]:
@@ -590,24 +612,12 @@ class Field:
         stride: int,
         denom: float,
     ) -> tuple[float, float | None, float | None]:
-        """Submerged share, water surface level, and its drop below the dry ground.
-
-        Vectorises ``Reading.submerged``, including its fallback: with a quality plane, wet
-        is ``quality != WATER_DRY``; without one -- a field written before that plane -- all
-        there is to go on is ``water > ground``, which over the fill layer reads the open
-        ocean as dry. The fallback stays because a pre-quality field is still readable, not
-        because the comparison is sound.
-        """
+        """Submerged share, water surface level, and its drop below the dry ground."""
         water = self._water_raster()
         if water is None:
             return 0.0, None, None
         wet_dm = water[cut]
-        has_water = wet_dm != NODATA
-        grades = self._water_quality_raster()
-        if grades is not None:
-            wet = has_water & (grades[cut] != WATER_DRY)
-        else:
-            wet = has_water & good & ((wet_dm.astype(np.float32) / DM_PER_M) > z)
+        wet = self._wet_mask(cut, wet_dm)
         n_wet = int(wet.sum())
         if n_wet == 0:
             return 0.0, None, None
@@ -618,6 +628,74 @@ class Field:
         # out near zero for a pond 40 m below a plateau rim.
         drop = None if dry_z.size == 0 else round(float(np.median(dry_z)) - level, 1)
         return 100.0 * n_wet * stride * stride / denom, round(level, 1), drop
+
+    def _wet_mask(self, cut: tuple[slice, slice], wet_dm: np.ndarray) -> np.ndarray:
+        """Which texels of a cut have water standing on them. Vectorises ``Reading.submerged``.
+
+        With a quality plane, wet is ``quality != WATER_DRY``; without one -- a field
+        written before that plane -- all there is to go on is ``water > ground``, which over
+        the fill layer reads the open ocean as dry. The fallback stays because a
+        pre-quality field is still readable, not because the comparison is sound.
+        """
+        wet = wet_dm != NODATA
+        grades = self._water_quality_raster()
+        if grades is not None:
+            return wet & (grades[cut] != WATER_DRY)
+        raw = self._height_dm[cut]
+        return wet & (raw != NODATA) & (wet_dm > raw)
+
+    def nearest_water(
+        self,
+        x_cm: float,
+        y_cm: float,
+        radius_cm: float,
+        max_texels: int = 1_000_000,
+    ) -> NearWater | None:
+        """The closest standing water to a point within a square of that half-width.
+
+        ``None`` only when this field carries no water plane at all, which is a different
+        answer from "no water nearby" and must not be collapsed into it. Decimated past
+        ``max_texels`` exactly as ``window`` is, so ``distance_m`` is quantised to
+        ``stride`` metres and ``stride`` is reported rather than folded away.
+        """
+        water = self._water_raster()
+        if water is None:
+            return None
+        radius_m = radius_cm / 100.0
+        row_lo, row_hi, col_lo, col_hi = self._rows_cols(
+            x_cm - radius_cm, y_cm - radius_cm, x_cm + radius_cm, y_cm + radius_cm
+        )
+        span = round(2 * radius_cm / self.spacing_cm) + 1
+        inside = max(row_hi - row_lo, 0) * max(col_hi - col_lo, 0)
+        covered = round(100.0 * inside / float(span * span), 1) if span else 0.0
+        if inside == 0:
+            return NearWater(radius_m=radius_m, stride=1, covered_pct=0.0)
+
+        stride = 1
+        if max_texels > 0 and inside > max_texels:
+            stride = int(np.ceil(np.sqrt(inside / max_texels)))
+        cut = (slice(row_lo, row_hi, stride), slice(col_lo, col_hi, stride))
+        wet_dm = water[cut]
+        rows, cols = np.nonzero(self._wet_mask(cut, wet_dm))
+        if rows.size == 0:
+            return NearWater(radius_m=radius_m, stride=stride, covered_pct=covered)
+
+        # Distance in the DECIMATED view's index space, then scaled back: the centre is
+        # rarely on a sampled texel once stride > 1, so the offset has to be carried
+        # through rather than assumed zero.
+        centre_col = ((x_cm - self.x0_cm) / self.spacing_cm - col_lo) / stride
+        centre_row = ((y_cm - self.y0_cm) / self.spacing_cm - row_lo) / stride
+        d2 = (cols - centre_col) ** 2 + (rows - centre_row) ** 2
+        best = int(np.argmin(d2))
+        grades = self._water_quality_raster()
+        return NearWater(
+            radius_m=radius_m,
+            stride=stride,
+            covered_pct=covered,
+            distance_m=round(float(np.sqrt(d2[best])) * self.spacing_cm * stride / 100.0, 1),
+            level_m=round(float(wet_dm[rows[best], cols[best]]) / DM_PER_M, 1),
+            quality=int(grades[cut][rows[best], cols[best]]) if grades is not None else WATER_DRY,
+        )
 
 
 #: Loaded fields, keyed by the directory and its sidecar's mtime, so a regenerated field is

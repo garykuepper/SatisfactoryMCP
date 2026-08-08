@@ -56,11 +56,17 @@ def prepare(
     objective_label: str = "",
     audit: bool = False,
     diagnose: bool = True,
+    site_at: str = "",
+    site_footprint: str = "",
 ) -> PreparedPlan:
     """Build and solve, or explain why not.
 
     ``plan_kwargs`` is already merged -- recall and override live in the tool layer,
     because only it knows which arguments a given tool exposes.
+
+    ``site_at`` rides beside those rather than among them: a plan STORES its site under its
+    own key (``planning.siting``), so routing it through the stored-argument dict would put
+    the same fact in two places.
 
     ``diagnose`` runs the supply probe on failure, costing one extra solve and only on the
     infeasible path.
@@ -68,7 +74,9 @@ def prepare(
     from ..spatial.select import SELECTOR_HELP
     from .scenario import EXPORT_HELP
 
-    request = build_scenario(game, state, **plan_kwargs)
+    request = build_scenario(
+        game, state, **plan_kwargs, site_at=site_at, site_footprint=site_footprint
+    )
     prepared = PreparedPlan(request=request)
 
     selection = request.selection

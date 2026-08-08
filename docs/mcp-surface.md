@@ -131,7 +131,10 @@ caller-measured or the square `plan_layout` budgets for the largest floor, and t
 says which). Set at save time (`plan_factory site_at=... save_as=...`) or afterwards
 (`site_plan`), cleared with `site_plan(clear=True)`. A siting is a *record of the
 decision, never a constraint*: nothing feeds it to the LP, and re-solving neither reads
-nor moves it. Once sited: every recall prints it, `list_plans` grows a `sited(m)` column,
+nor moves it. It is read for one thing — `plan_factory` measures the terrain at the pad
+and prints what the water there actually is instead of assuming it, on a fresh `site_at`
+and on every recall of a sited plan; the numbers it prints never move the plan's own.
+Once sited: every recall prints it, `list_plans` grows a `sited(m)` column,
 `diff_vs_save plan=...` adds an **ON SITE** census — counts by building class inside the
 (properly rotated) footprint against the plan's bill, named *approximate* because it
 checks neither recipes nor clocks — and `show_on_map target='plan:<name>'` centres both

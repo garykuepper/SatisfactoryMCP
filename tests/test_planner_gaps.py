@@ -110,8 +110,10 @@ def test_water_extractors_can_be_capped_to_what_a_site_holds(game, state):
 
 
 def test_the_default_water_cap_is_an_assumption_not_a_measurement(game):
-    """It is the only number in the constants register with no data behind it, and it
-    is high enough not to bind -- which makes reading it as capacity dangerous."""
+    """It is the only number in the constants register with no data behind it, which makes
+    reading it as capacity dangerous. It is NOT too high to bind either -- a whole-map
+    max_mw takes all 200 -- so ``test_water_assumption`` pins that every plan says which
+    of the two it is."""
     from satisfactory_mcp.core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 
     assert WATER_EXTRACTOR_CAP_ASSUMED >= 100
@@ -290,22 +292,21 @@ def test_the_water_warning_quotes_real_geometry(game, state):
     out = srv.plan_factory(
         sources=SPIRE, objective="max_mw", exports=["MW"], extractor_clocks=[1, 1.5, 2, 2.5]
     )
-    warn = [line for line in out.splitlines() if "Water Extractor(s): siting" in line]
-    if warn:
-        # The platform and its concrete, which is what actually costs something, in BOTH
-        # shapes: the block is the cheapest way to buy the area and the pier length is the
-        # number you lay platform modules against.
-        assert "Concrete)" in warn[0]
-        assert "pier" in warn[0]
-        assert "Shoreline is NOT the limit" in warn[0]
-        # The frontage figure this used to assert was answering a question nobody had.
-        # Pumps do not line a shore, they sit on floors built out over open water, and
-        # quoting metres-of-shoreline made ordinary large water plans look impossible.
-        assert "of shoreline" not in warn[0]
-        # Packed, not n x footprint. The per-machine count ignores shared edges and
-        # overstates the concrete by about a third, so the naive figure appears only as
-        # the thing being corrected.
-        assert "ignores shared edges" in warn[0]
+    warn = next(line for line in out.splitlines() if "Water Extractor(s)" in line)
+    # The platform and its concrete, which is what actually costs something, in BOTH
+    # shapes: the block is the cheapest way to buy the area and the pier length is the
+    # number you lay platform modules against.
+    assert "Concrete)" in warn
+    assert "pier" in warn
+    assert "Shoreline is NOT the limit" in warn
+    # The frontage figure this used to assert was answering a question nobody had.
+    # Pumps do not line a shore, they sit on floors built out over open water, and
+    # quoting metres-of-shoreline made ordinary large water plans look impossible.
+    assert "of shoreline" not in warn
+    # Packed, not n x footprint. The per-machine count ignores shared edges and
+    # overstates the concrete by about a third, so the naive figure appears only as
+    # the thing being corrected.
+    assert "ignores shared edges" in warn
 
 
 # ------------------------------------------------- packing machines onto foundations

@@ -49,6 +49,8 @@ __all__ = [
     "build_siting",
     "parse",
     "parse_footprint",
+    "plan_site_args",
+    "resolve_plan_site",
     "resolve_site_origin",
     "survey",
 ]
@@ -197,6 +199,52 @@ def resolve_site_origin(st: WorldState, at: str) -> tuple[float, float, float | 
         return here[0] / 100.0, here[1] / 100.0, here[2] / 100.0, "you"
     origin_cm, label = resolve_origin(st, text)  # raises ValueError with the known names
     return origin_cm[0] / 100.0, origin_cm[1] / 100.0, None, label
+
+
+def plan_site_args(st: WorldState, plan: str | None, at: str, footprint: str) -> tuple[str, str]:
+    """The site a planning call should MEASURE at: this call's, else the recalled plan's.
+
+    A stored plan that was sited measures its own ground on every recall without being told
+    again, which is most of the reason to have stored the siting at all.
+    """
+    if at:
+        return at, footprint
+    stored = st.plans.find(plan) if plan else None
+    sit = parse(stored) if stored is not None else None
+    if sit is None:
+        return "", footprint
+    if not footprint and sit.has_footprint:
+        footprint = f"{sit.width_m:g}x{sit.depth_m:g}"
+    return f"{sit.x_m:g},{sit.y_m:g}", footprint
+
+
+def resolve_plan_site(st: WorldState, at: str, footprint: str = "", when: str = "") -> Siting:
+    """A site for a plan being BUILT, resolved before there is a solution to size it from.
+
+    ``build_siting`` is the other half of this and derives a blank footprint from the
+    layout, which costs a solve; this runs while the scenario is still being assembled, so
+    a blank footprint is ``SITE_PAD_M`` and ``source`` says "default" rather than claiming
+    the square was measured. Raises ``ValueError`` with a caller-facing message.
+    """
+    from ..world.water import SITE_PAD_M
+
+    x_m, y_m, z_m, label = resolve_site_origin(st, at)
+    if footprint.strip():
+        width, depth = parse_footprint(footprint)
+        source = "given"
+    else:
+        width = depth = SITE_PAD_M
+        source = "default"
+    return Siting(
+        x_m=round(x_m, 2),
+        y_m=round(y_m, 2),
+        z_m=None if z_m is None else round(z_m, 2),
+        width_m=width,
+        depth_m=depth,
+        source=source,
+        origin_label=label,
+        when=when,
+    )
 
 
 def build_siting(

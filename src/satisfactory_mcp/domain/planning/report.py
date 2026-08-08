@@ -27,9 +27,19 @@ class PlanFactoryReport:
     #: ``None`` when the plan failed; every field below it is derived from a solution.
     bill: PlanSlice | None = None
     water_pumps: float = 0.0
-    #: ``water_volumes()`` with the pump footprint and its packings, and only when the
-    #: count is large enough to warn about and the caller set no cap.
+    #: ``water_volumes()`` whenever the plan pumps at all, carrying the pump footprint and
+    #: its packings only once the count is large enough for the concrete to matter.
     water: dict | None = None
+    #: The extractor ceiling this solve ran under, and where it came from. ``given`` means
+    #: the caller measured it; otherwise it is ``WATER_EXTRACTOR_CAP_ASSUMED``.
+    water_cap: int = 0
+    water_cap_given: bool = False
+    #: Whether that ceiling is HOLDING THE ANSWER DOWN -- the solve took every extractor it
+    #: was allowed, so the plan is shaped by an assumption rather than by the world.
+    water_binding: bool = False
+    #: What the terrain measures at the site, when the plan was told where it stands and
+    #: this machine has a field. Evidence for the assumption above; never a substitute.
+    site_water: object | None = None
     shard_budget: dict | None = None
     sloop_budget: dict | None = None
     #: The Production Amplifier research, when it is still in the way of the budget asked.
@@ -56,12 +66,22 @@ def build_plan_report(
     logistics_items: list[str] | None = None,
     *,
     objective: str = "",
+    site_at: str = "",
+    site_footprint: str = "",
 ) -> PlanFactoryReport:
     """Solve ``plan_kwargs`` and gather what this world says about the result.
 
     On failure the report carries ``prepared.failure`` and nothing else.
     """
-    prepared = prepare(g, st, plan_kwargs, objective_label=objective, audit=True)
+    prepared = prepare(
+        g,
+        st,
+        plan_kwargs,
+        objective_label=objective,
+        audit=True,
+        site_at=site_at,
+        site_footprint=site_footprint,
+    )
     report = PlanFactoryReport(prepared=prepared)
     if prepared.failure:
         return report
@@ -74,14 +94,34 @@ def build_plan_report(
         p["machines"] for p in sol.processes if p.get("building_id") == "Build_WaterPump_C"
     )
     n_water = report.water_pumps
-    if n_water >= WATER_EXTRACTOR_WARN_AT and not plan_kwargs.get("water_extractors"):
+    report.water_cap = int(
+        prepared.request.scenario.extractor_nodes.get(
+            ("Build_WaterPump_C", "Desc_Water_C", "normal"), 0
+        )
+    )
+    report.water_cap_given = plan_kwargs.get("water_extractors") is not None
+    # Whole machines, so equality is the test: the LP hands back a fractional count only
+    # when something else binds first.
+    report.water_binding = bool(report.water_cap) and n_water >= report.water_cap - 1e-6
+    if n_water > 0:
         pump = g.buildings.get("Build_WaterPump_C")
         size = pump.footprint if pump else None
+        heavy = n_water >= WATER_EXTRACTOR_WARN_AT and not report.water_cap_given
         # Packed, not n x footprint: that product ignores shared edges and overstates the
         # concrete by about a third.
-        block = size.pack(n_water) if size else None
-        pier = size.pack(n_water, columns=1) if size else None
-        report.water = {**st.water_volumes(), "size": size, "block": block, "pier": pier}
+        block = size.pack(n_water) if size and heavy else None
+        pier = size.pack(n_water, columns=1) if size and heavy else None
+        report.water = {
+            **st.water_volumes(),
+            "size": size if heavy else None,
+            "block": block,
+            "pier": pier,
+        }
+        site = prepared.request.site
+        if site is not None:
+            report.site_water = st.site_water(
+                site.x_m, site.y_m, width_m=site.width_m, depth_m=site.depth_m
+            )
 
     # A shard raises the MAXIMUM clock by 0.5, so a machine at 150% needs one and only a
     # machine at 250% needs three.

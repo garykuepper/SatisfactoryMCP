@@ -95,11 +95,13 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
 #: The only number here with no data behind it, and DANGEROUS to read as capacity. Water is
-#: drawn from FGWaterVolume objects -- ocean, lakes -- which carry no node entry, no purity and
-#: no geometry, so this exists only to keep the column bounded and is set high enough not to
-#: bind. Extractors go on platforms built out over open water, so frontage is irrelevant and
-#: only water AREA matters; what binds is vertical, since water alone must be drawn at sea
-#: level. Pass ``water_extractors`` to replace this with a number the player has measured.
+#: drawn from FGWaterVolume objects -- ocean, lakes -- which carry no node entry, no purity
+#: and no geometry, so this exists only to keep the column bounded. It is NOT too high to
+#: bind: a whole-map ``max_mw`` takes every one of the 200 and wants 246. Terrain does not
+#: fix that -- submerged area is not an extractor count, since shoreline geometry, clearance
+#: and overlap are level data nothing here reads -- so the number stays an assumption and
+#: every plan that pumps says so, says whether it is binding, and quotes what was measured
+#: at its site. Pass ``water_extractors`` to replace it with a number the player measured.
 WATER_EXTRACTOR_CAP_ASSUMED: int = 200
 
 #: Above this many extractors in one plan, say plainly that the count is an assumption and

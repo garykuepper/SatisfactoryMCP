@@ -171,6 +171,23 @@ plan using more than `WATER_EXTRACTOR_WARN_AT` says outright that siting is unmo
 Water pump rows also stop reporting `?` for resource and purity — a Water Extractor sits
 on a volume, so it now reads `Water / n/a (water volume)` rather than looking broken.
 
+**The cap does bind, and the terrain cannot retire it.** `WATER_EXTRACTOR_CAP_ASSUMED`
+was documented as set high enough not to bind. Measured on the reference world: a
+whole-map `max_mw` takes **all 200** and wants 246 — raising the cap to 400 buys 7,850 MW
+(180,272 → 188,122, 4.4 %). Aluminium, the canonical water-hungry plan, uses 21 and is
+nowhere near it. So the number was load-bearing on exactly the plans that never mentioned
+it, and the 30-pump warning threshold never fired for the ones that did.
+
+The terrain field (`Field.window`, `Field.nearest_water`) does **not** replace it. Submerged
+area is not an extractor count: shoreline geometry, clearance and overlap are level data no
+raster here carries, and deriving a count from `submerged_pct` is precisely the
+confidently-wrong answer this project exists to avoid. What the field replaces is the
+*silence*. Every plan that pumps now names the cap, says whether it is `BINDING` or merely
+present, and — given `site_at` — quotes what was measured at the pad: the submerged share
+and water level, or the distance to the nearest standing water and how far below the dry
+ground it sits, joined to the pump-measured sea level from `world/water.py`. `site_at` still
+changes no number the LP produces, and the `plan_id` is deliberately blind to it.
+
 **Degenerate sub-1 % rows were clock modes, not an LP artefact.** Offering a node set at
 several clocks creates one column per mode, and the modes share a node cap, so the solver
 may split across them arbitrarily — 0.615 machine-equivalents at 100 % plus 0.0201 at

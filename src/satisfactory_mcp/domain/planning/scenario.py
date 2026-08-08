@@ -19,6 +19,7 @@ from ...core.gamedata.constants import WATER_EXTRACTOR_CAP_ASSUMED
 from ...core.gamedata.model import GameData
 from ..spatial import nodes as nodes_mod
 from ..spatial.select import Selection, select_nodes
+from . import siting as siting_mod
 from .optimize import MW, Scenario
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
@@ -135,6 +136,13 @@ class PlanRequest:
     #: node is gone from the post-filter set precisely when it is the interesting one.
     scoped_nodes: list[dict] = field(default_factory=list)
     only_free_nodes: bool = False
+    #: Where this plan STANDS, resolved. Deliberately absent from ``plan_id``: nothing here
+    #: enters the LP, so hashing it would give one plan two ids depending only on whether
+    #: the caller had said where it goes.
+    site: siting_mod.Siting | None = None
+    #: A ``site_at`` that would not resolve. Reported, never raised: a bad coordinate must
+    #: not take down a plan whose numbers do not depend on one.
+    site_errors: list[str] = field(default_factory=list)
 
 
 def build_scenario(
@@ -160,6 +168,11 @@ def build_scenario(
     sloops: int = 0,
     recycle_once: list[str] | None = None,
     supplied: dict[str, float] | None = None,
+    #: Where the factory will stand, in any spelling ``spatial.origin`` takes. It buys the
+    #: plan a MEASURED water assumption instead of an assumed one; it changes no number the
+    #: LP sees, because how much water a site yields is placement geometry no data here has.
+    site_at: str = "",
+    site_footprint: str = "",
 ) -> PlanRequest:
     """Translate tool arguments into a Scenario, its node scope and a plan id.
 
@@ -324,6 +337,14 @@ def build_scenario(
         for pattern in [m for m in misses if m not in matched_a_recipe]:
             recipe_errors.append(f"exclude_recipes: nothing matches {pattern!r}")
 
+    site = None
+    site_errors: list[str] = []
+    if str(site_at or "").strip():
+        try:
+            site = siting_mod.resolve_plan_site(state, site_at, site_footprint)
+        except ValueError as exc:
+            site_errors.append(f"site_at: {exc}")
+
     return PlanRequest(
         scenario=sc,
         selection=sel,
@@ -334,6 +355,8 @@ def build_scenario(
         export_errors=export_errors,
         scoped_nodes=scoped,
         only_free_nodes=only_free_nodes,
+        site=site,
+        site_errors=site_errors,
     )
 
 

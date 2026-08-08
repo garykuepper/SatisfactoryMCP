@@ -167,6 +167,17 @@ def test_recall_of_an_unsited_plan_says_nothing_about_siting(store):
     assert not any("sited" in n for n in notes)
 
 
+def test_a_recalled_sited_plan_is_measured_at_its_own_site(store):
+    """The pad and its footprint come back without being retyped, which is most of the
+    point of having stored them: `plan_factory plan='x'` measures the ground it stands on."""
+    store.put("p", {"objective": "min_power"}, plan_id="x")
+    store.plans[0].siting = _sited(width_m=60.0, depth_m=40.0).to_dict()
+    assert siting_mod.plan_site_args(_FakeState(store), "p", "", "") == ("100,-200", "60x40")
+    # An explicit argument wins: the caller is asking about somewhere else.
+    assert siting_mod.plan_site_args(_FakeState(store), "p", "me", "") == ("me", "")
+    assert siting_mod.plan_site_args(_FakeState(store), None, "", "") == ("", "")
+
+
 # ----------------------------------------------------------------- survey
 
 

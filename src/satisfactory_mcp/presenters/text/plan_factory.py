@@ -16,6 +16,71 @@ from . import primitives as render
 __all__ = ["render_plan_factory"]
 
 
+def _water_bound(report: PlanFactoryReport) -> str:
+    """How the extractor ceiling was arrived at, and whether it is holding the plan down."""
+    cap = report.water_cap
+    if report.water_cap_given:
+        return f"capped at {cap}, the number you measured and passed"
+    if report.water_binding:
+        return (
+            f"capped at {cap} by the WATER_EXTRACTOR_CAP_ASSUMED default, and that cap is "
+            f"BINDING: the solve took every extractor it was allowed, so this answer is "
+            f"held down by an assumption rather than by your world"
+        )
+    return (
+        f"ASSUMED, not measured -- bounded at {cap} by the WATER_EXTRACTOR_CAP_ASSUMED "
+        f"default, which is not what binds here"
+    )
+
+
+def _water_evidence(report: PlanFactoryReport, site) -> str:
+    """What was actually measured about water at this plan's site, if it has one.
+
+    Every branch reports a distance, a level or a share of ground; none reports a capacity.
+    Turning submerged area into an extractor count would need shoreline geometry, clearance
+    and overlap rules, and none of the three is in this field.
+    """
+    if site is None:
+        return (
+            " This plan is NOT SITED, so its water was assumed and not measured: pass "
+            "site_at=<where it will stand> to have the terrain there read instead."
+        )
+    coords = f"{site.x_m:g},{site.y_m:g}"
+    named = "" if site.origin_label in ("", coords) else f"{site.origin_label} "
+    where = f" Sited at {named}({coords} m)"
+    sw = report.site_water
+    if sw is None:
+        return f"{where}, but this machine carries no terrain field, so nothing was measured."
+    pad = f"{site.width_m:g}x{site.depth_m:g} m pad"
+    if sw.pad.submerged_pct > 0:
+        body = f"{sw.pad.submerged_pct:g}% of the {pad} stands under water at {sw.level_m:.1f} m"
+    elif sw.distance_m is not None:
+        body = (
+            f"the {pad} is dry and the nearest standing water is {sw.distance_m:g} m away, "
+            f"surface {sw.level_m:.1f} m"
+        )
+    else:
+        radius = sw.near.radius_m if sw.near else 0.0
+        return (
+            f"{where}, and MEASURED: no standing water within {radius:g} m of the {pad}, so "
+            "every m3 this plan drinks has to be piped in from further out."
+        )
+    drop = (
+        ", and the pad keeps no dry ground to measure a drop against"
+        if sw.below_ground_m is None
+        else f", {sw.below_ground_m:.1f} m below its dry ground"
+    )
+    body += " (this world's sea level)" if sw.at_sea_level else ""
+    coarse = ""
+    if sw.pad.nodata_pct >= 10.0 or sw.pad.coarse_pct >= 50.0:
+        coarse = (
+            f" ({sw.pad.nodata_pct:g}% of the pad has no terrain data and "
+            f"{sw.pad.coarse_pct:g}% is the 3.9 m fill layer, so read those to the metre "
+            "at best)"
+        )
+    return f"{where}, and MEASURED: {body}{drop}.{coarse}"
+
+
 def render_plan_factory(
     g: GameData,
     st: WorldState,
@@ -79,7 +144,7 @@ def render_plan_factory(
             f"{why}. Pass export_minimums={{{name!r}: <rate>}} to require it"
         )
 
-    notes = [*zero_notes, *sel.errors, *req.recipe_errors, *prepared.notes]
+    notes = [*zero_notes, *sel.errors, *req.site_errors, *req.recipe_errors, *prepared.notes]
 
     n_water = report.water_pumps
     if report.water is not None:
@@ -109,12 +174,13 @@ def render_plan_factory(
                     " sea level and the height any new pump has to be drawn at."
                 )
         notes.append(
-            f"{n_water} Water Extractor(s): the COUNT is capped by assumption -- a water "
+            f"{n_water} Water Extractor(s): the COUNT is {_water_bound(report)} -- a water "
             "volume's shape is level geometry and is not in the save, so nothing here "
             "knows how many a body of water holds. Shoreline is NOT the limit: pumps sit "
             "on platforms built out over open water, so only area and concrete cost "
             "anything. What does bind is vertical -- water is the only fluid that must be "
-            f"drawn at sea level and cannot be gravity-fed, so it sets deck order.{space}"
+            f"drawn at sea level and cannot be gravity-fed, so it sets deck order."
+            f"{_water_evidence(report, req.site)}{space}"
             f"{existing} Pass water_extractors=<what your site holds> for a measured limit"
         )
     if bill.shard_rows:

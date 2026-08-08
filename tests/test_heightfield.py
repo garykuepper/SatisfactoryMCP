@@ -558,6 +558,51 @@ def test_an_area_states_which_layer_answered_so_a_reader_can_distrust_it(tmp_pat
 
 
 # --------------------------------------------------------------------------------------
+# Finding the nearest water: a distance and a level, and never a capacity.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_nearest_water_is_a_distance_and_a_surface(tmp_path):
+    """Row 4 is 4 m north of row 0 and its surface is 2.0 m, both read off the raster."""
+    field = hf.load_field(build_field(tmp_path))
+    near = field.nearest_water(0.0, FAKE_Y0, 500.0)
+    assert near.distance_m == pytest.approx(4.0)
+    assert near.level_m == pytest.approx(2.0)
+    assert near.quality == hf.WATER_MEASURED
+    assert near.covered_pct == pytest.approx(100.0 * 6 * 7 / (11 * 11), abs=0.1)
+
+
+def test_no_water_in_range_says_how_much_of_the_range_it_actually_saw(tmp_path):
+    """ "None within 300 m" over a box that ran off the grid is a weaker claim than it
+    sounds, and only ``covered_pct`` carries the difference."""
+    field = hf.load_field(build_field(tmp_path))
+    near = field.nearest_water(0.0, FAKE_Y0, 300.0)
+    assert near.distance_m is None
+    assert near.covered_pct < 100.0
+
+
+def test_a_field_with_no_water_plane_answers_nothing_rather_than_nowhere(tmp_path):
+    """Two different silences: this field cannot speak about water at all, which must not
+    read as "there is none nearby"."""
+    field = hf.load_field(build_field(tmp_path, water=False))
+    assert field.nearest_water(0.0, FAKE_Y0, 500.0) is None
+
+
+def test_without_a_quality_plane_the_ocean_row_reads_as_dry(tmp_path):
+    """The fallback's known blind spot, pinned where it is visible: row 5's sea surface
+    stands BELOW the fill raster's ground, so a comparison-only field walks past it to the
+    pond a metre away instead."""
+    graded = hf.load_field(build_field(tmp_path / "graded"))
+    assert graded.nearest_water(0.0, FAKE_Y0 + 5 * FAKE_SPACING, 500.0).level_m == pytest.approx(
+        -17.0
+    )
+    blind = hf.load_field(build_field(tmp_path / "blind", quality=False))
+    walked_past = blind.nearest_water(0.0, FAKE_Y0 + 5 * FAKE_SPACING, 500.0)
+    assert walked_past.distance_m == pytest.approx(1.0)
+    assert walked_past.level_m == pytest.approx(2.0)
+
+
+# --------------------------------------------------------------------------------------
 # The elevation probe: a fourth source, beside the populations rather than inside them.
 # --------------------------------------------------------------------------------------
 
