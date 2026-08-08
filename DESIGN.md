@@ -27,8 +27,13 @@ resolves through this table wherever it is written, in a document or in a docstr
 | §7, §17, §18, §19 | [docs/spatial-and-map.md](docs/spatial-and-map.md) | coordinate frame, regions, node lookup and the selector language; the map's three base layers, the mode model and the heightfield's water channel |
 | §8, §9 | [docs/planning.md](docs/planning.md) | the LP/MILP formulation, layout, commissioning, diffing against the save, and the hard-drive advisor |
 | §10, §11, §12 | [docs/mcp-surface.md](docs/mcp-surface.md) | the tools with their transcripts, the context budget, caching, and the testing contract |
-| §14, §15, §15b, §16, §16b, §19 | [docs/parked.md](docs/parked.md) | open questions, parked work with the measurements that would otherwise be redone, and finished work kept as a record |
+| §14, §15, §15b, §16, §16b, §19–§22 | [docs/parked.md](docs/parked.md) | open questions, parked work with the measurements that would otherwise be redone, and finished work kept as a record |
 | §23 | [docs/residency.md](docs/residency.md) | what an autosave costs the two processes, and why the answer is a pre-warming watcher rather than a resident daemon |
+
+Two documents carry no section numbers of their own, because they are ledgers rather than
+design: [docs/backlog.md](docs/backlog.md) is every known defect with the commit that closed
+it, and [docs/roadmap.md](docs/roadmap.md) is what to build next, what not to, and the
+measurements behind both.
 
 Older than the split and unchanged by it: [docs/savparse-notes.md](docs/savparse-notes.md) is the save
 format as derived, byte by byte, and [docs/commissioning-questions.md](docs/commissioning-questions.md)
