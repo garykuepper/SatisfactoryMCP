@@ -17,7 +17,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def tools(state, monkeypatch):
-    monkeypatch.setattr(world_tools, "_state", lambda save=None, world=None: state)
+    monkeypatch.setattr(world_tools, "_state", lambda save=None, world=None, as_of=None: state)
     return world_tools
 
 
@@ -44,7 +44,7 @@ def test_a_save_naming_neither_prints_neither(state, game, monkeypatch):
     projection["progression"].pop("last_active_schematic", None)
     projection["research"].pop("last_used_hard_drive_id", None)
     bare = WorldState(projection=projection, game=game)
-    monkeypatch.setattr(world_tools, "_state", lambda save=None, world=None: bare)
+    monkeypatch.setattr(world_tools, "_state", lambda save=None, world=None, as_of=None: bare)
     out = world_tools.world_summary()
     assert "working_on" not in out
     assert "last_hard_drive_spent" not in out

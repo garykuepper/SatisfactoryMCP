@@ -20,7 +20,7 @@ from satisfactory_mcp.interfaces.mcp.tools import floors as tool
 
 @pytest.fixture
 def tools(monkeypatch, state):
-    monkeypatch.setattr(tool, "_state", lambda save=None, world=None: state)
+    monkeypatch.setattr(tool, "_state", lambda save=None, world=None, as_of=None: state)
     return tool
 
 

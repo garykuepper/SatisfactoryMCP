@@ -17,7 +17,7 @@ from ....domain.factories.select import SelectorError
 from ....domain.factories.trace import power_at_risk, trace
 from ....domain.spatial import nodes as nodes_mod
 from ....presenters.text import primitives as render
-from ..app import Limit, _state, game, mcp
+from ..app import AsOf, Limit, _state, game, mcp
 
 #: Bare (machine-less) slabs at or above this many tiles are listed individually by
 #: factory_map; smaller ones are one summary line. 12 tiles is a 3x4 pour of 8 m
@@ -108,6 +108,7 @@ def _cand_row(c, store, labelled: set[str]) -> tuple:
 def factory_map(
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 12,
     offset: int = 0,
     show: Annotated[
@@ -129,7 +130,7 @@ def factory_map(
     are summarised in one line.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
@@ -339,6 +340,7 @@ def factory_query(
     offset: int = 0,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Ask one thing about one factory: what it makes, needs, draws, or touches.
 
@@ -369,7 +371,7 @@ def factory_query(
     from ....domain.factories.query import build_view
 
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     try:
@@ -645,6 +647,7 @@ def factory_health(
     offset: int = 0,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Measured uptime per machine, and WHY each stopped one is stopped.
 
@@ -666,7 +669,7 @@ def factory_health(
     from ....domain.factories.select import SelectorError
 
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -826,6 +829,7 @@ def factory_health(
 def propose_factories(
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 15,
     offset: int = 0,
     max_span_m: Annotated[float, Field(description="cap on a proposal's diameter, metres")] = 250.0,
@@ -843,7 +847,7 @@ def propose_factories(
     takes, and it counts over ALL proposals -- so it does not shift when you page.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import cohere, identity
@@ -912,6 +916,7 @@ def select_machines(
     ],
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
     expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
 ) -> str:
@@ -925,7 +930,7 @@ def select_machines(
     too: a poured platform with nothing on it yet is described rather than refused.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
@@ -990,6 +995,7 @@ def name_factory(
     notes: str = "",
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     split: Annotated[bool, Field(description="keep only the largest spatial cluster")] = False,
     expand: Annotated[bool, Field(description="pull in everything belted to the result")] = False,
     dry_run: bool = False,
@@ -1001,7 +1007,7 @@ def name_factory(
     this again with the same name re-anchors it to the current selection.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
@@ -1059,10 +1065,10 @@ def name_factory(
 
 
 @mcp.tool(structured_output=False)
-def list_factories(save: str | None = None, world: str | None = None) -> str:
+def list_factories(save: str | None = None, world: str | None = None, as_of: AsOf = None) -> str:
     """Named factories for this world, with how much of each is still standing."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
@@ -1105,10 +1111,12 @@ def list_factories(save: str | None = None, world: str | None = None) -> str:
 
 
 @mcp.tool(structured_output=False)
-def forget_factory(name: str, save: str | None = None, world: str | None = None) -> str:
+def forget_factory(
+    name: str, save: str | None = None, world: str | None = None, as_of: AsOf = None
+) -> str:
     """Delete a factory label. The machines themselves are untouched."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     store = st.labels
@@ -1131,6 +1139,7 @@ def trace_upstream(
     ] = "up",
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 20,
 ) -> str:
     """What feeds a machine, or what it feeds -- walked on the save's own connections.
@@ -1152,7 +1161,7 @@ def trace_upstream(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 

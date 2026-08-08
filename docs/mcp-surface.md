@@ -452,6 +452,55 @@ The two disagree wherever a ramp climbs, so the answer names which measurement i
 with no band at all — 62 of 132 on the reference world, the largest 7 tiles — are counted
 in a note rather than listed or silently dropped.
 
+### 10.1i `as_of=` — a save identity a client can check
+
+**The one sentence a client author needs: pin once, and every later call is either consistent
+or loudly not.** Read anything, take the `sav:…` token off the header line, and pass it as
+`as_of=` on every call that belongs to the same question.
+
+The failure it exists for: an assistant makes several tool calls, the game autosaves in the
+middle, call 1 reads save A and call 3 reads save B, and the answer it composes never existed
+in either world. Naming the file did not make that detectable, because the game **reuses**
+filenames — `autosave_0` is a different world every rotation.
+
+**The token.** `sav:` and twelve hex digits, hashed from the save's `save_identifier`,
+`play_duration_s`, `mtime_ns` and `size` — the same identity `timeline.row_key` keys on,
+minus the filename and minus both schema versions. The schema numbers version *this server's
+code*, not the world, so folding them in would expire a live pin on an upgrade and the
+refusal would have no true sentence to offer. 48 bits: at 100,000 saves — five minutes apart,
+a year of unbroken play — the chance any two collide is about 2e-5. Six digits *looks* right
+and is 24 bits, which is even odds by 5,000 saves.
+
+**Where it is printed.** In `age_note`, the one line every save-reading answer already
+carries, at the front — everything else on that line, filename included, is shared by every
+autosave the file has ever held. The `satisfactory://save/current` resource leads with it,
+because that is where an orienting client looks first. `/api/summary` sends it as
+`save_token`, and the SSE `save` event carries it too (`null` where the header could not be
+read), so the map page and an assistant can name the same world state.
+
+**What a mismatch does.** It **refuses**. It does not fall back to the newer save, and it
+does not try to answer from the pinned one: an autosave overwrites its own file, so the
+pinned state is usually no longer on disk. Four refusals, each naming the pin first, because
+each is a different mistake:
+
+| the pin | the answer |
+| --- | --- |
+| matches the save on disk | answered normally |
+| a token this install minted for **this** world, but not the current one | *that is not the save on disk now* — plus both states and the distance between them, in playtime **and** wall clock. Where the pin was a **manual** save it also offers `save=<that file>`, which is the one recovery that works: manual saves are not rewritten, so the re-read carries the pinned token and the pin holds. It is not offered for an autosave, whose bytes are gone |
+| a token minted for **another** world | *that token names a different world* — and no distance, because two worlds keep two unrelated playtime clocks and subtracting them would be a fabricated measurement |
+| a well-formed token never minted here | *no save this install has ever read carries that token* |
+| not a token at all | *not a save token* — plus what one looks like |
+
+**`as_of=` is a check, never a selector.** It is applied *after* `save=`/`world=` have picked
+a file, so the three cannot compete. That ordering is the useful one: `save=` names a file
+and the game rewrites files, so a pinned **filename** goes on resolving happily to a world
+state the caller has never seen. Pinning a filename is no protection; pinning a token is.
+
+Tokens are recorded in `save-pins.json` under the cache directory (the newest 200), which is
+what lets the second refusal differ from the third. The ledger is best-effort like every other
+cache here — losing it costs a refusal's sharpness, never an answer. `domain/world/pin.py` is
+the implementation; `tests/test_save_pin.py` reproduces the hazard end to end.
+
 ### 10.2 Context budget
 
 The binding constraint. All 291 automatable recipes in optimal TSV = 25,313 chars (~7k tokens). **No tool

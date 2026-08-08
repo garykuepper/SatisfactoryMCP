@@ -48,6 +48,11 @@ def current_save() -> str:
         written += " -- an autosave; the game writes them periodically, so disk may lag the world"
     return render.kv(
         [
+            # Leads, and is the one line here a tool takes back: this resource is where an
+            # orienting client looks first, and `file` alone cannot name a world state
+            # because the game rewrites `autosave_0` every rotation. See as_of= in
+            # docs/mcp-surface.md 10.1i.
+            ("save_token", st.token),
             ("file", st.header.get("filename")),
             ("written", written),
             ("world", st.header.get("session_name")),

@@ -8,7 +8,7 @@ from .... import config
 from ....core.saveio import projection as proj
 from ....core.text import ago, stamp
 from ....presenters.text import primitives as render
-from ..app import Limit, _state, mcp
+from ..app import AsOf, Limit, _state, mcp
 
 
 @mcp.tool(structured_output=False)
@@ -64,10 +64,10 @@ def list_worlds() -> str:
 
 
 @mcp.tool(structured_output=False)
-def world_summary(save: str | None = None, world: str | None = None) -> str:
+def world_summary(save: str | None = None, world: str | None = None, as_of: AsOf = None) -> str:
     """Progress, power and problems for one world."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game
@@ -140,6 +140,7 @@ def world_summary(save: str | None = None, world: str | None = None) -> str:
 def unlocked_recipes(
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     only_alternates: bool = True,
     limit: Limit = 25,
     offset: int = 0,
@@ -148,7 +149,7 @@ def unlocked_recipes(
 
     Sorted by name and paged with `offset=`, so the whole list is reachable."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     picks = st.unlocked_alternates if only_alternates else st.unlocked_recipes("part")
@@ -166,7 +167,7 @@ def unlocked_recipes(
 
 
 @mcp.tool(structured_output=False)
-def power_report(save: str | None = None, world: str | None = None) -> str:
+def power_report(save: str | None = None, world: str | None = None, as_of: AsOf = None) -> str:
     """Generation capacity vs machine draw, nameplate AND measured.
 
     Nameplate is what everything built would draw running at once. Measured weights each
@@ -179,7 +180,7 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
     starved, because those MW will not arrive when the grid asks for them.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     pw = st.power_report()
@@ -245,11 +246,15 @@ def power_report(save: str | None = None, world: str | None = None) -> str:
 
 @mcp.tool(structured_output=False)
 def factory_sites(
-    save: str | None = None, world: str | None = None, limit: Limit = 10, offset: int = 0
+    save: str | None = None,
+    world: str | None = None,
+    as_of: AsOf = None,
+    limit: Limit = 10,
+    offset: int = 0,
 ) -> str:
     """Built production buildings clustered into sites, largest first."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game

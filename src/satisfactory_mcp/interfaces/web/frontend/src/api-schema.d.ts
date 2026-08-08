@@ -2092,6 +2092,8 @@ export interface components {
             header: {
                 [key: string]: unknown;
             };
+            /** Save Token */
+            save_token: string;
             /** Age Note */
             age_note: string;
             power: components["schemas"]["PowerSummary"];

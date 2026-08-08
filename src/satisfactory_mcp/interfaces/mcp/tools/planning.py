@@ -33,7 +33,7 @@ from ....presenters.text.compare import render_comparison
 from ....presenters.text.diff import ENERGISED_CAVEAT, RANGE_CAVEAT, render_diff
 from ....presenters.text.layout import render_layout
 from ....presenters.text.plan_factory import render_plan_factory
-from ..app import Limit, _item_id, _state, game, mcp
+from ..app import AsOf, Limit, _item_id, _state, game, mcp
 
 #: The stored-argument defaults, re-exported under their old home for ``server``. The
 #: two stage caveats keep their old home too: they were read from here before they had
@@ -123,6 +123,7 @@ def list_plans(
     ] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Plans saved for this world, and whether the world has moved under them.
 
@@ -132,7 +133,7 @@ def list_plans(
     question, what those arguments resolve to today, and pays an LP solve for it.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     if name:
@@ -224,10 +225,12 @@ def list_plans(
 
 
 @mcp.tool(structured_output=False)
-def forget_plan(name: str, save: str | None = None, world: str | None = None) -> str:
+def forget_plan(
+    name: str, save: str | None = None, world: str | None = None, as_of: AsOf = None
+) -> str:
     """Delete a saved plan. Nothing in the world is touched."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     stored = st.plans.find(name)
@@ -245,6 +248,7 @@ def rename_plan(
     to: Annotated[str, Field(description="the new name")],
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Rename a saved plan. Nothing is re-solved and nothing else about it changes.
 
@@ -253,7 +257,7 @@ def rename_plan(
     without saving the plan again under a second name and forgetting the first.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     stored = st.plans.find(name)
@@ -309,6 +313,7 @@ def site_plan(
     clear: bool = False,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Record, update or clear WHERE a stored plan stands. Nothing is re-solved.
 
@@ -327,7 +332,7 @@ def site_plan(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     stored = st.plans.find(plan)
@@ -430,6 +435,7 @@ def plan_factory(
     only_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 15,
     logistics_items: Annotated[
         list[str] | None,
@@ -536,7 +542,7 @@ def plan_factory(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -686,6 +692,7 @@ def plan_layout(
     ] = "",
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 20,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
     factory: Annotated[
@@ -712,7 +719,7 @@ def plan_layout(
     g = game()
     detail = show or detail
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -806,6 +813,7 @@ def diff_vs_save(
     only_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 20,
     show_cost: bool = True,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
@@ -852,7 +860,7 @@ def diff_vs_save(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -914,6 +922,7 @@ def explain_byproducts(
     exclude_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 12,
 ) -> str:
     """Explain which byproducts stall a plan, and what can legally consume them.
@@ -928,7 +937,7 @@ def explain_byproducts(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     return byproducts_text.explain(
@@ -955,6 +964,7 @@ def compare_recipe_options(
     allow_sinks: bool = True,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 10,
 ) -> str:
     """Rank whole ROUTES to make an item by what each actually costs.
@@ -966,7 +976,7 @@ def compare_recipe_options(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     iid = _item_id(item)
@@ -994,6 +1004,7 @@ def bom(
     only_recipes: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 20,
     offset: int = 0,
 ) -> str:
@@ -1006,7 +1017,7 @@ def bom(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     try:
@@ -1047,6 +1058,7 @@ def commission_plan(
     ] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
@@ -1070,7 +1082,7 @@ def commission_plan(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -1131,6 +1143,7 @@ def rank_unlocks(
     query: Annotated[str | None, Field(description="alias for search=")] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 15,
     plan: Annotated[str | None, Field(description="recall a saved plan by name")] = None,
 ) -> str:
@@ -1151,7 +1164,7 @@ def rank_unlocks(
     """
     g = game()
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 

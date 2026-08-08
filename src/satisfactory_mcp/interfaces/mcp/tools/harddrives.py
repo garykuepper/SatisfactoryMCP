@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from ....domain.planning import advisor
 from ....presenters.text import primitives as render
-from ..app import Limit, _state, mcp
+from ..app import AsOf, Limit, _state, mcp
 
 #: Said on every hard-drive response, because it is the fact that decides how hard to
 #: think about the choice, and it is not visible anywhere in the game's own UI.
@@ -60,11 +60,15 @@ def _grants(option: dict, game) -> str:
 
 @mcp.tool(structured_output=False)
 def list_pending_hard_drive_choices(
-    save: str | None = None, world: str | None = None, limit: Limit = 25, offset: int = 0
+    save: str | None = None,
+    world: str | None = None,
+    as_of: AsOf = None,
+    limit: Limit = 25,
+    offset: int = 0,
 ) -> str:
     """The pending hard-drive choices stored in the save, with rerolls left."""
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game
@@ -103,6 +107,7 @@ def advise_hard_drive_pick(
     sources: list[str] | None = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
 ) -> str:
     """Rank one pending drive's options by marginal value, via counterfactual LP.
 
@@ -114,7 +119,7 @@ def advise_hard_drive_pick(
     baseline printed is the same quantity plan_factory reports for the same nodes.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 

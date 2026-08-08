@@ -80,7 +80,7 @@ def test_a_disagreement_between_the_two_is_reported_as_a_finding(game, live, mon
     budget["holders"][0]["boost"] = 1.25
     budget["holders"][0]["boost_in_save"] = 2.0
     monkeypatch.setattr(type(live), "sloop_budget", lambda self: budget)
-    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: live)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None: live)
     out = srv.somersloops()
     assert "THEY DISAGREE on 1 building(s)" in out
     assert "computed 1.25x, save says 2x" in out
@@ -98,6 +98,6 @@ def test_the_holder_table_says_how_many_there_are(game, live, monkeypatch):
     }
     budget = {**live.sloop_budget(), "holders": [dict(holder) for _ in range(30)]}
     monkeypatch.setattr(type(live), "sloop_budget", lambda self: budget)
-    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: live)
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None, as_of=None: live)
     out = srv.somersloops()
     assert "# 30 match(es), showing 20" in out

@@ -97,6 +97,15 @@ def test_worlds_lists_the_save_picker_rows(client, monkeypatch):
     assert list(row["saves"][0]) == ["path", "filename", "session_name", "play_duration_s", "mtime_ns"]
 
 
+def test_summary_carries_the_same_save_token_the_tools_print(client, state):
+    """The page and an assistant have to be able to name one world state to each other,
+    and a filename cannot do it -- the game rewrites ``autosave_0`` every rotation. See
+    docs/mcp-surface.md 10.1i."""
+    body = client.get("/api/summary").json()
+    assert body["save_token"] == state.token
+    assert body["save_token"] in body["age_note"]
+
+
 def test_summary_reports_the_header_power_and_progression(client, state):
     body = client.get("/api/summary").json()
     assert body["header"]["session_name"] == state.header["session_name"]

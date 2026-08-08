@@ -62,7 +62,7 @@ def _projection(belts: int = 1) -> dict:
 @pytest.fixture
 def traced(game, monkeypatch) -> WorldState:
     st = WorldState(projection=_projection(), game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     monkeypatch.setattr(ftools, "game", lambda: game)
     return st
 
@@ -111,7 +111,7 @@ def test_a_walk_that_may_over_report_says_how_much(traced, game, monkeypatch):
     segments read exactly like one where every edge stated its direction."""
     assert "Every edge here states its direction" in ftools.trace_upstream(CONSTRUCTOR)
     st = WorldState(projection=_projection(belts=3), game=game)
-    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None: st)
+    monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     assert "2 edge(s) have neither" in ftools.trace_upstream(CONSTRUCTOR)
 
 

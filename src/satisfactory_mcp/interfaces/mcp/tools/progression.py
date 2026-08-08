@@ -16,7 +16,7 @@ from ....domain.collectibles.service import collect_view
 from ....domain.progression.ladder import Rung, SchematicLadder
 from ....presenters.text import primitives as render
 from ....presenters.text.collectibles import render_collectibles
-from ..app import Limit, _state, mcp
+from ..app import AsOf, Limit, _state, mcp
 
 #: The three views onto a schematic ladder, spelled the same way by both tools that walk
 #: one. Adding a fourth here without teaching ``_select`` about it silently shows everything.
@@ -53,14 +53,16 @@ def _shortfall(g: GameData, rung: Rung) -> str:
 
 
 @mcp.tool(structured_output=False)
-def phase_requirements(save: str | None = None, world: str | None = None) -> str:
+def phase_requirements(
+    save: str | None = None, world: str | None = None, as_of: AsOf = None
+) -> str:
     """What the Space Elevator still wants, live record and deprecated record apart.
 
     The per-phase item table in the save is DEPRECATED and frozen, so it is shown
     labelled rather than believed. Read the header line first.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     g = st.game
@@ -183,6 +185,7 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
 def power_shards(
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     plan_machines: int = 0,
     plan_clock: float = 2.5,
     limit: Limit = 10,
@@ -194,7 +197,7 @@ def power_shards(
     says whether the free pool covers it.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     budget = st.shard_budget()
@@ -302,6 +305,7 @@ def mam_research(
     show: Annotated[str | None, Field(description="alias for status=")] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -318,7 +322,7 @@ def mam_research(
     than just adding a recipe.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -442,6 +446,7 @@ def milestones(
     show: Annotated[str | None, Field(description="alias for status=")] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -456,7 +461,7 @@ def milestones(
     elevator stands.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -543,6 +548,7 @@ def milestones(
 def somersloops(
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 20,
     offset: int = 0,
 ) -> str:
@@ -557,7 +563,7 @@ def somersloops(
     multiplier.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
@@ -661,6 +667,7 @@ def collected_from_world(
     ] = None,
     save: str | None = None,
     world: str | None = None,
+    as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
@@ -684,7 +691,7 @@ def collected_from_world(
     on disk says whether it is still there.
     """
     try:
-        st = _state(save, world)
+        st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
