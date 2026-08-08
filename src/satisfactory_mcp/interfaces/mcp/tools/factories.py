@@ -31,6 +31,12 @@ BARE_TILE_FLOOR = 12
 #: sentence saying which window "measured" was measured over.
 FLOW_ASPECTS = frozenset({"summary", "balance", "outputs", "inputs", "internal"})
 
+#: How many unwired machines factory_health names before it counts the rest. Named at all
+#: because the instance name is what show_on_map and factory_query take back, so a list of
+#: eight is a list of eight things the reader can go and look at; a hundred of them is one
+#: unwired BLOCK, and its name is not in this note.
+UNWIRED_NAMED = 8
+
 
 def _z_range(slab) -> str:
     """A slab's elevation in metres -- both ends of it where they differ.
@@ -656,8 +662,13 @@ def factory_health(
 
     States, worst first: `paused`, `dead node` (extractor bound to no resource --
     a game update removed it), `no recipe`, `blocked` (output stack full),
-    `starved` (input empty), `stalled` (has input, output has room, still not running --
-    usually power), `intermittent`, `saturated`, `unmonitored`.
+    `starved` (input empty), `stalled` (has input, output has room, still not running),
+    `intermittent`, `saturated`, `unmonitored`.
+
+    A stalled machine that no wire reaches says so in its `cause`, and every machine wired
+    to nothing is named in a note whatever state it is in. The save records no "has power"
+    flag, so a machine that IS wired is never called unpowered here -- the wire is the only
+    electrical fact the file carries.
 
     **Blocked is not automatically a fault.** A base whose output nobody consumes fills
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
@@ -685,15 +696,17 @@ def factory_health(
 
         rows, notes = [], []
         blocked_total = 0
+        unwired_total = 0
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
             standing = [m for m in label.anchors if m in alive]
-            report = assess(label.name, standing, st.game, st.projection)
+            report = assess(label.name, standing, st.game, st.projection, st.graph)
             view = build_view(label.name, standing, st.graph, st.game, st.projection, st.labels)
             mean = report.mean_uptime
             actionable = sum(
                 report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
             )
             blocked_total += report.by_state["blocked"]
+            unwired_total += len(report.unwired)
             rows.append(
                 (
                     label.name,
@@ -721,6 +734,14 @@ def factory_health(
                 f"{blocked_total} machine(s) are blocked -- their output stack is full. "
                 "That is what a factory nobody is drawing from looks like, not a fault. "
                 "Look at starved/stalled/no-recipe first."
+            )
+        if unwired_total:
+            # No column for it: this table is sorted on accumulated values because a
+            # column once moved and took the sort order with it, and a count that is
+            # zero on a finished factory does not earn eleven more cells.
+            notes.append(
+                f"{unwired_total} machine(s) across these factories have no electrical "
+                "connection at all. factory_health on the one factory names them"
             )
         return render.envelope(
             f"# {st.age_note}\n# uptime measured over a 300s window per machine",
@@ -753,7 +774,7 @@ def factory_health(
     if not machines:
         return f"! {factory!r} resolved to no machines that still exist in this save"
 
-    report = assess(name, machines, st.game, st.projection)
+    report = assess(name, machines, st.game, st.projection, st.graph)
     chunks = [summarise(report)]
 
     worst = report.worst(end)[start:]
@@ -812,9 +833,25 @@ def factory_health(
             "the node was removed, so they can never produce and must be rebuilt elsewhere"
         )
     if report.by_state["stalled"]:
+        # This used to end "Check power before anything else", which was advice offered
+        # because nothing here could check. The wires are in the save, so it is checked.
+        dark = sum(1 for m in report.machines if m.state == "stalled" and m.cause)
         notes.append(
-            f"{report.by_state['stalled']} stalled: has input, output has room, still "
-            "not producing. Check power before anything else"
+            f"{report.by_state['stalled']} stalled: has input, output has room, still not "
+            + (
+                f"producing, and {dark} of them are wired to nothing"
+                if dark
+                else "producing -- and every one of them IS wired, so power delivery, a "
+                "switch or a monitor that has not caught up, not a missing connection"
+            )
+        )
+    if report.unwired:
+        rest = len(report.unwired) - UNWIRED_NAMED
+        notes.append(
+            f"{len(report.unwired)} machine(s) have no electrical connection at all -- no wire "
+            "reaches them, whatever else they are doing: "
+            + ", ".join(report.unwired[:UNWIRED_NAMED])
+            + (f", and {rest} more" if rest > 0 else "")
         )
     if report.by_state["unmonitored"]:
         notes.append(

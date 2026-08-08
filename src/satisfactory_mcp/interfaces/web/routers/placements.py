@@ -182,7 +182,7 @@ def machines(request: Request, save: str | None = None, world: str | None = None
     leaves = [_leaf(row) for kind in MACHINE_KINDS for row in p.get(kind, ())]
     # Total by construction -- assess walks MACHINE_KINDS too -- and keyed on the leaf
     # /api/floors and the frontend's `_floor.id` already join on, so the lookup cannot miss.
-    verdicts = {m.instance: m for m in health.assess("map", leaves, st.game, p).machines}
+    verdicts = {m.instance: m for m in health.assess("map", leaves, st.game, p, st.graph).machines}
     return {
         kind: [_record_row(st, row, verdicts[_leaf(row)]) for row in p.get(kind, ())]
         for kind in MACHINE_KINDS

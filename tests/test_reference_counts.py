@@ -112,6 +112,22 @@ def test_the_six_machines_wired_to_nothing(proj):
     assert len(orphans) == 6, "domain/factories/build.py:29 quotes this"
 
 
+def test_the_seven_machines_no_wire_reaches(proj):
+    """What ``factory_health`` reports as wired to nothing, which is a LOOSER set than the
+    six above: those are on no belt and no wire, these are merely on no wire.
+
+    Seven of 570, and none of them stalled -- four half-built assemblers, a constructor and
+    two oil pumps. That is why "wired to nothing" is reported alongside every state rather
+    than as one: the machines it finds are unfinished, not stopped.
+    """
+    from satisfactory_mcp.domain.factories.build import build_graph
+
+    graph = build_graph(proj)
+    names = [r["instance"].rsplit(".", 1)[-1] for r in _records(proj)]
+    assert len(names) == 570
+    assert sum(1 for n in names if not graph.neighbours(n, "power")) == 7
+
+
 def test_the_lightweight_piece_count_four_modules_cite(proj):
     """8,347, and the 4,631 of them that sit at a yaw off the 90-degree grid.
 

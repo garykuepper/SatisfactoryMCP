@@ -40,14 +40,25 @@ def _machine(name, recipe, *, uptime=None, buffers=None, **extra):
     return record
 
 
-def _assess(game, machines=(), extractors=(), generators=()):
+class _Wires:
+    """A ``FactoryGraph`` reduced to the one question `assess` asks it."""
+
+    def __init__(self, wired):
+        self.wired = set(wired)
+
+    def neighbours(self, node, layer="material"):
+        assert layer == "power", "health asks about electricity and nothing else"
+        return ["a pole"] if node in self.wired else []
+
+
+def _assess(game, machines=(), extractors=(), generators=(), graph=None):
     projection = {
         "machines": list(machines),
         "extractors": list(extractors),
         "generators": list(generators),
     }
     names = [r["instance"].rsplit(".", 1)[-1] for r in (*machines, *extractors, *generators)]
-    return assess("test", names, game, projection)
+    return assess("test", names, game, projection, graph)
 
 
 def _state_of(report, instance):
@@ -321,3 +332,65 @@ def test_craftable_is_reported_apart_from_free(game):
     assert budget["free"] == 0
     assert budget["craftable"] == 10
     assert budget["potential"] == 10
+
+
+# --------------------------------------------------------------- machines wired to nothing
+#
+# The save records no mHasPower and no mCircuitID -- 0 of 44,634 objects -- so "unpowered"
+# is not knowable and is never claimed. A WIRE is: an actor either has a power edge or it
+# does not, which makes "nothing at all reaches this machine" the one positive electrical
+# fact in the file. `stalled` used to advise checking power because nothing here could.
+
+
+def _fed(name, uptime=0.0):
+    """A machine with input, room in its output, and not producing -- a bare stall."""
+    return _machine(
+        name,
+        "Recipe_IronPlate_C",
+        uptime=_uptime(uptime),
+        buffers={
+            "in": {"items": {"Desc_IronIngot_C": 100}, "slots": 1},
+            "out": {"items": {"Desc_IronPlate_C": 1}, "slots": 2},
+        },
+    )
+
+
+def test_a_stalled_machine_no_wire_reaches_says_so(game):
+    dark = _fed("Build_ConstructorMk1_C_90")
+    lit = _fed("Build_ConstructorMk1_C_91")
+    report = _assess(game, machines=[dark, lit], graph=_Wires({"Build_ConstructorMk1_C_91"}))
+    assert _state_of(report, "Build_ConstructorMk1_C_90") == "stalled"
+    assert _state_of(report, "Build_ConstructorMk1_C_91") == "stalled"
+    causes = {m.instance: m.cause for m in report.machines}
+    assert causes["Build_ConstructorMk1_C_90"] == ("no power connection",)
+    assert causes["Build_ConstructorMk1_C_91"] == (), "a wired stall has no such evidence"
+
+
+def test_without_a_graph_nothing_is_called_unwired(game):
+    """Absent evidence must not read as a finding: every caller that passes no graph --
+    the whole of this module before this section -- would otherwise report every machine."""
+    report = _assess(game, machines=[_fed("Build_ConstructorMk1_C_92")])
+    assert report.unwired == []
+    assert _state_of(report, "Build_ConstructorMk1_C_92") == "stalled"
+    assert report.machines[0].cause == ()
+
+
+def test_being_wired_to_nothing_is_reported_whatever_the_state_is(game):
+    """It is not a state, and that is the design: on the reference world all eight machines
+    wired to nothing are `no recipe`, `paused` or `unmonitored`, and NONE is stalled."""
+    idle = _machine("Build_ConstructorMk1_C_93", "", uptime=_uptime(0.0))
+    paused = _machine("Build_ConstructorMk1_C_94", "Recipe_IronPlate_C", paused=True)
+    everything = {"Build_ConstructorMk1_C_93", "Build_ConstructorMk1_C_94"}
+    report = _assess(game, machines=[idle, paused], graph=_Wires(set()))
+    assert set(report.unwired) == everything
+    assert _state_of(report, "Build_ConstructorMk1_C_93") == "no recipe"
+    assert _state_of(report, "Build_ConstructorMk1_C_94") == "paused"
+
+
+def test_a_fully_wired_factory_reports_none(game):
+    report = _assess(
+        game,
+        machines=[_fed("Build_ConstructorMk1_C_95")],
+        graph=_Wires({"Build_ConstructorMk1_C_95"}),
+    )
+    assert report.unwired == []
