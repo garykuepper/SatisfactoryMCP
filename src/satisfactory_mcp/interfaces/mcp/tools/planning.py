@@ -8,6 +8,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from ....core.gamedata.unlocks import granted_by_label
 from ....domain.factories.select import SelectorError
 from ....domain.planning import bom as bom_mod
 from ....domain.planning import compare
@@ -1192,6 +1193,9 @@ def rank_unlocks(
             return f"! no LOCKED alternate matches {search!r}"
 
     sweep = sweep_unlocks(prepared.request, st, pool)
+    # The candidates by id, so the granted-by cell is answered off the same recipe the
+    # sweep measured rather than a second lookup that could miss.
+    swept = {r.cls: r for r in pool}
     # Which of these you could claim today. A recipe worth 14,540 MW that is sitting in a
     # pending drive is a different instruction from one that needs a drive you have not
     # found yet.
@@ -1207,9 +1211,10 @@ def rank_unlocks(
             render.num(r.gain),
             f"{r.gain / sweep.baseline:+.1%}" if sweep.baseline else "",
             r.name[:34],
-            # The thing you actually research. A recipe with no schematic behind it cannot
-            # be reached at all, which is a different answer from "worth nothing".
-            "; ".join(r.unlocked_by)[:30] or "NOT GRANTED",
+            # The work you actually do, in the same words search_recipes and recipe_detail
+            # use: a hard drive and a milestone are different evenings. Never truncated --
+            # a cut-off schematic name is a name the reader cannot look up.
+            granted_by_label(st.game, swept[r.recipe], width=40),
             render.num(r.machines),
             f"drive {on_offer[r.recipe]}" if r.recipe in on_offer else "",
             ", ".join(r.needs)[:18],

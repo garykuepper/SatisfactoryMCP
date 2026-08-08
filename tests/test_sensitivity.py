@@ -14,6 +14,7 @@ import pytest
 from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp import server as srv
+from satisfactory_mcp.core.gamedata.unlocks import SOURCE_OF_TYPE
 from satisfactory_mcp.domain.planning.scenario import build_scenario
 from satisfactory_mcp.domain.planning.sensitivity import sweep_unlocks
 
@@ -171,6 +172,17 @@ def test_every_candidate_names_the_schematic_that_grants_it(sweep):
 def test_the_tool_prints_the_schematic_column(game):
     out = srv.rank_unlocks(**SPIRE)
     assert "alternate\tgranted by" in out
+
+
+def test_the_column_says_what_kind_of_work_the_unlock_is(game):
+    """A hard drive and a milestone are different evenings, and the schematic name alone
+    said neither -- it repeated the alternate column and was cut off at 30 characters. The
+    words come from ``core.gamedata.unlocks``, so this column reads like search_recipes'."""
+    out = srv.rank_unlocks(**SPIRE)
+    body = out.split("alternate\tgranted by", 1)[1].splitlines()[1:]
+    cells = [line.split("\t")[3] for line in body if line.count("\t") >= 7]
+    assert cells
+    assert all(c.split(":")[0] in set(SOURCE_OF_TYPE.values()) for c in cells), cells
 
 
 def test_an_unsolved_candidate_is_not_filed_with_the_worthless_ones():
