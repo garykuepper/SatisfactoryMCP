@@ -127,15 +127,124 @@ def test_the_untouched_target_row_is_the_only_one_marked_usable(state):
     assert [p for p, t in trust.items() if t == "usable"] == ["GP_Project_Assembly_Phase_4"]
 
 
-def test_the_target_row_stops_being_usable_the_moment_anything_is_delivered(state):
-    """The usable claim rests entirely on the phase never having been paid into. One
-    delivery and the frozen snapshot is stale like all the others -- it will keep
-    reporting the full 4000 while the live record says 4000 are already in."""
-    st = _with(state, paid_off_target={"Desc_SpaceElevatorPart_7_C": 4000})
-    req = st.phase_requirements()
-    phase4 = next(r for r in req["phases"] if r["phase"] == "GP_Project_Assembly_Phase_4")
+# ------------------------------------------- the target row after a delivery
+#
+# NONE of this is reachable from a real save on this machine and that is the whole reason
+# these fixtures are built by hand: mTargetGamePhasePaidOffCosts is EMPTY in every one of
+# the 29 parseable saves of the reference world, so the subtraction below would otherwise
+# ship untested and the question it answers -- "what does Phase 4 still need" on the day
+# after the next elevator run -- is one the player asks constantly.
+
+
+def test_a_delivery_into_the_target_is_subtracted_rather_than_invalidating_the_row(state):
+    """THE correction for this feature. The row used to flip to stale on the first
+    delivery and stay there, so the one question the tool exists for died permanently at
+    the moment the player started answering it.
+
+    The frozen snapshot of an untouched phase IS its full cost, and the live record says
+    what has gone in, so the remainder is the subtraction of the two. Assembly Director
+    System is settled here and Nuclear Pasta is a quarter paid.
+    """
+    st = _with(
+        state,
+        paid_off_target={
+            "Desc_SpaceElevatorPart_7_C": 4000,  # the whole 4000, so it is done
+            "Desc_SpaceElevatorPart_9_C": 250,  # 250 of 1000
+        },
+    )
+    phase4 = next(
+        r for r in st.phase_requirements()["phases"] if r["phase"] == "GP_Project_Assembly_Phase_4"
+    )
+    assert phase4["stale"] == "derived"
+    assert phase4["outstanding"] == {
+        "Desc_SpaceElevatorPart_6_C": 4000,
+        "Desc_SpaceElevatorPart_8_C": 1000,
+        "Desc_SpaceElevatorPart_9_C": 750,
+    }
+    # The settled item leaves the bill and joins the done list rather than lingering at 0.
+    assert "Desc_SpaceElevatorPart_7_C" in phase4["complete"]
+    assert phase4["snapshot"]["Desc_SpaceElevatorPart_7_C"] == 4000
+
+
+def test_only_the_target_row_is_ever_subtracted(state):
+    """Deliveries reach the target phase and nothing else -- PayOffOnTargetGamePhase --
+    so no other row has a live counter to take off. Phase 3 keeps billing its frozen 500
+    Modular Engine even while the live record shows Phase 4 deliveries."""
+    st = _with(state, paid_off_target={"Desc_SpaceElevatorPart_4_C": 500})
+    rows = {r["phase"]: r for r in st.phase_requirements()["phases"]}
+    phase3 = rows["GP_Project_Assembly_Phase_3"]
+    assert phase3["stale"] == "stale"
+    assert phase3["outstanding"]["Desc_SpaceElevatorPart_4_C"] == 500
+    assert phase3["paid_applied"] == {}
+
+
+def test_a_snapshot_that_demonstrably_froze_after_a_delivery_is_not_subtracted(state):
+    """The soundness condition, and it is checkable rather than assumed. A full cost has
+    no item at zero in it, so EGP_EndGame's settled Versatile Framework proves that row
+    froze after a delivery -- subtracting the live record from it would charge the same
+    delivery twice. Point the target at Phase 3 and the answer is stale, not derived."""
+    st = _with(
+        state,
+        target_phase="GP_Project_Assembly_Phase_3",
+        paid_off_target={"Desc_SpaceElevatorPart_2_C": 2500},
+    )
+    phase3 = next(
+        r for r in st.phase_requirements()["phases"] if r["phase"] == "GP_Project_Assembly_Phase_3"
+    )
+    assert phase3["stale"] == "stale"
+    assert phase3["outstanding"] == {
+        "Desc_SpaceElevatorPart_4_C": 500,
+        "Desc_SpaceElevatorPart_5_C": 100,
+    }
+
+
+def test_paying_in_more_than_the_row_still_bills_for_is_the_other_proof(state):
+    """The second half of the same check. Nothing can be delivered beyond a phase's cost,
+    so a live record larger than the frozen remainder means the remainder is not the cost.
+    4001 against a 4000 row is one unit over and enough."""
+    st = _with(state, paid_off_target={"Desc_SpaceElevatorPart_7_C": 4001})
+    phase4 = next(
+        r for r in st.phase_requirements()["phases"] if r["phase"] == "GP_Project_Assembly_Phase_4"
+    )
     assert phase4["stale"] == "stale"
-    assert req["paid_off_target"] == {"Desc_SpaceElevatorPart_7_C": 4000}
+    assert phase4["outstanding"]["Desc_SpaceElevatorPart_7_C"] == 4000
+
+
+def test_the_tool_says_the_subtraction_happened_and_what_it_is_worth(state, monkeypatch):
+    """A number whose provenance is not printed is a number the reader cannot weigh.
+    `_state` is patched in the module that calls it -- patching app._state would leave
+    the tool holding the original -- because this world cannot be reached from a save."""
+    from satisfactory_mcp.interfaces.mcp.tools import progression as progression_tools
+
+    st = _with(state, paid_off_target={"Desc_SpaceElevatorPart_7_C": 2500})
+    monkeypatch.setattr(progression_tools, "_state", lambda save=None, world=None: st)
+    out = progression_tools.phase_requirements()
+    assert "\tderived\t" in out
+    assert "1500 Assembly Director System" in out
+    note = next(x for x in out.splitlines() if x.startswith("! stale=derived"))
+    assert "Only the TARGET row is ever subtracted" in note
+    assert "LOWER bound" in note
+
+
+def test_a_fully_delivered_target_reads_as_nothing_left_to_see(state):
+    """Every item covered, so the derived remainder is empty. It stays labelled derived
+    rather than complete: derived is a LOWER bound, and if the snapshot had itself frozen
+    after an earlier delivery there would still be something owed."""
+    st = _with(
+        state,
+        paid_off_target={
+            "Desc_SpaceElevatorPart_6_C": 4000,
+            "Desc_SpaceElevatorPart_7_C": 4000,
+            "Desc_SpaceElevatorPart_8_C": 1000,
+            "Desc_SpaceElevatorPart_9_C": 1000,
+        },
+    )
+    phase4 = next(
+        r for r in st.phase_requirements()["phases"] if r["phase"] == "GP_Project_Assembly_Phase_4"
+    )
+    assert phase4["outstanding"] == {}
+    assert phase4["stale"] == "derived"
+    assert len(phase4["complete"]) == 4
 
 
 def test_absent_paid_off_record_is_empty_not_missing(state):

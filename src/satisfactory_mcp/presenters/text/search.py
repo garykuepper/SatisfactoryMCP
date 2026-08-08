@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from ...core.gamedata.model import GameData, Recipe
 from ...core.gamedata.search import KINDS, Census, Hit
+from ...core.gamedata.unlocks import granted_by_label
 from . import primitives as render
 
 __all__ = ["render_search"]
@@ -55,6 +56,9 @@ def render_search(
     # Only part recipes have a rate at all, so the /min suffix goes in the header
     # when every row is one, and onto each cell when the page mixes kinds.
     mixed = any(h.recipe.kind != "part" for h in page)
+    # A LOCKED row without this is a dead end, and on a page with nothing locked the
+    # column is a column of blanks -- so it appears exactly where it answers something.
+    show_granted = any(h.unlocked is False for h in page)
 
     headers = ["recipe", "machine"]
     if show_qty:
@@ -62,6 +66,8 @@ def render_search(
     headers += ["in", "out"] if mixed else ["in/min", "out/min"]
     if show_status:
         headers.append("status")
+    if show_granted:
+        headers.append("granted by")
 
     rows = []
     for h in page:
@@ -72,6 +78,8 @@ def render_search(
         row += [_flows(game, r, "in"), _flows(game, r, "out")]
         if show_status:
             row.append("HAVE" if h.unlocked else ("LOCKED" if h.unlocked is False else "-"))
+        if show_granted:
+            row.append(granted_by_label(game, r, width=60) if h.unlocked is False else "")
         rows.append(row)
 
     all_notes = list(notes or [])

@@ -40,7 +40,8 @@ import numpy as np
 from scipy.optimize import linprog
 
 from ...core.gamedata.constants import AWESOME_SINK_MW
-from ...core.gamedata.model import GameData, Recipe
+from ...core.gamedata.model import GameData
+from ...core.gamedata.unlocks import granted_by_label
 from ..world.state import WorldState
 from .optimize import MW, Process, Scenario, Solution, build_processes, solve
 from .scenario import build_scenario, resolve_item
@@ -51,18 +52,6 @@ _EPS = 1e-6
 
 #: Objectives whose value gets better as it gets bigger.
 _MAXIMISE = ("max_mw", "max_item")
-
-#: How a locked recipe is actually obtained, keyed by the schematic type granting
-#: it. The player-facing distinction is the whole point: "you need a hard drive" and
-#: "you need to finish a milestone" are completely different answers.
-_SOURCE_OF_TYPE = {
-    "EST_Alternate": "hard drive",
-    "EST_MAM": "MAM research",
-    "EST_Milestone": "milestone",
-    "EST_Tutorial": "milestone",
-    "EST_ResourceSink": "AWESOME shop",
-}
-
 
 # --------------------------------------------------------------------- objective
 
@@ -172,16 +161,6 @@ class Outlet:
     source: str = ""
 
 
-def _source_label(game: GameData, recipe: Recipe) -> str:
-    for sid in recipe.unlocked_by:
-        s = game.schematics.get(sid)
-        if s is None:
-            continue
-        kind = _SOURCE_OF_TYPE.get(s.type)
-        return f"{kind}: {s.name}" if kind else s.name
-    return "no known unlock"
-
-
 def _outlets(game: GameData, state: WorldState, item_id: str) -> list[Outlet]:
     """Every automatable recipe that consumes the item, unlocked or not.
 
@@ -208,7 +187,7 @@ def _outlets(game: GameData, state: WorldState, item_id: str) -> list[Outlet]:
                 unlocked=unlocked,
                 net_rate=net,
                 products=tuple(f.item for f in r.products if f.item != item_id),
-                source="" if unlocked else _source_label(game, r),
+                source="" if unlocked else granted_by_label(game, r),
             )
         )
     out.sort(key=lambda o: (not o.unlocked, o.net_rate))
@@ -245,7 +224,7 @@ def _packaging(game: GameData, state: WorldState, item_id: str) -> Outlet | None
             source=""
             if unlocked
             else (
-                _source_label(game, r) if not state.has_recipe(r.cls) else "no Packager unlocked"
+                granted_by_label(game, r) if not state.has_recipe(r.cls) else "no Packager unlocked"
             ),
         )
         if best is None or (cand.unlocked and not best.unlocked):

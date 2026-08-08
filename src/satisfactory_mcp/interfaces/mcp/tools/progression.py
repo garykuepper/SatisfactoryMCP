@@ -5,15 +5,51 @@ are tools, not resources -- both read the save and one takes a hypothetical."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated
 
 from pydantic import Field
 
 from ....core.gamedata.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
+from ....core.gamedata.model import GameData
 from ....domain.collectibles.service import collect_view
+from ....domain.progression.ladder import Rung, SchematicLadder
 from ....presenters.text import primitives as render
 from ....presenters.text.collectibles import render_collectibles
 from ..app import Limit, _state, mcp
+
+#: The three views onto a schematic ladder, spelled the same way by both tools that walk
+#: one. Adding a fourth here without teaching ``_select`` about it silently shows everything.
+LADDER_STATUS = ("all", "todo", "affordable")
+
+
+def _select(
+    rungs: list[Rung],
+    wanted: str,
+    search: str | None,
+    startable: Callable[[Rung], bool] = lambda r: True,
+) -> list[Rung]:
+    """One ladder view. ``affordable`` keeps BLOCKED rungs, because their bill IS covered
+    and they are the rows whose answer is "go and clear the prerequisite first"; anything a
+    ladder knows cannot be STARTED today belongs in ``startable`` instead."""
+    out = []
+    for r in rungs:
+        if wanted != "all" and r.done:
+            continue
+        if search and search.strip().casefold() not in (r.schematic.name or "").casefold():
+            continue
+        if wanted == "affordable" and (r.missing or r.done or not startable(r)):
+            continue
+        out.append(r)
+    return out
+
+
+def _bill(g: GameData, rung: Rung) -> str:
+    return ", ".join(f"{f.amount:g} {g.item_name(f.item)}" for f in rung.schematic.cost) or "-"
+
+
+def _shortfall(g: GameData, rung: Rung) -> str:
+    return ", ".join(f"{m.short_by:.0f} {g.item_name(m.item)}" for m in rung.missing)
 
 
 @mcp.tool(structured_output=False)
@@ -83,7 +119,8 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
         (
             "stale=usable means the phase has never been delivered into "
             "(mTargetGamePhasePaidOffCosts is empty), so its untouched snapshot is still "
-            "its true full cost. That is the only row safe to plan against."
+            "its true full cost. The first delivery turns that row into stale=derived, "
+            "not into stale=stale."
         ),
         (
             "[UNVERIFIED for MidGame/LateGame/FoodCourt] the EGP_* -> GP_Project_Assembly_"
@@ -94,6 +131,15 @@ def phase_requirements(save: str | None = None, world: str | None = None) -> str
             "key's single settled item. The rest follow by enum order from that anchor."
         ),
     ]
+    if any(r["stale"] == "derived" for r in req["phases"]):
+        notes.append(
+            "stale=derived is that row's frozen snapshot MINUS the live "
+            "mTargetGamePhasePaidOffCosts. Only the TARGET row is ever subtracted -- it is "
+            "the only phase deliveries can reach, so it is the only row with a live counter "
+            "to take off -- and the result is a LOWER bound on what is owed: were the "
+            "snapshot itself frozen after some earlier delivery the real bill would be "
+            "bigger, so a derived 0 means 'nothing left that this can see'"
+        )
     notes.append(
         "have and short by join each phase's outstanding items to spendable stock -- "
         "carried, storage containers and the Dimensional Depot, the same pool mam_research "
@@ -277,59 +323,49 @@ def mam_research(
         return f"could not read save: {exc}"
 
     g = st.game
-    done = st.purchased_schematic_ids
-    stock = st.stock()
     search = search or query
     start = max(0, offset)
     n = render.clamp(limit, default=25)
     wanted = (show or status or "todo").strip().casefold()
-    if wanted not in ("all", "todo", "affordable"):
+    if wanted not in LADDER_STATUS:
         return f"! unknown status {status!r}. Choose from: all, todo, affordable"
 
     gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
+    ladder = SchematicLadder(game=g, unlocks=st.unlocks, inventory=st.inventory).rungs("EST_MAM")
     ongoing = st.research.ongoing
+    shut = {r.schematic.cls: st.research.tree_locked(r.schematic.cls) for r in ladder}
+    outstanding = [r for r in ladder if not r.done]
+    n_todo = len(outstanding)
+    n_running = sum(1 for r in outstanding if r.schematic.cls in ongoing)
+    n_shut = sum(1 for r in outstanding if shut[r.schematic.cls])
+
     rows = []
-    n_todo = 0
-    n_running = 0
-    n_shut = 0
-    for cls, s in sorted(g.schematics.items(), key=lambda kv: kv[1].name):
-        if s.type != "EST_MAM":
-            continue
-        finished = cls in done
+    # Neither an in-flight node nor one in a shut tree can be started now, whatever the
+    # bill says, so affordable does not offer them.
+    for rung in _select(
+        ladder,
+        wanted,
+        search,
+        startable=lambda r: r.schematic.cls not in ongoing and not shut[r.schematic.cls],
+    ):
+        cls = rung.schematic.cls
         running = ongoing.get(cls)
-        shut = st.research.tree_locked(cls)
-        if not finished:
-            n_todo += 1
-            n_running += running is not None
-            n_shut += shut
-        if wanted != "all" and finished:
-            continue
-        if search and search.strip().casefold() not in (s.name or "").casefold():
-            continue
-        short = [(f, stock.get(f.item, 0.0)) for f in s.cost if stock.get(f.item, 0.0) < f.amount]
-        # Neither an in-flight node nor one in a shut tree can be started now, whatever
-        # the bill says, so affordable does not offer them.
-        if wanted == "affordable" and (short or finished or running is not None or shut):
-            continue
-        blocked = [
-            g.schematics[d].name for d in s.dependencies if d in g.schematics and d not in done
-        ]
-        if finished:
+        if rung.done:
             state = "DONE"
         elif running is not None:
             state = f"RUNNING {running:.0f}s"
-        elif shut:
+        elif shut[cls]:
             state = "TREE SHUT"
         else:
-            state = "BLOCKED" if blocked else ("short" if short else "READY")
+            state = rung.status
         rows.append(
             (
                 state,
-                s.name[:30],
+                rung.schematic.name[:30],
                 "LOCKS " + gates[cls] if cls in gates else "",
-                ", ".join(f"{f.amount:g} {g.item_name(f.item)}" for f in s.cost)[:52] or "-",
-                ", ".join(f"{f.amount - have:.0f} {g.item_name(f.item)}" for f, have in short)[:34],
-                ", ".join(blocked)[:24],
+                _bill(g, rung)[:52],
+                _shortfall(g, rung)[:34],
+                ", ".join(rung.blocked_by)[:24],
             )
         )
 
@@ -389,6 +425,116 @@ def mam_research(
             offset=start,
             limit=n,
         ),
+        notes,
+    )
+
+
+@mcp.tool(structured_output=False)
+def milestones(
+    status: Annotated[
+        str, Field(description="all | todo | affordable -- todo hides finished milestones")
+    ] = "todo",
+    tier: Annotated[
+        int | None, Field(description="one HUB tier, 1-9. Omit for all of them")
+    ] = None,
+    search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
+    query: Annotated[str | None, Field(description="alias for search=")] = None,
+    show: Annotated[str | None, Field(description="alias for status=")] = None,
+    save: str | None = None,
+    world: str | None = None,
+    limit: Limit = 25,
+    offset: int = 0,
+) -> str:
+    """HUB milestones: what is left, what each costs, and what you can afford right now.
+
+    The questions `mam_research` answers about the MAM tree, asked of the other ladder and
+    in the same words -- both walk one `SchematicLadder` priced against the same spendable
+    stock, so a status here means what it means there.
+
+    READY is about the BILL, not about access: tiers are opened by Space Elevator
+    deliveries, that gate is in no shipped data, and `phase_requirements` is where the
+    elevator stands.
+    """
+    try:
+        st = _state(save, world)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+
+    g = st.game
+    search = search or query
+    start = max(0, offset)
+    n = render.clamp(limit, default=25)
+    wanted = (show or status or "todo").strip().casefold()
+    if wanted not in LADDER_STATUS:
+        return f"! unknown status {status!r}. Choose from: all, todo, affordable"
+
+    ladder = SchematicLadder(game=g, unlocks=st.unlocks, inventory=st.inventory)
+    every = sorted(
+        ladder.rungs("EST_Milestone"), key=lambda r: (r.schematic.tier, r.schematic.name)
+    )
+    rungs = every
+    if tier is not None:
+        rungs = [r for r in every if r.schematic.tier == tier]
+        if not rungs:
+            tiers = sorted({r.schematic.tier for r in every})
+            return f"! no milestones in tier {tier}. Tiers are {tiers[0]}-{tiers[-1]}"
+    picked = _select(rungs, wanted, search)
+    outstanding = [r for r in rungs if not r.done]
+    ready = [r for r in outstanding if r.status == "READY"]
+
+    page = picked[start : start + n]
+    show_blocked = any(r.blocked_by for r in page)
+    headers = ["status", "tier", "milestone", "cost", "short by", "unlocks"]
+    if show_blocked:
+        headers.append("blocked by")
+    rows = []
+    for rung in page:
+        row = [
+            rung.status,
+            rung.schematic.tier,
+            rung.schematic.name,
+            _bill(g, rung),
+            _shortfall(g, rung),
+            len(st.unlocks.schematic_recipes(rung.schematic)) or "",
+        ]
+        if show_blocked:
+            row.append(", ".join(rung.blocked_by))
+        rows.append(row)
+
+    prog = st.progression()
+    notes = [
+        (
+            "cost is checked against spendable stock only: carried, storage containers "
+            "and the Dimensional Depot. Machine buffers do not count, and neither do the "
+            "crates on the ground -- a crate deletes itself once emptied"
+        ),
+        (
+            "READY is about the bill, not about access: a HUB tier is opened by delivering "
+            "to the Space Elevator, and no milestone schematic in Docs.json carries that "
+            "dependency -- so a READY row in a tier above the ones you have bought into may "
+            "still be behind an elevator phase. phase_requirements has that half"
+        ),
+        "'unlocks' counts the recipes a milestone would newly grant; blank means none",
+    ]
+    if ready:
+        notes.append(
+            "affordable right now: "
+            + ", ".join(f"T{r.schematic.tier} {r.schematic.name}" for r in ready[:5])
+        )
+
+    return render.envelope(
+        f"# {st.age_note}\n"
+        f"# {len(outstanding)} milestone(s) outstanding, showing status={wanted}"
+        + (f" tier={tier}" if tier is not None else "")
+        + "\n"
+        + render.kv(
+            [
+                ("highest_complete_tier", prog["highest_complete_tier"]),
+                ("by_tier", " ".join(f"{t}:{v}" for t, v in prog["milestones_by_tier"].items())),
+                ("affordable_now", len(ready)),
+            ]
+        ),
+        render.table(headers, rows, total=len(picked), offset=start, limit=n),
         notes,
     )
 

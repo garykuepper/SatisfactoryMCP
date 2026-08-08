@@ -497,7 +497,19 @@ as `unmapped` rather than dropped — a silently missing phase reads as a phase 
 drifted, so its snapshot still equals its full cost. That is a checkable condition, not an assumption,
 and it is what makes the Phase 4 numbers (Assembly Director System 4000, Magnetic Field Generator 4000,
 Thermal Propulsion Rocket 1000, Nuclear Pasta 1000) usable while the Phase 3 numbers are not. Every row
-is emitted with a `trust` column — `complete` / `usable` / `stale` / `unmapped` — rather than filtered.
+is emitted with a `trust` column — `complete` / `usable` / `derived` / `stale` / `unmapped` — rather
+than filtered.
+
+**And a delivery must not destroy the row.** `usable` used to expire on the player's first delivery
+into the target and never come back, so *"what does Phase 4 still need"* — the question this tool is
+for — died the moment they started answering it. The target phase is the only one deliveries can reach
+(`PayOffOnTargetGamePhase`), so it is the only row with a live counter to take off, and its remainder
+is the frozen cost **minus** `mTargetGamePhasePaidOffCosts`: `derived`. Two things prove a snapshot
+froze *after* a delivery and fall back to `stale`, an item at zero in it and a live figure larger than
+it still bills for; neither can happen to a full cost. A partial payment below the remainder cannot be
+detected, so the subtraction can only **understate** what is owed and `derived 0` means "nothing left
+that this can see". Untestable on any save of this world — `mTargetGamePhasePaidOffCosts` is empty in
+all 29 — so it is pinned on constructed projections in `tests/test_phase_and_shards.py`.
 
 ### 6.5 Power Shards — committed is read, never derived
 
@@ -581,6 +593,16 @@ what you are short of, prerequisites, and a `LOCKS <capability>` marker on the r
 gate a feature rather than merely adding a recipe. Costs are checked against spendable
 stock only — carried, storage containers and the Depot — never machine buffers and never
 the crates on the ground, per § 6.
+
+**The HUB ladder is the same walk, and `milestones` is it.** Status, bill, shortfall and
+prerequisites over `EST_Milestone` instead of `EST_MAM`, from one `SchematicLadder` priced
+against one stock pool, so a status means the same thing in both — a second vocabulary for
+the same four facts is the failure this avoided. It is a tool rather than a mode because
+the surface names tools after what they answer, and `mam_research(track=…)` would have
+been a tool whose name was false for half its arguments. One thing it deliberately cannot
+say: a HUB **tier** is opened by delivering to the Space Elevator, and no milestone
+schematic in Docs.json carries a dependency of any kind, so `READY` is a statement about
+the bill and the note under it points at `phase_requirements` for the other half.
 
 ### 6.10 Pushing back on "not modelled"
 
