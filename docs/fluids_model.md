@@ -143,16 +143,56 @@ is the truth". Machines can: they state a rating, carry no `mMaxPressure` at all
 ×1.10. **So ×1.10 of the rating is the game-wide rule, and a pump's `mMaxPressure` is the
 game printing that product.**
 
-> **Caveat, and it is larger than the ±0.26 m bar.** The overshoot is estimator-dependent.
-> Reading the same columns by volume conservation instead of by the topmost partial piece
-> gives machine 10.758, Mk1 21.877, Mk2 55.160 — under which *both pumps sit essentially on
-> their declared ceilings*. That estimator cannot be adopted for pumps alone, since it moves
-> the machine constant too. The bar is set by how many partially-filled pieces lie below the
-> surface, and a 22 m column carries three. **A rig built from 1 m or 2 m pieces would shrink
-> the interpolation step and decide whether the +0.68 m is physics or bookkeeping** — the
-> cheapest open experiment left. This lives in `PUMP_MEASURED_REACH_M` rather than overwriting the
-dump: `mMaxPressure` is authoritative for what the game *declares*, and the finding is
-precisely that declared and observed disagree.
+The overshoot was once suspected to be an artefact of our own estimator: reading the same
+columns by volume conservation rather than by the topmost partial piece gave machine 10.758,
+Mk1 21.877, Mk2 55.160 — under which both pumps sat essentially *on* their declared ceilings.
+**`HL_FINE` refuted that** `[MEASURED]`.
+
+Rebuilding the Mk1 column from **2 m pieces** (half the previous 4 m) gives:
+
+| estimator | reach above pump centre | vs declared 22.0 |
+|---|---|---|
+| topmost-partial-piece | +23.006 | **+1.006** |
+| volume conservation | +22.430 | **+0.430** |
+
+**Both now exceed 22.0**, and they are converging from below toward ≈23 m rather than toward
+the declared ceiling. The stronger statement needs no estimator at all: the interface piece
+spans +7.500 → +9.500 m, so the reach is bracketed in **[+22.244, +24.244]** by piece
+occupancy alone — no capacity model, no interpolation — **and that bracket's floor is 0.244 m
+above the declared ceiling.** The 4 m rig's bracket was [+21.946, +25.946], whose floor sits
+below 22.0, so this is the first rig on which the overshoot is proven rather than inferred.
+
+`PUMP_MEASURED_REACH_M["Build_PipelinePump_C"]` currently holds **22.801**, which is now known
+to be a 4 m-quantised reading and about 0.205 m low; the honest interval is the bracket above
+with a best estimate near **23.0**. It lives there rather than overwriting the dump, because
+`mMaxPressure` is authoritative for what the game *declares* and the finding is precisely that
+declared and observed disagree.
+
+### Trapped air is attached to the piece, not to the column `[MEASURED]`
+
+The deficit below the waterline, ranked from the interface downward, on the two rigs:
+
+| rank | 4 m pieces | 2 m pieces |
+|---|---|---|
+| 1 | 9.67% of the piece | 9.28% |
+| 2 | 7.47% | 7.69% |
+| 3 | 5.96% | 7.31% |
+| 4 | — | 4.51% |
+| total void | 1.717 m³ | 2.015 m³ |
+
+**Proportional-to-length is decisively excluded** (predicts 0.286 m³ mean against 0.504
+observed, off by 38%). Fixed-volume-per-piece and fixed-fraction-of-capacity cannot yet be
+separated: they differ by 6% here, under the 12% scatter, because the 7.0 m³ capacity floor
+makes a 2 m piece hold nearly as much as a 4 m one.
+
+**So the estimator gap is bookkeeping, at moderate confidence.** Halving the piece length cut
+it 0.924 → 0.576 m (−38%); the bookkeeping prediction is −50%, the physics prediction is 0%.
+Physics sits 7× the intra-rig noise away and is excluded; bookkeeping sits ~2× away.
+
+Stated neutrally, the same data two ways: **the trapped-air volume is roughly conserved
+(1.72 → 2.02 m³) while the trapped-air height nearly halves (0.92 → 0.58 m).** Which is the
+invariant is the open question, and it is the one the 7.0 m³ floor prevents this rig from
+answering.
 
 ### Connector heights `[MEASURED]`
 
@@ -448,6 +488,17 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 - ~~**Does 11 m generalise?**~~ **CLOSED** — two classes, two fluids, two datums, 67 mm apart.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
+- **Is the trapped air a fixed VOLUME per piece or a fixed FRACTION of its capacity?** The
+  one question `HL_FINE` could not answer, because the 7.0 m³ capacity floor makes a 2 m
+  piece hold nearly as much as a 4 m one. **The rig that settles it uses LONGER pieces, not
+  shorter** — the opposite of the standing assumption. An 8 m column (capacity 14.87 m³, safely
+  above the knee) predicts the estimator gap **doubles to ≈1.85 m** if the deficit is a fixed
+  fraction, and stays **unchanged at ≈0.92 m** if it is a fixed volume. Those are 18× the
+  noise apart.
+- **Pinning the pump reach without any model.** Rebuild the 2 m column shifted vertically by
+  0.5 m and save; repeat. Each shift moves the piece boundaries through the waterline, and
+  intersecting the assumption-free brackets narrows the answer without invoking a capacity
+  model at all. Four shifts pin the Mk1 to ±0.25 m on evidence nobody can dispute.
 - **The pump overshoots its own declared ceiling and the machines do not.** Both machines land
   on ×1.10 of their stated rating, which is exactly what the pumps *declare* (22/20, 55/50) —
   yet the Mk1 pump itself measured 22.801, 3.6% past its own `mMaxPressure`. A 0.8 m question
