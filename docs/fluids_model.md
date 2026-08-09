@@ -173,8 +173,30 @@ Below the threshold the pipe above a buffer tracks only the buffer's own fill-pr
 head. Above it, incoming head passes through. A proportional blend is excluded arithmetically:
 at 89.6% a blend puts the waterline 11 m higher than observed.
 
-**Threshold: between 89.6% and 100.7% of capacity.** "In the last few percent" is as tight as
-four points support.
+**Threshold: between 95.6% and 100.7% of capacity** `[MEASURED]`. Six points, and the excess
+over what the buffer's own head explains falls into two disjoint clusters with nothing
+between them — further evidence for a step rather than a blend:
+
+| fill | excess over buffer-alone | verdict |
+|---|---|---|
+| 18.82% | +2.54 m | off |
+| 89.64% | +2.19 m | off |
+| 90.09% | +1.70 m | off |
+| **95.61%** | **+1.12 m** | **off** |
+| 100.74% | +15.36 m | on (pipe-capped) |
+| 100.74% | +16.76 m | on (measured) |
+
+At 95.61% the two hypotheses predict waterlines **17.08 m apart** — the pump's reach dwarfs
+the buffer's 8 m column — so the reading separates them by 61× the error bar. It is also not
+a lag artefact: in the 10 s before the save the buffer gained 22 m³ while the waterline went
+*down* 14 cm. Everything banks in the tank; nothing climbs.
+
+`BUFFER_TRANSMITS_ABOVE_FILL = 1.0` is conservative but now well supported: every off-point
+is strictly below 1.0 and both on-points are at 100.744%. The true gate lies in
+(95.61%, 100.74%].
+
+To pin it further, save every few seconds through 96–101% rather than aiming at a fill — the
+switch was about 8 seconds beyond the last reading.
 
 A buffer's **own** head is `base + height × fill_fraction`, and that part is confirmed by the
 A→B tracking.
