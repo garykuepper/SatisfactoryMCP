@@ -674,10 +674,15 @@ def factory_health(
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
 
+    The sweep over every factory also reports two plumbing faults that belong to no machine
+    set: fluid buffers holding too little to output at their intake rate, and pipeline pumps
+    no wire reaches. Both are world-wide there, not scoped to a factory.
+
     `offset` pages every table in the answer at once, worst first throughout.
     """
     from ....domain.factories.health import STATES, assess, summarise
     from ....domain.factories.select import SelectorError
+    from ....domain.world.plumbing import dark_pumps, throttled_buffers
 
     try:
         st = _state(save, world, as_of)
@@ -743,8 +748,7 @@ def factory_health(
                 f"{unwired_total} machine(s) across these factories have no electrical "
                 "connection at all. factory_health on the one factory names them"
             )
-        return render.envelope(
-            f"# {st.age_note}\n# uptime measured over a 300s window per machine",
+        chunks = [
             render.table(
                 (
                     "factory",
@@ -763,7 +767,53 @@ def factory_health(
                 total=len(rows),
                 offset=start,
                 limit=n,
-            ),
+            )
+        ]
+        # Plumbing is world-wide here and nowhere else: a buffer and a pump belong to no
+        # machine set, so the sweep is the only view either can honestly appear in.
+        throttled = throttled_buffers(st.projection, st.game)
+        if throttled:
+            chunks.append(
+                "## fluid buffers below the level they need\n"
+                + render.table(
+                    ("buffer", "fluid", "holding m3", "needs m3"),
+                    [
+                        (
+                            b.instance,
+                            st.game.item_name(b.fluid) if b.fluid else "-",
+                            f"{b.stored_m3:.0f}",
+                            f"{b.balance_m3:.0f}",
+                        )
+                        for b in throttled[start:end]
+                    ],
+                    total=len(throttled),
+                    offset=start,
+                    limit=n,
+                )
+            )
+            notes.append(
+                f"{len(throttled)} fluid buffer(s) world-wide are under the level they need: "
+                "a buffer's head lift is the height of the fluid standing in it, so one "
+                "holding less than 1.5 m of fluid outputs slower than it takes in, silently"
+            )
+        dark, unseen = dark_pumps(st.projection, st.graph)
+        if dark:
+            rest = len(dark) - UNWIRED_NAMED
+            notes.append(
+                f"{len(dark)} pipeline pump(s) have no electrical connection: an unpowered "
+                "pump still passes fluid but lifts nothing, so a line that climbs past it "
+                "stops climbing and no machine on it looks broken -- "
+                + ", ".join(dark[:UNWIRED_NAMED])
+                + (f", and {rest} more" if rest > 0 else "")
+            )
+        if unseen:
+            notes.append(
+                f"{unseen} pipeline pump(s) are coupled to no pipe at all and were not "
+                "checked for a wire"
+            )
+        return render.envelope(
+            f"# {st.age_note}\n# uptime measured over a 300s window per machine",
+            "\n\n".join(chunks),
             notes,
         )
 
