@@ -357,13 +357,17 @@ def test_a_full_buffer_passes_incoming_head_through_unchanged(game):
 
 
 def test_a_buffer_inside_the_measured_bracket_is_counted_rather_than_decided_quietly(game):
-    """95% is above the fill measured OFF and below the one measured ON, so the constant
-    settles it and the verdict says how many buffers it settled."""
-    report = _verdict(_through_tank(2280.0, 25.0), game)
+    """99.96% is above the fill measured OFF and below the one measured ON, so the constant
+    settles it and the verdict says how many buffers it settled.
+
+    The band is 0.7 percentage points wide, so a buffer has to be within a couple of cubic
+    metres of capacity to land in it: 95% is now DECIDED, by a measurement that says off.
+    """
+    report = _verdict(_through_tank(2399.0, 25.0), game)
     assert report.undecided_buffers == 1
     (crest,) = report.crests
-    assert crest.head_m == pytest.approx(11.4)
-    assert _verdict(_through_tank(1200.0, 25.0), game).undecided_buffers == 0
+    assert crest.head_m == pytest.approx(11.995)
+    assert _verdict(_through_tank(2280.0, 25.0), game).undecided_buffers == 0
 
 
 def test_a_t_junction_is_a_body_and_not_a_machine_port(game):
@@ -479,6 +483,9 @@ def test_the_fuel_line_runs_on_its_buffer_and_that_is_reported_as_no_fault(proje
     waterline interpolates to the buffer's level, not the pump's. The twenty generators are
     nonetheless producing at 100% uptime in this save and in thirty others, so the honest
     reading is that the line has no margin above its buffer rather than that it is cut off.
+
+    Nothing here rests on the constant: 94.77% is below the fill measured not to pass head
+    on, so the finding is a measurement's and the undecided count is zero.
     """
     report = head_lift(projection, game, build_graph(projection))
     (line,) = report.buffer_lines
@@ -487,7 +494,7 @@ def test_the_fuel_line_runs_on_its_buffer_and_that_is_reported_as_no_fault(proje
     assert line.crest_m == pytest.approx(-8.14)  # the Mk2 pump's inlet, 0.93 m above it
     assert len(line.consumers) == 20
     assert not line.assumed
-    assert report.undecided_buffers == 1
+    assert report.undecided_buffers == 0
 
 
 def test_the_reference_worlds_silence_is_a_verdict_and_not_an_empty_model(projection, game):
