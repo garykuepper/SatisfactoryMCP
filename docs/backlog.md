@@ -124,6 +124,13 @@ Three closed, three narrowed by an alias rather than settled, two open.
 
 ## P4 — missing round-trips
 
+- **`flow.py` did not know the T junction — DONE.** `_BODIES` listed the cross and both tanks
+  by build class, so a `Build_PipelineJunction_T_C` was not one volume: its three ports stayed
+  three unjoined nodes and the pipe network was CUT at every T. Measured on the owner's newest
+  save, which holds 12 of them: 92 of 657 pipes could not be oriented that now can, and **no
+  confident answer changed** — it cost coverage, not correctness. Invisible until now because
+  the reference fixture contains no T junction. `domain/world/headlift.py` avoids the whole
+  class of bug by matching on `Building.native`, where the T and the cross are one class.
 - **Plans: no rename, no way to read a stored plan's arguments — DONE** (`0dd05e4`).
   `rename_plan`, and a detail view that reads one stored plan in full without solving it.
 - **Labels: no rename; cannot add or drop one machine — OPEN.** `LabelStore` still exposes only
