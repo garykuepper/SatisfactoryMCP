@@ -74,12 +74,19 @@ class HeadLift:
 
     crests: tuple[Crest, ...]
     consumers: int
-    unfed: int
+    #: One actor name per port in ``unfed``, so a diagnosis can ask about one machine. Named
+    #: without a fluid because a network no source reaches has typically never carried one,
+    #: and the save then records none for it.
+    unfed_ports: tuple[str, ...]
     networks: int
     gas_networks: int
     #: Ports whose facing neither the save nor the building's nature settles. Each is taken
     #: BOTH ways, so a crest behind one is still reported and its head may be overstated.
     ambiguous_ports: int
+
+    @property
+    def unfed(self) -> int:
+        return len(self.unfed_ports)
 
 
 @dataclass
@@ -443,7 +450,7 @@ def head_lift(projection: dict, game: GameData, graph) -> HeadLift:
     return HeadLift(
         crests=tuple(crests),
         consumers=len(plumbing.sinks),
-        unfed=sum(1 for node, _actor in plumbing.sinks if node not in fed),
+        unfed_ports=tuple(sorted(a for node, a in plumbing.sinks if node not in fed)),
         networks=plumbing.networks,
         gas_networks=plumbing.gas_networks,
         ambiguous_ports=plumbing.ambiguous,
