@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from ...core.gamedata.model import GameData
 
-__all__ = ["PowerLedger", "dry_inputs", "measured_share"]
+__all__ = ["PowerLedger", "dry_input_classes", "dry_inputs", "measured_share"]
 
 #: Stands in for a fuel class where the save records none -- a hand-fed burner sitting
 #: empty. Not an item name; it is printed as it reads.
@@ -40,6 +40,15 @@ def dry_inputs(game: GameData, record: dict) -> tuple[str, ...]:
     whether that inventory is empty cannot see the failure worth catching: a full hopper
     behind a broken water pipe. Each class the generator needs is tested by name instead.
     """
+    return tuple(
+        NO_FUEL if cls == NO_FUEL else game.item_name(cls)
+        for cls in dry_input_classes(game, record)
+    )
+
+
+def dry_input_classes(game: GameData, record: dict) -> tuple[str, ...]:
+    """`dry_inputs` by item class, for callers that have to join on one. Carries the bare
+    ``NO_FUEL`` marker through, which is a state and not a class."""
     fuel = (record.get("buffers") or {}).get("fuel")
     if fuel is None:
         return ()
@@ -54,7 +63,7 @@ def dry_inputs(game: GameData, record: dict) -> tuple[str, ...]:
     wanted = [spec.fuel_class]
     if building.requires_supplemental and spec.supplemental_class:
         wanted.append(spec.supplemental_class)
-    return tuple(game.item_name(cls) for cls in wanted if not held.get(cls))
+    return tuple(cls for cls in wanted if not held.get(cls))
 
 
 @dataclass

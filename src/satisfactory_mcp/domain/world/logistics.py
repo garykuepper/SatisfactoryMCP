@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from ...core.gamedata.model import GameData
 from ...core.saveio import ports
+from ...core.saveio import rows as saverows
 
 __all__ = ["Link", "PhysicalGraph", "build_physical_graph"]
 
@@ -45,6 +46,11 @@ class Link:
     #: The port role at each end, as the save spells it. ``""`` at an end that is nothing.
     source_role: str = ""
     target_role: str = ""
+    #: A ``pipe:<row>`` on the run, which ``search_conduits`` prints and ``resolve_origin``
+    #: takes. EMPTY on every belt run, because the belt table carries no actor to join a
+    #: chain by and the geometric match is unique for 58% of them -- §6.15,
+    #: ``docs/save-projection.md``.
+    ident: str = ""
 
     def other(self, actor: str) -> str | None:
         """The far end from ``actor``. The only safe way to walk an ``UNKNOWN`` link.
@@ -164,10 +170,10 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             joins.union(a, b)
 
     boundary: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
-    run_size: dict[int, int] = defaultdict(int)
+    members: dict[int, list[int]] = defaultdict(list)
     for i, conduit in enumerate(is_conduit):
         if conduit:
-            run_size[joins.find(i)] += 1
+            members[joins.find(i)].append(i)
     for a, b, role_a, role_b in edges:
         if is_conduit[a] and not is_conduit[b]:
             boundary[joins.find(a)][b].append(role_b)
@@ -175,8 +181,17 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             boundary[joins.find(b)][a].append(role_a)
 
     pipe_classes = set((projection.get("pipes") or {}).get("classes") or ())
-    for root, pieces in run_size.items():
+    pipe_row = {
+        seg.actor_index: seg.index
+        for seg in saverows.iter_pipe_segments(projection)
+        if seg.actor_index >= 0
+    }
+
+    for root, on in members.items():
+        pieces = len(on)
         medium = ports.PIPE if _class_of(actors[root]) in pipe_classes else ports.CONVEYOR
+        rows = [pipe_row[i] for i in on if i in pipe_row]
+        ident = f"pipe:{min(rows)}" if rows else ""
         attached = boundary.get(root) or {}
         if not attached:
             out.orphan_runs += 1
@@ -198,6 +213,7 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
                 pieces=pieces,
                 source_role="" if arriving else node_roles[0],
                 target_role=node_roles[0] if arriving else "",
+                ident=ident,
             )
             out.links.append(link)
             out.dangling.append(link)
@@ -233,6 +249,7 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             pieces=pieces,
             source_role=src_role,
             target_role=dst_role,
+            ident=ident,
         )
         out.links.append(link)
         out.outbound[link.source].append(link)

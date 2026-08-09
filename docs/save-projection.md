@@ -860,6 +860,41 @@ since nothing is subtracted) so the banked digests still compare on all 31 saves
 written under 18 disagrees about `machine` and lacks `crate`, so the cache key had to move
 with the number, as every correcting bump's must.
 
+### 6.15 Conduit runs — which of them can be named, and which cannot
+
+`domain.world.logistics` contracts the 3,597 conduit actors of `graph["material"]` into 2,200
+node-to-node runs in ~15 ms, by actor identity rather than by geometry. `domain.world.conduits`
+builds a parallel set of runs from the *drawn line* — `chain:<n>` per belt chain, `pipe:<row>`
+per pipeline piece — and those are the ids `search_conduits` prints and `resolve_origin`
+accepts. Two views of the same belts, and joining them is only sometimes possible.
+
+**Pipes join exactly.** `pipes["segments"]` carries `actorIndex` (schema 14), which is a
+position in `graph["actors"]`, so every one of the reference world's 503 pipe pieces maps to
+the actor the physical graph knows it by. A contracted pipe run therefore names itself with
+the lowest `pipe:<row>` on it, and following that id lands on a piece of that very run.
+
+**Belts do not join at all.** `belts["segments"]` carries `[chainIndex, classIndex, points,
+spans]` and no actor: `extract._belts` reads each piece's instance name only to recover its
+class and then discards it. The two groupings are nearly the same size — 1,909 chains against
+1,916 contracted belt runs — but nothing in the projection pairs them, so the only available
+join is geometric, and it was measured before being rejected:
+
+| how the chain was matched to the run | runs matched uniquely (of 1,916) |
+| --- | --- |
+| nearest placement to each chain end, then paired by that pair of instances | 1,432 (75%) |
+| candidate chains within each endpoint building's own port reach | 1,120 (58%) |
+
+The residue is not noise. 360 runs have both endpoint actors placed and still no chain whose
+ends resolve to that pair, because a belt end sits nearer a neighbour's centre than its own
+machine's; 96 endpoints are `Build_TreeGiftProducer_C`, which is in no placement table at all.
+A 75%-accurate id printed as a fact is a confident wrong claim about which belt to go and look
+at, which is worse than not naming it — so `Link.ident` is empty for every belt, and
+`factory_health` and `trace_upstream` name the far-end ACTOR instead, which is exact.
+
+Closing the gap needs one column: an `actorIndex` on the belt row, interned from the same
+`actor_ix` `_pipes` already reads, which would make the belt join as exact as the pipe one.
+That is a schema bump and a re-cut of every cached sidecar, and it has not been taken.
+
 ---
 
 ## 13a. Replacing the vendored parser
