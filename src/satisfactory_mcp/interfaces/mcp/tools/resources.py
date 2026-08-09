@@ -5,7 +5,7 @@ from __future__ import annotations
 from ....core.text import ago, stamp
 from ....domain.spatial import regions as regions_mod
 from ....presenters.text import primitives as render
-from ..app import _state, game, mcp
+from ..app import _state, game, integrity_notes, mcp, stale_artifact_notes
 
 # Resources are CLIENT-PULLED, so they cost zero context until something asks for
 # them. That makes them right for stable orientation data and wrong for anything
@@ -19,18 +19,21 @@ def docs_summary() -> str:
     kinds: dict[str, int] = {}
     for r in g.recipes.values():
         kinds[r.kind] = kinds.get(r.kind, 0) + 1
-    return render.kv(
-        [
-            ("items", len(g.items)),
-            ("fluids", sum(1 for i in g.items.values() if i.is_fluid)),
-            ("recipes", len(g.recipes)),
-            ("automatable", kinds.get("part", 0)),
-            ("alternates", len(g.alternates())),
-            ("buildings", len(g.buildings)),
-            ("schematics", len(g.schematics)),
-            ("docs_sha256", g.docs_sha256[:16]),
-            ("warnings", len(g.warnings)),
-        ]
+    return render.envelope(
+        render.kv(
+            [
+                ("items", len(g.items)),
+                ("fluids", sum(1 for i in g.items.values() if i.is_fluid)),
+                ("recipes", len(g.recipes)),
+                ("automatable", kinds.get("part", 0)),
+                ("alternates", len(g.alternates())),
+                ("buildings", len(g.buildings)),
+                ("schematics", len(g.schematics)),
+                ("docs_sha256", g.docs_sha256[:16]),
+                ("warnings", len(g.warnings)),
+            ]
+        ),
+        notes=integrity_notes({}, g) + list(stale_artifact_notes()),
     )
 
 
@@ -46,24 +49,27 @@ def current_save() -> str:
     written = f"{stamp(mtime_ns)} ({ago(mtime_ns)})" if mtime_ns else "?"
     if "autosave" in (st.header.get("filename") or "").lower():
         written += " -- an autosave; the game writes them periodically, so disk may lag the world"
-    return render.kv(
-        [
-            # Leads, and is the one line here a tool takes back: this resource is where an
-            # orienting client looks first, and `file` alone cannot name a world state
-            # because the game rewrites `autosave_0` every rotation. See as_of= in
-            # docs/mcp-surface.md 10.1i.
-            ("save_token", st.token),
-            ("file", st.header.get("filename")),
-            ("written", written),
-            ("world", st.header.get("session_name")),
-            ("played_h", int((st.header.get("play_duration_s") or 0) / 3600)),
-            ("save_version", st.header.get("save_version")),
-            ("phase", p["game_phase"]),
-            ("tier_complete", p["highest_complete_tier"]),
-            ("recipes", p["available_recipes"]),
-            ("alternates", len(st.unlocked_alternates)),
-            ("hard_drives_pending", len(st.hard_drive_offers)),
-        ]
+    return render.envelope(
+        render.kv(
+            [
+                # Leads, and is the one line here a tool takes back: this resource is where an
+                # orienting client looks first, and `file` alone cannot name a world state
+                # because the game rewrites `autosave_0` every rotation. See as_of= in
+                # docs/mcp-surface.md 10.1i.
+                ("save_token", st.token),
+                ("file", st.header.get("filename")),
+                ("written", written),
+                ("world", st.header.get("session_name")),
+                ("played_h", int((st.header.get("play_duration_s") or 0) / 3600)),
+                ("save_version", st.header.get("save_version")),
+                ("phase", p["game_phase"]),
+                ("tier_complete", p["highest_complete_tier"]),
+                ("recipes", p["available_recipes"]),
+                ("alternates", len(st.unlocked_alternates)),
+                ("hard_drives_pending", len(st.hard_drive_offers)),
+            ]
+        ),
+        notes=integrity_notes(st.projection, st.game) + list(stale_artifact_notes()),
     )
 
 

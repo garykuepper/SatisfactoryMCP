@@ -202,6 +202,43 @@ FLUID_BUFFER_CLASSES = (
     "Build_IndustrialTank_C",  # Industrial Fluid Buffer, 2,400 m3
 )
 
+#: Classes that carry a factory building's own evidence -- a 300 s productivity monitor, or an
+#: input/output/fuel buffer -- and for which this projection deliberately keeps no per-actor
+#: record. **EDIT THIS LIST.** It is the whole reason the unfiled-class census below is silent,
+#: so a class arriving that is not here is one nobody has looked at yet, which is exactly what
+#: the census exists to say. Adding a name is a claim that its record is not wanted; the
+#: alternative is a hint list above, which is a claim that it is.
+#:
+#: Measured, not guessed: across 18 saves spanning save versions 25 to 60, these six are the
+#: ONLY classes reaching a drop point with that evidence on them. The other 68 unfiled
+#: buildables -- every foundation, wall, belt, lift and catwalk -- carry none of it, and of the
+#: 93 non-``Build_`` classes those saves hold, one does.
+DISMISSED_FACTORY_CLASSES = frozenset(
+    {
+        # Moves fluid along a pipe the ``pipes`` layer already draws, and runs no recipe.
+        "Build_PipelinePump_C",
+        # A hypertube entrance. It moves the player, which is not production.
+        "Build_PipeHyperStart_C",
+        # The HUB. Its milestone intake is ``progression``'s business.
+        "Build_TradingPost_C",
+        # Its intake is already reported against the phase, by ``progression``.
+        "Build_SpaceElevator_C",
+        # The AWESOME Shop. Its inventory is a catalogue, not stock the player owns.
+        "Build_ResourceSinkShop_C",
+        # The Portable Miner, which the census found on its own first run: it really does
+        # extract, carrying an ``mExtractResourceNode`` and an OutputInventory. It is dropped
+        # anyway because it is not a buildable -- no ``Build_`` class, no FGBuildingDescriptor,
+        # so nothing downstream can cost, size or draw one. Filing it under ``extractors``
+        # would mean giving every consumer of that list a machine game data cannot describe.
+        "BP_PortableMiner_C",
+    }
+)
+
+#: How many class names the unfiled-class warning prints before it stops. One game update
+#: cannot rename more than a handful of buildings, so a longer list is a parser that has
+#: stopped recognising the format rather than a patch note.
+UNFILED_CLASSES_SHOWN = 8
+
 #: How far a span's curve is allowed to leave the straight line between its two control
 #: points before the projection bothers to carry the tangents that bend it, in centimetres.
 #:
@@ -384,6 +421,38 @@ def _drop_notes(drops: Drops) -> list[str]:
     return notes
 
 
+def _unfiled_notes(unfiled: dict[str, str], factoryish) -> list[str]:
+    """The unread-class census: buildings this run recognised as production and filed nowhere.
+
+    The null-yaw census below says a placement was read wrong; this says a whole KIND of
+    building was never read at all. A game update that renames or adds a manufacturer lands
+    here, and unreported it makes the projection publish a smaller world -- ``machines`` short
+    by a class, ``factory_health`` blind to it, and nothing anywhere saying so.
+
+    ``factoryish`` is every instanceName the walk saw carrying a productivity monitor or an
+    input/output/fuel buffer, which is the game's OWN mark of a factory building and is why
+    this needs no list of 73 wall and foundation names to stay quiet. What it does need is
+    ``DISMISSED_FACTORY_CLASSES``, the five that carry the mark and want no record.
+    """
+    census = collections.Counter(
+        cls
+        for instance, cls in unfiled.items()
+        if instance in factoryish and cls not in DISMISSED_FACTORY_CLASSES
+    )
+    if not census:
+        return []
+    named = ", ".join(f"{n}x {cls}" for cls, n in census.most_common(UNFILED_CLASSES_SHOWN))
+    rest = len(census) - UNFILED_CLASSES_SHOWN
+    return [
+        f"{len(census)} building class(es) carry a productivity monitor or a machine buffer "
+        f"and this projection filed no record for any of them, so they are missing from "
+        f"machines, extractors and generators: {named}"
+        + (f", and {rest} more" if rest > 0 else "")
+        + ". Each belongs in a hint list in extract.py, or in DISMISSED_FACTORY_CLASSES "
+        "beside them"
+    ]
+
+
 def extract(path: str) -> dict:
     save = read_full_save(path)
     # Diagnostics, and only to stderr: stdout is the projection and has to stay parseable.
@@ -444,6 +513,10 @@ def extract(path: str) -> dict:
     #: Threaded into the builders that skip records rather than returned by them, so that a
     #: reader gets ONE list of what this save cost. Drained into ``warnings`` at the bottom.
     drops = Drops()
+    #: instanceName -> class, for every actor the walk below files nowhere. Both drop points
+    #: feed it; which of them are worth a warning is decided at the bottom, against evidence
+    #: that only exists once every component has been seen. See the census there.
+    unfiled: dict[str, str] = {}
     counts: dict[str, int] = {}
     n_objects = 0
     #: (chain actor world position, the actor) for every conveyor chain. Held rather than
@@ -744,6 +817,7 @@ def extract(path: str) -> dict:
             continue
 
         if not cls.startswith("Build_"):
+            unfiled[str(instance)] = cls
             continue
         counts[cls] = counts.get(cls, 0) + 1
 
@@ -756,6 +830,12 @@ def extract(path: str) -> dict:
 
         # Poles, pipes and containers are HELD rather than `continue`d past: each is a Build_
         # actor and still owes ``building_counts`` its tally and `record` below its row.
+        for_a_builder = (
+            cls in POWER_POLE_CLASSES
+            or cls in PIPE_CLASSES
+            or cls in STORAGE_CLASSES
+            or cls in FLUID_BUFFER_CLASSES
+        )
         if cls in POWER_POLE_CLASSES:
             pole_actors.append(
                 (cls, instance, pos_of(header), yaw_of(getattr(header, "rotation", None)))
@@ -819,6 +899,10 @@ def extract(path: str) -> dict:
             out["generators"].append(record)
         elif any(h in cls for h in _ATTACHMENT_HINTS):
             out["attachments"].append(record)
+        elif not for_a_builder:
+            # Built, tallied, and its record kept by nothing. Ordinary for a wall; the whole
+            # point of the census for a class that turns out to run a recipe.
+            unfiled[str(instance)] = cls
 
     # Buffers, now that every component has been seen.
     for owner, sides in buffers.items():
@@ -877,6 +961,7 @@ def extract(path: str) -> dict:
             f"{unread} placement(s) carry a rotation this parser could not read; "
             "their yaw is null rather than 0, which would have meant axis-aligned"
         )
+    out["warnings"].extend(_unfiled_notes(unfiled, uptime.keys() | buffers.keys()))
     out["warnings"].extend(_drop_notes(drops))
     return out
 

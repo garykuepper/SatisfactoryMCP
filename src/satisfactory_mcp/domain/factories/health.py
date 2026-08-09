@@ -79,6 +79,12 @@ class HealthReport:
     #: item name -> how many machines are blocked on it / starved of it
     blocked_on: Counter = field(default_factory=Counter)
     starved_of: Counter = field(default_factory=Counter)
+    #: Machines with no electrical connection at all, whatever state they are otherwise in.
+    #: Its own list rather than a state, because it cuts across all nine: a machine wired to
+    #: nothing can equally have no recipe, be paused, or keep no monitor, and every one of
+    #: those is still worth saying on its own terms. EMPTY when no graph was supplied -- see
+    #: `assess`, where absent evidence must not read as "wired to nothing".
+    unwired: list[str] = field(default_factory=list)
 
     @property
     def monitored(self) -> list[MachineHealth]:
@@ -135,11 +141,24 @@ def assess(
     machines: list[str],
     game: GameData,
     projection: dict,
+    graph=None,
 ) -> HealthReport:
     """Classify every machine in a set. Extractors and generators are included when they
-    carry a monitor, since a starved coal plant is exactly what one wants to see."""
+    carry a monitor, since a starved coal plant is exactly what one wants to see.
+
+    ``graph`` is a ``FactoryGraph`` and is what makes "wired to nothing" answerable. Optional
+    because without one the answer is UNKNOWN and not "wired": the save records no ``mHasPower``
+    and no ``mCircuitID``, so the one positive electrical fact it carries is the wire, and a
+    caller who supplies no wires must not have silence read as a finding.
+    """
     wanted = set(machines)
     report = HealthReport(name=name)
+    # Every machine in ``wanted``, so a machine wired to nothing is reported even when it is
+    # also paused or unbuilt. ``neighbours`` on an unknown name is empty, which is why this
+    # asks the graph about the machines rather than asking the machines about the graph:
+    # `build.py` puts every machine record into the graph precisely so an isolated one is a
+    # node rather than an absence.
+    unwired = {m for m in wanted if not graph.neighbours(m, "power")} if graph else set()
 
     for key in ("machines", "extractors", "generators"):
         for record in projection.get(key, ()):
@@ -181,6 +200,11 @@ def assess(
                 state, cause = "blocked", backed
             elif missing:
                 state, cause = "starved", missing
+            elif short in unwired:
+                # Has input, output has room, not running, and no wire reaches it. This is
+                # the one power fact the save states outright, so "usually power" stops
+                # being advice and becomes the cause.
+                state, cause = "stalled", ("no power connection",)
             else:
                 # Has input, output not full, still not running: power, or a monitor that
                 # has not caught up.
@@ -197,6 +221,8 @@ def assess(
             )
             report.machines.append(entry)
             report.by_state[state] += 1
+            if short in unwired:
+                report.unwired.append(short)
             if state == "blocked":
                 for item in entry.cause:
                     report.blocked_on[item] += 1

@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ... import config
+from ...core.gameassets import provenance
 from ...core.gamedata.loader import load_docs
 from ...core.gamedata.model import GameData
 from ...core.gamedata.normalize import normalize
@@ -63,6 +64,54 @@ def _state(
 
 def _item_id(query: str) -> str | None:
     return resolve_item(game(), query)
+
+
+@lru_cache(maxsize=1)
+def stale_artifact_notes() -> tuple[str, ...]:
+    """Whether the generated tables under ``data/`` still describe the build installed here.
+
+    Cached for the process's life alongside ``game``, and for the same reason: neither the
+    install nor a generated table changes under a running server, and this reads six sidecars.
+
+    Not folded into `integrity_notes` next door, which is a pure function of what a caller
+    already holds; this one goes to disk. Both are notes and both surface together.
+    """
+    try:
+        return tuple(provenance.stale_artifacts(config.game_root(), config.data_dir()))
+    except (FileNotFoundError, OSError):
+        # No install to compare against is not drift. `docs_path` raises here on a machine
+        # with no game, which is a machine that cannot be told its tables are out of date.
+        return ()
+
+
+#: How many of a channel's warnings are quoted before the rest are counted. Both channels are
+#: silent on healthy data, so anything at all is worth reading; past a handful the answer is
+#: "this build is not the one this server was written against" and the first few say it.
+INTEGRITY_NOTES_SHOWN = 4
+
+
+def integrity_notes(projection: dict, data: GameData) -> list[str]:
+    """What the two normalisation guards found, as notes, or nothing at all.
+
+    Both channels collect drift instead of raising, because one unreadable spline must not
+    cost the other 502 pipes and one changed building must not cost the whole docs dump. That
+    is only a good trade while somebody is told: unread, they turn a game update into a
+    quietly smaller world reported with full confidence. This is where they are told.
+    """
+    notes = []
+    for channel, found in (
+        ("this save", list(projection.get("warnings") or [])),
+        ("the game's own data", list(data.warnings)),
+    ):
+        if not found:
+            continue
+        shown = "; ".join(found[:INTEGRITY_NOTES_SHOWN])
+        rest = len(found) - INTEGRITY_NOTES_SHOWN
+        notes.append(
+            f"{len(found)} problem(s) reading {channel}, so what follows may describe less "
+            f"than is really there: {shown}" + (f"; and {rest} more" if rest > 0 else "")
+        )
+    return notes
 
 
 #: The domain resolvers under their old private names, for ``server`` and for tests.
