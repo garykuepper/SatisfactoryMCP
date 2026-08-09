@@ -91,6 +91,25 @@ The manual's 10 m rating is **correct and confirmed by the game itself**. Only i
 ceiling is wrong. An earlier version of this project's notes claimed the opposite; that claim
 was refuted by audit and should not be repeated.
 
+**It generalises across classes** `[MEASURED]`. `HL_REFINERY` repeats the experiment on an Oil
+Refinery producing Heavy Oil Residue, 30 m higher in the world, in a different part of the
+base, on a different fluid and from a different datum (+1.750 m from the actor, against the
+extractor's +2.400 m):
+
+| rig | device | rating | measured ceiling | ×rating |
+|---|---|---|---|---|
+| `HL_MACHINE` | Water Extractor | 10 | 11.020 | 1.102 |
+| `HL_REFINERY` | Oil Refinery | 10 | **11.087** | 1.109 |
+
+**67 mm apart**, well inside the ±0.26 m bar, and both land on the ×1.10 the pumps declare.
+So the model's most load-bearing constant rests on two classes and two fluids rather than one
+of each, and no per-class table is needed.
+
+A refinery only pressurises its output while producing, and this one had stopped — but the
+reading survives, because its output fluid box sits at 6.999468 of 7.0 and is **unchanged to
+the last bit across 298 s**. A full box drains the instant its pipe can accept anything; a
+pinned box proves the pipe is at its ceiling whatever the machine is doing.
+
 ### A pump exceeds even its ceiling `[MEASURED]`
 
 **22.801 m above the pump's centre**, against a 20 m rating and a 22 m ceiling. Read three
@@ -133,6 +152,9 @@ capacity(L) = max(7.0, 1.858252 x L)   cubic metres, L in metres
 The 7.0 m³ floor bites below **3.767 m**; 23 Mk2 pipes of 3.0 m all read exactly 7.000000.
 Identical on both tiers — 0 of 472 pipes ≥6 m exceed `K·L` by 0.1%. Converting a short pipe's
 fill to a height with `K` alone is wrong by up to 26%.
+
+**Capacity is geometric, not per-fluid**: re-derived on Heavy Oil Residue in `HL_REFINERY`, a
+4.0000 m piece reads exactly 7.43301 — the same constant water gives.
 
 ---
 
@@ -308,10 +330,13 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 - **What carries fuel over the 0.93 m.** The one open question the calibration created, and
   the most valuable thing to measure next. The barrier reproduces and the line works anyway;
   until that is explained, a buffer-gated crest stays a note rather than a fault.
-- **Does 11 m generalise?** Measured on a Water Extractor only. The dump states 10 m for six
-  classes, so the rating is shared; the ceiling has been measured once.
+- ~~**Does 11 m generalise?**~~ **CLOSED** — two classes, two fluids, two datums, 67 mm apart.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
+- **The pump overshoots its own declared ceiling and the machines do not.** Both machines land
+  on ×1.10 of their stated rating, which is exactly what the pumps *declare* (22/20, 55/50) —
+  yet the Mk1 pump itself measured 22.801, 3.6% past its own `mMaxPressure`. A 0.8 m question
+  about pumps, not about class generality, and it touches neither rule the model rests on.
 - **Buffer transmission threshold** is bracketed, not pinned: four points, A off at 18.8%,
   B off at 89.6%, C and D both on at 100.7%. The gate sits at capacity, inside the bracket
   and above the fill measured off; 22 buffer readings across the saves fall in the band and
