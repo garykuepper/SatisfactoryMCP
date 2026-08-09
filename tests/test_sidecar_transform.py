@@ -216,30 +216,76 @@ def test_a_rotation_that_is_not_one_costs_a_yaw_and_not_the_projection():
 
 
 def test_the_belts_key_is_interned_polylines_in_whole_centimetres(projection):
-    """The shape, field by field: ``[chainIndex, classIndex, [[x, y, z], ...]]``.
+    """The shape, field by field: ``[chainIndex, classIndex, [[x, y, z], ...], actorIndex]``.
 
     Read POSITIONALLY, with a width guard, rather than destructured -- which is the posture
-    every consumer of these rows takes and the reason schema 15 could add a fourth column
-    without touching one of them. A row that bends carries its tangents there; a straight one
-    is three columns wide and identical to what schema 12 emitted.
+    every consumer of these rows takes, and it is what let schema 15 add a curve column
+    without touching one of them. A row that bends carries its tangents past the actor; a
+    straight one stops at the actor.
     """
     belts = projection["belts"]
     classes = belts["classes"]
     rows = belts["segments"]
+    actors = projection["graph"]["actors"]
     assert classes and all(c.startswith("Build_Conveyor") and c.endswith("_C") for c in classes)
     assert rows, "the reference world has 3,085 belt pieces"
 
     seen_chains = set()
     for row in rows:
-        assert 3 <= len(row) <= 4, row[:2]
-        chain, ci, points = row[0], row[1], row[2]
+        assert 4 <= len(row) <= 5, row[:2]
+        chain, ci, points, actor = row[0], row[1], row[2], row[3]
         seen_chains.add(chain)
         assert 0 <= ci < len(classes)
         assert len(points) >= 2, "a polyline needs two points"
         for p in points:
             assert len(p) == 3 and all(isinstance(c, int) for c in p), p
+        # Schema 20. -1 is the only permitted miss, and where there IS an index it points at a
+        # CONVEYOR: an actor index that resolved to a smelter would be a well-formed join to
+        # the wrong thing, which is exactly what naming a run by geometry used to risk.
+        assert actor == -1 or 0 <= actor < len(actors), actor
+        if actor >= 0:
+            assert actors[actor].startswith("Build_Conveyor"), actors[actor]
     assert seen_chains == set(range(len(seen_chains))), "chain indices are dense and start at 0"
     assert [r[0] for r in rows] == sorted(r[0] for r in rows), "a chain's rows are contiguous"
+
+
+def test_the_belt_actor_join_is_the_saves_own_identity_and_not_a_nearest_match(projection):
+    """Schema 20's column, held to the standard the geometric match it replaced could not meet.
+
+    Matching a chain to a run by geometry was measured at 75% unique and rejected for it: an
+    id that is right three times in four, printed as a fact, sends a reader to the wrong belt.
+    The actor index is not a match at all -- the chain names its pieces by INSTANCE and the
+    graph interns that same instance -- so the property to pin is not accuracy but INJECTIVITY
+    and agreement: no two pieces may claim one actor, and every claim must land on a conveyor.
+
+    3,083 of the 3,085 pieces resolve. The 2 that do not are a pair of parallel Mk3 belts the
+    save records no coupling for at either end, so they are in ``graph["actors"]`` nowhere --
+    absent from the graph, not mismatched in it.
+    """
+    rows = projection["belts"]["segments"]
+    actors = projection["graph"]["actors"]
+    # The table's OWN class list, not a ``Build_Conveyor`` prefix: that prefix also catches
+    # the splitters and mergers, which are nodes a run ends at rather than pieces of one.
+    belt_classes = set(projection["belts"]["classes"])
+
+    def cls_of(actor):
+        head, _, tail = actor.rpartition("_")
+        return head if tail.isdigit() else actor
+
+    claimed = [row[3] for row in rows if row[3] >= 0]
+    assert len(claimed) == 3083
+    assert len(set(claimed)) == len(claimed), "two belt pieces claiming one actor"
+    assert all(cls_of(actors[i]) in belt_classes for i in claimed)
+
+    # And the other direction. 11 conveyors the graph names have no row here: the FICSMAS
+    # gift-tree belts, which the game builds without an ``FGConveyorChainActor``, so there is
+    # no drawn line for them to be joined to. ``test_logistics`` pins what they are attached
+    # to; what matters here is that the shortfall is one-sided -- the rows do not name a
+    # conveyor the graph has never heard of.
+    conveyors = {i for i, a in enumerate(actors) if cls_of(a) in belt_classes}
+    assert len(conveyors) == 3094
+    assert set(claimed) <= conveyors
+    assert len(conveyors - set(claimed)) == 11
 
 
 def test_belts_are_placed_in_the_world_and_not_in_the_chains_own_frame(projection):
@@ -306,16 +352,17 @@ def test_belts_out_of_real_trailing_bytes(projection):
     """
     chains = _trailer_chains()
     assert chains, "no chain records in the trailer fixture"
-    out = _belts([([1000.0, 2000.0, 3000.0], Chain(info)) for info in chains], Drops())
+    out = _belts([([1000.0, 2000.0, 3000.0], Chain(info)) for info in chains], {}, Drops())
     assert out["classes"] and out["segments"]
     assert {r[0] for r in out["segments"]} == set(range(len(chains)))
     for row in out["segments"]:
         assert out["classes"][row[1]].startswith("Build_Conveyor")
         assert len(row[2]) >= 2
+        assert row[3] == -1, "an empty actor index names nothing, rather than naming actor 0"
 
     # The same records with the actor at the origin: every point moves by exactly the offset,
     # which is the whole of what the frame correction does.
-    at_origin = _belts([([0.0, 0.0, 0.0], Chain(info)) for info in chains], Drops())
+    at_origin = _belts([([0.0, 0.0, 0.0], Chain(info)) for info in chains], {}, Drops())
     for moved, base in zip(out["segments"], at_origin["segments"]):
         assert [[p[0] - 1000, p[1] - 2000, p[2] - 3000] for p in moved[2]] == base[2]
 
@@ -333,6 +380,7 @@ def test_a_chain_that_will_not_decode_costs_that_chain_and_not_the_save():
             ([0.0, 0.0, 0.0], Unreadable(None)),
             *(([0.0, 0.0, 0.0], Chain(info)) for info in chains),
         ],
+        {},
         drops,
     )
     assert {r[0] for r in out["segments"]} == set(range(len(chains))), "indices stay dense"
@@ -351,11 +399,11 @@ def test_a_chain_of_nothing_recognisable_is_dropped_rather_than_raising():
     """
     empty = {"classes": [], "segments": []}
     drops = Drops()
-    assert _belts([], drops) == empty
+    assert _belts([], {}, drops) == empty
     assert sum(drops.values()) == 0, "nothing in, nothing dropped"
-    assert _belts([(None, Chain(None))], drops) == empty
-    assert _belts([([0.0, 0.0, 0.0], Chain([1, 2]))], drops) == empty
-    assert _belts([(["x", 0.0, 0.0], Chain([1, 2, []]))], drops) == empty
+    assert _belts([(None, Chain(None))], {}, drops) == empty
+    assert _belts([([0.0, 0.0, 0.0], Chain([1, 2]))], {}, drops) == empty
+    assert _belts([(["x", 0.0, 0.0], Chain([1, 2, []]))], {}, drops) == empty
     assert sum(drops.values()) == 3, "three unreadable chains, three counted"
 
 
@@ -713,16 +761,21 @@ def _departure(p0, m0, p1, m1, n=128):
     return worst
 
 
+#: Where the schema-15 curve column sits in each table's row. The SAME index in both since
+#: schema 20 gave a belt the actor column a pipe has had since 14, which is why this is one
+#: constant and not a per-key pair.
+_SPANS_AT = 4
+
+
 def _routes(projection):
     """``(key, points, spans)`` for every belt piece and pipe; ``spans`` is ``[]`` if straight.
 
-    One walk over both keys, because the column means the same thing in both and the only
-    difference is where it sits -- fourth on a belt, fifth on a pipe, because a pipe already
-    had a fourth.
+    One walk over both keys, because the column means the same thing in both and now sits in
+    the same place in both.
     """
-    for key, at in (("belts", 3), ("pipes", 4)):
+    for key in ("belts", "pipes"):
         for row in projection[key]["segments"]:
-            yield key, row[2], (row[at] if len(row) > at else [])
+            yield key, row[2], (row[_SPANS_AT] if len(row) > _SPANS_AT else [])
 
 
 def test_a_route_carries_one_curve_entry_per_span_and_nothing_more(projection):
@@ -749,19 +802,19 @@ def test_a_route_carries_one_curve_entry_per_span_and_nothing_more(projection):
     assert seen == {"belts": 966, "pipes": 296}, "the routes of the reference world that bend"
 
 
-def test_a_straight_run_is_the_row_schema_14_already_emitted(projection):
-    """The promise that made this addition free for everything that was already right.
+def test_a_straight_run_is_the_row_without_the_curve_column(projection):
+    """The promise that makes the curve column free for everything that was already straight.
 
-    A belt with no bend in it is three columns wide and a pipe with none is four -- exactly
-    what schema 14 wrote -- so a straight run is drawn today from the same numbers it was
-    drawn from yesterday, with no client-side tolerance deciding so. 2,119 of the world's
-    3,085 belt pieces and 207 of its 503 pipes are in that state.
+    A route with no bend in it is four columns wide in both tables and a bending one is five,
+    so a straight run is drawn from the numbers before the column existed, with no client-side
+    tolerance deciding so. 2,119 of the world's 3,085 belt pieces and 207 of its 503 pipes are
+    in that state.
     """
     plain = {"belts": 0, "pipes": 0}
-    for key, at in (("belts", 3), ("pipes", 4)):
+    for key in ("belts", "pipes"):
         for row in projection[key]["segments"]:
-            assert len(row) in (at, at + 1), (key, len(row))
-            if len(row) == at:
+            assert len(row) in (_SPANS_AT, _SPANS_AT + 1), (key, len(row))
+            if len(row) == _SPANS_AT:
                 plain[key] += 1
     assert plain == {"belts": 2119, "pipes": 207}
     # And a two-point route -- the commonest thing in the world -- is overwhelmingly one of
@@ -861,16 +914,16 @@ def test_tangents_are_rounded_with_the_points_but_never_translated_with_them():
     belt = ObjectReference("Persistent_Level", "x.Build_ConveyorBeltMk3_C_7")
     info = [belt, belt, [[belt, belt, bend, 0.0, 0.0, 900.0, -1, -1, 0]], [900.0, 9, -1, -1], []]
 
-    here = _belts([([0.0, 0.0, 0.0], Chain(info))], Drops())["segments"]
-    there = _belts([([120_000.0, -80_000.0, 500.0], Chain(info))], Drops())["segments"]
+    here = _belts([([0.0, 0.0, 0.0], Chain(info))], {}, Drops())["segments"]
+    there = _belts([([120_000.0, -80_000.0, 500.0], Chain(info))], {}, Drops())["segments"]
     assert len(here) == len(there) == 1
-    assert len(here[0]) == 4, "this run bends, so it carries tangents"
+    assert len(here[0]) == 5, "this run bends, so it carries tangents past the actor column"
     assert [[p[0] + 120_000, p[1] - 80_000, p[2] + 500] for p in here[0][2]] == there[0][2]
-    assert here[0][3] == there[0][3], "a tangent moved with the chain"
+    assert here[0][4] == there[0][4], "a tangent moved with the chain"
     # And the pairing, span by span: the first takes point 0's LEAVE and point 1's ARRIVE,
     # which are both three quarters of the chord between them and so bend nothing; the second
     # takes point 1's leave and point 2's arrive, which turn the corner and are carried.
-    assert here[0][3] == [0, [300, 0, 0, 300, 0, 0]]
+    assert here[0][4] == [0, [300, 0, 0, 300, 0, 0]]
 
 
 def test_a_point_that_will_not_decode_takes_its_own_tangents_with_it():
@@ -894,9 +947,9 @@ def test_a_point_that_will_not_decode_takes_its_own_tangents_with_it():
             [900.0, 9, -1, -1],
             [],
         ]
-        return _belts([([0.0, 0.0, 0.0], Chain(info))], drops if drops is not None else Drops())[
-            "segments"
-        ]
+        return _belts(
+            [([0.0, 0.0, 0.0], Chain(info))], {}, drops if drops is not None else Drops()
+        )["segments"]
 
     drops = Drops()
     assert run([good, broken, far, end], drops) == run([good, far, end])

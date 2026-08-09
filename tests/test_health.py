@@ -965,6 +965,38 @@ def test_the_reference_world_puts_no_fluid_on_the_ladder_at_all(projection, game
     assert [f.rung for m in report.machines for f in m.feeds if f.rung] == []
 
 
+def test_every_starved_machine_that_has_a_feeder_names_the_run_to_go_and_look_at(projection, game):
+    """What schema 20 was for, measured where it is actually spent.
+
+    All 12 starved machines on the reference world are BELT-fed, so before the belt segment
+    carried an actor index this section named a far-end actor for every real case and a run
+    for none -- the feature was paid for and not collected. Now 16 of the 18 feed rows carry
+    a ``chain:<n>`` a reader can hand straight to ``show_on_map`` or ``search_conduits``.
+
+    The two rows without one are the assertion that matters most here, because they are the
+    case that must NOT be papered over: their verdict is ``NOTHING``, no conveyor arrives at
+    that machine at all, and there is therefore no run in existence to name. An id there
+    would be an invention. So the rule pinned is not "every row has a run" but "every row
+    that has a FEEDER has a run".
+    """
+    names = [
+        record["instance"].rsplit(".", 1)[-1]
+        for key in ("machines", "extractors", "generators")
+        for record in projection.get(key, ())
+    ]
+    graph = build_graph(projection)
+    report = assess("all", names, game, projection, graph, build_physical_graph(projection, game))
+    starved = [m for m in report.machines if m.state == "starved"]
+    rows = [f for m in starved for f in m.feeds]
+    assert (len(starved), len(rows)) == (12, 18)
+
+    assert all(f.medium == ports.CONVEYOR for f in rows), "the world's starvation is all belts"
+    assert [f.verdict for f in rows if not f.run] == [NOTHING, NOTHING]
+    assert all(f.run.startswith("chain:") for f in rows if f.run)
+    assert sum(1 for f in rows if f.run) == 16
+    assert sum(1 for m in starved if any(f.run for f in m.feeds)) == 11
+
+
 def test_the_same_machines_flip_from_flow_rate_to_head_lift_when_the_pumps_go_dark(
     projection, game
 ):

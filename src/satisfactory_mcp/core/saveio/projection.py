@@ -46,7 +46,10 @@ from ..text import ago, stamp
 #: 19 CORRECTS the key 16 did: a crate's contents had counted into ``inventories["machine"]``,
 #: filed with the smelter buffers as material that cannot be spent, and they are recoverable
 #: stock, so they move to their own ``inventories["crate"]`` bucket.
-SCHEMA_VERSION = 19
+#: 20 added a fourth column to a belt segment, the index of its own actor in
+#: ``graph["actors"]`` -- the join schema 14 gave a pipe, now given to the conveyor beside it,
+#: which is what lets a contracted run be NAMED rather than only described by its far end.
+SCHEMA_VERSION = 20
 
 #: The in-process projection memo, and the single-flight around its misses. An autosave is a
 #: new cache key for a file every reader resolves to at once, so without the flight the map

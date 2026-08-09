@@ -51,7 +51,7 @@ read_full_save = pioneersav.read_full_save
 #: that main()'s except clause names one thing.
 PARSE_ERROR: tuple[type[BaseException], ...] = (pioneersav.ParseError,)
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 #: The classes the game drops on the ground when items have nowhere else to go. Schema 18;
 #: see `_crates`.
@@ -929,10 +929,10 @@ def extract(path: str) -> dict:
         "power": power_edges,
     }
     out["building_counts"] = dict(sorted(counts.items()))
-    out["belts"] = _belts(chain_actors, drops)
-    # ``actor_ix`` READ-ONLY, hence the dict rather than ``actor_id``: the graph's actor
-    # list was snapshotted three lines up, so interning a new name here would mint an
-    # index past the end of it. A pipe with no connection at all gets -1 instead.
+    # ``actor_ix`` READ-ONLY in both, hence the dict rather than ``actor_id``: the graph's
+    # actor list was snapshotted six lines up, so interning a new name here would mint an
+    # index past the end of it. A piece with no connection at all gets -1 instead.
+    out["belts"] = _belts(chain_actors, actor_ix, drops)
     out["pipes"] = _pipes(pipe_actors, pipe_nets, actor_ix, drops)
     out["storage"] = _storage(storage_actors, held, pipe_nets)
     out["crates"] = _crates(crate_actors, crate_held)
@@ -1321,15 +1321,19 @@ def _spans(points: list, tangents: list) -> list:
     return [spans] if curved else []
 
 
-def _belts(chains: list, drops: Drops) -> dict:
-    """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``.
+def _belts(chains: list, actor_ix: dict, drops: Drops) -> dict:
+    """Every conveyor's route, as polylines. ``chains`` is ``[(actorPosition, actor), ...]``,
+    and ``actor_ix`` is the connectivity graph's ``{shortName: index}``, read only.
 
     Belts are not lightweight buildables and their geometry is in no property: it lives in
     ``FGConveyorChainActor``'s trailing bytes, which ``pioneersav.trailers`` decodes as
     ``location, arrive tangent, leave tangent`` per point.
 
-    Rows are ``[chainIndex, classIndex, [[x, y, z], ...]]``, and ``[..., tangents]`` where the
-    run bends -- see `_spans` for the fourth column.
+    Rows are ``[chainIndex, classIndex, [[x, y, z], ...], actorIndex]``, and
+    ``[..., tangents]`` where the run bends -- see `_spans` for the fifth column. The layout
+    is the one `_pipes` writes, column for column, because the two tables answer the same
+    questions and a reader that has to remember which of them puts the actor where is a
+    reader that will one day put it in the wrong place.
 
     * **chainIndex** groups segments into the run the game itself groups them into: one chain
       is one continuous flow of items. Dense and ordered, so a consumer wanting per-chain
@@ -1340,6 +1344,11 @@ def _belts(chains: list, drops: Drops) -> dict:
       is the connector between two Z bands.
     * The points are the spline's control points at the whole-centimetre precision
       ``_structures`` uses. There is nothing to thin: they are already the bends.
+    * **actorIndex** points into ``graph["actors"]``. Schema 20, and the column that makes a
+      drawn chain and a contracted run the same object -- see §6.15,
+      ``docs/save-projection.md``, for the four surfaces that were naming the wrong thing
+      without it. The chain names its pieces by INSTANCE, which is the very name the graph
+      interns, so the join is the save's own identity and not a nearest match.
 
     Two measured facts about the source that this function is entirely about.
 
@@ -1395,7 +1404,8 @@ def _belts(chains: list, drops: Drops) -> dict:
             if not (isinstance(seg, list) and len(seg) >= 3):
                 drops["belt segment(s) dropped: no [?, class, points] to read"] += 1
                 continue
-            cls = _conveyor_class(ref_path(seg[1]) or "")
+            instance = ref_path(seg[1]) or ""
+            cls = _conveyor_class(instance)
             if not cls:
                 drops["belt segment(s) dropped: the class is not a known conveyor"] += 1
                 continue
@@ -1432,7 +1442,15 @@ def _belts(chains: list, drops: Drops) -> dict:
             if ci is None:
                 ci = index[cls] = len(classes)
                 classes.append(cls)
-            rows.append([chain_ix, ci, points, *_spans(points, tangents)])
+            rows.append(
+                [
+                    chain_ix,
+                    ci,
+                    points,
+                    actor_ix.get(instance.rsplit(".", 1)[-1], -1),
+                    *_spans(points, tangents),
+                ]
+            )
         if rows:
             segments.extend(rows)
             chain_ix += 1

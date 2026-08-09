@@ -46,14 +46,14 @@ __all__ = [
 #: schema 12.
 STRUCTURE_ROW_WIDTH = 5
 
-#: Columns of ``belts["segments"]``: ``[chainIndex, classIndex, points, spans]``. The spans
-#: arrived in schema 15 and are emitted only for a run that actually bends, so a three-column
-#: row is the ordinary case rather than an old projection.
-BELT_ROW_WIDTH = 4
+#: Columns of ``belts["segments"]``: ``[chainIndex, classIndex, points, actorIndex, spans]``.
+#: The actor join arrived in schema 20 and the spans in 15, the latter emitted only for a run
+#: that actually bends, so a four-column row is the ordinary case rather than an old projection.
+BELT_ROW_WIDTH = 5
 
 #: Columns of ``pipes["segments"]``: ``[networkIndex, classIndex, points, actorIndex, spans]``.
 #: The actor join arrived in schema 14 and the spans in 15, the latter again only where the
-#: pipe bends.
+#: pipe bends. The same five columns as a belt, in the same order, since schema 20.
 PIPE_ROW_WIDTH = 5
 
 #: Columns of ``power["poles"]["instances"]``: ``[classIndex, x, y, z, yaw, actorIndex]``. All
@@ -82,12 +82,14 @@ class Structure(NamedTuple):
 
 
 class BeltSegment(NamedTuple):
-    """One conveyor piece: its chain, its class, its polyline and its curve.
+    """One conveyor piece: its chain, its class, its polyline, its actor and its curve.
 
     ``points`` are the spline's control points in world centimetres, in travel order, and
-    there is at least one. ``spans`` is schema 15's tangent column exactly as stored -- one
-    entry per span, ``0`` for a straight one -- or ``None`` where the row carries no such
-    column; its only reader is ``/api/belts``, so it is left undecoded.
+    there is at least one. ``actor_index`` points into ``graph["actors"]`` on a
+    ``PipeSegment``'s terms and is ``-1`` for a piece that has none -- a projection older than
+    schema 20, or a belt the graph does not name. ``spans`` is schema 15's tangent column
+    exactly as stored -- one entry per span, ``0`` for a straight one -- or ``None`` where the
+    row carries no such column; its only reader is ``/api/belts``, so it is left undecoded.
     """
 
     index: int
@@ -95,6 +97,7 @@ class BeltSegment(NamedTuple):
     class_index: int
     cls: str | None
     points: list[list[float]]
+    actor_index: int
     spans: Any | None
 
 
@@ -238,7 +241,8 @@ def iter_belt_segments(projection: dict) -> Iterator[BeltSegment]:
     """Every conveyor piece in ``belts``, decoded, in the table's own order.
 
     A row whose points do not decode at all is dropped: a piece with no geometry is not a
-    piece.
+    piece. ``actor_index`` normalises to ``-1`` rather than dropping the row, on a pipe
+    segment's terms: a belt the graph does not name is still a belt, and is still drawn.
     """
     table = _table(projection, "belts")
     classes = _classes(table)
@@ -253,13 +257,15 @@ def iter_belt_segments(projection: dict) -> Iterator[BeltSegment]:
         points = _points(row[2])
         if not points:
             continue
+        actor = _column(row, 3)
         yield BeltSegment(
             index=index,
             chain=chain,
             class_index=class_index,
             cls=_class_at(classes, class_index),
             points=points,
-            spans=_column(row, 3),
+            actor_index=actor if isinstance(actor, int) and actor >= 0 else -1,
+            spans=_column(row, 4),
         )
 
 

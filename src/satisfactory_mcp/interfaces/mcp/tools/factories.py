@@ -121,7 +121,8 @@ def _via(crossed: list) -> str:
     """The route a trace took, as runs rather than as the hundreds of nodes they contract.
 
     Named in the order the walk met them, so the sample is the near end of the chain rather
-    than six consecutive pipes of whichever network sorts first.
+    than six consecutive pipes of whichever network sorts first. Belt runs are named beside
+    the pipes since schema 20 gave a belt segment its actor index.
     """
     if not crossed:
         return ""
@@ -139,8 +140,6 @@ def _via(crossed: list) -> str:
             + (f" and {rest} more" if rest > 0 else "")
             + ", which search_conduits and show_on_map both take"
         )
-    if belts:
-        out += ". A belt run carries no id in this projection; search_conduits near=<x,y> reaches one by position"
     return out
 
 

@@ -999,6 +999,15 @@ and any join would have inherited that lie; and the contraction itself
 (`domain/world/logistics.py`). The graph is a derived artifact of one save, so it caches exactly
 like the other domain computations and needed no schema bump.
 
+**NAMING those runs did need one, and it took the opposite route to the struck join above.**
+A contracted run could not be given a followable id while `belts["segments"]` carried no actor,
+and the only way to get one from the projection as it stood was the geometry this section
+forbids. Schema 20 added the belt row an `actorIndex` instead — the save's own identity for the
+piece, no tolerance anywhere — and 2,187 of the 2,198 runs now carry a `chain:<n>` or
+`pipe:<row>`. The 11 that do not are gift-tree belts the game builds with no chain actor at all.
+See §6.15 of `docs/save-projection.md`; the prohibition here stands unchanged and is the reason
+the column was worth a bump.
+
 **Left to do.** Nothing consumes the module yet — `trace_upstream`'s physical mode and
 `factory_health`'s evidence line are the next commits, and the 128 undirected pipe runs would
 mostly resolve by taking `world/flow.py`'s per-segment inference into the contraction. What that

@@ -46,10 +46,10 @@ class Link:
     #: The port role at each end, as the save spells it. ``""`` at an end that is nothing.
     source_role: str = ""
     target_role: str = ""
-    #: A ``pipe:<row>`` on the run, which ``search_conduits`` prints and ``resolve_origin``
-    #: takes. EMPTY on every belt run, because the belt table carries no actor to join a
-    #: chain by and the geometric match is unique for 58% of them -- §6.15,
-    #: ``docs/save-projection.md``.
+    #: A ``chain:<n>`` or ``pipe:<row>`` on the run, which ``search_conduits`` prints and
+    #: ``resolve_origin`` takes. Both join by ACTOR INDEX, so the id names a piece this very
+    #: run contracted rather than the nearest one -- §6.15, ``docs/save-projection.md``.
+    #: Empty only where no piece of the run is in ``graph["actors"]`` at all.
     ident: str = ""
 
     def other(self, actor: str) -> str | None:
@@ -184,11 +184,19 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             boundary[joins.find(b)][a].append(role_a)
 
     pipe_classes = set((projection.get("pipes") or {}).get("classes") or ())
-    pipe_row = {
+    # Every conduit piece to the number its run gets named by -- a pipe's own row, a belt's
+    # CHAIN -- keyed by the actor index both tables carry, which is the save's own identity
+    # for the piece rather than a nearest match. §6.15, docs/save-projection.md.
+    numbered: dict[int, int] = {
         seg.actor_index: seg.index
         for seg in saverows.iter_pipe_segments(projection)
         if seg.actor_index >= 0
     }
+    numbered.update(
+        (seg.actor_index, seg.chain)
+        for seg in saverows.iter_belt_segments(projection)
+        if seg.actor_index >= 0
+    )
 
     def register(link: Link, on: list[int]) -> None:
         for i in on:
@@ -197,8 +205,11 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
     for root, on in members.items():
         pieces = len(on)
         medium = ports.PIPE if _class_of(actors[root]) in pipe_classes else ports.CONVEYOR
-        rows = [pipe_row[i] for i in on if i in pipe_row]
-        ident = f"pipe:{min(rows)}" if rows else ""
+        # The LOWEST number on the run: any piece of it lands the reader on the run, and the
+        # lowest is the one that does not move when a piece is added at the far end.
+        found = [numbered[i] for i in on if i in numbered]
+        prefix = "pipe" if medium == ports.PIPE else "chain"
+        ident = f"{prefix}:{min(found)}" if found else ""
         attached = boundary.get(root) or {}
         if not attached:
             out.orphan_runs += 1

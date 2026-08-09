@@ -124,22 +124,43 @@ def test_a_projection_with_no_structures_at_all_yields_nothing():
 # ------------------------------------------------------------------------ belts
 
 
-def test_a_belt_row_decodes_its_chain_its_class_its_points_and_its_curve():
+def test_a_belt_row_decodes_its_chain_its_class_its_points_its_actor_and_its_curve():
     span = [7, 8, 9, 1, 2, 3]
-    (seg,) = rows.iter_belt_segments(_belts([[4, 0, [[1, 2, 3], [4, 5, 6]], [span]]]))
+    (seg,) = rows.iter_belt_segments(_belts([[4, 0, [[1, 2, 3], [4, 5, 6]], 11, [span]]]))
     assert seg.index == 0
     assert seg.chain == 4
     assert seg.class_index == 0
     assert seg.cls == "Build_ConveyorBeltMk3_C"
     assert seg.points == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    assert seg.actor_index == 11
     # Handed through exactly as stored: the one reader of it converts to metres itself.
     assert seg.spans == [span]
 
 
-def test_a_three_column_belt_row_is_a_straight_run_and_not_an_old_projection():
-    """2,198 of the reference world's 3,085 pieces have no bend and so no fourth column."""
-    (seg,) = rows.iter_belt_segments(_belts([[0, 0, [[0, 0, 0], [800, 0, 0]]]]))
+def test_a_four_column_belt_row_is_a_straight_run_and_not_an_old_projection():
+    """2,119 of the reference world's 3,085 pieces have no bend and so no curve column."""
+    (seg,) = rows.iter_belt_segments(_belts([[0, 0, [[0, 0, 0], [800, 0, 0]], 4]]))
+    assert seg.actor_index == 4
     assert seg.spans is None
+
+
+def test_a_belt_actor_column_that_is_not_an_index_reads_as_no_join():
+    """``-1`` for every way of not naming an actor, on ``iter_pipe_segments``' terms.
+
+    The two tables carry the same column and must not disagree about what a torn one means:
+    a belt whose actor index is a float or a string is a belt that cannot be named, not a
+    belt that is not there.
+    """
+    projection = _belts(
+        [
+            [0, 0, [[0, 0, 0], [1, 1, 1]], -1],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], "not an index"],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], 3.0],
+            [0, 0, [[0, 0, 0], [1, 1, 1]], None],
+            [0, 0, [[0, 0, 0], [1, 1, 1]]],  # a projection older than schema 20
+        ]
+    )
+    assert [seg.actor_index for seg in rows.iter_belt_segments(projection)] == [-1] * 5
 
 
 def test_a_torn_belt_row_costs_that_row_and_leaves_the_ordinals_of_the_rest():
@@ -370,10 +391,11 @@ def test_the_fixture_carries_both_the_short_and_the_long_form_of_a_route():
     """Otherwise the tripwire above and the len-guards below it are untested by real data.
 
     A curve column is emitted only where a route bends, so a fixture of nothing but straight
-    runs would exercise the three-column belt path and never the four-column one.
+    runs would exercise the four-column path and never the five-column one. The two tables
+    take the same pair of widths since schema 20 gave a belt the actor column a pipe had.
     """
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert _widths(fixture["belts"], "segments") == {3, 4}
+    assert _widths(fixture["belts"], "segments") == {4, 5}
     assert _widths(fixture["pipes"], "segments") == {4, 5}
 
 

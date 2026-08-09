@@ -30,9 +30,9 @@ BELT_PROJECTION = {
     "belts": {
         "classes": ["Build_ConveyorBeltMk1_C", "Build_ConveyorBeltMk3_C"],
         "segments": [
-            [7, 0, [[0, 0, 100], [1000, 0, 100]], None],
-            [7, 1, [[1000, 0, 100], [2000, 0, 150]], None],
-            [8, 0, [[0, 50000, 0], [50000, 50000, 0]], None],
+            [7, 0, [[0, 0, 100], [1000, 0, 100]], -1, None],
+            [7, 1, [[1000, 0, 100], [2000, 0, 150]], -1, None],
+            [8, 0, [[0, 50000, 0], [50000, 50000, 0]], -1, None],
         ],
     },
     "machines": [],
@@ -240,7 +240,7 @@ def test_the_tool_pages_the_offset_its_truncation_line_promises(game, monkeypatc
         "belts": {
             "classes": ["Build_ConveyorBeltMk1_C"],
             "segments": [
-                [i, 0, [[0, i * 100, 0], [(i + 1) * 1000, i * 100, 0]], None] for i in range(5)
+                [i, 0, [[0, i * 100, 0], [(i + 1) * 1000, i * 100, 0]], -1, None] for i in range(5)
             ],
         },
         "machines": [],
@@ -294,8 +294,8 @@ def test_a_run_ident_centres_on_that_runs_midpoint(game):
         "belts": {
             "classes": ["Build_ConveyorBeltMk1_C"],
             "segments": [
-                [3, 0, [[0, 0, 0], [2000, 0, 0]], None],
-                [3, 0, [[2000, 0, 0], [2000, 2000, 0]], None],
+                [3, 0, [[0, 0, 0], [2000, 0, 0]], -1, None],
+                [3, 0, [[2000, 0, 0], [2000, 2000, 0]], -1, None],
             ],
         },
         "machines": [],

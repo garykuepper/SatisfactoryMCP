@@ -860,40 +860,79 @@ since nothing is subtracted) so the banked digests still compare on all 31 saves
 written under 18 disagrees about `machine` and lacks `crate`, so the cache key had to move
 with the number, as every correcting bump's must.
 
-### 6.15 Conduit runs — which of them can be named, and which cannot
+### 6.15 Conduit runs — naming them, and why geometry was refused
 
-`domain.world.logistics` contracts the 3,597 conduit actors of `graph["material"]` into 2,200
+`domain.world.logistics` contracts the 3,597 conduit actors of `graph["material"]` into 2,198
 node-to-node runs in ~15 ms, by actor identity rather than by geometry. `domain.world.conduits`
 builds a parallel set of runs from the *drawn line* — `chain:<n>` per belt chain, `pipe:<row>`
 per pipeline piece — and those are the ids `search_conduits` prints and `resolve_origin`
-accepts. Two views of the same belts, and joining them is only sometimes possible.
+accepts. Two views of the same conduit, and **schema 20 is the column that joins them.**
 
-**Pipes join exactly.** `pipes["segments"]` carries `actorIndex` (schema 14), which is a
+**Pipes joined from the start.** `pipes["segments"]` carries `actorIndex` (schema 14), a
 position in `graph["actors"]`, so every one of the reference world's 503 pipe pieces maps to
-the actor the physical graph knows it by. A contracted pipe run therefore names itself with
-the lowest `pipe:<row>` on it, and following that id lands on a piece of that very run.
+the actor the physical graph knows it by. A contracted pipe run names itself with the lowest
+`pipe:<row>` on it, and following that id lands on a piece of that very run.
 
-**Belts do not join at all.** `belts["segments"]` carries `[chainIndex, classIndex, points,
-spans]` and no actor: `extract._belts` reads each piece's instance name only to recover its
-class and then discards it. The two groupings are nearly the same size — 1,909 chains against
-1,916 contracted belt runs — but nothing in the projection pairs them, so the only available
-join is geometric, and it was measured before being rejected:
+**Belts did not, and the geometric substitute was measured before being refused.**
+`belts["segments"]` used to be `[chainIndex, classIndex, points, spans]` with no actor:
+`extract._belts` read each piece's instance name only to recover its class and then threw it
+away. The two groupings are nearly the same size — 1,909 chains against 1,916 contracted belt
+runs — but nothing paired them, so the only available join was geometric:
 
 | how the chain was matched to the run | runs matched uniquely (of 1,916) |
 | --- | --- |
 | nearest placement to each chain end, then paired by that pair of instances | 1,432 (75%) |
 | candidate chains within each endpoint building's own port reach | 1,120 (58%) |
 
-The residue is not noise. 360 runs have both endpoint actors placed and still no chain whose
-ends resolve to that pair, because a belt end sits nearer a neighbour's centre than its own
-machine's; 96 endpoints are `Build_TreeGiftProducer_C`, which is in no placement table at all.
-A 75%-accurate id printed as a fact is a confident wrong claim about which belt to go and look
-at, which is worse than not naming it — so `Link.ident` is empty for every belt, and
-`factory_health` and `trace_upstream` name the far-end ACTOR instead, which is exact.
+That residue was not noise. 360 runs had both endpoint actors placed and still no chain whose
+ends resolved to that pair, because a belt end sits nearer a neighbour's centre than its own
+machine's; 96 endpoints were `Build_TreeGiftProducer_C`, which is in no placement table at
+all. **A 75%-accurate id printed as a fact is a confident wrong claim about which belt to go
+and look at**, which is worse than not naming it — so `Link.ident` stayed empty for every
+belt, and `factory_health` and `trace_upstream` named the far-end ACTOR instead.
 
-Closing the gap needs one column: an `actorIndex` on the belt row, interned from the same
-`actor_ix` `_pipes` already reads, which would make the belt join as exact as the pipe one.
-That is a schema bump and a re-cut of every cached sidecar, and it has not been taken.
+#### Schema 20 — the belt row's actor index
+
+The fix is one column, interned from the same `actor_ix` `_pipes` already reads: the belt row
+becomes `[chainIndex, classIndex, points, actorIndex, spans]`, the pipe layout exactly. The
+chain names its pieces by INSTANCE and the graph interns that same instance, so this is **not
+a match at all** — there is no distance, no tolerance and nothing to tune. The measurements
+that matter are therefore not accuracy but coverage and injectivity:
+
+| | reference world |
+| --- | --- |
+| belt rows resolving to an actor | 3,083 of 3,085 |
+| two rows claiming one actor | 0 |
+| rows naming a non-conveyor actor | 0 |
+| contracted runs carrying an ident | **2,187 of 2,198** — belts 1,905/1,916, pipes 282/282 |
+| ident collisions across both media | 0 |
+| idents naming no drawn run | 0 |
+
+**The residue, named.** Two belt rows carry `-1`: a parallel pair of Mk3 belts for which the
+save records no coupling at either end, so they are in `graph["actors"]` nowhere — absent from
+the graph, not mismatched in it, and a run they are not part of cannot want their id. Eleven
+contracted runs carry no ident for the mirror reason: their pieces ARE in the graph, with real
+couplings, but the game builds them without an `FGConveyorChainActor`, so the projection holds
+no drawn line to name. All eleven hang off the FICSMAS gift trees — the same `Build_Tree
+GiftProducer_C` the geometric attempt above also fell over. **Every one of the 13 is an
+absence the save itself states, not a join that failed.**
+
+**Where it is spent.** All 12 starved machines on the reference world are belt-fed, so
+`factory_health`'s "arrives by / at the far end" section previously named a far-end actor for
+every real case and a run for none — a feature paid for and not collected. It now names a run
+on 16 of the 18 feed rows, covering 11 of the 12 machines. The other two rows are verdict
+`NOTHING`: no conveyor arrives at that machine at all, so there is no run in existence to name
+and an id there would be an invention. `trace_upstream`'s crossed-run list names belt runs
+beside the pipes, which matters because those walks are nearly all conveyor.
+
+**What the bump cost.** The change is confined to `belts`, which the parity filter drops
+whole, so it owes no `_unfix_20` — and that was verified rather than assumed: all 31 banked
+saves were replayed through `as_schema_11` before and after, and **not one of the 20 keys'
+digests moved on any save.** The projection grew 14,780 bytes on 1,571,480 (+0.94%) and the
+re-cut takes 3.5 s. The one thing to notice on review is that 20 does not only append: putting
+the actor at column 3 to match the pipe layout MOVES schema 15's tangents from column 3 to
+column 4, so every reader of a raw belt row had to move with it. Inside a dropped key that is
+free; on a banked row it would have owed a reconstruction.
 
 ---
 

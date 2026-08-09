@@ -112,6 +112,14 @@ POST_11_ADDITIONS = {
     #: and schema 18 deliberately left them there, so 18 cost one line where 16 cost a
     #: function. Schema 19 then made the move 18 declined: see ``crate_bucket_fix`` below
     #: and ``_unfix_19``, which is the function 19 owed all along.
+    #:
+    #: **Schema 20 gave a belt segment the actor column 14 gave a pipe, and it is 14's case
+    #: for 14's reason** -- confined inside ``belts``, which is dropped whole, so no entry.
+    #: It gets a paragraph anyway because 20 does not only APPEND: the actor goes at column 3
+    #: to match the pipe layout exactly, which MOVES schema 15's tangents from column 3 to
+    #: column 4 within the row. Still nothing to undo here, because the whole key leaves the
+    #: comparison -- but had that row been a banked one, moving a column would have owed a
+    #: reconstruction rather than a width, which is a heavier debt than anything in this list.
     "keys": ("belts", "pipes", "attachments", "storage", "power", "crates"),
     #: The version label is itself one of the 20 banked keys, and it is the one key that is
     #: SUPPOSED to differ. A projection filtered back to the schema-11 shape claims the
@@ -339,8 +347,8 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    nineteen = {
-        "schema_version": 19,
+    latest = {
+        "schema_version": 20,
         "machines": [{"cls": "Build_SmelterMk1_C", "pos": [1.0, 2.0, 3.0], "yaw": -20.0}],
         "extractors": [{"cls": "Build_MinerMk2_C", "pos": [4.0, 5.0, 6.0], "yaw": 90.0}],
         "generators": [{"cls": "Build_GeneratorCoal_C", "pos": [7.0, 8.0, 9.0], "yaw": 0.0}],
@@ -349,11 +357,14 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
             "instances": [[0, 10, 20, 30, -20.0]],
         },
         # A curved belt, so the schema-15 tangent column is actually present and not just
-        # declared absent: a filter that only ever saw three-column rows would pass this test
-        # while dropping nothing.
+        # declared absent: a filter that only ever saw the short row would pass this test
+        # while dropping nothing. Both rows carry schema 20's actor index at column 3.
         "belts": {
             "classes": ["Build_ConveyorBeltMk3_C"],
-            "segments": [[0, 0, [[1, 2, 3]]], [0, 0, [[1, 2, 3], [4, 5, 6]], [[7, 8, 9, 1, 2, 3]]]],
+            "segments": [
+                [0, 0, [[1, 2, 3]], 6],
+                [0, 0, [[1, 2, 3], [4, 5, 6]], 7, [[7, 8, 9, 1, 2, 3]]],
+            ],
         },
         "attachments": [
             {"cls": "Build_ConveyorAttachmentSplitter_C", "pos": [1.0, 2.0, 3.0], "yaw": 90.0}
@@ -415,14 +426,14 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
         },
         "warnings": [],
     }
-    filtered = as_schema_11(nineteen)
+    filtered = as_schema_11(latest)
     assert filtered == eleven, "the filter did not land back on the schema-11 shape"
     assert {k: _digest(v) for k, v in filtered.items()} == {
         k: _digest(v) for k, v in eleven.items()
     }
 
-    moved = dict(nineteen)
-    moved["machines"] = [{**nineteen["machines"][0], "pos": [1.0, 2.0, 99.0]}]
+    moved = dict(latest)
+    moved["machines"] = [{**latest["machines"][0], "pos": [1.0, 2.0, 99.0]}]
     assert _digest(as_schema_11(moved)["machines"]) != _digest(eleven["machines"]), (
         "the filter hides a changed schema-11 field, which is the drift the bank exists to catch"
     )
@@ -431,13 +442,13 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
     # RESTORES a value rather than dropping one: a reconstruction that simply copied the
     # bank's shape would pass the equality above and hide every stack in the key for ever. A
     # container the two parsers would have read differently still has to move the digest.
-    misread = dict(nineteen)
+    misread = dict(latest)
     misread["storage"] = [
-        {**nineteen["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
-        nineteen["storage"][1],
+        {**latest["storage"][0], "items": [["Desc_IronPlate_C", 41]]},
+        latest["storage"][1],
     ]
     misread["inventories"] = {
-        **nineteen["inventories"],
+        **latest["inventories"],
         "storage": {"Desc_IronPlate_C": 101},
     }
     assert _digest(as_schema_11(misread)["inventories"]) != _digest(eleven["inventories"]), (
@@ -448,10 +459,10 @@ def test_the_schema_11_filter_removes_the_new_fields_and_only_those():
     # started miscounting has to move the folded ``machine`` digest, or the stacks that
     # moved buckets would have left the banked comparison rather than been reconstructed
     # into it.
-    miscrated = dict(nineteen)
-    miscrated["crates"] = [{**nineteen["crates"][0], "items": [["Desc_Rubber_C", 6]]}]
+    miscrated = dict(latest)
+    miscrated["crates"] = [{**latest["crates"][0], "items": [["Desc_Rubber_C", 6]]}]
     miscrated["inventories"] = {
-        **nineteen["inventories"],
+        **latest["inventories"],
         "crate": {"Desc_Rubber_C": 6},
     }
     assert _digest(as_schema_11(miscrated)["inventories"]) != _digest(eleven["inventories"]), (
@@ -532,7 +543,7 @@ def test_this_parser_still_produces_what_the_two_agreed_on(banked, saves_root):
             pool, present, lambda item: _projection(item[2]), width=width
         ):
             assert "error" not in proj, (name, proj.get("detail"))
-            assert proj["schema_version"] == 19, (name, "unexpected schema for the filter")
+            assert proj["schema_version"] == 20, (name, "unexpected schema for the filter")
             proj = as_schema_11(proj)
             for key, want in entry.items():
                 if key == "n_objects_value":

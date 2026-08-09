@@ -23,14 +23,18 @@ its own spline, and a span with none is its chord. The projection stores tangent
 where a chord would be out by a centimetre or more, so both branches measure the curve the
 map draws -- a chord across one bend was out by 16.4 m.
 
-Endpoint attachment is a NEAREST-PORT guess, labelled as one. The save records exact
-connection components, but the interned belt table carries no actor identity to join
-them by, so what stands at an end is answered geometrically: the closest placed thing
-whose footprint (plus a port's reach) covers the endpoint. ``None`` where nothing known
-stands there -- a pipe ending at a junction reports the junction only when the material
-graph names it, because junctions, pumps and valves are not placements in any projection
-table. Coordinates stay in the save's centimetres; every distance routes through
-``spatial.geo`` and every threshold is stated in the metres it is compared in.
+Endpoint attachment here is a NEAREST-PORT guess, labelled as one: what stands at an end is
+answered geometrically, by the closest placed thing whose footprint (plus a port's reach)
+covers the endpoint. ``None`` where nothing known stands there -- a pipe ending at a junction
+reports the junction only when the material graph names it, because junctions, pumps and
+valves are not placements in any projection table. Coordinates stay in the save's
+centimetres; every distance routes through ``spatial.geo`` and every threshold is stated in
+the metres it is compared in.
+
+The EXACT answer to "what is on the end of this" is ``domain.world.logistics``, which
+contracts the same conduit out of the save's own connection records; since schema 20 both
+tables carry an actor index, so a run there and a run here share the ``chain:<n>`` and
+``pipe:<row>`` ident and the two views can be read against each other.
 """
 
 from __future__ import annotations

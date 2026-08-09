@@ -408,7 +408,7 @@ def test_a_route_sends_its_curve_alongside_its_points(client, state):
     the map is still a bend and is the wrong one, which is precisely the kind of fault a
     screenshot does not catch.
     """
-    for path, key, at in (("/api/belts", "belts", 3), ("/api/pipes", "pipes", 4)):
+    for path, key, at in (("/api/belts", "belts", 4), ("/api/pipes", "pipes", 4)):
         body = client.get(path).json()
         raw = state.projection[key]["segments"]
         assert len(body[key]) == len(raw)
@@ -499,15 +499,16 @@ def test_a_malformed_curve_costs_the_curve_and_not_the_route(game):
                     0,
                     0,
                     [[0, 0, 0], [400, 0, 0], [800, 0, 0], [1200, 0, 0], [1600, 0, 0]],
+                    -1,
                     [[100, 200, 0, 300, 400, 0], 0, "not a span", [1, 2, 3]],
                 ],
                 # Column present and the wrong length for the points: unusable as a whole,
                 # because there is no way to tell which span each entry belongs to.
-                [1, 0, [[0, 0, 0], [400, 0, 0], [800, 0, 0]], [[1, 2, 3, 4, 5, 6]]],
+                [1, 0, [[0, 0, 0], [400, 0, 0], [800, 0, 0]], -1, [[1, 2, 3, 4, 5, 6]]],
                 # Column present and entirely unusable: null, not an empty list, so a client
                 # takes the same branch it takes for a straight run.
-                [2, 0, [[0, 0, 0], [400, 0, 0]], ["rubbish"]],
-                [3, 0, [[0, 0, 0], [400, 0, 0]], "not a column"],
+                [2, 0, [[0, 0, 0], [400, 0, 0]], -1, ["rubbish"]],
+                [3, 0, [[0, 0, 0], [400, 0, 0]], -1, "not a column"],
             ],
         }
     }

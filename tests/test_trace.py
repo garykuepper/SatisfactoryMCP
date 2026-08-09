@@ -102,12 +102,20 @@ def test_logistics_is_walked_through_but_not_reported(live, game, gens):
 
 def test_the_walk_keeps_the_runs_it_crossed(live, game, gens):
     """The route, named without the table growing 300 rows: those hundreds of belt and pipe
-    nodes contract to the runs a player would call them."""
+    nodes contract to the runs a player would call them.
+
+    Belts are named beside the pipes since schema 20, which is what makes this route
+    followable rather than merely countable -- this walk is nearly all conveyor, so a list
+    that could only name pipes named almost none of what it crossed.
+    """
     result = trace(live, game, gens, "up")
     assert result.crossed
     assert len(result.crossed) < result.visited, "a run is many nodes, so this must contract"
     assert sum(link.pieces for link in result.crossed) <= result.visited
-    assert all(link.ident.startswith("pipe:") for link in result.crossed if link.ident)
+    named = [link.ident for link in result.crossed if link.ident]
+    assert all(i.startswith(("chain:", "pipe:")) for i in named)
+    assert any(i.startswith("chain:") for i in named), "a mostly-conveyor route named no belt"
+    assert len(set(named)) == len(named), "one run listed twice is one run counted twice"
 
 
 def test_the_traversal_itself_did_not_change(live, game, gens):
@@ -128,7 +136,8 @@ def test_the_route_note_summarises_rather_than_listing_every_run(live, game, gen
 
     said = _via(trace(live, game, gens, "up").crossed)
     assert "run(s)" in said
-    assert said.count("pipe:") <= VIA_NAMED
+    assert said.count("pipe:") + said.count("chain:") <= VIA_NAMED
+    assert "carries no id" not in said, "the belt caveat outlived the gap it described"
     assert _via([]) == "", "no route is silence, not a sentence about nothing"
 
 

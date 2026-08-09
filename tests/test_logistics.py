@@ -12,11 +12,14 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp.core.saveio import ports
+from satisfactory_mcp.core.saveio import rows as saverows
 from satisfactory_mcp.domain.factories.build import build_graph
+from satisfactory_mcp.domain.world.conduits import build_runs
 from satisfactory_mcp.domain.world.logistics import (
     BY_NATURE,
     BY_ROLE,
     UNKNOWN,
+    _class_of,
     build_physical_graph,
 )
 
@@ -125,18 +128,82 @@ def test_a_machines_recipe_finds_its_feeders(projection, game) -> None:
     assert (with_recipe, fed) == (426, 423)
 
 
-def test_a_pipe_run_is_followable_and_a_belt_run_is_not(projection, game) -> None:
-    """``ident`` is the id ``search_conduits`` prints. A pipe has one because the pipe table
-    carries the actor the graph names it by; ``belts["segments"]`` carries no actor at all,
-    and matching a chain geometrically is unique for only 58% of runs, so a belt link says
-    nothing rather than naming the wrong chain."""
+def test_both_a_pipe_run_and_a_belt_run_are_followable(projection, game) -> None:
+    """``ident`` is the id ``search_conduits`` prints and ``resolve_origin`` takes.
+
+    Both media carry one since schema 20 gave a belt segment the actor index a pipe has had
+    since 14 -- so both join by the save's OWN identity for the piece. That is the whole
+    point of the column: the geometric match this replaced was unique for 75% of belt runs,
+    and a 75%-accurate id printed as a fact is a confident wrong claim about which belt to go
+    and look at. There is no tolerance here to loosen, because no distance is measured.
+
+    2,187 of the 2,198 contracted runs are named. The 11 that are not are named in the test
+    below, which is where the residue is argued rather than merely tolerated.
+    """
     graph = build_physical_graph(projection, game)
-    named = {link.medium for link in graph.links if link.ident}
-    assert named == {ports.PIPE}
+    belts = [link for link in graph.links if link.medium == ports.CONVEYOR]
     pipes = [link for link in graph.links if link.medium == ports.PIPE]
+    assert (len(belts), len(pipes)) == (1916, 282)
+
     assert all(link.ident.startswith("pipe:") for link in pipes)
-    rows = {int(link.ident.split(":")[1]) for link in pipes}
-    assert len(rows) == len(pipes), "two runs sharing a row would send both to one piece"
+    assert sum(1 for link in pipes if link.ident) == 282, "every pipe run is named"
+    assert all(link.ident.startswith("chain:") for link in belts if link.ident)
+    assert sum(1 for link in belts if link.ident) == 1905
+
+    # No two runs may answer to one id, across BOTH media at once: an ident is what a reader
+    # hands back to ``show_on_map``, so a collision sends two different belts to one place.
+    idents = [link.ident for link in graph.links if link.ident]
+    assert len(set(idents)) == len(idents) == 2187
+
+
+def test_the_only_unnamed_runs_are_the_belts_the_save_draws_no_line_for(projection, game) -> None:
+    """The residue, named -- 11 runs, and not one of them is a join that FAILED.
+
+    A belt is named by its chain, and these eleven pieces are in ``graph["actors"]`` with real
+    couplings at both ends while appearing in no ``FGConveyorChainActor`` at all, so the
+    projection holds no drawn line for them and there is nothing to name. All eleven hang off
+    the FICSMAS gift trees, which §6.15 already found sitting outside the placement tables.
+
+    The distinction this pins is the one the whole column was added for: an id that is absent
+    because the save states nothing is honest, and an id guessed from the nearest chain is
+    not.
+    """
+    graph = build_physical_graph(projection, game)
+    unnamed = [link for link in graph.links if not link.ident]
+    assert len(unnamed) == 11
+    assert all(link.medium == ports.CONVEYOR for link in unnamed)
+    assert all(link.pieces == 1 for link in unnamed)
+    # Every one of them touches a gift tree, directly or through the mergers they feed.
+    trees = {"Build_TreeGiftProducer_C", "Build_ConveyorAttachmentMerger_C"}
+    for link in unnamed:
+        ends = {_class_of(e) for e in (link.source, link.target) if e}
+        assert ends <= trees, ends
+
+    chains = {seg.actor_index for seg in saverows.iter_belt_segments(projection)}
+    for link in unnamed:
+        for actor, run in graph.run_of.items():
+            if run is link:
+                assert actor not in chains, "this piece has a drawn line and still went unnamed"
+
+
+def test_every_ident_a_contracted_run_prints_is_one_the_drawn_view_answers_to(
+    projection, game
+) -> None:
+    """The loop the ident exists to close, and it could not be tested before schema 20.
+
+    ``logistics`` contracts runs out of the CONNECTION records and ``conduits`` builds them
+    from the DRAWN LINE. They are two views of one world, and an ident is only useful if it
+    means the same thing in both -- ``factory_health`` prints one from the first view and
+    ``resolve_origin`` and ``search_conduits`` look it up in the second. An id that resolved
+    to nothing would be worse than no id: it reads as a fact and dead-ends.
+    """
+    graph = build_physical_graph(projection, game)
+    drawn = {run.ident for run in build_runs(projection, game)}
+    printed = {link.ident for link in graph.links if link.ident}
+    assert len(printed) == 2187
+    assert printed <= drawn, sorted(printed - drawn)[:5]
+    # Both prefixes really are exercised, or the containment above is a statement about pipes.
+    assert {ident.split(":")[0] for ident in printed} == {"chain", "pipe"}
 
 
 def test_every_contracted_piece_points_back_at_its_run(projection, game) -> None:

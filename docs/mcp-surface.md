@@ -373,11 +373,13 @@ Decisions that took measurement:
   connectivity fact, so a network touching both areas is reported as joining them even when no
   single piece qualifies. Belts have no such id (a route through a splitter is several
   chains); a note owns that gap rather than a guess.
-- **`connects` is labelled a geometric read.** The interned belt table carries no actor
-  identity to join the save's connection components by, so ends are attributed to the nearest
-  placed thing whose footprint (plus port reach) covers them, `?` where nothing known stands
-  there, and a `chain:`/`pipe:` ident where the run simply continues into another — which is
-  what lets a route be followed piece to piece.
+- **`connects` is labelled a geometric read**, and it is the one part of this tool that still
+  is. Ends are attributed to the nearest placed thing whose footprint (plus port reach) covers
+  them, `?` where nothing known stands there, and a `chain:`/`pipe:` ident where the run
+  simply continues into another — which is what lets a route be followed piece to piece. The
+  EXACT answer to the same question is `factory_health` and `trace_upstream`, which read the
+  save's connection records instead; since schema 20 both tables carry an actor index, so the
+  two views share these idents and can be read against each other. §6.15.
 - **Lengths follow the chords.** The points are spline control points and a bend's arc is up
   to 16.4 m longer than its chords on one measured piece, so curved runs read slightly short
   and the response says so instead of inventing an arc length.
