@@ -5,7 +5,7 @@ Head lift is an ABSOLUTE HEIGHT rather than a budget: a source at ``z`` pushes f
 pump is ``max(incoming, its own centre + its lift)`` and never a sum. The finding is the
 CREST that stops a line, named once with every consumer behind it, because that is where a
 pump would go. The rules, the exclusions and what a reading does not mean are in
-`docs/fluid-head.md`.
+`docs/fluids_model.md`.
 """
 
 from __future__ import annotations

@@ -363,7 +363,7 @@ def test_the_owners_base_reports_no_head_lift_problem(projection, game):
     """The acceptance test. A model that cries wolf on a working factory is wrong.
 
     Swept over every save on the author's machine this holds for all 71 of them, 756 fluid
-    networks and 4,048 consumer ports -- see `docs/fluid-head.md`.
+    networks and 4,048 consumer ports -- see `docs/fluids_model.md`.
     """
     report = head_lift(projection, game, build_graph(projection))
     assert report.crests == ()
