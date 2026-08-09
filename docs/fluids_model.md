@@ -280,6 +280,10 @@ derivation** — a 6×6×8 m box is 288 m³ of space holding a stated 400 m³.
   manual]`. It does not merely reduce it.
 - **Gas has no head lift at all** `[ASSUMED, manual]`. Pumps do not work on it and buffers
   cannot compensate its flow. Gas networks are excluded entirely, never modelled with a zero.
+  **Verification DEFERRED by Lukas, 2026-08-09** — he has not reached gases in his world, so
+  there is nothing to measure and no answer to get wrong. The exclusion is the safe default
+  either way: excluding a network cannot invent a fault, whereas modelling gas as a zero-lift
+  fluid would. Revisit when nitrogen appears in a save.
 
 ---
 

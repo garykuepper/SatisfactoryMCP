@@ -164,11 +164,17 @@ Two are defused. Four are live, and their ordering is unchanged.
 4. **Both invariant channels unread.** p = whenever a patch breaks normalisation; damage =
    publishing a smaller world and calling it the world, silently. See §3.
 5. **`/api/worlds` publishes the Windows username and SteamID64, and the server accepts any Host
-   header.** Low p — it needs a hostile page open while the map runs, and DNS rebinding defeats
-   the absent CORS header — but real damage on a public repo. Fix is a Host allowlist with an env
-   override. Caveat: dropping `path` is costlier than pitched, because `routers/world.py:41`
-   documents it as the pin `?save=` takes back verbatim, so schema, frontend and the filename
-   resolver's cross-world ambiguity move together.
+   header.** **DEFERRED by Lukas, 2026-08-09**, on his own environment: the machine sits behind
+   NAT on a household network with two people on it, so the exposure he cares about is not
+   there. Recorded rather than closed, and with one honest asterisk — **that reasoning is his
+   network's, not the code's.** The repo is public, and a stranger who clones it inherits the
+   same behaviour without inheriting the NAT, so this stays on the list for the stranger-facing
+   cluster in §5 and should be revisited before the project is advertised anywhere.
+   Low p in any case — it needs a hostile page open while the map runs, and DNS rebinding
+   defeats the absent CORS header. Fix is a Host allowlist with an env override. Caveat:
+   dropping `path` is costlier than pitched, because `routers/world.py:41` documents it as the
+   pin `?save=` takes back verbatim, so schema, frontend and the filename resolver's
+   cross-world ambiguity move together.
 6. **`cohere.propose` is between quadratic and cubic.** 0.35 s at 581 machines, 10.92 s at 2,324,
    extrapolating to ~90 s at 4,600. p of hitting it this year: low, and risk 1's memo means it is
    paid once per save rather than per request. What remains is a scale assertion with 10×
