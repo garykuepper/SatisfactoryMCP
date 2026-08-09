@@ -731,6 +731,213 @@ def test_one_ingredient_reached_by_several_runs_gets_one_rung(game):
     assert {f.rung for f in water} == {HEAD_LIFT}
 
 
+# ------------------------------------------- a machine that has never produced at all
+#
+# `Starved.sav` holds the case these were written from: an Oil Refinery on Alternate: Heavy
+# Oil Residue, input pipe connector with no mConnectedComponent at all, both buffers empty,
+# wired and idle at 0.1 MW. It carries NO mLastProductivityMeasurementDuration, and that is
+# permanent rather than a window yet to close -- still absent 19 minutes and four
+# window-lengths after the machine was built. 48 of that save's 584 machine-like records are
+# in the same position and 19 of them have a recipe set, so the buffers alone cannot decide
+# this: eight of those nineteen are a fresh row of Constructors with belts already run.
+
+
+#: The two neighbours every case below is built beside, and they are load-bearing rather
+#: than scenery: `assess` reads "no run of this medium arrives" as a fact only where the
+#: conduit graph resolves that medium somewhere, so one belt AND one pipe have to resolve
+#: for the refinery's dangling pipe to mean anything. `Starved.sav` resolves 2,275 runs.
+ON_A_BELT = "Build_ConstructorMk1_C_2147441491"
+ON_A_PIPE = "Build_OilRefinery_C_2146795155"
+
+
+class _PerActor:
+    """A ``PhysicalGraph`` that answers per actor, unlike `_Runs`."""
+
+    def __init__(self, arriving):
+        self.arriving = dict(arriving)
+
+    def feeds(self, actor):
+        return list(self.arriving.get(actor, ()))
+
+
+def _never_run(name, recipe="Recipe_Alternate_HeavyOilResidue_C", held=None, out=None):
+    """The refinery's shape: a recipe, empty buffers, and no uptime key whatsoever."""
+    return _machine(
+        name,
+        recipe,
+        buffers={
+            "in": {"items": held or {}, "slots": 2},
+            "out": {"items": out or {}, "slots": 3},
+        },
+    )
+
+
+def _neighbours(exclude=""):
+    """One machine on a belt that resolves and one refinery on a pipe that resolves."""
+    return [
+        record
+        for record in (
+            _never_run(ON_A_BELT, "Recipe_IronRod_C", held={"Desc_IronIngot_C": 100}),
+            _never_run(ON_A_PIPE, held={"Desc_LiquidOil_C": 300}),
+        )
+        if record["instance"] != f"L:P.{exclude}"
+    ]
+
+
+def _world(**arriving):
+    return _PerActor(
+        {
+            ON_A_BELT: [_link("Build_ConveyorAttachmentSplitter_C_2147444586", ON_A_BELT)],
+            ON_A_PIPE: [_link("Build_Pipeline_C_2146795200", ON_A_PIPE, medium=ports.PIPE)],
+            **arriving,
+        }
+    )
+
+
+def _beside(game, record, arriving=(), **kw):
+    """Assess one never-run machine in a world whose belts AND pipes demonstrably resolve."""
+    name = record["instance"].rsplit(".", 1)[-1]
+    return _assess(
+        game,
+        machines=[record, *_neighbours(exclude=name)],
+        graph=_Wires({name, ON_A_BELT, ON_A_PIPE}),
+        physical=_world(**{name: list(arriving)}),
+        **kw,
+    )
+
+
+def test_a_never_run_machine_no_pipe_reaches_is_starved_on_the_connection_rung(game):
+    """THE case. `uptime is None` used to answer before the buffers were read, so this
+    machine was `unmonitored`, never entered `needs_attention`, and the fluid ladder --
+    gated on `state == "starved"` -- was never called on it at all."""
+    name = "Build_OilRefinery_C_2146786838"
+    report = _beside(game, _never_run(name), heads=_heads())
+    machine = next(m for m in report.machines if m.instance == name)
+    assert machine.uptime is None, "no window, and it is not being invented"
+    assert machine.state == "starved"
+    assert machine.needs_attention
+    assert machine.cause == ("Crude Oil (connection)",)
+    assert _rungs(report, name) == {"Crude Oil": CONNECTION}
+    assert [m.instance for m in report.worst()] == [name]
+
+
+def test_a_closed_window_on_the_same_record_still_gives_the_old_answer(game):
+    """The counterfactual that proved this was only a gate: injecting a closed window into
+    that refinery's record and running the UNCHANGED code already gave this."""
+    name = "Build_OilRefinery_C_2146786838"
+    record = _never_run(name)
+    record["uptime"] = {"window_s": 300.0, "produce_s": 0.0}
+    report = _beside(game, record, heads=_heads())
+    machine = next(m for m in report.machines if m.instance == name)
+    assert (machine.state, machine.uptime) == ("starved", 0.0)
+    assert machine.cause == ("Crude Oil (connection)",)
+
+
+def test_a_never_run_machine_a_belt_does_reach_stays_quiet(game):
+    """The eight Constructors that must NOT light up. Same empty buffers, same absent
+    window, but a conveyor arrives from a real splitter: the build is finished and nothing
+    has come down it yet, which is a base mid-construction and not a fault."""
+    name = "Build_ConstructorMk1_C_2146956309"
+    report = _beside(
+        game,
+        _never_run(name, "Recipe_IronPlate_C"),
+        arriving=[_link("Build_ConveyorAttachmentSplitter_C_2146887273", name)],
+        heads=_heads(),
+    )
+    machine = next(m for m in report.machines if m.instance == name)
+    assert machine.state == "unmonitored"
+    assert not machine.needs_attention
+    assert report.worst() == []
+
+
+def test_a_medium_the_conduit_graph_never_resolves_promotes_nothing(game):
+    """THE correction to this rule, and it is per MEDIUM rather than per world. Save versions
+    25 to 36 on the author's machine resolve 88 pipe runs between coal generators and NOT ONE
+    conveyor run, in worlds of 6,266 material couplings. Reading that as "no belt feeds this"
+    turned 39 smelters and constructors in a single save into findings, every one of them the
+    projection's blind spot rather than the world's -- and a world-wide "does anything
+    resolve" test passes there, because the pipes do."""
+    name = "Build_SmelterMk1_C_310"
+    pipes_only = _PerActor(
+        {ON_A_PIPE: [_link("Build_Pipeline_C_2146795200", ON_A_PIPE, medium=ports.PIPE)]}
+    )
+    report = _assess(
+        game,
+        machines=[_never_run(name, "Recipe_IngotIron_C"), _never_run(ON_A_PIPE)],
+        graph=_Wires({name, ON_A_PIPE}),
+        physical=pipes_only,
+        heads=_heads(),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_a_never_run_machine_whose_run_reaches_nothing_stays_quiet(game):
+    """OPEN is not NOTHING, and this module's own vocabulary says so: a run does arrive and
+    the save joins its far end to no actor, which is a feeder unknown rather than a feeder
+    absent. Ten FICSMAS Constructors on one save are exactly this and must stay quiet."""
+    name = "Build_ConstructorMk1_C_2145270171"
+    report = _beside(
+        game,
+        _never_run(name, "Recipe_CandyCane_C"),
+        arriving=[_link(None, name)],
+        heads=_heads(),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_a_never_run_machine_holding_its_ingredients_stays_quiet(game):
+    """Nothing is missing, so there is nothing an absent window is hiding."""
+    report = _beside(
+        game, _never_run(ON_A_BELT, "Recipe_IronRod_C", held={"Desc_IronIngot_C": 100})
+    )
+    assert _state_of(report, ON_A_BELT) == "unmonitored"
+
+
+def test_a_never_run_machine_with_no_recipe_stays_quiet(game):
+    """Eight Smelters in that save. No recipe is the player's own answer to why it is
+    stopped, and it already outranks this branch."""
+    name = "Build_SmelterMk1_C_300"
+    report = _beside(game, _never_run(name, ""))
+    assert next(m for m in report.machines if m.instance == name).state == "no recipe"
+
+
+def test_a_never_run_generator_out_of_fuel_stays_quiet(game):
+    """Ten Biomass Burners in that save hold no fuel and never will unless the player walks
+    over with an armful. A fuel inventory is not a recipe's ingredient list, so it is not
+    evidence that a run was ever meant to arrive."""
+    name = "Build_GeneratorBiomass_C_301"
+    record = _machine(name, "", buffers={"fuel": {"items": {}, "slots": 1}})
+    report = _assess(
+        game,
+        generators=[record],
+        machines=_neighbours(),
+        graph=_Wires({name, ON_A_BELT, ON_A_PIPE}),
+        physical=_world(),
+    )
+    assert next(m for m in report.machines if m.instance == name).state == "unmonitored"
+
+
+def test_without_a_physical_graph_a_never_run_machine_is_never_promoted(game):
+    """Absent evidence must not read as a finding, on `unwired`'s terms -- and /api/machines
+    supplies no conduit graph, so this is the map's answer for these machines."""
+    name = "Build_OilRefinery_C_302"
+    report = _assess(game, machines=[_never_run(name)], graph=_Wires({name}))
+    assert report.machines[0].state == "unmonitored"
+    assert report.machines[0].feeds == ()
+
+
+def test_a_never_run_machine_backed_up_at_the_output_stays_quiet(game):
+    """Five Constructors in that save sit on 497-499 of a 500 stack with no window. A full
+    output box is not actionable on its own -- the tool's own note says so -- and there is no
+    second, structural fact behind it the way there is for an input no run reaches."""
+    name = "Build_ConstructorMk1_C_2147447118"
+    record = _never_run(
+        name, "Recipe_Screw_C", held={"Desc_IronRod_C": 200}, out={"Desc_IronScrew_C": 498}
+    )
+    report = _beside(game, record)
+    assert next(m for m in report.machines if m.instance == name).state == "unmonitored"
+
+
 def test_the_reference_world_puts_no_fluid_on_the_ladder_at_all(projection, game):
     """The calibration record, and it is a fact about the world rather than about the code.
 

@@ -345,7 +345,7 @@ per-machine input/output/fuel buffers. Field semantics, verified rather than ass
 | `mLastProductivityMeasurementDuration` | **300.00 s on all 580** carriers — a fixed window, so the ratio needs no normalisation |
 | `mLastProductivityMeasurementProduceDuration` | **absent when zero**; UE omits defaults, so missing is a real zero (377 of 580 idle) |
 | `mCurrentProductivityMeasurement*` | a *partial* window still filling — mixing it with the last complete one compares a 3-minute sample to a 5-minute one |
-| `mTimeSinceStartStopProducing` | **FLT_MAX on 256 of 580** as a "never flipped" sentinel. Not a duration; averaging it poisons any statistic. Unused |
+| `mTimeSinceStartStopProducing` | **FLT_MAX on 256 of 580** as a "never flipped" sentinel. Not a duration; averaging it poisons any statistic. Unused, and **not** a "has never produced" marker either — on `Starved.sav` 770 of the 1,023 carriers hold it and **353 of those also hold a closed productivity window**, so it does not separate a machine that never started from one that started and never stopped. Not projected |
 
 Uptime says a machine is stopped but never why, and the fixes are opposite. The buffers
 settle it. **Every rule below was wrong before it was measured:**

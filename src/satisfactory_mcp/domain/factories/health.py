@@ -161,6 +161,10 @@ def _stack_limit(game: GameData, item_cls: str) -> int:
     return STACK_SIZE.get(getattr(item, "stack_size", ""), 0)
 
 
+def _held(record: dict) -> dict:
+    return ((record.get("buffers") or {}).get("in") or {}).get("items") or {}
+
+
 def _buffer_state(game: GameData, record: dict, recipe) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Returns (items backed up in the output, ingredients missing from the input).
 
@@ -178,9 +182,8 @@ def _buffer_state(game: GameData, record: dict, recipe) -> tuple[tuple[str, ...]
         if limit and count >= limit * FULL_FRACTION:
             backed.append(game.item_name(item_cls))
 
-    intake = buffers.get("in")
-    if intake is not None and recipe is not None:
-        held = intake.get("items") or {}
+    if buffers.get("in") is not None and recipe is not None:
+        held = _held(record)
         missing = [game.item_name(f.item) for f in recipe.ingredients if not held.get(f.item)]
         return tuple(sorted(backed)), tuple(sorted(missing))
 
@@ -189,7 +192,55 @@ def _buffer_state(game: GameData, record: dict, recipe) -> tuple[tuple[str, ...]
     return tuple(sorted(backed)), dry_inputs(game, record)
 
 
-def _classify(key: str, record: dict, game: GameData, unwired: bool):
+def _medium(game: GameData, item_cls: str) -> str:
+    item = game.items.get(item_cls)
+    return ports.PIPE if item is not None and item.is_fluid else ports.CONVEYOR
+
+
+@dataclass(frozen=True)
+class _Conduits:
+    """A physical graph, and which media it is known to resolve runs on at all.
+
+    A projection can carry the pipes and not the belts: save versions 25 to 36 on the author's
+    machine resolve 88 pipe runs between coal generators and not one conveyor run in a world
+    of 6,266 material couplings. "No run of that medium arrives" is therefore a fact only for
+    a medium this graph resolves somewhere, and a blind spot everywhere else.
+    """
+
+    graph: object
+    media: frozenset
+
+    @classmethod
+    def of(cls, physical, actors) -> _Conduits:
+        return cls(physical, frozenset(link.medium for a in actors for link in physical.feeds(a)))
+
+    def may_arrive(self, actor: str, medium: str) -> bool:
+        """True unless NOTHING of that medium arrives -- the far end is deliberately not read.
+
+        A run whose far end the save joins to no actor is ``OPEN``, a feeder unknown rather
+        than a feeder absent, and only ``NOTHING`` is a finding here. Ten FICSMAS
+        Constructors on one save turn on the difference.
+        """
+        if medium not in self.media:
+            return True
+        return any(link.medium == medium for link in self.graph.feeds(actor))
+
+
+def _cut_off(short: str, record: dict, recipe, game: GameData, conduits) -> bool:
+    """Whether a required ingredient is at zero and NO run of its medium reaches the machine.
+
+    Rung (1) of the manual's ladder, asked of a machine with no productivity window: an empty
+    buffer alone is weak evidence there, because nothing has ever flowed through it.
+    """
+    if recipe is None or conduits is None or (record.get("buffers") or {}).get("in") is None:
+        return False
+    missing = [cls for cls, _name in _missing_classes(record, recipe, game)]
+    return bool(missing) and not any(
+        conduits.may_arrive(short, _medium(game, cls)) for cls in missing
+    )
+
+
+def _classify(key: str, record: dict, game: GameData, unwired: bool, short: str, conduits):
     """One record's ``(state, cause, uptime, recipe)``, on the ladder in the module docstring."""
     recipe = game.recipes.get(record.get("recipe") or "")
     live = record.get("uptime") or {}
@@ -212,7 +263,10 @@ def _classify(key: str, record: dict, game: GameData, unwired: bool):
     elif key == "machines" and not record.get("recipe"):
         state, cause = "no recipe", ()
     elif uptime is None:
-        state, cause = "unmonitored", ()
+        # A machine that has NEVER produced carries no window at all and never will: this
+        # branch is permanent, not a monitor yet to catch up.
+        cut = _cut_off(short, record, recipe, game, conduits)
+        state, cause = ("starved", missing) if cut else ("unmonitored", ())
     elif uptime >= SATURATED:
         state, cause = "saturated", ()
     elif uptime > STOPPED:
@@ -288,9 +342,8 @@ def _feed_rows(
 
     rows: list[Feed] = []
     for item_cls, item_name in missing_items:
-        item = game.items.get(item_cls)
-        fluid = item is not None and item.is_fluid
-        medium = ports.PIPE if fluid else ports.CONVEYOR
+        medium = _medium(game, item_cls)
+        fluid = medium == ports.PIPE
         arriving = [link for link in physical.feeds(short) if link.medium == medium]
         found: list[Feed] = []
         if not arriving:
@@ -332,7 +385,7 @@ def _missing_classes(record: dict, recipe, game: GameData) -> list[tuple[str, st
     needs; a feeder has to be looked up by class.
     """
     if recipe is not None:
-        held = ((record.get("buffers") or {}).get("in") or {}).get("items") or {}
+        held = _held(record)
         return [
             (flow.item, game.item_name(flow.item))
             for flow in recipe.ingredients
@@ -385,18 +438,24 @@ def assess(
         for record in projection.get(key, ()):
             everything[record["instance"].rsplit(".", 1)[-1]] = (key, record)
 
+    # What the never-run branch of `_classify` may read as "no run arrives". The feed rows
+    # below keep the raw graph: they say NOTHING ARRIVES in their own words and always have.
+    conduits = _Conduits.of(physical, everything) if physical is not None else None
+
     def far_health(actor: str) -> tuple[dict | None, str]:
         found = everything.get(actor)
         if found is None:
             return None, ""
         key, record = found
         dark = bool(graph) and not graph.neighbours(actor, "power")
-        return record, _classify(key, record, game, dark)[0]
+        return record, _classify(key, record, game, dark, actor, conduits)[0]
 
     for short, (key, record) in everything.items():
         if short not in wanted:
             continue
-        state, cause, uptime, recipe = _classify(key, record, game, short in unwired)
+        state, cause, uptime, recipe = _classify(
+            key, record, game, short in unwired, short, conduits
+        )
         entry = MachineHealth(
             instance=short,
             building=record.get("cls", "?"),

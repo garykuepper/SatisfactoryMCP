@@ -314,31 +314,61 @@ about fill.
    because that one means "this is a pipeline pump" to the pump picker and the logistics
    filter. `Crest.assumed` now means "rests on the manual" and is true nowhere on real data.
    The separator in the dump is **U+202F**, a narrow no-break space.
-4. **The classifier gates the fluid ladder out, and the mechanism is now named** `[MEASURED]`.
-   Not "the ladder is silent" — **it is never called**.
+4. ~~**The classifier gates the fluid ladder out.**~~ **FIXED, and the gate is now evidence
+   rather than a branch order** `[MEASURED]`.
 
-   `Starved.sav` is a real, deliberately-built case: an Oil Refinery with its input pipe
-   dangling, dry box, no crude oil, wired and idle. The hand-walk stops correctly at rung 1 —
-   `feeds()` is empty, no run of any medium arrives. The shipped tool says:
+   **Root cause, unchanged and confirmed: a machine that has never produced carries no
+   productivity window at all, permanently.** It is not a window yet to close — still absent
+   19 minutes and four window-lengths after the machine was built. `uptime` was therefore
+   `None`, `_classify` took the `unmonitored` branch **before it looked at the buffers**,
+   `unmonitored` is an OK state, and the feed/rung block is gated on `state == "starved"`. The
+   ladder was not silent on these machines; **it was never called**. Injecting a closed window
+   into the same record and re-running the unchanged code already gave `starved`,
+   `cause=('Crude Oil (connection)',)`, rung `connection` — exactly the hand-walk — which is
+   what proved only the gate was wrong.
 
-   ```
-   state: unmonitored | uptime: None | needs_attention: False | cause: () | feeds: ()
-   ```
+   **What now happens.** The branch stays, and reads the buffers before it answers. A machine
+   with no window is promoted to `starved` only when a required ingredient is at zero **and no
+   run of that ingredient's medium arrives at the machine at all**. That is rung (1), the
+   manual's own first question, and it is the second fact the promotion needs: an empty buffer
+   on a machine nothing has ever flowed through is weak evidence by itself. No new state was
+   added — see the commit for why — and `uptime` reading `-` rather than `0%` in the same table
+   row is what still separates "never started" from "stopped after running".
 
-   `uptime` is `None`, so `_classify` takes the `unmonitored` branch **before it looks at the
-   buffers**; `unmonitored` is an OK state, so the machine never enters `needs_attention`, and
-   the feed/rung block is gated on `state == "starved"`.
+   **Two guards, both of which the sweep put there and neither of which was foreseen:**
 
-   **Root cause: a machine that has never produced carries no productivity window at all,
-   permanently.** It is not a window yet to close — confirmed 19 minutes and four
-   window-lengths later, still absent. So "has never run" and "is running fine" both present
-   as `unmonitored`.
+   * **Per MEDIUM, not per world.** Save versions 25–36 on this machine resolve 88 pipe runs
+     between coal generators and **not one conveyor run**, in worlds carrying 6,266 material
+     couplings. "No belt reaches this" is a blind spot there, not a fact, and reading it as one
+     turned **39 smelters and constructors in a single save** into findings. A world-wide "does
+     anything resolve" test passes those saves, because the pipes do.
+   * **`OPEN` is not `NOTHING`.** A run that arrives and whose far end the save joins to no
+     actor is a feeder *unknown*, which is `health.py`'s own vocabulary and was already written
+     down beside the constants. Counting it as absent lit **ten FICSMAS Constructors** on one
+     save.
 
-   The ladder itself is correct. Injecting a closed window into the same record and re-running
-   unchanged code gives `starved`, `cause=('Crude Oil (connection)',)`, rung `connection` —
-   exactly the hand-walk. Scope in that save: 48 of 584 records carry no window, 19 of them
-   have a recipe set, and this refinery is the only fluid consumer among them. Meanwhile all
-   22 machines the save *does* call starved are short of a solid.
+   **The sweep, every `.sav` on this machine.** 82 saves, 584 machines at the largest. **Four
+   machines change state world-wide, and all four are the same Oil Refinery** — `Starved.sav`
+   and the three autosaves that caught it. Four newly enter `needs_attention`, four carry a
+   fluid rung, all four `connection`, and there is **no construction noise at all**: the median
+   save changes nothing. That refinery is the deliberately-built case — input pipe connector
+   with no `mConnectedComponent`, dry box, empty inventory, wired and idle at 0.1 MW,
+   `mTimeSinceStartStopProducing` at the FLT_MAX sentinel. `Starved.sav` reads 22 starved
+   before and 23 after.
+
+   **Scope of the population this rule looks at, in that save:** 48 of 584 machine-like records
+   carry no window; 19 of those have a recipe set (17 Constructors, 1 Smelter, this Refinery).
+   Of the eighteen that stay quiet, eight are a fresh row of Iron Plate Constructors with belts
+   already run and nothing yet down them, five sit on 497–499 of a 500 stack, three are paused,
+   and the rest hold what they need. **Not one of them is a build the player has to go and
+   finish** — which is the bar this was measured against.
+
+   Two neighbours were checked and rejected as markers. `mTimeSinceStartStopProducing == FLT_MAX`
+   is **not** "has never produced": 770 of that save's 1,023 carriers hold it and **353 of those
+   also hold a closed window**, so it separates nothing. It is not projected either, and there
+   is no reason to project it. A full **output** box on a never-run machine is left alone: it is
+   the same evidence `blocked` reads with a window, but `blocked` is not actionable on its own —
+   the tool's own note says so — and there is no structural second fact behind it.
 5. **A pump's declared ceiling and its measured reach are now separate.** `mMaxPressure`
    stays what the game declares; `PUMP_MEASURED_REACH_M` carries what a class was measured to
    do, keyed by class because no multiplier fits both the machine's ×1.102 and the Mk1's
@@ -405,6 +435,12 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 - **What carries fuel over the 0.93 m.** The one open question the calibration created, and
   the most valuable thing to measure next. The barrier reproduces and the line works anyway;
   until that is explained, a buffer-gated crest stays a note rather than a fault.
+- **The ten refineries on a network no source reaches still read `unmonitored`.** They keep no
+  window and a pipe *does* arrive at each, so the never-run gate above declines them by
+  construction — it asks the conduit graph and not the head-lift model, which is the only thing
+  that can see an unfed network. Promoting on `HeadLift.unfed_ports` would be the second form
+  of rung (1) and would light exactly those ten. Whether ten at once is a finding or a wall is
+  the same question this rule was measured against, and it has not been measured for them.
 - ~~**Does 11 m generalise?**~~ **CLOSED** — two classes, two fluids, two datums, 67 mm apart.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
