@@ -481,8 +481,8 @@ Three strands make it conclusive, and the third is the one that closes the argum
   refutes "it was running on what was already in the pipe", without assuming continuity
   between saves.
 * **There is no other source, ever.** Seven Packager output ports at −12.899 m in all 48
-  saves, and nothing else. The upper buffer is fed rather than feeding: it takes from the
-  riser and hands on to the manifold, and its own fill never exceeds 18.75%.
+  saves, and nothing else. The upper buffer is no exception: it holds fuel, but it takes it
+  from the riser and passes it on, so everything in it came through the pump.
 
 **The competing explanation was killed rather than ignored.** Those seven Packagers run
 Unpackage Fuel and each states `machine_head_lift_m` **10 m**, so from −12.899 m they reach
