@@ -140,4 +140,6 @@ crests that appear — with not one of them still being told to check its supply
 A crest names the fluid of the network it stands on, so rung (2) is attributed per ingredient.
 `unfed_ports` cannot be: a network no source reaches has typically never carried a fluid and
 the save records none for it, so a machine with a second, working fluid input would have that
-one called a connection fault too. Every case seen so far is a refinery with one fluid input.
+one called a connection fault too. Measured rather than assumed — across all 71 saves every
+unfed consumer is the same thing, an Oil Refinery on Alternate: Heavy Oil Residue, whose one
+fluid ingredient is Crude Oil. The over-attribution has never had a case to happen in.
