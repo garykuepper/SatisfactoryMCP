@@ -121,8 +121,9 @@ MACHINE_HEAD_LIFT_M: float = 10.0
 #: The height at which that flow drops to zero. [MEASURED], not read and not the rating times
 #: a tolerance: a capped dead-end column off a Water Extractor settled 11.020 m +-0.26 above
 #: its pipe connection (`docs/fluids_model.md`). "12 m", which this was, appears in none of
-#: the dump's 2,868 classes. SCOPE: the dump states the same 10 m rating for six classes and
-#: the ceiling has been measured on the Water Extractor alone, so the other five inherit it.
+#: the dump's 2,868 classes. SCOPE: the dump states the same 10 m rating for six classes, and
+#: an Oil Refinery on a different fluid measured 11.087 -- 67 mm away, inside the bar -- so
+#: one number for all six rests on two classes and two fluids rather than on one of each.
 MACHINE_MAX_HEAD_LIFT_M: float = 11.020
 
 #: How high a pump's fluid actually stands above its centre, per BUILD class, where that has
@@ -132,10 +133,10 @@ MACHINE_MAX_HEAD_LIFT_M: float = 11.020
 #: (`docs/fluids_model.md`).
 #:
 #: Per class because no single multiplier fits: the machine sits at x1.102 of its rating and
-#: the Mk1 at x1.140 of its. A class absent here is therefore NOT extrapolated -- the Mk2
-#: (50/55) is unmeasured and the model uses its declared 55, which the Mk1's overshoot
-#: suggests is an understatement, and understating a reach only ever reports a climb as
-#: harder than it is.
+#: the Mk1 at x1.140 of its. A class absent here is NOT extrapolated -- the Mk2 measured
+#: 55.564 against its declared 55 and is still left out, because both pump readings are
+#: quantised by the 4 m pieces they were taken on and a finer rig puts the Mk1 nearer 23.0
+#: (`docs/fluids_model.md`). Understating a reach only reports a climb as harder than it is.
 PUMP_MEASURED_REACH_M: dict[str, float] = {
     "Build_PipelinePump_C": 22.801,
 }
