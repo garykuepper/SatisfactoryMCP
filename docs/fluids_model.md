@@ -118,7 +118,39 @@ agreeing to 13 µm. The first reading was 52 mm high for the same reason the mac
 was: taken before the column stopped moving.
 
 So a Mk1 pump reaches **0.80 m past its own `mMaxPressure`**. Nothing lands near the 20 m
-rating under any reference. This lives in `PUMP_MEASURED_REACH_M` rather than overwriting the
+rating under any reference.
+
+**The Mk2 measures 55.564 m** `[MEASURED]`, settled across five saves with 14.4 m of dry pipe
+above the surface, and it decides the shape of the overshoot:
+
+| device | rating | declared max | measured | ÷ rating | over max |
+|---|---|---|---|---|---|
+| Water Extractor | 10 | — | 11.020 | 1.102 | — |
+| Oil Refinery | 10 | — | 11.087 | 1.109 | — |
+| Pump Mk1 | 20 | 22 | 22.801 | 1.140 | **+0.801** |
+| Pump Mk2 | 50 | 55 | 55.564 | 1.111 | **+0.564** |
+
+**A multiplicative overshoot is refuted.** ×1.036 would put the Mk2 at 57.0 and needs its
+interface piece 76.4% full; it reads 40.5%, missing by 1.44 m — 5.5× the bar, on a strictly
+vertical piece. What survives is **additive**: +0.801 and +0.564 differ by 0.237 m, inside
+the bar, so "a pump reaches `mMaxPressure` + ≈0.68 m" fits both readings and "×1.036" fits
+one. Machines overshoot their own ×1.10 by only +0.020 and +0.087, so this is pump-specific.
+
+**And the two hypotheses about ceilings are already separated — by machines, not pumps.**
+`mMaxPressure = 1.10 × mDesignPressure` holds for *both* pumps by construction, so no pump
+rig anywhere in the game can distinguish "the declared max is the truth" from "rating × 1.10
+is the truth". Machines can: they state a rating, carry no `mMaxPressure` at all, and measure
+×1.10. **So ×1.10 of the rating is the game-wide rule, and a pump's `mMaxPressure` is the
+game printing that product.**
+
+> **Caveat, and it is larger than the ±0.26 m bar.** The overshoot is estimator-dependent.
+> Reading the same columns by volume conservation instead of by the topmost partial piece
+> gives machine 10.758, Mk1 21.877, Mk2 55.160 — under which *both pumps sit essentially on
+> their declared ceilings*. That estimator cannot be adopted for pumps alone, since it moves
+> the machine constant too. The bar is set by how many partially-filled pieces lie below the
+> surface, and a 22 m column carries three. **A rig built from 1 m or 2 m pieces would shrink
+> the interpolation step and decide whether the +0.68 m is physics or bookkeeping** — the
+> cheapest open experiment left. This lives in `PUMP_MEASURED_REACH_M` rather than overwriting the
 dump: `mMaxPressure` is authoritative for what the game *declares*, and the finding is
 precisely that declared and observed disagree.
 
@@ -282,10 +314,31 @@ about fill.
    because that one means "this is a pipeline pump" to the pump picker and the logistics
    filter. `Crest.assumed` now means "rests on the manual" and is true nowhere on real data.
    The separator in the dump is **U+202F**, a narrow no-break space.
-4. **The fluid ladder has never fired on real data.** Still true. 60 dry fluid boxes exist
-   across the saves and every one belongs to an `unmonitored` machine, which the classifier
-   can never call starved. The honest claim is "no *monitored* machine has had a dry fluid
-   box".
+4. **The classifier gates the fluid ladder out, and the mechanism is now named** `[MEASURED]`.
+   Not "the ladder is silent" — **it is never called**.
+
+   `Starved.sav` is a real, deliberately-built case: an Oil Refinery with its input pipe
+   dangling, dry box, no crude oil, wired and idle. The hand-walk stops correctly at rung 1 —
+   `feeds()` is empty, no run of any medium arrives. The shipped tool says:
+
+   ```
+   state: unmonitored | uptime: None | needs_attention: False | cause: () | feeds: ()
+   ```
+
+   `uptime` is `None`, so `_classify` takes the `unmonitored` branch **before it looks at the
+   buffers**; `unmonitored` is an OK state, so the machine never enters `needs_attention`, and
+   the feed/rung block is gated on `state == "starved"`.
+
+   **Root cause: a machine that has never produced carries no productivity window at all,
+   permanently.** It is not a window yet to close — confirmed 19 minutes and four
+   window-lengths later, still absent. So "has never run" and "is running fine" both present
+   as `unmonitored`.
+
+   The ladder itself is correct. Injecting a closed window into the same record and re-running
+   unchanged code gives `starved`, `cause=('Crude Oil (connection)',)`, rung `connection` —
+   exactly the hand-walk. Scope in that save: 48 of 584 records carry no window, 19 of them
+   have a recipe set, and this refinery is the only fluid consumer among them. Meanwhile all
+   22 machines the save *does* call starved are short of a solid.
 5. **A pump's declared ceiling and its measured reach are now separate.** `mMaxPressure`
    stays what the game declares; `PUMP_MEASURED_REACH_M` carries what a class was measured to
    do, keyed by class because no multiplier fits both the machine's ×1.102 and the Mk1's
