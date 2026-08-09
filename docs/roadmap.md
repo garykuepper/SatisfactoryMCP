@@ -113,6 +113,40 @@ One of seven is done. The rest are unchanged and still cheap.
 
 ---
 
+## 3b. Split off the fluid work, 2026-08-06
+
+Both came out of reading the FICSIT Plumbing Manual (public domain, on the wiki) while
+designing head lift. Neither belongs in the head-lift work, and both are worth doing.
+
+**Pipe build review — a build-advice tool, not a diagnosis.** Two checks the manual names as
+common mistakes, both decidable from the contracted runs and machine positions we already
+have, and neither of which any tool in the ecosystem performs:
+
+- *A feed pipeline built below its machine inputs.* Manual, Lesson 8: always build the feed
+  line level with or above the inputs, because head lift is the same for every pipe in a
+  network and no machine is fed until levels equalise — so a feed line below its machines
+  starves all of them the moment the level drops.
+- *Pumps stacked with no vertical separation between them.* Pump head lift does NOT stack
+  pump-to-pump (three Mk2 pumps in a row give 50 m, not 150); it stacks only with gravity
+  gained after the pump. Pumps within no vertical distance of each other are concrete spent
+  for nothing.
+
+Output is advice about what was built, not a fault, and it wants its own tool rather than a
+column on a health report. Effort: hours once the head-lift model exists, because both reuse
+its geometry.
+
+**Byproduct remedies in `explain_byproducts`.** Manual, Lesson 9: the aluminium water loop
+is the canonical case, and the LP is mathematically right about it while being physically
+naive — it balances the byproduct as an equality and has no idea the second refinery clogs
+when its output is fed back to the first. The manual ranks four remedies: underclock the
+extractors and cap them with a valve (only stable at 100% efficiency), dedicate refineries
+to the byproduct (most stable), feed it to other machines, or package and sink it (worst).
+`explain_byproducts` should carry them, so a plan that strands a byproduct says what players
+actually do about it. This is a planner change and has nothing to do with the head-lift
+model; it is listed here so it is not lost.
+
+---
+
 ## 4. Risks to defuse, by probability × damage
 
 Two are defused. Four are live, and their ordering is unchanged.
