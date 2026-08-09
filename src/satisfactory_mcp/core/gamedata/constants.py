@@ -98,6 +98,15 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 #: the FICSIT Plumbing Manual; nothing in the dump carries it. See `docs/plumbing.md`.
 BUFFER_BALANCE_HEAD_M: float = 1.5
 
+#: Head lift any machine that is not a pipeline pump gives, in metres, and the height at
+#: which its flow drops to zero. [WIKI]: the FICSIT Plumbing Manual, and the ONLY figure the
+#: head-lift model assumes -- head lift outside a pump lives in the ``FluidBox`` struct,
+#: which Docs.json exports empty, so ``mDesignPressure`` exists on the pump class and on no
+#: other of 2,868. The gap is NOT a tolerance rate: the pumps' own 22/20 and 55/50 are 10%,
+#: which is why every ceiling is a per-class number. See `docs/plumbing.md` §24.2.
+MACHINE_HEAD_LIFT_M: float = 10.0
+MACHINE_MAX_HEAD_LIFT_M: float = 12.0
+
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
 #: The only number here with no data behind it, and DANGEROUS to read as capacity. Water is

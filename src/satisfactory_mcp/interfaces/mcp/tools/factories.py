@@ -733,14 +733,16 @@ def factory_health(
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
 
-    The sweep over every factory also reports two plumbing faults that belong to no machine
-    set: fluid buffers holding too little to output at their intake rate, and pipeline pumps
-    no wire reaches. Both are world-wide there, not scoped to a factory.
+    The sweep over every factory also reports three plumbing faults that belong to no machine
+    set: fluid buffers holding too little to output at their intake rate, pipeline pumps no
+    wire reaches, and points where a line climbs above the head lift pushing it. All three
+    are world-wide there, not scoped to a factory.
 
     `offset` pages every table in the answer at once, worst first throughout.
     """
     from ....domain.factories.health import NOTHING, OPEN, STATES, assess, summarise
     from ....domain.factories.select import SelectorError
+    from ....domain.world.headlift import head_lift
     from ....domain.world.plumbing import dark_pumps, throttled_buffers
 
     try:
@@ -855,6 +857,38 @@ def factory_health(
                 "a buffer's head lift is the height of the fluid standing in it, so one "
                 "holding less than 1.5 m of fluid outputs slower than it takes in, silently"
             )
+        head = head_lift(st.projection, st.game, st.graph)
+        if head.crests:
+            chunks.append(
+                "## fluid lines that climb higher than their supply can push\n"
+                + render.table(
+                    ("fluid", "crest m", "head m", "short by", "machines cut off", "state"),
+                    [
+                        (
+                            st.game.item_name(c.fluid) if c.fluid else "-",
+                            f"{c.crest_m:.1f}",
+                            f"{c.head_m:.1f}",
+                            f"{c.short_m:.1f}",
+                            len(c.consumers),
+                            "marginal" if c.marginal else "cut off",
+                        )
+                        for c in head.crests[start:end]
+                    ],
+                    total=len(head.crests),
+                    offset=start,
+                    limit=n,
+                )
+            )
+            notes.append(
+                f"{len(head.crests)} point(s) on the plumbing stand above the head lift "
+                "behind them, so nothing past them is supplied -- a pump placed BEFORE the "
+                "crest is the fix, and a second pump after it would add nothing"
+            )
+            if any(c.assumed for c in head.crests):
+                notes.append(
+                    "some of those rest on the 10 m of head lift a normal machine is assumed "
+                    "to give, which is the plumbing manual's figure and is in no game data"
+                )
         dark, unseen = dark_pumps(st.projection, st.graph)
         if dark:
             rest = len(dark) - UNWIRED_NAMED
