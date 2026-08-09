@@ -87,3 +87,57 @@ set. Both are §24.1 arithmetic and neither walks the pipe graph.
   An unpowered pump passes fluid while setting the head lift past it to zero, so nothing
   downstream looks broken. The count is guarded against the graph's own blind spot: its actor
   list is cut from edges, so `building_counts` settles how many pumps were not looked at.
+
+## §24.5 The diagnostic ladder
+
+The manual gives a troubleshooting ORDER and puts a red box round it: check **(1) connection**,
+then **(2) head lift**, and attempt **(3) flow rate** only once sure it is neither. A starved
+refinery answered with its supply rates when its water cannot climb to it is the mistake the
+box is about, and the three models that answer those rungs now exist separately — so
+`factory_health` walks them in that order and **stops at the first rung that fires**.
+
+The rung is per missing INGREDIENT, and only a fluid ever carries one: head lift is not a
+thing that happens to Iron Ore, so a solid reads exactly as it did before and a machine short
+of both prints `Iron Ore, Water (head lift)`.
+
+| rung | fires when | answered by |
+|---|---|---|
+| **(1) connection** | no run of that medium arrives at all, or every one that does reaches nothing | `domain/world/logistics.py` — `NOTHING` and `OPEN` |
+| **(1) connection** | a run arrives from a real fitting, and no source anywhere reaches that network | `headlift.unfed_ports` |
+| **(2) head lift** | the machine is behind a crest on that fluid's network | `domain/world/headlift.py` |
+| **(3) flow rate** | none of the above, so the fluid can arrive and there is not enough of it | nothing yet — the rung is named, not measured |
+
+Two things about the shape. **Rung (1) is two different facts**, and the second is one only the
+head-lift model can see: the conduit graph is perfectly satisfied by a pipe running from a
+junction, and the network it belongs to may still have no producer on it anywhere. **Rung (3)
+is earned rather than defaulted to** — `assess` is given the head-lift model or it reports no
+rung at all, because "it must be the rates" without checking the climb is precisely the error.
+
+### What it says on real data
+
+Nothing, on every rung but one, and that is a fact about the world rather than about the code.
+Across all 71 saves on this machine there are 802 starved machines and **not one of them is
+short of a fluid**: a machine's fluid box is carried in its input inventory in litres, so the
+ingredient is readable — `Desc_Water_C: 50000` on a refinery — and every starved machine here
+is short of a solid. Rungs (2) and (3) therefore never fire, which follows from the head-lift
+model reporting zero crests over the same sweep.
+
+The one rung that does fire is the second form of (1): **ten refineries plumbed into a pipe
+network no source reaches**, in the newest three saves. They keep no productivity monitor, so
+`factory_health` calls them `unmonitored` and says nothing else about them; the sweep now names
+them in a note, world-wide, beside the throttled buffers and the dark pumps. A line to finish,
+and explicitly not ten head-lift failures.
+
+**That silence is a verdict, and the perturbation shows it both ways round.** Take the
+supplemental water away from every generator on the reference world and 32 of them read starved
+of Water. As the base is actually wired the plumbing reaches all 32, so every one is answered at
+rung (3), the rates. Cut power to every pump and the *same* 32 move to rung (2) behind the five
+crests that appear — with not one of them still being told to check its supply. Pinned in
+`tests/test_health.py`; it is the whole of phase 3 in one assertion.
+
+### Limits
+
+A crest names the fluid of the network it stands on, so rung (2) is attributed per ingredient.
+`unfed_ports` cannot be: a network no source reaches has typically never carried a fluid and
+the save records none for it, so a machine with a second, working fluid input would have that
+one called a connection fault too. Every case seen so far is a refinery with one fluid input.

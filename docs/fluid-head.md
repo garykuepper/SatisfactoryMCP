@@ -152,7 +152,8 @@ so it is not checked at all rather than checked against a guess.
 running: it says nothing about whether there is *enough* fluid, only that what there is can
 reach. A refinery reading starved in `factory_health` with no crest against it is a rung-(3)
 problem — a flow rate, a recipe ratio, a share at a junction — and the head-lift model has just
-ruled its own rung out.
+ruled its own rung out. That is now what the tool does with this model rather than something a
+reader has to do by hand: the ladder is [§24.5](plumbing.md).
 
 **A crest is a claim about height and nothing else.** It names the altitude the line reaches,
 the head available behind it, and the consumers past it. `assumed` on a crest says the head

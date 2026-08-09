@@ -10,6 +10,9 @@ stopped and never why, so the input and output buffers settle it::
     an output item at a full stack -> BLOCKED, its consumer is not keeping up
     both                           -> BLOCKED wins; a full output stops it regardless
 
+A missing FLUID then walks a second ladder, the plumbing manual's own -- connection, head
+lift, flow rate, stopping at the first that fires. It is written down in §24.5.
+
 Two neighbouring save fields look usable and are not. ``mCurrentProductivityMeasurement*``
 is a partial window still filling, so mixing it with the last complete one compares a
 3-minute sample against a 5-minute one; ``mTimeSinceStartStopProducing`` carries FLT_MAX
@@ -20,14 +23,14 @@ poisons any statistic it enters.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ...core.gamedata.constants import STACK_SIZE
 from ...core.gamedata.model import GameData
 from ...core.saveio import ports
 from ..power.report import NO_FUEL, dry_input_classes, dry_inputs
 
-__all__ = ["OK", "STATES", "Feed", "MachineHealth", "assess", "summarise"]
+__all__ = ["OK", "RUNGS", "STATES", "Feed", "MachineHealth", "assess", "summarise"]
 
 #: Uptime at or above this counts as running flat out.
 SATURATED = 0.999
@@ -64,6 +67,16 @@ OPEN = "open"
 JOINED = "joined"
 FED = "fed"
 
+#: The plumbing manual's troubleshooting order, and the rung a FLUID input's diagnosis stops
+#: at -- §24.5. ``UNDETERMINED`` is what a caller supplying no head-lift model gets: rung (2)
+#: is then unruled-out, and claiming rung (3) over it is the mistake the manual warns about.
+#: A solid never carries one, because head lift is not a thing that happens to it.
+CONNECTION = "connection"
+HEAD_LIFT = "head lift"
+FLOW_RATE = "flow rate"
+UNDETERMINED = ""
+RUNGS = (CONNECTION, HEAD_LIFT, FLOW_RATE)
+
 
 @dataclass(frozen=True)
 class Feed:
@@ -87,6 +100,9 @@ class Feed:
     #: True only where that far end is KNOWN to make this item; false is "not established",
     #: never "it does not".
     makes: bool = False
+    #: Which rung of the ladder this input's diagnosis stopped at. Shared by every row of one
+    #: item, since the rung is a property of the ingredient and not of one arriving run.
+    rung: str = UNDETERMINED
 
 
 @dataclass
@@ -234,14 +250,35 @@ def _makes(record: dict, item_cls: str, game: GameData) -> bool:
     return item_cls in out
 
 
+def _rung(short: str, item_cls: str, found: list[Feed], heads) -> str:
+    """Which rung of the manual's ladder one missing FLUID stops at -- §24.5.
+
+    Rung (1) twice over, and they are different facts: no run of that medium arrives at the
+    machine at all, or every one that does reaches nothing; and the run arriving from a real
+    fitting on a network no source anywhere reaches, which only the head-lift model sees.
+    """
+    if all(row.verdict in (NOTHING, OPEN) for row in found):
+        return CONNECTION
+    if heads is None:
+        return UNDETERMINED
+    if short in heads.unfed_ports:
+        return CONNECTION
+    # A crest names the fluid of the network it stands on, and ``None`` where that network
+    # carries none yet; matching on it keeps a machine's second, working input out of it.
+    if any(short in c.consumers and c.fluid in (None, item_cls) for c in heads.crests):
+        return HEAD_LIFT
+    return FLOW_RATE
+
+
 def _feed_rows(
     short: str,
     missing_items: list[tuple[str, str]],
     game: GameData,
     physical,
     far_health,
+    heads,
 ) -> tuple[Feed, ...]:
-    """One hop back from each missing ingredient of one starved machine.
+    """One hop back from each missing ingredient of one starved machine, and its rung.
 
     The medium is what separates the ingredients: a run carries whatever is put on it, so the
     save cannot say which belt was meant to bring the Coal, but it does say that a solid
@@ -252,19 +289,20 @@ def _feed_rows(
     rows: list[Feed] = []
     for item_cls, item_name in missing_items:
         item = game.items.get(item_cls)
-        medium = ports.PIPE if item is not None and item.is_fluid else ports.CONVEYOR
+        fluid = item is not None and item.is_fluid
+        medium = ports.PIPE if fluid else ports.CONVEYOR
         arriving = [link for link in physical.feeds(short) if link.medium == medium]
+        found: list[Feed] = []
         if not arriving:
-            rows.append(Feed(item=item_name, verdict=NOTHING, medium=medium))
-            continue
+            found.append(Feed(item=item_name, verdict=NOTHING, medium=medium))
         for link in arriving:
             far = link.other(short)
             if far is None:
-                rows.append(Feed(item_name, OPEN, link.ident, medium, link.pieces))
+                found.append(Feed(item_name, OPEN, link.ident, medium, link.pieces))
                 continue
             cls = _class_of(far)
             record, state = far_health(far)
-            rows.append(
+            found.append(
                 Feed(
                     item=item_name,
                     verdict=JOINED if link.basis == UNKNOWN else FED,
@@ -277,6 +315,8 @@ def _feed_rows(
                     makes=_makes(record, item_cls, game) if record else False,
                 )
             )
+        rung = _rung(short, item_cls, found, heads) if fluid else UNDETERMINED
+        rows.extend(replace(row, rung=rung) for row in found)
     return tuple(rows)
 
 
@@ -301,6 +341,12 @@ def _missing_classes(record: dict, recipe, game: GameData) -> list[tuple[str, st
     return [(cls, game.item_name(cls)) for cls in dry_input_classes(game, record) if cls != NO_FUEL]
 
 
+def _laddered(cause: tuple[str, ...], feeds: tuple[Feed, ...]) -> tuple[str, ...]:
+    """The missing items, each fluid one carrying the rung its diagnosis stopped at."""
+    rung_of = {feed.item: feed.rung for feed in feeds if feed.rung}
+    return tuple(f"{item} ({rung_of[item]})" if item in rung_of else item for item in cause)
+
+
 def assess(
     name: str,
     machines: list[str],
@@ -308,16 +354,20 @@ def assess(
     projection: dict,
     graph=None,
     physical=None,
+    heads=None,
 ) -> HealthReport:
     """Classify every machine in a set. Extractors and generators are included when they
     carry a monitor, since a starved coal plant is exactly what one wants to see.
 
     ``graph`` is a ``FactoryGraph`` and is what makes "wired to nothing" answerable;
     ``physical`` is a ``logistics.PhysicalGraph`` and is what makes "and this is what feeds
-    the input it lacks" answerable. Both optional, for one reason: without them the answer is
-    UNKNOWN rather than negative. The save records no ``mHasPower`` and no ``mCircuitID``, so
-    the one positive electrical fact it carries is the wire; and a caller who supplies no
-    conduit must not have silence read as "nothing feeds this".
+    the input it lacks" answerable; ``heads`` is a ``headlift.HeadLift`` and is what lets a
+    missing fluid be diagnosed on the manual's ladder rather than at its bottom rung. All
+    three optional, for one reason: without them the answer is UNKNOWN rather than negative.
+    The save records no ``mHasPower`` and no ``mCircuitID``, so the one positive electrical
+    fact it carries is the wire; a caller who supplies no conduit must not have silence read
+    as "nothing feeds this"; and without the head-lift model no input is called a flow-rate
+    problem, because ruling rung (2) out is what earns rung (3).
     """
     wanted = set(machines)
     report = HealthReport(name=name)
@@ -358,8 +408,9 @@ def assess(
         )
         if state == "starved" and physical is not None:
             entry.feeds = _feed_rows(
-                short, _missing_classes(record, recipe, game), game, physical, far_health
+                short, _missing_classes(record, recipe, game), game, physical, far_health, heads
             )
+            entry.cause = _laddered(entry.cause, entry.feeds)
         report.machines.append(entry)
         report.by_state[state] += 1
         if short in unwired:

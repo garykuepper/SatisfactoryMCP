@@ -29,7 +29,7 @@ resolves through this table wherever it is written, in a document or in a docstr
 | §10, §11, §12 | [docs/mcp-surface.md](docs/mcp-surface.md) | the tools with their transcripts, the context budget, caching, and the testing contract |
 | §14, §15, §15b, §16, §16b, §19–§22 | [docs/parked.md](docs/parked.md) | open questions, parked work with the measurements that would otherwise be redone, and finished work kept as a record |
 | §23 | [docs/residency.md](docs/residency.md) | what an autosave costs the two processes, and why the answer is a pre-warming watcher rather than a resident daemon |
-| §24 | [docs/plumbing.md](docs/plumbing.md) | head lift and flow: which of the manual's constants the dump confirms, the one it does not carry, and what the save measures about pipes, buffers and pumps |
+| §24 | [docs/plumbing.md](docs/plumbing.md) | head lift and flow: which of the manual's constants the dump confirms, the one it does not carry, what the save measures about pipes, buffers and pumps, and the connection → head lift → flow rate ladder a missing fluid is diagnosed on |
 
 Three documents carry no section numbers of their own. Two are ledgers rather than design:
 [docs/backlog.md](docs/backlog.md) is every known defect with the commit that closed it, and

@@ -10,12 +10,14 @@ from __future__ import annotations
 import pytest
 
 from satisfactory_mcp.domain.factories.build import build_graph
+from satisfactory_mcp.domain.world import headlift
 from satisfactory_mcp.domain.world.plumbing import (
     PUMP_CLASSES,
     balance_level_m3,
     dark_pumps,
     throttled_buffers,
 )
+from satisfactory_mcp.domain.world.state import WorldState
 from satisfactory_mcp.interfaces.mcp.tools import factories as tool
 
 pytestmark = pytest.mark.integration
@@ -137,3 +139,105 @@ def test_the_sweep_over_every_factory_reports_both_and_calls_them_world_wide(mon
     assert "7 pipeline pump(s) have no electrical connection" in out
     assert "Build_IndustrialTank_C_2147229749\tFuel\t54\t300" in out
     assert "coupled to no pipe at all" not in out, "nothing went unchecked here"
+
+
+# ------------------------------------- the ladder as factory_health prints it, §24.5
+
+
+def _thirsty(projection):
+    """The reference world with one real refinery emptied of its water.
+
+    A perturbation rather than a hand-built world: the rendering under test reaches for the
+    graph, the labels and the conduit runs, and a stub projection answers none of them.
+    """
+    wet = next(
+        record
+        for record in projection["machines"]
+        if "Desc_Water_C" in ((record.get("buffers") or {}).get("in") or {}).get("items", {})
+    )
+    dry = dict(
+        wet,
+        buffers={"in": {"items": {}, "slots": 2}, "out": {"items": {}, "slots": 3}},
+        uptime={"window_s": 300.0, "produce_s": 0.0, "cur_window_s": 10.0, "producing": False},
+    )
+    machines = [dry if r is wet else r for r in projection["machines"]]
+    return dict(projection, machines=machines), dry["instance"].rsplit(".", 1)[-1]
+
+
+def _crested(consumers, fluid="Desc_Water_C"):
+    crest = headlift.Crest(
+        fluid=fluid,
+        crest_m=26.4,
+        head_m=17.2,
+        consumers=tuple(consumers),
+        marginal=False,
+        assumed=True,
+        pos=(1000.0, 2000.0, 26.4),
+    )
+    return headlift.HeadLift(
+        crests=(crest,),
+        consumers=1,
+        unfed_ports=(),
+        networks=1,
+        gas_networks=0,
+        ambiguous_ports=0,
+    )
+
+
+def test_the_sweep_names_the_machines_on_a_pipe_network_no_source_reaches(monkeypatch, state):
+    """Rung (1), world-wide, and the only rung that fires on this author's saves."""
+    monkeypatch.setattr(tool, "_state", lambda save=None, world=None, as_of=None: state)
+    monkeypatch.setattr(
+        headlift,
+        "head_lift",
+        lambda *_a, **_k: headlift.HeadLift(
+            crests=(),
+            consumers=2,
+            unfed_ports=("Build_OilRefinery_C_1", "Build_OilRefinery_C_2"),
+            networks=1,
+            gas_networks=0,
+            ambiguous_ports=0,
+        ),
+    )
+    out = tool.factory_health(factory="all")
+    assert "2 machine(s) draw a fluid from a pipe network that reaches NO source at all" in out
+    assert "rung (1)" in out
+    assert "Build_OilRefinery_C_1, Build_OilRefinery_C_2" in out
+
+
+def test_a_machine_behind_a_crest_is_told_where_the_pump_goes(monkeypatch, game, projection):
+    """Rung (2) end to end: the cause names the rung, and the crest that binds is named
+    beside it -- twenty machines behind one hill are one problem with one fix."""
+    patched, short = _thirsty(projection)
+    monkeypatch.setattr(
+        tool, "_state", lambda save=None, world=None, as_of=None: WorldState(patched, game)
+    )
+    monkeypatch.setattr(headlift, "head_lift", lambda *_a, **_k: _crested([short]))
+    out = tool.factory_health(factory=f"machine:{short}")
+    assert "Water (head lift)" in out
+    assert "## where the fluid stops climbing" in out
+    assert "Water\t26.4\t17.2\t9.2\t1" in out
+    assert "1 at (2) head lift" in out
+    assert "a pump placed BEFORE the crest is the fix" in out
+    (row,) = [line for line in out.splitlines() if line.startswith(f"{short}\tstarved")]
+    assert row.endswith("Copper Ore, Water (head lift)"), (
+        "the whole point: the fluid is answered at the rung that fires and the solid beside "
+        "it is left alone"
+    )
+    assert "at (3) flow rate" not in out, "a head-lift failure never gets the rates answer"
+
+
+def test_a_crest_on_another_fluid_does_not_claim_this_machine(monkeypatch, game, projection):
+    """The reference world reports no crest at all, so an unrelated one leaves the same
+    machine on rung (3) -- which is what makes the assertion above a verdict."""
+    patched, short = _thirsty(projection)
+    monkeypatch.setattr(
+        tool, "_state", lambda save=None, world=None, as_of=None: WorldState(patched, game)
+    )
+    monkeypatch.setattr(
+        headlift, "head_lift", lambda *_a, **_k: _crested([short], fluid="Desc_LiquidOil_C")
+    )
+    out = tool.factory_health(factory=f"machine:{short}")
+    assert "Water (flow rate)" in out
+    assert "1 at (3) flow rate" in out
+    assert "the head-lift model checked the climb and ruled its own rung out" in out

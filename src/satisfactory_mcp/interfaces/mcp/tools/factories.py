@@ -5,6 +5,7 @@ labels, and the two read-outs built on a named machine set."""
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Annotated
 
 from pydantic import Field
@@ -729,6 +730,11 @@ def factory_health(
     `trace_upstream` walks the rest. "No conduit of that medium arrives" and "one arrives
     and the save joins its far end to nothing" are different rows and are never merged.
 
+    A missing FLUID is diagnosed on the plumbing manual's own ladder -- (1) connection,
+    (2) head lift, (3) flow rate -- and the `cause` names the FIRST rung that fires, so a
+    line that cannot climb to the machine is never answered with its supply rates. Solids
+    have no head-lift rung and read exactly as before.
+
     **Blocked is not automatically a fault.** A base whose output nobody consumes fills
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
@@ -740,7 +746,15 @@ def factory_health(
 
     `offset` pages every table in the answer at once, worst first throughout.
     """
-    from ....domain.factories.health import NOTHING, OPEN, STATES, assess, summarise
+    from ....domain.factories.health import (
+        FLOW_RATE,
+        NOTHING,
+        OPEN,
+        RUNGS,
+        STATES,
+        assess,
+        summarise,
+    )
     from ....domain.factories.select import SelectorError
     from ....domain.world.headlift import head_lift
     from ....domain.world.plumbing import dark_pumps, throttled_buffers
@@ -889,6 +903,16 @@ def factory_health(
                     "some of those rest on the 10 m of head lift a normal machine is assumed "
                     "to give, which is the plumbing manual's figure and is in no game data"
                 )
+        if head.unfed_ports:
+            named = sorted(set(head.unfed_ports))
+            rest = len(named) - UNWIRED_NAMED
+            notes.append(
+                f"{len(named)} machine(s) draw a fluid from a pipe network that reaches NO "
+                "source at all -- rung (1) of the plumbing manual's order, a line to finish "
+                "rather than a shortage, and not a head-lift fault: "
+                + ", ".join(named[:UNWIRED_NAMED])
+                + (f", and {rest} more" if rest > 0 else "")
+            )
         dark, unseen = dark_pumps(st.projection, st.graph)
         if dark:
             rest = len(dark) - UNWIRED_NAMED
@@ -917,7 +941,8 @@ def factory_health(
     if not machines:
         return f"! {factory!r} resolved to no machines that still exist in this save"
 
-    report = assess(name, machines, st.game, st.projection, st.graph, st.physical)
+    heads = head_lift(st.projection, st.game, st.graph)
+    report = assess(name, machines, st.game, st.projection, st.graph, st.physical, heads)
     chunks = [summarise(report)]
 
     worst = report.worst(end)[start:]
@@ -975,8 +1000,39 @@ def factory_health(
                 limit=n,
             )
         )
+    # Only the crests that cut off a machine in THIS factory: a crest is a world-wide finding
+    # and belongs to no machine set, but the ones behind these machines are why they are on
+    # rung (2), and naming a crest is what says where the pump goes.
+    standing = {m.instance for m in report.machines}
+    crests = [c for c in heads.crests if standing.intersection(c.consumers)]
+    if crests:
+        chunks.append(
+            "## where the fluid stops climbing\n"
+            + render.table(
+                ("fluid", "crest m", "head m", "short by", "machines here"),
+                [
+                    (
+                        st.game.item_name(c.fluid) if c.fluid else "-",
+                        f"{c.crest_m:.1f}",
+                        f"{c.head_m:.1f}",
+                        f"{c.short_m:.1f}",
+                        len(standing.intersection(c.consumers)),
+                    )
+                    for c in crests[start:end]
+                ],
+                total=len(crests),
+                offset=start,
+                limit=n,
+            )
+        )
 
     notes = []
+    if crests:
+        notes.append(
+            "a pump placed BEFORE the crest is the fix and a second one after it would add "
+            "nothing -- head lift does not stack pump to pump, only with the height a pump "
+            "already stands at"
+        )
     if supply:
         notes.append(
             "the far end is ONE hop: trace_upstream walks the rest of the chain. A run "
@@ -995,6 +1051,27 @@ def factory_health(
                 f"{loose} run(s) do arrive and the save joins their far end to nothing, so "
                 "the feeder is UNKNOWN there rather than absent -- a torn line or a build in "
                 "progress. Not the same finding as the row above"
+            )
+        # Counted per (machine, ingredient), not per row: one input reached by three runs is
+        # one diagnosis, and the rung is shared by all three.
+        rungs = Counter(
+            rung for _m, _item, rung in {(m.instance, f.item, f.rung) for m, f in supply if f.rung}
+        )
+        if rungs:
+            reached = [
+                f"{rungs[rung]} at ({i}) {rung}" for i, rung in enumerate(RUNGS, 1) if rungs[rung]
+            ]
+            notes.append(
+                f"{sum(rungs.values())} missing fluid(s) walked the plumbing manual's order -- "
+                "(1) connection, (2) head lift, (3) flow rate -- and each stops at the first "
+                "rung that fires, which is what the bracket in its cause names: "
+                + ", ".join(reached)
+                + (
+                    ". Reaching (3) means the head-lift model checked the climb and ruled its "
+                    "own rung out"
+                    if rungs[FLOW_RATE]
+                    else ""
+                )
             )
     if report.by_state["blocked"]:
         notes.append(
