@@ -225,7 +225,7 @@ def test_three_pumps_in_a_row_lift_twenty_metres_and_not_sixty(game):
     """The rule the whole model turns on. A max cannot become a sum by repetition."""
     assert _verdict(_pumped(19.0, count=3), game).crests == ()
     (crest,) = _verdict(_pumped(25.0, count=3), game).crests
-    assert crest.head_m == pytest.approx(22.0)  # the Mk1's ceiling, from mMaxPressure
+    assert crest.head_m == pytest.approx(22.801)  # the Mk1's MEASURED reach
 
 
 def _staged(consumer_z):
@@ -255,7 +255,25 @@ def test_a_pump_lifts_from_its_own_centre_so_the_height_under_it_stacks(game):
     """
     assert _verdict(_staged(59.0), game).crests == ()
     (crest,) = _verdict(_staged(65.0), game).crests
-    assert crest.head_m == pytest.approx(62.0)  # 40 m under it plus the Mk1's 22 m ceiling
+    assert crest.head_m == pytest.approx(62.801)  # 40 m under it plus the Mk1's measured reach
+
+
+def test_a_measured_pump_reaches_past_its_declared_ceiling_and_an_unmeasured_one_does_not(game):
+    """The dump says what the game DECLARES and stays untouched; the register says what the
+    game was seen to DO. A Mk1 stands 0.80 m above its own mMaxPressure, so a climb to 22.5 m
+    is a warning where the declaration alone would have made it a fault. The Mk2 is
+    unmeasured and is not given a factor borrowed from the Mk1: it stops at the 55 it
+    declares."""
+    assert game.buildings["Build_PipelinePump_C"].max_head_lift_m == 22.0
+    (warned,) = _verdict(_pumped(22.5), game).crests
+    assert warned.marginal  # inside the measured reach, outside the rating
+    (crest,) = _verdict(_pumped(23.0), game).crests
+    assert not crest.marginal
+    assert crest.head_m == pytest.approx(22.801)
+
+    assert game.buildings["Build_PipelinePumpMk2_C"].max_head_lift_m == 55.0
+    (mk2,) = _verdict(_pumped(56.0, cls="Build_PipelinePumpMk2_C"), game).crests
+    assert mk2.head_m == pytest.approx(55.0)
 
 
 def test_a_pump_no_wire_reaches_sets_the_head_past_it_to_its_own_centre(game):

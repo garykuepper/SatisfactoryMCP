@@ -125,6 +125,21 @@ MACHINE_HEAD_LIFT_M: float = 10.0
 #: the ceiling has been measured on the Water Extractor alone, so the other five inherit it.
 MACHINE_MAX_HEAD_LIFT_M: float = 11.020
 
+#: How high a pump's fluid actually stands above its centre, per BUILD class, where that has
+#: been measured. NOT a correction to the dump: ``mMaxPressure`` stays what the game DECLARES
+#: and keeps being what `list_buildings` reports, while this is what the game was observed to
+#: DO, and the two differ -- a Mk1 reaches 0.80 m past its own declared 22 m ceiling
+#: (`docs/fluids_model.md`).
+#:
+#: Per class because no single multiplier fits: the machine sits at x1.102 of its rating and
+#: the Mk1 at x1.140 of its. A class absent here is therefore NOT extrapolated -- the Mk2
+#: (50/55) is unmeasured and the model uses its declared 55, which the Mk1's overshoot
+#: suggests is an understatement, and understating a reach only ever reports a climb as
+#: harder than it is.
+PUMP_MEASURED_REACH_M: dict[str, float] = {
+    "Build_PipelinePump_C": 22.801,
+}
+
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
 #: The only number here with no data behind it, and DANGEROUS to read as capacity. Water is

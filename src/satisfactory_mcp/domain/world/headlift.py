@@ -19,6 +19,7 @@ from ...core.gamedata.constants import (
     BUFFER_TRANSMITS_ABOVE_FILL,
     MACHINE_HEAD_LIFT_M,
     MACHINE_MAX_HEAD_LIFT_M,
+    PUMP_MEASURED_REACH_M,
 )
 from ...core.gamedata.model import GameData
 from ...core.saveio import rows as saverows
@@ -124,7 +125,8 @@ class _Plumbing:
     fluid_of: dict = field(default_factory=dict)
     #: (u, v, the highest altitude between them, where that is).
     spans: list = field(default_factory=list)
-    #: (inlet, outlet, rated lift, the lift at which it fails, powered).
+    #: (inlet, outlet, rated lift, how high it reaches, powered). The reach is the measured
+    #: one where a class has been measured and the declared ``mMaxPressure`` where it has not.
     devices: list = field(default_factory=list)
     #: (node, actor, the head lift its class STATES, or 0.0 where it states none).
     sources: list = field(default_factory=list)
@@ -269,7 +271,7 @@ def _build(projection: dict, game: GameData, powered: set[str]) -> _Plumbing:
                             inlet,
                             outlet,
                             building.head_lift_m,
-                            building.max_head_lift_m,
+                            PUMP_MEASURED_REACH_M.get(cls, building.max_head_lift_m),
                             name in powered,
                         )
                     )
