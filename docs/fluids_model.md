@@ -245,7 +245,30 @@ Below the threshold the pipe above a buffer tracks only the buffer's own fill-pr
 head. Above it, incoming head passes through. A proportional blend is excluded arithmetically:
 at 89.6% a blend puts the waterline 11 m higher than observed.
 
-**Threshold: between 95.6% and 100.7% of capacity** `[MEASURED]`. Six points, and the excess
+**Threshold: between 99.903% and 100.604% of capacity** `[MEASURED]` — a 2.805 m³ window on a
+400 m³ buffer, from two adjacent saves 30 s apart in a throttled fill. That is 7× tighter than
+the previous bracket and 30× tighter than the one the code shipped with, and **it contains
+1.000**, so `BUFFER_TRANSMITS_ABOVE_FILL = 1.0` stops being a conservative choice and becomes a
+measurement.
+
+The gate must be spelled `stored_m3 / capacity >= 1.0`, never an equality or a band: the game
+overfills, and every transmitting reading in the world sits *above* 1.0 (highest 1.00999),
+while the highest non-transmitting reading ever measured is 0.99903. Twelve points, no
+misclassification.
+
+One save landed *between* the off and on clusters, at +4.063 m — the transition caught in
+flight, and three things prove it is not a blend. A piece 4 m below the claimed waterline
+**emptied** (92.2% settled across five points, 75.3% here) while the column above gained
+3.5 m³, which a standing column cannot do. The blend weight is flat at 7.0–7.5% across a
+3.3-point fill sweep and then jumps to 99.4%. And the stack was still filling, 9.0 → 11.3 →
+35.8 m³.
+
+The load-bearing control: the valve was opened to full **after** the switch had already fired.
+`mUserFlowLimit` reads 10 m³/min in all six pre-switch saves and 600 only in the last one, and
+the interval containing the switch ran at the same throttle as every off point. **A fill
+effect, not a flow effect.**
+
+Earlier, coarser reading, kept because it is the same experiment at lower resolution: Six points, and the excess
 over what the buffer's own head explains falls into two disjoint clusters with nothing
 between them — further evidence for a step rather than a blend:
 
