@@ -153,10 +153,39 @@ def test_the_measured_ceiling_is_eleven_so_a_climb_past_it_is_a_fault_not_a_warn
     assert not crest.marginal
 
 
-def test_the_verdict_names_the_pinned_ten_metres_it_rests_on(game):
-    """Every non-pump source in the world stands behind one number the dump does not carry."""
-    (crest,) = _verdict(_straight(15.0), game).crests
-    assert crest.assumed
+def test_a_verdict_says_whether_the_game_or_the_manual_is_behind_it(game):
+    """A Water Extractor states "Head Lift: 10 m" in its own description, so a crest behind
+    one rests on the game. A Converter states nothing and falls back to the pinned figure,
+    which is the only case left that has to declare itself."""
+    (stated,) = _verdict(_straight(15.0), game).crests
+    assert not stated.assumed
+
+    w = _straight(15.0)
+    w.actors[0] = "Build_Converter_C_1"
+    w.extractors = [{"cls": "Build_Converter_C", "instance": "x.Build_Converter_C_0"}]
+    (pinned,) = _verdict(w, game).crests
+    assert pinned.assumed
+    assert pinned.head_m == pytest.approx(11.020)
+
+
+def test_the_stated_rating_is_read_per_class_and_not_pinned_for_all_six(game):
+    """All six that state it say 10 m, so nothing moves today -- what moves is the claim."""
+    assert [
+        game.buildings[c].machine_head_lift_m
+        for c in (
+            "Build_WaterPump_C",
+            "Build_OilPump_C",
+            "Build_OilRefinery_C",
+            "Build_Packager_C",
+            "Build_Blender_C",
+            "Build_FrackingExtractor_C",
+        )
+    ] == [10.0] * 6
+    # The prose parse is checked against a field on the only two classes carrying both.
+    assert game.buildings["Build_PipelinePump_C"].machine_head_lift_m == 20.0
+    assert game.buildings["Build_PipelinePumpMk2_C"].machine_head_lift_m == 50.0
+    # And it is NOT head_lift_m, which is what makes a building a pump.
+    assert game.buildings["Build_OilRefinery_C"].head_lift_m == 0.0
 
 
 def test_a_hill_between_two_low_ends_stops_the_fluid(game):

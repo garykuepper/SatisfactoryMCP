@@ -174,6 +174,16 @@ def _fuels(raw: object) -> tuple[Fuel, ...]:
     return tuple(out)
 
 
+#: "Head Lift: 10 m" as the dump actually writes it. The space before the unit is U+202F, a
+#: NARROW NO-BREAK SPACE, so ``\s`` is required here and a literal " m" matches nothing.
+_HEAD_LIFT_RE = re.compile(r"Head\s*Lift:\s*([\d.]+)\s*m", re.IGNORECASE)
+
+
+def _stated_head_lift(desc: object) -> float:
+    m = _HEAD_LIFT_RE.search(str(desc or ""))
+    return float(m.group(1)) if m else 0.0
+
+
 def _build_buildings(dump: DocsDump, items: dict[str, Item]) -> dict[str, Building]:
     descriptors = {k: v for k, v in items.items() if v.native == "FGBuildingDescriptor"}
     out: dict[str, Building] = {}
@@ -236,6 +246,7 @@ def _build_buildings(dump: DocsDump, items: dict[str, Item]) -> dict[str, Buildi
                 storage_capacity_m3=_f(c.get("mStorageCapacity")),
                 head_lift_m=_f(c.get("mDesignPressure")),
                 max_head_lift_m=_f(c.get("mMaxPressure")),
+                machine_head_lift_m=_stated_head_lift(c.get("mDescription")),
                 footprint=extract_footprint(c.get("mClearanceData")),
             )
     return out
@@ -414,6 +425,17 @@ def _check(data: GameData, dump: DocsDump) -> None:
         m = re.search(r"(\d+)\s*m.{0,4}\s*of fluid per minute", desc, re.IGNORECASE)
         if b and m and abs(float(m.group(1)) - b.flow_m3_min) > 0.5:
             w.append(f"{b.cls}: computed {b.flow_m3_min} m3/min, description says {m.group(1)}")
+
+    # A pump states its head lift in prose as well as in mDesignPressure, so the prose parse
+    # that gives every other machine its rating is checked against a field on the two classes
+    # that carry both.
+    for c in dump.classes("FGBuildablePipelinePump"):
+        b = data.buildings.get(c.get("ClassName", ""))
+        if b and b.machine_head_lift_m and abs(b.machine_head_lift_m - b.head_lift_m) > 0.01:
+            w.append(
+                f"{b.cls}: mDesignPressure {b.head_lift_m} m but description says "
+                f"{b.machine_head_lift_m} m"
+            )
 
     # Extractor descriptions state the NORMAL-purity rate, which is what pins
     # PURITY_MULT. Check the ones that spell out a number.

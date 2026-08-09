@@ -191,6 +191,12 @@ class Building:
     #: rating, so the design figure is the one to plan against.
     head_lift_m: float = 0.0
     max_head_lift_m: float = 0.0
+    #: Metres of head this class states in ``mDescription`` prose, 0.0 where it states none.
+    #: Six non-pump classes say "Head Lift: 10 m" and the two pumps repeat their
+    #: ``mDesignPressure``. SEPARATE from ``head_lift_m`` on purpose: that field means "this
+    #: is a pipeline pump", and the pump picker and the logistics filter both read it that
+    #: way, so folding a refinery's 10 m into it would make a refinery a pump.
+    machine_head_lift_m: float = 0.0
 
     @property
     def max_clock(self) -> float:

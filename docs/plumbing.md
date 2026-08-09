@@ -33,18 +33,32 @@ head lift when full is its building height** — the manual's 8 m and 12 m are r
 exactly by the clearance box, which is what lets `BUFFER_BALANCE_HEAD_M` become a level in
 m³ instead of a second pair of hard-coded numbers.
 
-## §24.2 The one number that is not in game data
+## §24.2 The machine rating is in the prose, and the ceiling is measured
 
-**A normal machine's 10 m of head lift is absent from the dump, and so is its 12 m ceiling.**
-Head lift outside a pump lives in the `FluidBox` struct, and Docs.json exports every
-`mFluidBox` as the empty tuple `()`; `mDesignPressure` and `mMaxPressure` appear on
-`FGBuildablePipelinePump` and on nothing else in 2,868 classes. So a Water Extractor, a
-refinery output and a freight platform state no lift anywhere the project can read.
+**Superseded in both halves; `docs/fluids_model.md` is the authority and this section records
+what changed.** The original claim was that a normal machine's 10 m of head lift is absent
+from the dump and so is its 12 m ceiling. Half of that was a search that stopped too early
+and half of it was wrong.
 
-What the model should therefore do: pin 10 m and 12 m in
-`core/gamedata/constants.py` beside the other unreadable values, cite the manual, and — since
-one number now stands behind every non-pump source in the world — say so wherever a
-head-lift verdict depends on it, rather than presenting it as measured.
+**The 10 m rating IS in game data — as prose.** It is true that head lift outside a pump
+lives in the `FluidBox` struct and that Docs.json exports every `mFluidBox` as the empty
+tuple `()`, and true that `mDesignPressure`/`mMaxPressure` appear on `FGBuildablePipelinePump`
+and nowhere else in 2,868 classes. But six classes state the number in `mDescription`:
+`Build_WaterPump_C`, `Build_OilPump_C`, `Build_OilRefinery_C`, `Build_Packager_C`,
+`Build_Blender_C` and `Build_FrackingExtractor_C` each say `Head Lift: 10 m`. `normalize.py`
+already parsed that field for belt speeds and extraction rates, and now parses this one too,
+into `Building.machine_head_lift_m`. The two pump classes state theirs in prose as well, at
+20 m and 50 m, which makes the parse self-checking against `mDesignPressure`.
+
+The separator is **U+202F, a narrow no-break space** — a literal `" m"` matches nothing.
+
+**The 12 m ceiling was not merely unreadable, it was wrong.** Measured at 11.020 m ±0.26 on a
+Water Extractor; see `docs/fluids_model.md`. `MACHINE_MAX_HEAD_LIFT_M` now carries the
+measurement.
+
+So `MACHINE_HEAD_LIFT_M` survives only as the fallback for a class that states nothing, and a
+crest declares which of the two it rests on: `Crest.assumed` is now true only where the
+pinned figure was used, which on real data is nowhere.
 
 Gas is the other absence, and it is a rule rather than a number: gas has no head lift at all,
 pumps do not work on it and buffers cannot compensate its flow. A gas network must be

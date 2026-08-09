@@ -59,8 +59,9 @@ class Crest:
     head_m: float
     consumers: tuple[str, ...]
     marginal: bool
-    #: Whether the head behind this crest rests on the 10 m a machine is ASSUMED to give --
-    #: the one figure in this model that game data does not carry.
+    #: Whether the head behind this crest rests on the PINNED machine rating rather than on
+    #: one the source's own class states in ``mDescription``. Six classes state theirs, so
+    #: this is now false for most sources and means what it says.
     assumed: bool
     #: Where the crest stands, in world metres, or ``None`` when a device rather than a pipe
     #: is the obstacle.
@@ -125,6 +126,7 @@ class _Plumbing:
     spans: list = field(default_factory=list)
     #: (inlet, outlet, rated lift, the lift at which it fails, powered).
     devices: list = field(default_factory=list)
+    #: (node, actor, the head lift its class STATES, or 0.0 where it states none).
     sources: list = field(default_factory=list)
     sinks: list = field(default_factory=list)
     #: (node, base altitude, height of the fluid standing in it, whether it passes head on).
@@ -277,6 +279,7 @@ def _build(projection: dict, game: GameData, powered: set[str]) -> _Plumbing:
             continue
         if kind == _JUNCTION:
             continue
+        stated = getattr(game.buildings.get(cls), "machine_head_lift_m", 0.0)
         for role in held:
             spelled = roles[role] if 0 <= role < len(roles) else ""
             if spelled.startswith("Pipeline"):
@@ -287,18 +290,18 @@ def _build(projection: dict, game: GameData, powered: set[str]) -> _Plumbing:
             # Most local evidence first: the port's own typing outranks the building's
             # nature, so an extractor that also takes a fluid in is read a port at a time.
             if spelled.startswith("PipeOutputFactory"):
-                out.sources.append((port, name))
+                out.sources.append((port, name, stated))
             elif spelled.startswith("PipeInputFactory"):
                 out.sinks.append((port, name))
             elif cls in producers:
-                out.sources.append((port, name))
+                out.sources.append((port, name, stated))
             elif cls in consumers:
                 out.sinks.append((port, name))
             else:
                 # Nothing says which way it faces, so it is taken as both: a source that may
                 # not be one, and a consumer that may not be one.
                 out.ambiguous += 1
-                out.sources.append((port, name))
+                out.sources.append((port, name, stated))
                 out.sinks.append((port, name))
     return out
 
@@ -338,7 +341,7 @@ def _adjacency(plumbing: _Plumbing):
 def _fed(plumbing: _Plumbing) -> set:
     """Every node fluid arrives at with heights ignored: rung (1) of the manual's ladder."""
     spans, devices = _adjacency(plumbing)
-    seen = {node for node, _actor in plumbing.sources} | {n for n, *_rest in plumbing.tanks}
+    seen = {node for node, *_rest in plumbing.sources} | {n for n, *_rest in plumbing.tanks}
     stack = list(seen)
     while stack:
         node = stack.pop()
@@ -380,8 +383,11 @@ def _spread(plumbing: _Plumbing, machine_lift: float, ceiling: bool) -> tuple[di
         gated[node] = from_buffer
         return True
 
-    for node, _actor in plumbing.sources:
-        raise_to(node, z.get(node, 0.0) + machine_lift, True, False)
+    for node, _actor, stated in plumbing.sources:
+        # The class's own description outranks the pinned figure. The ceiling is measured
+        # on one class and inherited, so it is never taken below a stated rating.
+        lift = max(stated, machine_lift) if ceiling else (stated or machine_lift)
+        raise_to(node, z.get(node, 0.0) + lift, not stated, False)
     for node, base, column, transmits in plumbing.tanks:
         raise_to(node, base + column, False, not transmits)
 
