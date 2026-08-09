@@ -98,14 +98,18 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 #: the FICSIT Plumbing Manual; nothing in the dump carries it. See `docs/plumbing.md`.
 BUFFER_BALANCE_HEAD_M: float = 1.5
 
-#: Head lift any machine that is not a pipeline pump gives, in metres, and the height at
-#: which its flow drops to zero. [WIKI]: the FICSIT Plumbing Manual, and the ONLY figure the
-#: head-lift model assumes -- head lift outside a pump lives in the ``FluidBox`` struct,
-#: which Docs.json exports empty, so ``mDesignPressure`` exists on the pump class and on no
-#: other of 2,868. The gap is NOT a tolerance rate: the pumps' own 22/20 and 55/50 are 10%,
-#: which is why every ceiling is a per-class number. See `docs/plumbing.md` §24.2.
+#: Head lift any machine that is not a pipeline pump gives, in metres. [WIKI]: the FICSIT
+#: Plumbing Manual -- head lift outside a pump lives in the ``FluidBox`` struct, which
+#: Docs.json exports empty, so ``mDesignPressure`` exists on the pump class and on no other
+#: of 2,868. See `docs/plumbing.md` §24.2.
 MACHINE_HEAD_LIFT_M: float = 10.0
-MACHINE_MAX_HEAD_LIFT_M: float = 12.0
+
+#: The height at which that flow drops to zero. [MEASURED], not read and not the rating times
+#: a tolerance: a capped dead-end column off a Water Extractor settled 11.020 m +-0.26 above
+#: its pipe connection (`docs/fluids_model.md`). "12 m", which this was, appears in none of
+#: the dump's 2,868 classes. SCOPE: the dump states the same 10 m rating for six classes and
+#: the ceiling has been measured on the Water Extractor alone, so the other five inherit it.
+MACHINE_MAX_HEAD_LIFT_M: float = 11.020
 
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:

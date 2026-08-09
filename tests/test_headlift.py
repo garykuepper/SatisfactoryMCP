@@ -133,16 +133,24 @@ def test_a_consumer_above_the_tolerance_ceiling_is_a_crest(game):
     (crest,) = report.crests
     assert not crest.marginal
     assert crest.crest_m == pytest.approx(15.0)
-    assert crest.head_m == pytest.approx(12.0)
-    assert crest.short_m == pytest.approx(3.0)
+    assert crest.head_m == pytest.approx(11.020)
+    assert crest.short_m == pytest.approx(3.98)
     assert crest.consumers == ("Build_GeneratorCoal_C_2",)
     assert crest.fluid == WATER
 
 
 def test_a_consumer_between_the_rating_and_the_ceiling_is_marginal(game):
-    (crest,) = _verdict(_straight(11.0), game).crests
+    (crest,) = _verdict(_straight(10.5), game).crests
     assert crest.marginal
     assert crest.consumers == ("Build_GeneratorCoal_C_2",)
+
+
+def test_the_measured_ceiling_is_eleven_so_a_climb_past_it_is_a_fault_not_a_warning(game):
+    """The correction that moves a verdict: 11.5 m was marginal-but-reachable at a 12 m
+    ceiling, and the game does not deliver it. Measured at 11.020 +-0.26, so 11.5 is outside
+    the bar rather than inside it."""
+    (crest,) = _verdict(_straight(11.5), game).crests
+    assert not crest.marginal
 
 
 def test_the_verdict_names_the_pinned_ten_metres_it_rests_on(game):
@@ -288,7 +296,7 @@ def test_a_t_junction_is_a_body_and_not_a_machine_port(game):
     assert report.ambiguous_ports == 0
     assert report.consumers == 1
     (crest,) = report.crests
-    assert crest.head_m == pytest.approx(12.0)
+    assert crest.head_m == pytest.approx(11.020)
 
 
 # --------------------------------------------------------------- what is refused
