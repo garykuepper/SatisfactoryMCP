@@ -77,6 +77,9 @@ class PhysicalGraph:
     undirected: int = 0
     #: Runs joined to no node at all: conduit floating in the world, both ends open.
     orphan_runs: int = 0
+    #: Every conduit actor, to the link its run contracted to. What turns a walk over the
+    #: raw graph back into the runs it crossed. An orphan run's pieces are absent.
+    run_of: dict[str, Link] = field(default_factory=dict)
 
     def feeds(self, actor: str) -> list[Link]:
         """Every link that delivers to ``actor``, undirected runs included."""
@@ -187,6 +190,10 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
         if seg.actor_index >= 0
     }
 
+    def register(link: Link, on: list[int]) -> None:
+        for i in on:
+            out.run_of[actors[i]] = link
+
     for root, on in members.items():
         pieces = len(on)
         medium = ports.PIPE if _class_of(actors[root]) in pipe_classes else ports.CONVEYOR
@@ -218,6 +225,7 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             out.links.append(link)
             out.dangling.append(link)
             (out.inbound if arriving else out.outbound)[actors[node]].append(link)
+            register(link, on)
             continue
         # A run with three or more nodes on it would mean a conduit piece with three ports,
         # which the game has none of; taking the first two would hide the malformed record.
@@ -254,6 +262,7 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
         out.links.append(link)
         out.outbound[link.source].append(link)
         out.inbound[actors[dst]].append(link)
+        register(link, on)
         if basis == UNKNOWN:
             out.undirected += 1
             # No direction means either end may be the feeder, so the link answers from

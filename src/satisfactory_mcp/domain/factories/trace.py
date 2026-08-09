@@ -23,12 +23,13 @@ A trap worth recording: asking whether BOTH ends name a direction says 0% of 11,
 are orientable, which is true and useless. The far end is nearly always a belt, and a belt
 genuinely has no direction as an object -- only the machine end does.
 
-Logistics is traversed, not reported
-------------------------------------
+Logistics is traversed, then named
+----------------------------------
 A trace from the generators touches 331 nodes at depth 72, almost all of it conveyor and
 pipe segments. A path through that is unreadable, so the walk passes THROUGH logistics and
-reports only machines, which is the same thing `graph.query` does to find a factory's
-boundary.
+reports only machines in its table, which is the same thing `graph.query` does to find a
+factory's boundary. What it also keeps is which RUNS those nodes belonged to
+(`..world.logistics`), so the route can be named without the table growing 300 rows.
 """
 
 from __future__ import annotations
@@ -77,6 +78,9 @@ class Trace:
     #: Traversed BOTH ways, which can only over-report -- never miss a real feeder.
     ambiguous: int = 0
     truncated: bool = False
+    #: The conduit runs the walk crossed, contracted out of the belt and pipe nodes it
+    #: passed through. Empty when no physical graph was supplied.
+    crossed: list = field(default_factory=list)
 
     def by_class(self) -> dict[str, list[Reached]]:
         out: dict[str, list[Reached]] = {}
@@ -166,6 +170,16 @@ def trace(state, game: GameData, seeds: list[str], direction: str = "up") -> Tra
 
     out.visited = len(seen)
     out.deepest = max(seen.values(), default=0)
+    # The same nodes, contracted rather than re-walked: the traversal above is untouched and
+    # this only keeps what it already crossed. Deduplicated by identity, because one run is
+    # dozens of nodes.
+    run_of = getattr(getattr(state, "physical", None), "run_of", None) or {}
+    kept: dict[int, object] = {}
+    for node in seen:
+        link = run_of.get(node)
+        if link is not None:
+            kept.setdefault(id(link), link)
+    out.crossed = list(kept.values())
     for node, hops in seen.items():
         if node in seeds:
             continue

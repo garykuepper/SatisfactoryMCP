@@ -111,6 +111,38 @@ def _cand_row(c, store, labelled: set[str]) -> tuple:
     )
 
 
+#: Run ids named in a trace's route note. The reference world's deepest walk crosses 166
+#: runs, so this is a sample to follow and the counts beside it are the whole answer.
+VIA_NAMED = 6
+
+
+def _via(crossed: list) -> str:
+    """The route a trace took, as runs rather than as the hundreds of nodes they contract.
+
+    Named in the order the walk met them, so the sample is the near end of the chain rather
+    than six consecutive pipes of whichever network sorts first.
+    """
+    if not crossed:
+        return ""
+    belts = sum(1 for link in crossed if link.medium == ports.CONVEYOR)
+    idents = [link.ident for link in crossed if link.ident]
+    counted = " and ".join(
+        f"{n} {word} run(s)" for n, word in ((belts, "belt"), (len(crossed) - belts, "pipe")) if n
+    )
+    out = f"the route ran through {counted}, {sum(link.pieces for link in crossed)} pieces in all"
+    if idents:
+        rest = len(idents) - VIA_NAMED
+        out += (
+            "; it crossed "
+            + ", ".join(idents[:VIA_NAMED])
+            + (f" and {rest} more" if rest > 0 else "")
+            + ", which search_conduits and show_on_map both take"
+        )
+    if belts:
+        out += ". A belt run carries no id in this projection; search_conduits near=<x,y> reaches one by position"
+    return out
+
+
 def _feed_row(machine, feed) -> tuple:
     """One starved input and the run that should be bringing it.
 
@@ -1251,8 +1283,9 @@ def trace_upstream(
     one is not.
 
     Belts and pipes are walked THROUGH and left out of the table: a trace from the
-    generators touches 331 nodes at depth 72, nearly all of it conveyor. The runs
-    themselves are `search_conduits`' subject.
+    generators touches 331 nodes at depth 72, nearly all of it conveyor. What the route
+    crossed is named instead in a note -- how many runs of each medium, and the ids
+    `search_conduits` takes for the ones that have them.
     """
     g = game()
     try:
@@ -1307,11 +1340,17 @@ def trace_upstream(
                 ", ".join(r.instance for r in group[:3]),
             )
         )
+    via = _via(result.crossed)
     notes = [
         (
-            f"walked {result.visited} node(s) to depth {result.deepest}; belts and pipes are "
-            "traversed but not listed, because a path through them is unreadable -- "
-            "search_conduits lists the runs themselves, with endpoints and lengths"
+            f"walked {result.visited} node(s) to depth {result.deepest}; the belt and pipe "
+            "nodes are traversed and never listed one by one, because a path through them "
+            "is unreadable -- "
+            + (
+                "the route note below names the RUNS they contract to instead"
+                if via
+                else "search_conduits lists the runs themselves, with endpoints and lengths"
+            )
         ),
         (
             "direction comes from each edge's connector role, and from the machine's own "
@@ -1325,6 +1364,8 @@ def trace_upstream(
             )
         ),
     ]
+    if via:
+        notes.append(via)
     if result.truncated:
         notes.append(
             "the walk stopped at its hop limit, so this is a FLOOR: machines further along "

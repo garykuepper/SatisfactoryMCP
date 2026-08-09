@@ -139,6 +139,15 @@ def test_a_pipe_run_is_followable_and_a_belt_run_is_not(projection, game) -> Non
     assert len(rows) == len(pipes), "two runs sharing a row would send both to one piece"
 
 
+def test_every_contracted_piece_points_back_at_its_run(projection, game) -> None:
+    """``run_of`` is what turns a walk over the raw graph back into the runs it crossed."""
+    graph = build_physical_graph(projection, game)
+    assert len(graph.run_of) == 3590
+    assert {id(link) for link in graph.run_of.values()} == {id(link) for link in graph.links}
+    pieces = sum(link.pieces for link in graph.links)
+    assert pieces == len(graph.run_of), "a piece counted into a run but not indexed by it"
+
+
 @pytest.mark.integration
 def test_the_live_world_contracts_too(live) -> None:
     """The reference fixture is one save; the shape has to hold on whatever is newest."""
