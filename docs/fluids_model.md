@@ -22,10 +22,15 @@ The propagated quantity is therefore a reachable altitude, and the rule at each 
 
 ```
 source machine at connector z   ->  z + machine_lift
+into a POWERED pump's inlet     ->  reached iff fluid ARRIVES there, at any altitude
 through a pump at its centre    ->  max(incoming, pump_centre + pump_lift)
 along a pipe                    ->  unchanged
 consumer at z                   ->  reachable iff incoming >= z
 ```
+
+The second line is the one exception to the altitude test, and it is measured rather than
+assumed — see *A powered pump draws* below. Everything else keeps the test: a consumer, a
+plain pipe crest and a buffer all answer "is the incoming altitude at least mine?".
 
 **A pump is a maximum, never a sum, and this is measured rather than argued** `[MEASURED]`.
 In `HL_PUMP` a Mk1 pump stands above a Water Extractor on one column. The two rules predict
@@ -440,25 +445,99 @@ about fill.
    stays what the game declares; `PUMP_MEASURED_REACH_M` carries what a class was measured to
    do, keyed by class because no multiplier fits both the machine's ×1.102 and the Mk1's
    ×1.140. The Mk2 is not in it.
+6. ~~**A pump waits to be reached.**~~ **FIXED, and it was the model's last unsafe direction**
+   `[MEASURED]`. A powered pump's inlet is settled by rung (1) rather than by an altitude, so
+   the model no longer declares twenty producing generators cut off because the surface behind
+   their pump sits below its inlet. Consumers, plain pipe crests and buffers keep the altitude
+   test unchanged — `HL_MACHINE`, `HL_PUMP` and `HL_FINE` all measure dead-end columns that
+   stop at a definite height, and the buffer step is measured too. The scope is exactly one
+   node type, and *A powered pump draws* argues why it is spelled ungated.
+
+---
+
+## A powered pump draws `[MEASURED]`
+
+**A powered pump does not wait to be reached. It draws.** Its inlet is settled by rung (1) —
+does fluid arrive there — and not by the altitude test. Its outlet then gets
+`max(incoming, pump_centre + reach)` exactly as before.
+
+The rig for this is the owner's own fuel line, network 99, `Desc_LiquidFuel_C`, whose
+102-member membership is byte-identical across 48 saves and 88 hours of play. The model used
+to declare its twenty Fuel Generators cut off; they read uptime 1.000000 in all **960**
+readings (48 saves × 20 generators), with **zero variance** against a buffer fill spanning
+14.6%–94.8%. A verdict that never moves while its input sweeps eight tenths of its range is
+not measuring the thing it names.
+
+Three strands make it conclusive, and the third is the one that closes the argument.
+
+* **The suction pipe fills above the surface it draws from.** In **31 of the 48 saves the
+  entire climbing pipe stands above the buffer's fluid surface**, and it is 18–65% full
+  anyway. Worst case: pipe bottom **3.58 m above** the surface, pipe 57.1% full, all twenty
+  generators at 100%. The excess over the surface reaches **+5.86 m**. A column standing where
+  a hydrostatic model says there is nothing to hold it up is being pulled, not pushed.
+* **Nothing is coasting on stock.** Each save's closed 300 s window means 2,000 m³ was burned
+  in the prior five minutes, while the **entire line** — both buffers, twenty internal
+  generator boxes and all 866 m³ of pipe — holds only **1,548–1,627 m³**. Every single save
+  refutes "it was running on what was already in the pipe", without assuming continuity
+  between saves.
+* **There is no other source, ever.** Seven Packager output ports at −12.899 m in all 48
+  saves, and nothing else. The upper buffer is fed rather than feeding: it takes from the
+  riser and hands on to the manifold, and its own fill never exceeds 18.75%.
+
+**The competing explanation was killed rather than ignored.** Those seven Packagers run
+Unpackage Fuel and each states `machine_head_lift_m` **10 m**, so from −12.899 m they reach
+−1.88 m and would clear the pump's inlet at −8.141 m unaided. They do not, because the buffer
+stands between them and it destroys that head — which is exactly what `HL_BUFFER_A` shows
+directly: at 18.8% fill the extractor's whole output went into the tank and none of it up the
+column. **That is what makes the buffer gate load-bearing here rather than incidental**: with
+the gate off, the Packagers alone explain the line and the pump proves nothing.
+
+### The spelling chosen, and the one that was not
+
+Two rules both fit every reading:
+
+* **(a) inlets are ungated** — an inlet is fed if and only if fluid arrives at it.
+* **(b) suction is bounded by the pump's own reach** — fed iff `incoming >= pump_centre −
+  reach`.
+
+The data cannot separate them. The Mk2 here draws from at least **7.34 m** below its inlet
+against a declared 55 m of reach, and 7.34 ≪ 55.56 sits deep inside both. **No save the owner
+has can separate them either**: network 99 is the only network in his world where a fluid
+surface stands below a pump inlet at all.
+
+**(a) is what ships.** The tie-breaker is which error the project can live with. (a) can never
+invent a fault — it only ever declares more of the line reachable — but it could miss a real
+one, on a pump lifting from an absurd depth that nobody has yet built. (b) could invent a
+fault, in a case nobody has ever observed, on a bound nobody has measured: `mMaxPressure` was
+measured as a **discharge** height above a pump's centre, and reusing it as a suction depth
+below the same centre is a second claim with no evidence behind it. This project has taken the
+same side twice already — gas networks are excluded rather than modelled with a zero, and a
+part-full buffer's crest is reported rather than called broken — and the reason is the same
+each time: **a model that cries wolf on a working factory is wrong.** (b) stays named below as
+the open alternative, and the experiment that would settle it is written down with it.
 
 ---
 
 ## The buffer barrier is real, and "cut off" is not what it means `[MEASURED]`
 
-Switching the gate on turned a world-wide silence into **33 crests over 31 saves naming 584
-machines — of which 580 were producing at the moment of their own save.** Nearly all of it is
-one line, and it is worth stating in full because it is the only place the rigs and the
-owner's base disagree.
+Switching the gate on turned a world-wide silence into crests naming the owner's fuel line in
+every save that holds it. Nearly all of the model's output on this machine is that one line,
+and it is worth stating in full because it is the only place the rigs and the owner's base
+disagree.
 
-A 400 m³ Fluid Buffer sits **in series** — confirmed by walking its couplings, not inferred —
-between seven Packagers and the Mk2 pump that lifts fuel to twenty Fuel Generators at
-+17.10 m. Its two connectors are both at −14.90 m, 1.75 m above its base at −16.649 m. Its own
-surface therefore tops out at −8.649 m even when completely full, and the pump's inlet stands
-at −8.14 m. **The buffer can never reach that pump on its own head, at any fill.** Across 31
-saves its fill ranges 14.6%–94.8% and the twenty generators read **100% uptime in every one**.
+**The line is gated twice, and only the second gate still binds.**
 
-Reading the save's own `mFluidBox` on that run settles which half is wrong, and it is not the
-gate:
+**The lower gate, cleared by the pump rule.** A 400 m³ Fluid Buffer sits **in series** —
+confirmed by walking its couplings, not inferred — between seven Packagers and the Mk2 pump
+that lifts fuel to twenty Fuel Generators. Its two connectors are both at −14.90 m, 1.75 m
+above its base at −16.649 m, so its surface tops out at −8.649 m when completely full while
+the pump's inlet stands at −8.141 m: **at true capacity the gap is 0.508 m, and across the 48
+saves it runs 0.93 m to 7.34 m.** The often-quoted **0.93 m is the minimum over the whole
+history**, at the highest fill ever recorded (94.8%) — not a typical figure and not the
+barrier's size. The pump draws over all of it, and this gate no longer produces a crest.
+
+Reading the save's own `mFluidBox` on that run is what showed the head really does stop at the
+buffer, which is why the pump rule and not the buffer rule had to give:
 
 | piece | z range | capacity | held | full |
 |---|---|---|---|---|
@@ -466,21 +545,24 @@ gate:
 | valve → rise | −12.77 → −11.90 | 23.06 | 22.50 | 98% |
 | **rise → pump inlet** | **−11.90 → −8.14** | **9.61** | **6.03** | **63%** |
 
-The pipe climbing to the pump is **62.8% full and its waterline interpolates to −9.54 m**,
-against a buffer surface of −9.07 m and a pump inlet of −8.14 m. The fluid stands at the
-buffer's level, exactly where the gate predicts, **and the generators run anyway**.
+**The upper gate, which now binds.** A **second** 400 m³ Fluid Buffer sits in series again, at
+base +15.351 m, between the riser and the generators' flat manifold at +17.100 m. Its
+connectors are 1.749 m up its own side, so its surface does not reach **its own outlet** until
+it is **21.9% full** — and across the 48 saves it runs **1.60%–18.75%**, never once above that
+line. The model therefore says nothing leaves it, and the shortfall is **0.249 m at the
+fullest and 1.621 m at the emptiest**. The twenty generators run at 100% through all of it.
 
-So the barrier reproduces on the owner's base and the consequence does not. Whatever carries
-fuel over that 0.93 m, a fill-derived altitude does not see it, and calling those generators
-cut off would be false 31 times over. Hence `Crest.buffer_gated` and `HeadLift.faults`: a
-crest whose head is a part-full buffer's surface is reported as *this line has no margin above
-its buffer* and is never counted as a fault.
+So the barrier reproduces on the owner's base and the consequence does not, at both buffers.
+Whatever carries fuel over that gap, a fill-derived altitude does not see it, and calling
+those generators cut off would be false 48 times over. Hence `Crest.buffer_gated` and
+`HeadLift.faults`: a crest whose head is a part-full buffer's surface is reported as *this line
+has no margin above its buffer* and is never counted as a fault.
 
-**The cross-check is clean in both directions.** Of the 524 machines named across the 71
-non-rotating saves, 520 were producing. The four remaining are the same Packager in four
-saves — and it is not starved either: its input holds a **full** 50 m³ fuel box plus 100
-canisters while its output sits at 100 Packaged Fuel. It is output-blocked. **Not one of the
-524 machines the model names is short of a fluid.**
+**The cross-check is clean in both directions.** Of the 965 machine-readings named across the
+91 saves, 960 are those generators and all of them were producing. The five remaining are the
+same Packager in five saves — and it is not starved either: its input holds a **full** 50 m³
+fuel box plus 100 canisters while its output sits at 100 Packaged Fuel. It is output-blocked.
+**Not one machine the model names is short of a fluid.**
 
 ---
 
@@ -499,9 +581,29 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 
 ## Open
 
-- **What carries fuel over the 0.93 m.** The one open question the calibration created, and
-  the most valuable thing to measure next. The barrier reproduces and the line works anyway;
-  until that is explained, a buffer-gated crest stays a note rather than a fault.
+- ~~**What carries fuel over the 0.93 m.**~~ **ANSWERED for the pump: the pump does.** It
+  draws, and the gap it draws over runs 0.93–7.34 m rather than 0.93. See *A powered pump
+  draws*.
+- **What carries fuel out of a buffer that cannot clear its own connectors.** The question the
+  pump answer inherits, one buffer further up and 0.249 m smaller. A 400 m³ buffer's
+  connectors stand 1.749 m up its side, so under **21.9%** fill its own surface is below its
+  own outlet and the model says nothing leaves it — while twenty generators downstream of
+  exactly that buffer run at 100% in all 48 saves at fills of 1.60%–18.75%. Either a buffer
+  always delivers **at** its connector height whatever its fill (making its head
+  `max(base + height × fill, connector_z)`), or something else does. **Do not guess it**: the
+  rig is a buffer drained to a few percent with a flat capped pipe run off its outlet and a
+  consumer on the end, saved twice. Until then a buffer-gated crest stays a note rather than a
+  fault, which is the same posture the pump question was held in and for the same reason.
+- **Is a pump's suction bounded, and by what?** The alternative spelling the fuel line could
+  not separate: **(b)** an inlet is fed iff `incoming >= pump_centre − reach`, against the
+  shipped **(a)** ungated. Nothing in the owner's world can decide it, so it needs a built rig.
+  **The settling experiment:** drain the 400 m³ buffer to ≈19% (surface −15.5 m) and take two
+  saves with the Mk1 pump — measured reach 22.8–23.0 m — moved up the existing `HL_BUFFER`
+  column, once at **≈+6 m** (21.5 m above the surface, inside its reach) and once at
+  **≈+10 m** (25.5 m above, outside it), each with dry capped pipe above the pump. **Both
+  columns filling means inlets are ungated and (a) is right; only the low one filling means
+  suction is bounded and (b) is.** One rig, two saves, and it is the only question on this page
+  whose answer could turn a silence into a fault.
 - **The ten refineries on a network no source reaches still read `unmonitored`.** They keep no
   window and a pipe *does* arrive at each, so the never-run gate above declines them by
   construction — it asks the conduit graph and not the head-lift model, which is the only thing
@@ -530,32 +632,49 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
   B off at 89.6%, C and D both on at 100.7%. The gate sits at capacity, inside the bracket
   and above the fill measured off; 22 buffer readings across the saves fall in the band and
   are counted rather than silently decided.
-- **The Mk2 pump (50/55) is untested**, as are non-extractor machines. It is deliberately
-  absent from `PUMP_MEASURED_REACH_M` and the model uses its declared 55.
+- **The Mk2 pump is measured at 55.564 m but is deliberately absent from
+  `PUMP_MEASURED_REACH_M`**, so the model uses its declared 55. Non-extractor machines are
+  still untested.
 - **No single tolerance multiplier fits.** The machine sits at ×1.102 of its rating, the Mk1
   pump at ×1.140 of its — and the pump passes its own stated ceiling. Ceilings are per-class
   measurements or they are nothing.
 
 ## The calibration, before and after
 
-Every `.sav` on the machine, 78 of 79 parsed (`ServerManager_V2.sav` is not a save). Compared
-over the **71 that did not rotate mid-sweep** — the game was running and seven autosaves moved
-between the two passes, which is the only difference in the totals.
+Every `.sav` on the machine, **91 of 92 parsed** (`ServerManager_V2.sav` is not a save), and
+compared over the 91 that did not rotate between the two passes — so the columns are the same
+worlds actor for actor rather than two sweeps of a moving target.
 
 | | before | after |
 |---|---|---|
-| fluid networks | 899 | 899 |
-| consumer ports | 4,344 | 4,344 |
+| fluid networks | 1,379 | 1,379 |
+| consumer ports | 6,168 | 6,168 |
 | unfed ports | 80 | 80 |
 | ambiguous ports | 0 | 0 |
 | marginal verdicts | 0 | 0 |
 | **crests called faults** | **0** | **0** |
-| lines running on a buffer's own head | – | 30, naming 524 machines |
-| buffers inside the undecided band | – | 22 |
+| consumers the model calls cut off | 965 | 965 |
+| …named by a crest | 804 | **965** |
+| …**named by nothing at all** | **161** | **0** |
+| crests, all buffer-gated | 44 | 53 |
+| distinct places a crest stands | 4 | **2** |
+| buffers inside the undecided band | 1 | 1 |
 
-**The zero survived every tightening**, which is the result worth having: the ceiling dropped
-to 11.020, the buffer gained a barrier and the Mk1 gained 0.80 m of measured reach, and the
-model still calls nothing on this machine a head-lift fault.
+**The fault count is still zero and the cut-off count did not move**, and both halves of that
+matter. The pump rule frees no machine in this world, because a second barrier stands behind
+the first; what it does is move the diagnosis onto the barrier that actually binds. Before, the
+crest wandered with the lower buffer's fill — 16 saves blamed the pump inlet at −8.14 m, 16 a
+pipe crest at −12.77 m, 8 another at −11.90 m. After, **48 of the 53 crests are the same place
+in every save**: the upper buffer's own connectors at +17.100 m, naming the same twenty
+generators. One barrier, one location, one number.
+
+**161 readings were named by nothing before.** They were cut off by a buffer whose surface
+could not clear its own connectors, and `_walls` could not see that as an obstacle because the
+incoming head cleared the geometry — so twenty generators in eight saves, and one Packager in
+the committed fixture, were dropped in silence. A buffer now enters the reachable set at its
+own surface even when that surface is below its connectors, which changes no verdict and makes
+the barrier nameable. Without that, the pump rule alone would have taken the silent count from
+161 to **961**.
 
 ---
 

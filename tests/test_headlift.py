@@ -285,6 +285,43 @@ def test_a_pump_no_wire_reaches_sets_the_head_past_it_to_its_own_centre(game):
     assert not crest.assumed
 
 
+def _uphill_pump(consumer_z, pump_z=20.0, powered=True):
+    """An extractor at sea level, a pump standing far above anything its head can reach."""
+    w = _World()
+    source = w.actor("Build_WaterPump_C")
+    pump = w.actor("Build_PipelinePump_C")
+    burner = w.actor("Build_GeneratorCoal_C")
+    w.produces("Build_WaterPump_C")
+    w.consumes("Build_GeneratorCoal_C")
+    if powered:
+        w.wire(pump)
+    w.pipe(source, "FGPipeConnectionFactory", pump, "Connection0", [(0.0, 0.0), (5.0, pump_z)])
+    w.pipe(
+        pump, "Connection1", burner, "FGPipeConnectionFactory", [(5.0, pump_z), (10.0, consumer_z)]
+    )
+    return w
+
+
+def test_a_powered_pump_draws_from_below_its_own_inlet(game):
+    """The rule the owner's fuel line forced: a powered pump does not wait to be reached.
+
+    The extractor's 11.02 m stops 9 m short of this pump's inlet and the pump lifts anyway,
+    from its own centre, because fluid ARRIVING is what settles an inlet -- rung (1) -- and
+    an altitude is what settles everything else. Measured on network 99, where the whole
+    climbing pipe stands above the buffer's surface and is 18-65% full in 31 of 48 saves.
+    """
+    assert _verdict(_uphill_pump(39.0), game).crests == ()
+    (crest,) = _verdict(_uphill_pump(43.0), game).crests
+    assert crest.head_m == pytest.approx(42.801)  # 20 m centre plus the Mk1's measured reach
+
+
+def test_an_unpowered_pump_draws_nothing_and_the_climb_to_it_still_binds(game):
+    """Suction is the powered pump's, so cutting the wire puts the crest back on the pipe."""
+    (crest,) = _verdict(_uphill_pump(39.0, powered=False), game).crests
+    assert crest.crest_m == pytest.approx(20.0)
+    assert crest.head_m == pytest.approx(11.020)
+
+
 def test_a_valve_passes_head_lift_and_never_counts_as_unpowered(game):
     """A Valve is the same native class as a pump and lifts zero, so a wire is nothing to it."""
     world = _pumped(8.0, cls="Build_Valve_C", powered=False)
@@ -299,7 +336,7 @@ def test_the_mark_two_pump_is_read_from_game_data_and_not_from_its_name(game):
 # --------------------------------------------------------------- bodies and buffers
 
 
-def _tanked(stored_m3, consumer_z, cls="Build_IndustrialTank_C"):
+def _tanked(stored_m3, consumer_z, cls="Build_IndustrialTank_C", connector_z=0.0):
     w = _World()
     tank = w.actor(cls)
     burner = w.actor("Build_GeneratorCoal_C")
@@ -314,7 +351,11 @@ def _tanked(stored_m3, consumer_z, cls="Build_IndustrialTank_C"):
         }
     )
     w.pipe(
-        tank, "ConnectionAny0", burner, "FGPipeConnectionFactory", [(0.0, 0.0), (5.0, consumer_z)]
+        tank,
+        "ConnectionAny0",
+        burner,
+        "FGPipeConnectionFactory",
+        [(0.0, connector_z), (5.0, consumer_z)],
     )
     return w
 
@@ -368,6 +409,20 @@ def test_a_buffer_inside_the_measured_bracket_is_counted_rather_than_decided_qui
     (crest,) = report.crests
     assert crest.head_m == pytest.approx(11.995)
     assert _verdict(_through_tank(2280.0, 25.0), game).undecided_buffers == 0
+
+
+def test_a_buffer_below_its_own_connectors_is_named_rather_than_dropped(game):
+    """A buffer's connectors stand 1.75 m up its side, so under 14.6% of an Industrial one
+    its own surface does not reach them. The barrier is real either way; what is not
+    acceptable is answering with nothing, which is what dropping the node from the reachable
+    set did -- 161 consumers across nine of the owner's saves stood behind one and appeared
+    in no crest at all.
+    """
+    (crest,) = _verdict(_tanked(240.0, 11.0, connector_z=1.75), game).crests
+    assert crest.buffer_gated
+    assert crest.head_m == pytest.approx(1.2)  # a tenth of the 12 m column, below the 1.75
+    assert crest.crest_m == pytest.approx(11.0)
+    assert crest.consumers == ("Build_GeneratorCoal_C_2",)
 
 
 def test_a_t_junction_is_a_body_and_not_a_machine_port(game):
@@ -474,25 +529,27 @@ def test_the_owners_base_reports_no_head_lift_problem(projection, game):
     assert report.gas_networks == 0
 
 
-def test_the_fuel_line_runs_on_its_buffer_and_that_is_reported_as_no_fault(projection, game):
+def test_the_fuel_line_runs_on_its_second_buffer_and_that_is_reported_as_no_fault(
+    projection, game
+):
     """The one thing the buffer gate finds here, and why it is not called broken.
 
-    A 400 m3 buffer sits in series between seven Packagers and the Mk2 pump that lifts fuel
-    to twenty generators, and the pump's inlet stands above the buffer's own surface. The
-    save agrees the head stops there -- the pipe climbing to the pump is 63% full and its
-    waterline interpolates to the buffer's level, not the pump's. The twenty generators are
-    nonetheless producing at 100% uptime in this save and in thirty others, so the honest
-    reading is that the line has no margin above its buffer rather than that it is cut off.
+    The line is gated twice. A 400 m3 buffer sits in series between seven Packagers and the
+    Mk2 pump, and the pump's inlet stands above its surface -- but a powered pump draws, so
+    that one no longer binds. What binds is the SECOND 400 m3 buffer, in series again at
+    +15.351 under the generators' flat manifold: its connectors are 1.749 m up its side and
+    it is never more than 18.75% full, so its own surface never reaches its own outlet.
 
-    Nothing here rests on the constant: 94.77% is below the fill measured not to pass head
-    on, so the finding is a measurement's and the undecided count is zero.
+    The twenty generators are nonetheless producing at 100% uptime here and in 47 other
+    saves, so the honest reading is that the line runs on what a buffer alone can give
+    rather than that it is cut off. Nothing rests on the constant: 10.47% is far below the
+    fill measured not to pass head on, so the undecided count is zero.
     """
     report = head_lift(projection, game, build_graph(projection))
-    (line,) = report.buffer_lines
+    line = next(c for c in report.buffer_lines if len(c.consumers) == 20)
     assert line.fluid == "Desc_LiquidFuel_C"
-    assert line.head_m == pytest.approx(-9.0676)  # the buffer's surface at 94.77% of 400 m3
-    assert line.crest_m == pytest.approx(-8.14)  # the Mk2 pump's inlet, 0.93 m above it
-    assert len(line.consumers) == 20
+    assert line.head_m == pytest.approx(16.1882)  # the buffer's surface at 10.47% of 400 m3
+    assert line.crest_m == pytest.approx(17.1)  # its own connectors, 0.91 m above it
     assert not line.assumed
     assert report.undecided_buffers == 0
 
@@ -509,8 +566,8 @@ def test_the_reference_worlds_silence_is_a_verdict_and_not_an_empty_model(projec
         plumbing, devices=[(i, o, r, c, False) for i, o, r, c, _p in plumbing.devices]
     )
     fed = H._fed(dark)
-    reach, whence, gated = H._spread(dark, H.MACHINE_MAX_HEAD_LIFT_M, True)
+    reach, whence, gated = H._spread(dark, fed, H.MACHINE_MAX_HEAD_LIFT_M, True)
     cut = {n for n, _a in dark.sinks if n in fed} - set(reach)
     crests = H._crests(dark, reach, whence, cut, False, gated)
-    assert sum(len(c.consumers) for c in crests) == 52
-    assert len(crests) == 5
+    assert sum(len(c.consumers) for c in crests) == 53
+    assert len(crests) == 6
