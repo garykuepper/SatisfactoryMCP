@@ -92,6 +92,12 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
     "power_augmenter": "Research_Alien_PowerBooster_C",
 }
 
+#: Head lift a fluid buffer needs to push out as fast as it takes in, in metres. A buffer's
+#: own head lift is the height of the fluid standing in it, so this converts to a level
+#: through the class's capacity and height -- both of which Docs.json does state. [WIKI]:
+#: the FICSIT Plumbing Manual; nothing in the dump carries it. See `docs/plumbing.md`.
+BUFFER_BALANCE_HEAD_M: float = 1.5
+
 #: Water Extractors the planner assumes can be sited, when the caller does not say.
 #:
 #: The only number here with no data behind it, and DANGEROUS to read as capacity. Water is
