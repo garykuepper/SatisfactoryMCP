@@ -125,6 +125,29 @@ def test_a_machines_recipe_finds_its_feeders(projection, game) -> None:
     assert (with_recipe, fed) == (426, 423)
 
 
+def test_a_pipe_run_is_followable_and_a_belt_run_is_not(projection, game) -> None:
+    """``ident`` is the id ``search_conduits`` prints. A pipe has one because the pipe table
+    carries the actor the graph names it by; ``belts["segments"]`` carries no actor at all,
+    and matching a chain geometrically is unique for only 58% of runs, so a belt link says
+    nothing rather than naming the wrong chain."""
+    graph = build_physical_graph(projection, game)
+    named = {link.medium for link in graph.links if link.ident}
+    assert named == {ports.PIPE}
+    pipes = [link for link in graph.links if link.medium == ports.PIPE]
+    assert all(link.ident.startswith("pipe:") for link in pipes)
+    rows = {int(link.ident.split(":")[1]) for link in pipes}
+    assert len(rows) == len(pipes), "two runs sharing a row would send both to one piece"
+
+
+def test_every_contracted_piece_points_back_at_its_run(projection, game) -> None:
+    """``run_of`` is what turns a walk over the raw graph back into the runs it crossed."""
+    graph = build_physical_graph(projection, game)
+    assert len(graph.run_of) == 3590
+    assert {id(link) for link in graph.run_of.values()} == {id(link) for link in graph.links}
+    pieces = sum(link.pieces for link in graph.links)
+    assert pieces == len(graph.run_of), "a piece counted into a run but not indexed by it"
+
+
 @pytest.mark.integration
 def test_the_live_world_contracts_too(live) -> None:
     """The reference fixture is one save; the shape has to hold on whatever is newest."""

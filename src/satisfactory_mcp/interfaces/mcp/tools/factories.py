@@ -9,6 +9,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from ....core.saveio import ports
 from ....domain.factories.query import ASPECTS as QUERY_ASPECTS
 from ....domain.factories.resolve import resolve_factory
 from ....domain.factories.select import INDEX_WARNING as GRAPH_INDEX_WARNING
@@ -108,6 +109,59 @@ def _cand_row(c, store, labelled: set[str]) -> tuple:
         ", ".join(sorted(named))[:40] or "-",
         c.name_hint()[:44],
     )
+
+
+#: Run ids named in a trace's route note. The reference world's deepest walk crosses 166
+#: runs, so this is a sample to follow and the counts beside it are the whole answer.
+VIA_NAMED = 6
+
+
+def _via(crossed: list) -> str:
+    """The route a trace took, as runs rather than as the hundreds of nodes they contract.
+
+    Named in the order the walk met them, so the sample is the near end of the chain rather
+    than six consecutive pipes of whichever network sorts first.
+    """
+    if not crossed:
+        return ""
+    belts = sum(1 for link in crossed if link.medium == ports.CONVEYOR)
+    idents = [link.ident for link in crossed if link.ident]
+    counted = " and ".join(
+        f"{n} {word} run(s)" for n, word in ((belts, "belt"), (len(crossed) - belts, "pipe")) if n
+    )
+    out = f"the route ran through {counted}, {sum(link.pieces for link in crossed)} pieces in all"
+    if idents:
+        rest = len(idents) - VIA_NAMED
+        out += (
+            "; it crossed "
+            + ", ".join(idents[:VIA_NAMED])
+            + (f" and {rest} more" if rest > 0 else "")
+            + ", which search_conduits and show_on_map both take"
+        )
+    if belts:
+        out += ". A belt run carries no id in this projection; search_conduits near=<x,y> reaches one by position"
+    return out
+
+
+def _feed_row(machine, feed) -> tuple:
+    """One starved input and the run that should be bringing it.
+
+    The three not-fed verdicts read differently on purpose: nothing arriving is a finding,
+    a run whose far end the save joins to no actor is not.
+    """
+    from ....domain.factories.health import JOINED, NOTHING, OPEN
+
+    carrier = "conveyor" if feed.medium == ports.CONVEYOR else "pipe"
+    if feed.verdict == NOTHING:
+        arrives, far = f"NO {carrier} arrives", ""
+    else:
+        arrives = f"{feed.run or carrier} x{feed.pieces}"
+        far = "far end joined to nothing" if feed.verdict == OPEN else f"{feed.far_name} {feed.far}"
+        if feed.verdict == JOINED:
+            far += " (which way is unresolved)"
+        if feed.makes:
+            far += " -- MAKES it"
+    return (machine.instance, feed.item, arrives, far, feed.far_state)
 
 
 @mcp.tool(structured_output=False)
@@ -670,13 +724,18 @@ def factory_health(
     flag, so a machine that IS wired is never called unpowered here -- the wire is the only
     electrical fact the file carries.
 
+    For a STARVED machine it also says what physically feeds the input it lacks: the run
+    that arrives, what stands at its far end and that feeder's own state, ONE hop back --
+    `trace_upstream` walks the rest. "No conduit of that medium arrives" and "one arrives
+    and the save joins its far end to nothing" are different rows and are never merged.
+
     **Blocked is not automatically a fault.** A base whose output nobody consumes fills
     its buffers and stops, which is what a mature factory at rest looks like. Starved,
     stalled and no-recipe are the actionable ones.
 
     `offset` pages every table in the answer at once, worst first throughout.
     """
-    from ....domain.factories.health import STATES, assess, summarise
+    from ....domain.factories.health import NOTHING, OPEN, STATES, assess, summarise
     from ....domain.factories.select import SelectorError
 
     try:
@@ -774,7 +833,7 @@ def factory_health(
     if not machines:
         return f"! {factory!r} resolved to no machines that still exist in this save"
 
-    report = assess(name, machines, st.game, st.projection, st.graph)
+    report = assess(name, machines, st.game, st.projection, st.graph, st.physical)
     chunks = [summarise(report)]
 
     worst = report.worst(end)[start:]
@@ -820,8 +879,39 @@ def factory_health(
                 limit=n,
             )
         )
+    supply = [(m, f) for m in report.machines for f in m.feeds]
+    if supply:
+        chunks.append(
+            "## what feeds the missing input\n"
+            + render.table(
+                ("machine", "missing", "arrives by", "at the far end", "its state"),
+                [_feed_row(m, f) for m, f in supply[start:end]],
+                total=len(supply),
+                offset=start,
+                limit=n,
+            )
+        )
 
     notes = []
+    if supply:
+        notes.append(
+            "the far end is ONE hop: trace_upstream walks the rest of the chain. A run "
+            "carries whatever is put on it, so where several arrive the save does not say "
+            "which was meant to bring the item -- only the one marked MAKES it provably could"
+        )
+        nothing = sum(1 for _m, f in supply if f.verdict == NOTHING)
+        if nothing:
+            notes.append(
+                f"{nothing} of these inputs have NO conduit of that medium arriving at all -- "
+                "the item cannot reach the machine, which is a build to finish, not a shortage"
+            )
+        loose = sum(1 for _m, f in supply if f.verdict == OPEN)
+        if loose:
+            notes.append(
+                f"{loose} run(s) do arrive and the save joins their far end to nothing, so "
+                "the feeder is UNKNOWN there rather than absent -- a torn line or a build in "
+                "progress. Not the same finding as the row above"
+            )
     if report.by_state["blocked"]:
         notes.append(
             f"{report.by_state['blocked']} blocked: output stack full, so its consumer "
@@ -1193,8 +1283,9 @@ def trace_upstream(
     one is not.
 
     Belts and pipes are walked THROUGH and left out of the table: a trace from the
-    generators touches 331 nodes at depth 72, nearly all of it conveyor. The runs
-    themselves are `search_conduits`' subject.
+    generators touches 331 nodes at depth 72, nearly all of it conveyor. What the route
+    crossed is named instead in a note -- how many runs of each medium, and the ids
+    `search_conduits` takes for the ones that have them.
     """
     g = game()
     try:
@@ -1249,11 +1340,17 @@ def trace_upstream(
                 ", ".join(r.instance for r in group[:3]),
             )
         )
+    via = _via(result.crossed)
     notes = [
         (
-            f"walked {result.visited} node(s) to depth {result.deepest}; belts and pipes are "
-            "traversed but not listed, because a path through them is unreadable -- "
-            "search_conduits lists the runs themselves, with endpoints and lengths"
+            f"walked {result.visited} node(s) to depth {result.deepest}; the belt and pipe "
+            "nodes are traversed and never listed one by one, because a path through them "
+            "is unreadable -- "
+            + (
+                "the route note below names the RUNS they contract to instead"
+                if via
+                else "search_conduits lists the runs themselves, with endpoints and lengths"
+            )
         ),
         (
             "direction comes from each edge's connector role, and from the machine's own "
@@ -1267,6 +1364,8 @@ def trace_upstream(
             )
         ),
     ]
+    if via:
+        notes.append(via)
     if result.truncated:
         notes.append(
             "the walk stopped at its hop limit, so this is a FLOOR: machines further along "

@@ -39,12 +39,13 @@ __all__ = ["CollectibleTable", "HardDriveOffer", "WorldState", "load_collectible
 #: Re-exported rather than used: the collectibles tests import ``_name_stem`` from here.
 _ = (_name_stem,)
 
-#: The five expensive views that are pure functions of ``(projection, game)``, shared by every
+#: The six expensive views that are pure functions of ``(projection, game)``, shared by every
 #: state built over the same pair -- a request builds its own ``WorldState`` and the whole
-#: ~0.8 s of graph, structures, pipe flow, conduit runs and proposals was being paid per
-#: request per layer. Five names times three projections, matching the projection memo's own
-#: depth, and ~7 MB of views per projection on the reference world beside its own ~13 MB.
-_DERIVED = Singleflight(maxsize=15)
+#: ~0.8 s of graph, structures, pipe flow, conduit runs, the physical graph and proposals was
+#: being paid per request per layer. Six names times three projections, matching the
+#: projection memo's own depth, and ~7 MB of views per projection on the reference world
+#: beside its own ~13 MB.
+_DERIVED = Singleflight(maxsize=18)
 
 
 @dataclass
@@ -177,6 +178,14 @@ class WorldState:
             "conduit_runs",
             lambda: conduits.build_runs(self.projection, self.game, self.pipe_flow),
         )
+
+    @cached_property
+    def physical(self):
+        """What actually feeds what, belt and pipe runs contracted away, ~19 ms. Health and
+        the upstream walk both want the whole contraction."""
+        from .logistics import build_physical_graph
+
+        return self._derived("physical", lambda: build_physical_graph(self.projection, self.game))
 
     @cached_property
     def structures(self):

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from ...core.gamedata.model import GameData
 from ...core.saveio import ports
+from ...core.saveio import rows as saverows
 
 __all__ = ["Link", "PhysicalGraph", "build_physical_graph"]
 
@@ -45,6 +46,11 @@ class Link:
     #: The port role at each end, as the save spells it. ``""`` at an end that is nothing.
     source_role: str = ""
     target_role: str = ""
+    #: A ``pipe:<row>`` on the run, which ``search_conduits`` prints and ``resolve_origin``
+    #: takes. EMPTY on every belt run, because the belt table carries no actor to join a
+    #: chain by and the geometric match is unique for 58% of them -- §6.15,
+    #: ``docs/save-projection.md``.
+    ident: str = ""
 
     def other(self, actor: str) -> str | None:
         """The far end from ``actor``. The only safe way to walk an ``UNKNOWN`` link.
@@ -71,6 +77,9 @@ class PhysicalGraph:
     undirected: int = 0
     #: Runs joined to no node at all: conduit floating in the world, both ends open.
     orphan_runs: int = 0
+    #: Every conduit actor, to the link its run contracted to. What turns a walk over the
+    #: raw graph back into the runs it crossed. An orphan run's pieces are absent.
+    run_of: dict[str, Link] = field(default_factory=dict)
 
     def feeds(self, actor: str) -> list[Link]:
         """Every link that delivers to ``actor``, undirected runs included."""
@@ -164,10 +173,10 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             joins.union(a, b)
 
     boundary: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
-    run_size: dict[int, int] = defaultdict(int)
+    members: dict[int, list[int]] = defaultdict(list)
     for i, conduit in enumerate(is_conduit):
         if conduit:
-            run_size[joins.find(i)] += 1
+            members[joins.find(i)].append(i)
     for a, b, role_a, role_b in edges:
         if is_conduit[a] and not is_conduit[b]:
             boundary[joins.find(a)][b].append(role_b)
@@ -175,8 +184,21 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             boundary[joins.find(b)][a].append(role_a)
 
     pipe_classes = set((projection.get("pipes") or {}).get("classes") or ())
-    for root, pieces in run_size.items():
+    pipe_row = {
+        seg.actor_index: seg.index
+        for seg in saverows.iter_pipe_segments(projection)
+        if seg.actor_index >= 0
+    }
+
+    def register(link: Link, on: list[int]) -> None:
+        for i in on:
+            out.run_of[actors[i]] = link
+
+    for root, on in members.items():
+        pieces = len(on)
         medium = ports.PIPE if _class_of(actors[root]) in pipe_classes else ports.CONVEYOR
+        rows = [pipe_row[i] for i in on if i in pipe_row]
+        ident = f"pipe:{min(rows)}" if rows else ""
         attached = boundary.get(root) or {}
         if not attached:
             out.orphan_runs += 1
@@ -198,10 +220,12 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
                 pieces=pieces,
                 source_role="" if arriving else node_roles[0],
                 target_role=node_roles[0] if arriving else "",
+                ident=ident,
             )
             out.links.append(link)
             out.dangling.append(link)
             (out.inbound if arriving else out.outbound)[actors[node]].append(link)
+            register(link, on)
             continue
         # A run with three or more nodes on it would mean a conduit piece with three ports,
         # which the game has none of; taking the first two would hide the malformed record.
@@ -233,10 +257,12 @@ def build_physical_graph(projection: dict, game: GameData) -> PhysicalGraph:
             pieces=pieces,
             source_role=src_role,
             target_role=dst_role,
+            ident=ident,
         )
         out.links.append(link)
         out.outbound[link.source].append(link)
         out.inbound[actors[dst]].append(link)
+        register(link, on)
         if basis == UNKNOWN:
             out.undirected += 1
             # No direction means either end may be the feeder, so the link answers from

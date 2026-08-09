@@ -100,6 +100,38 @@ def test_logistics_is_walked_through_but_not_reported(live, game, gens):
     assert len(result.reached) < result.visited / 5
 
 
+def test_the_walk_keeps_the_runs_it_crossed(live, game, gens):
+    """The route, named without the table growing 300 rows: those hundreds of belt and pipe
+    nodes contract to the runs a player would call them."""
+    result = trace(live, game, gens, "up")
+    assert result.crossed
+    assert len(result.crossed) < result.visited, "a run is many nodes, so this must contract"
+    assert sum(link.pieces for link in result.crossed) <= result.visited
+    assert all(link.ident.startswith("pipe:") for link in result.crossed if link.ident)
+
+
+def test_the_traversal_itself_did_not_change(live, game, gens):
+    """The runs are read off the nodes the walk already visited, so what it reaches and how
+    deep it goes must be untouched by keeping them."""
+    result = trace(live, game, gens, "up")
+    assert (result.visited, result.deepest) == (
+        trace(live, game, gens, "up").visited,
+        trace(live, game, gens, "up").deepest,
+    )
+    assert {r.instance for r in result.reached} == {
+        r.instance for r in trace(live, game, gens, "up").reached
+    }
+
+
+def test_the_route_note_summarises_rather_than_listing_every_run(live, game, gens):
+    from satisfactory_mcp.interfaces.mcp.tools.factories import VIA_NAMED, _via
+
+    said = _via(trace(live, game, gens, "up").crossed)
+    assert "run(s)" in said
+    assert said.count("pipe:") <= VIA_NAMED
+    assert _via([]) == "", "no route is silence, not a sentence about nothing"
+
+
 def test_up_and_down_are_inverses_for_a_reached_pair(live, game, gens):
     """If A is upstream of B then B must be downstream of A, or the orientation is being
     applied inconsistently in the two directions."""
