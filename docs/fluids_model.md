@@ -58,7 +58,7 @@ All verified directly against `Docs/en-US.json` at buildVersion 495413, exhausti
 | Pipeline Pump Mk1 | 20 m rated, 22 m ceiling | `mDesignPressure`, `mMaxPressure` | already read as `Building.head_lift_m` |
 | Pipeline Pump Mk2 | 50 m rated, 55 m ceiling | same | |
 | Valve | 0 m, 0 m | same | **same native class as a pump** — a trap for any class-name match |
-| Machine head lift | **10 m** | `mDescription` prose | stated by `Build_WaterPump_C`, `Build_OilPump_C`, `Build_OilRefinery_C`, `Build_Packager_C`, `Build_Blender_C`, `Build_FrackingExtractor_C` |
+| Machine head lift | **10 m** | `mDescription` prose | stated by `Build_WaterPump_C`, `Build_OilPump_C`, `Build_OilRefinery_C`, `Build_Packager_C`, `Build_Blender_C`, `Build_FrackingExtractor_C`; read into `Building.machine_head_lift_m`. The unit separator is **U+202F** |
 | Pipe Mk1 / Mk2 flow | 300 / 600 m³/min | `mFlowLimit` 5.0 / 10.0 per **second** | the two Clean Pipeline variants carry the same |
 | Fluid Buffer / Industrial | 400 / 2400 m³ | `mStorageCapacity` | |
 | Buffer height | 8 m / 12 m | clearance box, confirmed by `mStackingHeight` 800 / 1200 cm | |
@@ -99,7 +99,9 @@ agreeing to 13 µm. The first reading was 52 mm high for the same reason the mac
 was: taken before the column stopped moving.
 
 So a Mk1 pump reaches **0.80 m past its own `mMaxPressure`**. Nothing lands near the 20 m
-rating under any reference.
+rating under any reference. This lives in `PUMP_MEASURED_REACH_M` rather than overwriting the
+dump: `mMaxPressure` is authoritative for what the game *declares*, and the finding is
+precisely that declared and observed disagree.
 
 ### Connector heights `[MEASURED]`
 
@@ -220,22 +222,71 @@ about fill.
 
 ## What the model gets wrong today
 
-1. **`MACHINE_MAX_HEAD_LIFT_M = 12.0` should be ≈11.0.** This is the one error that makes the
-   tool say *safe* about something unsafe: a climb between 11 and 12 m is currently reported
-   as marginal-but-reachable when the game will not deliver it.
-2. **Buffer pass-through is ungated, and this is the only rule that needs changing.**
-   `_RESERVOIR` sits in `_BODIES`, making a buffer one node, so incoming head passes through
-   at any fill. The measurement says it is off below ~90% and exact at full. Any line fed
-   through a part-full buffer is credited with head it does not have — the unsafe direction,
-   and three of the reference world's five buffers sit under 10% full. `_add_tank`'s own-head
-   term is confirmed and stays; the pump rule needs no change at all, since the 0.000 m
-   connector offset is exact and `max()` is now doubly confirmed.
-3. **The 10 m is labelled unreadable.** It is stated in `mDescription`, and `normalize.py`
-   already parses that field for extraction rates and belt speeds. Parsing it would move a
-   verdict from "rests on the manual" to "rests on the game".
-4. **The fluid ladder has never fired on real data.** 60 dry fluid boxes exist across the
-   saves and every one belongs to an `unmonitored` machine, which the classifier can never
-   call starved. The honest claim is "no *monitored* machine has had a dry fluid box".
+1. ~~**`MACHINE_MAX_HEAD_LIFT_M = 12.0` should be ≈11.0.**~~ **FIXED.** It is 11.020, and the
+   constant's own note carries the measurement, the citation and the scope limit. A climb
+   between 11 and 12 m is a fault now instead of a warning, which is the one verdict that was
+   pointing the unsafe way.
+2. ~~**Buffer pass-through is ungated.**~~ **FIXED as a rule, and then refused as a verdict** —
+   see the section below, which is the more important half. `BUFFER_TRANSMITS_ABOVE_FILL`
+   gates it at capacity, `BUFFER_TRANSMIT_BRACKET` records the two fills the step was
+   measured between, and `HeadLift.undecided_buffers` counts the buffers the constant rather
+   than a measurement settled. `_add_tank`'s own-head term is confirmed and unchanged, and
+   the pump rule needed no change: the 0.000 m connector offset is exact and `max()` is
+   doubly confirmed.
+3. ~~**The 10 m is labelled unreadable.**~~ **FIXED.** Parsed out of `mDescription` into
+   `Building.machine_head_lift_m`, which is a separate field from the pump's `head_lift_m`
+   because that one means "this is a pipeline pump" to the pump picker and the logistics
+   filter. `Crest.assumed` now means "rests on the manual" and is true nowhere on real data.
+   The separator in the dump is **U+202F**, a narrow no-break space.
+4. **The fluid ladder has never fired on real data.** Still true. 60 dry fluid boxes exist
+   across the saves and every one belongs to an `unmonitored` machine, which the classifier
+   can never call starved. The honest claim is "no *monitored* machine has had a dry fluid
+   box".
+5. **A pump's declared ceiling and its measured reach are now separate.** `mMaxPressure`
+   stays what the game declares; `PUMP_MEASURED_REACH_M` carries what a class was measured to
+   do, keyed by class because no multiplier fits both the machine's ×1.102 and the Mk1's
+   ×1.140. The Mk2 is not in it.
+
+---
+
+## The buffer barrier is real, and "cut off" is not what it means `[MEASURED]`
+
+Switching the gate on turned a world-wide silence into **33 crests over 31 saves naming 584
+machines — of which 580 were producing at the moment of their own save.** Nearly all of it is
+one line, and it is worth stating in full because it is the only place the rigs and the
+owner's base disagree.
+
+A 400 m³ Fluid Buffer sits **in series** — confirmed by walking its couplings, not inferred —
+between seven Packagers and the Mk2 pump that lifts fuel to twenty Fuel Generators at
++17.10 m. Its two connectors are both at −14.90 m, 1.75 m above its base at −16.649 m. Its own
+surface therefore tops out at −8.649 m even when completely full, and the pump's inlet stands
+at −8.14 m. **The buffer can never reach that pump on its own head, at any fill.** Across 31
+saves its fill ranges 14.6%–94.8% and the twenty generators read **100% uptime in every one**.
+
+Reading the save's own `mFluidBox` on that run settles which half is wrong, and it is not the
+gate:
+
+| piece | z range | capacity | held | full |
+|---|---|---|---|---|
+| buffer → valve | −14.90 → −12.77 | 23.84 | 19.39 | 81% |
+| valve → rise | −12.77 → −11.90 | 23.06 | 22.50 | 98% |
+| **rise → pump inlet** | **−11.90 → −8.14** | **9.61** | **6.03** | **63%** |
+
+The pipe climbing to the pump is **62.8% full and its waterline interpolates to −9.54 m**,
+against a buffer surface of −9.07 m and a pump inlet of −8.14 m. The fluid stands at the
+buffer's level, exactly where the gate predicts, **and the generators run anyway**.
+
+So the barrier reproduces on the owner's base and the consequence does not. Whatever carries
+fuel over that 0.93 m, a fill-derived altitude does not see it, and calling those generators
+cut off would be false 31 times over. Hence `Crest.buffer_gated` and `HeadLift.faults`: a
+crest whose head is a part-full buffer's surface is reported as *this line has no margin above
+its buffer* and is never counted as a fault.
+
+**The cross-check is clean in both directions.** Of the 524 machines named across the 71
+non-rotating saves, 520 were producing. The four remaining are the same Packager in four
+saves — and it is not starved either: its input holds a **full** 50 m³ fuel box plus 100
+canisters while its output sits at 100 Packaged Fuel. It is output-blocked. **Not one of the
+524 machines the model names is short of a fluid.**
 
 ---
 
@@ -254,16 +305,43 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 
 ## Open
 
+- **What carries fuel over the 0.93 m.** The one open question the calibration created, and
+  the most valuable thing to measure next. The barrier reproduces and the line works anyway;
+  until that is explained, a buffer-gated crest stays a note rather than a fault.
 - **Does 11 m generalise?** Measured on a Water Extractor only. The dump states 10 m for six
   classes, so the rating is shared; the ceiling has been measured once.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
 - **Buffer transmission threshold** is bracketed, not pinned: four points, A off at 18.8%,
-  B off at 89.6%, C and D both on at 100.7%.
-- **The Mk2 pump (50/55) is untested**, as are non-extractor machines.
+  B off at 89.6%, C and D both on at 100.7%. The gate sits at capacity, inside the bracket
+  and above the fill measured off; 22 buffer readings across the saves fall in the band and
+  are counted rather than silently decided.
+- **The Mk2 pump (50/55) is untested**, as are non-extractor machines. It is deliberately
+  absent from `PUMP_MEASURED_REACH_M` and the model uses its declared 55.
 - **No single tolerance multiplier fits.** The machine sits at ×1.102 of its rating, the Mk1
   pump at ×1.140 of its — and the pump passes its own stated ceiling. Ceilings are per-class
   measurements or they are nothing.
+
+## The calibration, before and after
+
+Every `.sav` on the machine, 78 of 79 parsed (`ServerManager_V2.sav` is not a save). Compared
+over the **71 that did not rotate mid-sweep** — the game was running and seven autosaves moved
+between the two passes, which is the only difference in the totals.
+
+| | before | after |
+|---|---|---|
+| fluid networks | 899 | 899 |
+| consumer ports | 4,344 | 4,344 |
+| unfed ports | 80 | 80 |
+| ambiguous ports | 0 | 0 |
+| marginal verdicts | 0 | 0 |
+| **crests called faults** | **0** | **0** |
+| lines running on a buffer's own head | – | 30, naming 524 machines |
+| buffers inside the undecided band | – | 22 |
+
+**The zero survived every tightening**, which is the result worth having: the ceiling dropped
+to 11.020, the buffer gained a barrier and the Mk1 gained 0.80 m of measured reach, and the
+model still calls nothing on this machine a head-lift fault.
 
 ---
 

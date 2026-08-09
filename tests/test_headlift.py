@@ -1,8 +1,9 @@
 """The head-lift model: every rule once, and the reference world as the acceptance test.
 
 The model exists to be SILENT on a working base, so the test that matters most is the last
-section: the owner's world reports nothing, and the perturbations beside it prove that is a
-verdict rather than a model with nothing to say.
+section: the owner's world reports no FAULT, the one line it does name is pinned as the
+disagreement it is, and the perturbations beside it prove the silence is a verdict rather
+than a model with nothing to say.
 """
 
 from __future__ import annotations
