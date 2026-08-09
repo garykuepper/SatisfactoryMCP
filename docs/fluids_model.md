@@ -91,10 +91,15 @@ The manual's 10 m rating is **correct and confirmed by the game itself**. Only i
 ceiling is wrong. An earlier version of this project's notes claimed the opposite; that claim
 was refuted by audit and should not be repeated.
 
-### A pump reaches its ceiling, not its rating `[MEASURED]`
+### A pump exceeds even its ceiling `[MEASURED]`
 
-`HL_PUMP`: **22.85 m above the pump's centre** (21.88 m by the pessimistic volume method),
-against a 20 m rating and a 22 m ceiling. Nothing lands near 20 under any reference.
+**22.801 m above the pump's centre**, against a 20 m rating and a 22 m ceiling. Read three
+times as the rig settled — 22.853 at 09:03, then 22.801 at both 09:31 and 09:35, the last two
+agreeing to 13 µm. The first reading was 52 mm high for the same reason the machine reading
+was: taken before the column stopped moving.
+
+So a Mk1 pump reaches **0.80 m past its own `mMaxPressure`**. Nothing lands near the 20 m
+rating under any reference.
 
 ### Connector heights `[MEASURED]`
 
@@ -145,10 +150,32 @@ head. Above it, incoming head passes through. A proportional blend is excluded a
 at 89.6% a blend puts the waterline 11 m higher than observed.
 
 **Threshold: between 89.6% and 100.7% of capacity.** "In the last few percent" is as tight as
-three points support.
+four points support.
 
 A buffer's **own** head is `base + height × fill_fraction`, and that part is confirmed by the
 A→B tracking.
+
+### A full buffer transmits unchanged — it does not add its own column `[MEASURED]`
+
+`HL_BUFFER_D` is the same rig with the stack extended to +23 m, so the ceiling is visible
+instead of pressed against the cap: waterline **+7.824 m**, settled to 0.32 mm over 208 s,
+with 12 m of dry pipe above the interface.
+
+| candidate | predicts | residual |
+|---|---|---|
+| pump centre + its measured 22.801 | +7.730 | **0.094 m** |
+| pump centre + 22 (`mMaxPressure`) | +6.929 | 0.895 m |
+| buffer base + 8 (buffer alone) | −9.000 | 16.8 m |
+| pump + 22, **then the buffer adds its 8** | +14.929 | **7.105 m** |
+
+The two rigs — one with a buffer in the line, one without — put their water 22.801 m and
+22.895 m above their own pump centres. **Interposing a full 400 m³ buffer changed the
+reachable altitude by 94 mm**, which is smaller than the ±0.26 m bar and is therefore
+correctly read as "no measurable difference" rather than as a number. Stacking is off by
+7.1 m, twenty-seven times the bar, and is excluded.
+
+This is the second independent confirmation of `max()` over `sum()`: once directly through a
+pump, once through a full buffer.
 
 ### Output throttling is a separate mechanic `[ASSUMED]`
 
@@ -196,10 +223,13 @@ about fill.
 1. **`MACHINE_MAX_HEAD_LIFT_M = 12.0` should be ≈11.0.** This is the one error that makes the
    tool say *safe* about something unsafe: a climb between 11 and 12 m is currently reported
    as marginal-but-reachable when the game will not deliver it.
-2. **Buffer pass-through is ungated.** A reservoir is one node, so incoming head passes
-   through at any fill. The measurement says it is off below ~90%. Any line fed through a
-   part-full buffer is credited with head it does not have — again the unsafe direction, and
-   three of the reference world's five buffers sit under 10% full.
+2. **Buffer pass-through is ungated, and this is the only rule that needs changing.**
+   `_RESERVOIR` sits in `_BODIES`, making a buffer one node, so incoming head passes through
+   at any fill. The measurement says it is off below ~90% and exact at full. Any line fed
+   through a part-full buffer is credited with head it does not have — the unsafe direction,
+   and three of the reference world's five buffers sit under 10% full. `_add_tank`'s own-head
+   term is confirmed and stays; the pump rule needs no change at all, since the 0.000 m
+   connector offset is exact and `max()` is now doubly confirmed.
 3. **The 10 m is labelled unreadable.** It is stated in `mDescription`, and `normalize.py`
    already parses that field for extraction rates and belt speeds. Parsing it would move a
    verdict from "rests on the manual" to "rests on the game".
@@ -209,18 +239,31 @@ about fill.
 
 ---
 
+## One anomaly, and why it was not real
+
+A reading of +10.81 m in the buffer rig's network briefly looked like a `sum()`: 25.7 m above
+the pump connector, past every ceiling. It does not survive.
+
+At the time of that save the network's **tallest pipe topped out at +7.00 m** — the +23 m
+extension did not exist yet. Water cannot stand where there is no pipe. The 10.81 came from
+two *oil* pipes on a different network, 19 m and 55 m long and **neither vertical**, whose
+fill was interpolated as though it were a vertical column.
+
+That is the trap worth remembering: **interpolating a long sloped pipe's fill as a height
+manufactures a plausible number.** Only a vertical piece measures an altitude.
+
 ## Open
 
-- **An unexplained reading.** In one autosave, the buffer rig's network holds water at
-  +10.81 m with its pump at −15.07 m — 25.7 m above the pump connector, past the 22 m
-  ceiling. A candidate explanation is that a full buffer transmits what it receives **and**
-  adds its own column on top, which would be a sum without breaking the pump-to-pump rule,
-  because a buffer is not a pump. `HL_BUFFER_D`, a taller rig, was built to settle it.
 - **Does 11 m generalise?** Measured on a Water Extractor only. The dump states 10 m for six
   classes, so the rating is shared; the ceiling has been measured once.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
-- **Buffer transmission threshold** is bracketed, not pinned.
+- **Buffer transmission threshold** is bracketed, not pinned: four points, A off at 18.8%,
+  B off at 89.6%, C and D both on at 100.7%.
+- **The Mk2 pump (50/55) is untested**, as are non-extractor machines.
+- **No single tolerance multiplier fits.** The machine sits at ×1.102 of its rating, the Mk1
+  pump at ×1.140 of its — and the pump passes its own stated ceiling. Ceilings are per-class
+  measurements or they are nothing.
 
 ---
 
@@ -237,7 +280,9 @@ The save file is the instrument; no in-game reading is needed.
    single save can be mid-jiggle even when the ceiling has been reached — one reading here
    moved 24 mm after the save it was taken from.
 5. Find the waterline by interpolating **within the partial piece**: `bottom_z + fill_fraction
-   × vertical_extent`. Piece counting is not precise enough.
+   × vertical_extent`. Piece counting is not precise enough. **Only a vertical piece measures
+   an altitude** — interpolating a long sloped pipe this way invents a plausible height, which
+   is how one phantom reading got as far as being called an anomaly.
 6. Subtract the **connector** height, not the actor origin, using the table above.
 
 ---
