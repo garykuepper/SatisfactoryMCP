@@ -28,12 +28,19 @@ REVERSE = "reverse"
 UNKNOWN = "unknown"
 
 #: A junction and a buffer are ONE volume of fluid: what arrives at any port can leave by any
-#: other, so their ports collapse into a single node.
-_BODIES = (
+#: other, so their ports collapse into a single node. The T and the cross are both here and
+#: both have to be: a junction left out is a CUT in the network, not a missing node.
+_JUNCTIONS = (
     "Build_PipelineJunction_Cross_C",
+    "Build_PipelineJunction_T_C",
+)
+#: The bodies that also HOLD fluid, which is what ``_solve``'s guard needs and a junction is
+#: not: a tank can accept flow that nothing beyond it consumes, so it can end a route.
+_STORES = (
     "Build_IndustrialTank_C",
     "Build_PipeStorageTank_C",
 )
+_BODIES = _JUNCTIONS + _STORES
 
 #: One-way by construction, from ``Connection0`` (the inlet) to ``Connection1``.
 _ONE_WAY = (
@@ -126,8 +133,7 @@ def _build(projection: dict) -> tuple[list, list, list, dict, set]:
         if actor in pipe_actors:
             continue  # emitted below, in the segments' own order
         if cls in _BODIES:
-            # A tank is a STORE, which the guard in ``_solve`` needs; a junction holds nothing.
-            if cls != "Build_PipelineJunction_Cross_C":
+            if cls in _STORES:
                 stores.add(joins.find((actor, min(ports))))
             continue
         if cls in _ONE_WAY:

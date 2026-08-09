@@ -202,6 +202,40 @@ def test_direction_propagates_through_a_junction_to_a_pipe_touching_nothing():
     ]
 
 
+def test_the_t_junction_is_a_body_exactly_as_the_cross_is():
+    """A junction missing from ``_BODIES`` is a CUT, so the far half loses its warrant.
+
+    The same plumbing as above with a T in the middle. Left out, the T's three ports are
+    three unjoined nodes and the network stops there.
+    """
+    world = _world(
+        actors=[
+            "Build_WaterPump_C_0",
+            "Build_Pipeline_C_1",
+            "Build_PipelineJunction_T_C_2",
+            "Build_Pipeline_C_3",
+            "Build_GeneratorCoal_C_4",
+        ],
+        roles=ROLES,
+        material=[
+            *_couple(0, "FGPipeConnectionFactory", 1, "PipelineConnection0"),
+            *_couple(1, "PipelineConnection1", 2, "Connection0"),
+            *_couple(2, "Connection2", 3, "PipelineConnection0"),
+            *_couple(3, "PipelineConnection1", 4, "FGPipeConnectionFactory"),
+        ],
+        segments=[
+            [0, 0, [[0, 0, 0], [100, 0, 0]], 1],
+            [0, 0, [[200, 0, 0], [300, 0, 0]], 3],
+        ],
+        extractors=[{"cls": "Build_WaterPump_C"}],
+        generators=[{"cls": "Build_GeneratorCoal_C"}],
+    )
+    assert pipe_flow(world) == [
+        {"direction": FORWARD, "basis": "machine port"},
+        {"direction": FORWARD, "basis": "machine port"},
+    ]
+
+
 def test_a_pipe_into_a_dead_end_is_refused_rather_than_guessed():
     """The guard, and the hold-out that put it there.
 
