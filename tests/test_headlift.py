@@ -271,11 +271,51 @@ def _tanked(stored_m3, consumer_z, cls="Build_IndustrialTank_C"):
     return w
 
 
+def _through_tank(stored_m3, consumer_z, cls="Build_IndustrialTank_C"):
+    """An extractor 20 m up feeding a buffer at sea level, then a consumer.
+
+    The source is deliberately high enough that its head (31.02 m) clears the buffer's own
+    full column (12 m), so what arrives past the buffer tells the two rules apart.
+    """
+    w = _tanked(stored_m3, consumer_z, cls)
+    source = w.actor("Build_WaterPump_C")
+    w.produces("Build_WaterPump_C")
+    w.pipe(source, "FGPipeConnectionFactory", 0, "ConnectionAny1", [(-5.0, 20.0), (0.0, 0.0)])
+    return w
+
+
 def test_a_buffers_head_lift_is_the_height_of_the_fluid_standing_in_it(game):
     """Full, an Industrial Buffer gives its own 12 m; a tenth full it gives a tenth of that."""
     assert _verdict(_tanked(2400.0, 11.0), game).crests == ()
     (crest,) = _verdict(_tanked(240.0, 11.0), game).crests
     assert crest.head_m == pytest.approx(1.2)
+
+
+def test_a_part_full_buffer_passes_no_incoming_head_at_all(game):
+    """The step, and the unsafe direction it closes: a buffer is a body for CONNECTION and a
+    barrier for HEIGHT. Half full, the 31 m arriving is not what the line above it gets --
+    the buffer's own 6 m is, so a consumer at 25 m is cut off rather than supplied."""
+    (crest,) = _verdict(_through_tank(1200.0, 25.0), game).crests
+    assert crest.head_m == pytest.approx(6.0)
+    assert not crest.assumed
+
+
+def test_a_full_buffer_passes_incoming_head_through_unchanged(game):
+    """Measured at 94 mm of difference, inside the +-0.26 m bar: it neither attenuates nor
+    stacks. Stacking would clear 43 m and was excluded by 7.1 m."""
+    assert _verdict(_through_tank(2400.0, 25.0), game).crests == ()
+    (crest,) = _verdict(_through_tank(2400.0, 40.0), game).crests
+    assert crest.head_m == pytest.approx(31.020)
+
+
+def test_a_buffer_inside_the_measured_bracket_is_counted_rather_than_decided_quietly(game):
+    """95% is above the fill measured OFF and below the one measured ON, so the constant
+    settles it and the verdict says how many buffers it settled."""
+    report = _verdict(_through_tank(2280.0, 25.0), game)
+    assert report.undecided_buffers == 1
+    (crest,) = report.crests
+    assert crest.head_m == pytest.approx(11.4)
+    assert _verdict(_through_tank(1200.0, 25.0), game).undecided_buffers == 0
 
 
 def test_a_t_junction_is_a_body_and_not_a_machine_port(game):
@@ -370,16 +410,36 @@ def test_consumers_behind_one_hill_are_named_once_under_that_hill(game):
 def test_the_owners_base_reports_no_head_lift_problem(projection, game):
     """The acceptance test. A model that cries wolf on a working factory is wrong.
 
-    Swept over every save on the author's machine this holds for all 71 of them, 756 fluid
-    networks and 4,048 consumer ports -- see `docs/fluids_model.md`.
+    Swept over every save on the author's machine this holds for all 78 of them, 1,014 fluid
+    networks and 4,790 consumer ports -- see `docs/fluids_model.md`.
     """
     report = head_lift(projection, game, build_graph(projection))
-    assert report.crests == ()
+    assert report.faults == ()
     assert report.networks == 19
     assert report.consumers == 96
     assert report.unfed == 0
     assert report.ambiguous_ports == 0
     assert report.gas_networks == 0
+
+
+def test_the_fuel_line_runs_on_its_buffer_and_that_is_reported_as_no_fault(projection, game):
+    """The one thing the buffer gate finds here, and why it is not called broken.
+
+    A 400 m3 buffer sits in series between seven Packagers and the Mk2 pump that lifts fuel
+    to twenty generators, and the pump's inlet stands above the buffer's own surface. The
+    save agrees the head stops there -- the pipe climbing to the pump is 63% full and its
+    waterline interpolates to the buffer's level, not the pump's. The twenty generators are
+    nonetheless producing at 100% uptime in this save and in thirty others, so the honest
+    reading is that the line has no margin above its buffer rather than that it is cut off.
+    """
+    report = head_lift(projection, game, build_graph(projection))
+    (line,) = report.buffer_lines
+    assert line.fluid == "Desc_LiquidFuel_C"
+    assert line.head_m == pytest.approx(-9.0676)  # the buffer's surface at 94.77% of 400 m3
+    assert line.crest_m == pytest.approx(-8.14)  # the Mk2 pump's inlet, 0.93 m above it
+    assert len(line.consumers) == 20
+    assert not line.assumed
+    assert report.undecided_buffers == 1
 
 
 def test_the_reference_worlds_silence_is_a_verdict_and_not_an_empty_model(projection, game):
@@ -394,8 +454,8 @@ def test_the_reference_worlds_silence_is_a_verdict_and_not_an_empty_model(projec
         plumbing, devices=[(i, o, r, c, False) for i, o, r, c, _p in plumbing.devices]
     )
     fed = H._fed(dark)
-    reach, whence = H._spread(dark, H.MACHINE_MAX_HEAD_LIFT_M, True)
+    reach, whence, gated = H._spread(dark, H.MACHINE_MAX_HEAD_LIFT_M, True)
     cut = {n for n, _a in dark.sinks if n in fed} - set(reach)
-    crests = H._crests(dark, reach, whence, cut, False)
+    crests = H._crests(dark, reach, whence, cut, False, gated)
     assert sum(len(c.consumers) for c in crests) == 52
     assert len(crests) == 5

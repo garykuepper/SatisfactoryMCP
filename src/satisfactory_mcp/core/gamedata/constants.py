@@ -98,6 +98,20 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 #: the FICSIT Plumbing Manual; nothing in the dump carries it. See `docs/plumbing.md`.
 BUFFER_BALANCE_HEAD_M: float = 1.5
 
+#: Fill fraction at and above which a buffer passes INCOMING head lift on unchanged. Below it
+#: the line above a buffer gets only the buffer's own fill-proportional head, and this is a
+#: step rather than a blend -- a blend is excluded arithmetically by 11 m. [MEASURED], see
+#: `docs/fluids_model.md`. The step is BRACKETED and not pinned, so this is a choice: the
+#: bracket's low end was measured OFF, which rules the permissive end out, and the game
+#: overfills a buffer past its nominal capacity (13 of 198 readings on this machine, up to
+#: 1.010), so a gate at capacity is one that does open.
+BUFFER_TRANSMITS_ABOVE_FILL: float = 1.0
+
+#: The two fills the step was measured between: off at the first, on at the second. A buffer
+#: inside this band is decided by the constant above rather than by a measurement, and
+#: ``HeadLift.undecided_buffers`` counts how many the verdict rested on.
+BUFFER_TRANSMIT_BRACKET: tuple[float, float] = (0.8964, 1.0074)
+
 #: Head lift any machine that is not a pipeline pump gives, in metres. [WIKI]: the FICSIT
 #: Plumbing Manual -- head lift outside a pump lives in the ``FluidBox`` struct, which
 #: Docs.json exports empty, so ``mDesignPressure`` exists on the pump class and on no other

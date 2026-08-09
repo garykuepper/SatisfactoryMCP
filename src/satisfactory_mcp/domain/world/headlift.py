@@ -2,10 +2,11 @@
 
 Head lift is an ABSOLUTE HEIGHT rather than a budget: a source at ``z`` pushes fluid to
 ``z + lift`` anywhere in a full pipe, so this propagates a maximum reachable altitude and a
-pump is ``max(incoming, its own centre + its lift)`` and never a sum. The finding is the
-CREST that stops a line, named once with every consumer behind it, because that is where a
-pump would go. The rules, the exclusions and what a reading does not mean are in
-`docs/fluids_model.md`.
+pump is ``max(incoming, its own centre + its lift)`` and never a sum. A buffer is the one
+element that BLOCKS an altitude: below ``BUFFER_TRANSMITS_ABOVE_FILL`` the line above it gets
+only the buffer's own fill-proportional head. The finding is the CREST that stops a line,
+named once with every consumer behind it, because that is where a pump would go. The rules,
+the exclusions and what a reading does not mean are in `docs/fluids_model.md`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,12 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-from ...core.gamedata.constants import MACHINE_HEAD_LIFT_M, MACHINE_MAX_HEAD_LIFT_M
+from ...core.gamedata.constants import (
+    BUFFER_TRANSMIT_BRACKET,
+    BUFFER_TRANSMITS_ABOVE_FILL,
+    MACHINE_HEAD_LIFT_M,
+    MACHINE_MAX_HEAD_LIFT_M,
+)
 from ...core.gamedata.model import GameData
 from ...core.saveio import rows as saverows
 from ...core.saveio.ports import PIPE as _PIPE
@@ -28,7 +34,8 @@ __all__ = ["Crest", "HeadLift", "head_lift"]
 _JUNCTION = "FGBuildablePipelineJunction"
 _RESERVOIR = "FGBuildablePipeReservoir"
 _PUMP = "FGBuildablePipelinePump"
-#: One fluid volume each, so every port on one is the same node.
+#: One fluid volume each, so every port on one is the same node. A buffer is a body for
+#: CONNECTION -- fluid crosses it at any fill -- and a barrier for HEIGHT until it is full.
 _BODIES = (_JUNCTION, _RESERVOIR)
 
 _CM_PER_M = 100.0
@@ -58,6 +65,11 @@ class Crest:
     #: Where the crest stands, in world metres, or ``None`` when a device rather than a pipe
     #: is the obstacle.
     pos: tuple[float, float, float] | None
+    #: Whether the head behind it is a part-full buffer's own surface. NOT a fault: the rig
+    #: and the owner's base disagree here and the base wins on 31 saves, so this is "the line
+    #: runs on what the buffer alone can give" rather than "these machines are cut off". See
+    #: `docs/fluids_model.md`.
+    buffer_gated: bool = False
 
     @property
     def short_m(self) -> float:
@@ -83,10 +95,22 @@ class HeadLift:
     #: Ports whose facing neither the save nor the building's nature settles. Each is taken
     #: BOTH ways, so a crest behind one is still reported and its head may be overstated.
     ambiguous_ports: int
+    #: Buffers whose fill lands inside the bracket the transmission step was measured
+    #: between, so ``BUFFER_TRANSMITS_ABOVE_FILL`` decided them and no measurement did.
+    undecided_buffers: int = 0
 
     @property
     def unfed(self) -> int:
         return len(self.unfed_ports)
+
+    @property
+    def faults(self) -> tuple[Crest, ...]:
+        """The crests this model will call a fault. A buffer-gated one is not one of them."""
+        return tuple(c for c in self.crests if not c.buffer_gated)
+
+    @property
+    def buffer_lines(self) -> tuple[Crest, ...]:
+        return tuple(c for c in self.crests if c.buffer_gated)
 
 
 @dataclass
@@ -103,11 +127,12 @@ class _Plumbing:
     devices: list = field(default_factory=list)
     sources: list = field(default_factory=list)
     sinks: list = field(default_factory=list)
-    #: (node, base altitude, height of the fluid standing in it).
+    #: (node, base altitude, height of the fluid standing in it, whether it passes head on).
     tanks: list = field(default_factory=list)
     networks: int = 0
     gas_networks: int = 0
     ambiguous: int = 0
+    undecided_tanks: int = 0
 
 
 class _Union:
@@ -284,9 +309,19 @@ def _add_tank(out: _Plumbing, game: GameData, cls: str, row, node) -> None:
         return
     if not building.storage_capacity_m3:
         return
-    share = min(1.0, float(row.get("stored_m3") or 0.0) / building.storage_capacity_m3)
+    fill = float(row.get("stored_m3") or 0.0) / building.storage_capacity_m3
     base = float((row.get("pos") or (0, 0, 0))[2]) / _CM_PER_M
-    out.tanks.append((node, base, building.footprint.height_m * share))
+    low, high = BUFFER_TRANSMIT_BRACKET
+    if low <= fill < high:
+        out.undecided_tanks += 1
+    out.tanks.append(
+        (
+            node,
+            base,
+            building.footprint.height_m * min(1.0, fill),
+            fill >= BUFFER_TRANSMITS_ABOVE_FILL,
+        )
+    )
 
 
 def _adjacency(plumbing: _Plumbing):
@@ -303,7 +338,7 @@ def _adjacency(plumbing: _Plumbing):
 def _fed(plumbing: _Plumbing) -> set:
     """Every node fluid arrives at with heights ignored: rung (1) of the manual's ladder."""
     spans, devices = _adjacency(plumbing)
-    seen = {node for node, _actor in plumbing.sources} | {n for n, _b, _c in plumbing.tanks}
+    seen = {node for node, _actor in plumbing.sources} | {n for n, *_rest in plumbing.tanks}
     stack = list(seen)
     while stack:
         node = stack.pop()
@@ -318,8 +353,8 @@ def _fed(plumbing: _Plumbing) -> set:
     return seen
 
 
-def _spread(plumbing: _Plumbing, machine_lift: float, ceiling: bool) -> tuple[dict, dict]:
-    """Reachable altitude per node, and whether the pinned machine lift is behind it.
+def _spread(plumbing: _Plumbing, machine_lift: float, ceiling: bool) -> tuple[dict, dict, dict]:
+    """Reachable altitude per node, and the two provenances a crest has to declare.
 
     A relaxation rather than one pass: loops and several sources per network are the normal
     shape of a fluid system, and a node's answer can improve after it has been visited.
@@ -327,41 +362,54 @@ def _spread(plumbing: _Plumbing, machine_lift: float, ceiling: bool) -> tuple[di
     z = plumbing.z
     reach: dict = {}
     assumed: dict = {}
+    gated: dict = {}
+    #: A buffer too empty to pass head on caps the altitude AT its node rather than only what
+    #: it emits, so the crest search reads the same height the line above it actually gets.
+    capped = {
+        node: base + column for node, base, column, transmits in plumbing.tanks if not transmits
+    }
 
-    def raise_to(node, height: float, from_machine: bool) -> bool:
+    def raise_to(node, height: float, from_machine: bool, from_buffer: bool) -> bool:
+        own = capped.get(node)
+        if own is not None and own < height:
+            height, from_machine, from_buffer = own, False, True
         if height < z.get(node, _LOW) or height <= reach.get(node, _LOW):
             return False
         reach[node] = height
         assumed[node] = from_machine
+        gated[node] = from_buffer
         return True
 
     for node, _actor in plumbing.sources:
-        raise_to(node, z.get(node, 0.0) + machine_lift, True)
-    for node, base, column in plumbing.tanks:
-        raise_to(node, base + column, False)
+        raise_to(node, z.get(node, 0.0) + machine_lift, True, False)
+    for node, base, column, transmits in plumbing.tanks:
+        raise_to(node, base + column, False, not transmits)
 
     spans, devices = _adjacency(plumbing)
     work = deque(reach)
     while work:
         node = work.popleft()
-        height, machine = reach[node], assumed[node]
+        height, machine, buffered = reach[node], assumed[node], gated[node]
         for peer, crest in spans[node]:
-            if height >= crest and raise_to(peer, height, machine):
+            if height >= crest and raise_to(peer, height, machine, buffered):
                 work.append(peer)
         for outlet, rated, tolerance, powered in devices[node]:
+            behind = buffered
             if not tolerance:
                 lifted, from_machine = height, machine  # a valve, which lifts nothing
             elif powered:
                 centre = (z.get(node, 0.0) + z.get(outlet, 0.0)) / 2.0
                 lifted = max(height, centre + (tolerance if ceiling else rated))
                 from_machine = machine and lifted == height
+                behind = buffered and lifted == height
             else:
                 # A pump no wire reaches passes fluid and sets the head past it to its own
                 # centre, so everything the line had climbed on the way in is gone.
                 lifted, from_machine = (z.get(node, 0.0) + z.get(outlet, 0.0)) / 2.0, False
-            if raise_to(outlet, lifted, from_machine):
+                behind = False
+            if raise_to(outlet, lifted, from_machine, behind):
                 work.append(outlet)
-    return reach, assumed
+    return reach, assumed, gated
 
 
 def _walls(plumbing: _Plumbing, reach: dict):
@@ -379,7 +427,14 @@ def _walls(plumbing: _Plumbing, reach: dict):
     return out
 
 
-def _crests(plumbing: _Plumbing, reach: dict, assumed: dict, cut_off: set, marginal: bool):
+def _crests(
+    plumbing: _Plumbing,
+    reach: dict,
+    assumed: dict,
+    cut_off: set,
+    marginal: bool,
+    gated: dict | None = None,
+):
     """Group cut-off consumers under the crest that is cheapest to clear.
 
     A consumer can sit behind several crests; it is named once, under the lowest of them,
@@ -422,6 +477,7 @@ def _crests(plumbing: _Plumbing, reach: dict, assumed: dict, cut_off: set, margi
                 marginal=marginal,
                 assumed=bool(assumed.get(u)),
                 pos=pos,
+                buffer_gated=bool((gated or {}).get(u)),
             )
         )
     return out
@@ -438,15 +494,17 @@ def head_lift(projection: dict, game: GameData, graph) -> HeadLift:
     plumbing = _build(projection, game, powered)
 
     fed = _fed(plumbing)
-    rated, rated_from = _spread(plumbing, MACHINE_HEAD_LIFT_M, False)
-    ceiling, ceiling_from = _spread(plumbing, MACHINE_MAX_HEAD_LIFT_M, True)
+    rated, rated_from, rated_gate = _spread(plumbing, MACHINE_HEAD_LIFT_M, False)
+    ceiling, ceiling_from, ceiling_gate = _spread(plumbing, MACHINE_MAX_HEAD_LIFT_M, True)
 
     supplied = {node for node, _actor in plumbing.sinks if node in fed}
-    crests = _crests(plumbing, ceiling, ceiling_from, supplied - set(ceiling), marginal=False)
-    crests += _crests(
-        plumbing, rated, rated_from, (supplied & set(ceiling)) - set(rated), marginal=True
+    crests = _crests(
+        plumbing, ceiling, ceiling_from, supplied - set(ceiling), False, ceiling_gate
     )
-    crests.sort(key=lambda c: (c.marginal, -c.short_m))
+    crests += _crests(
+        plumbing, rated, rated_from, (supplied & set(ceiling)) - set(rated), True, rated_gate
+    )
+    crests.sort(key=lambda c: (c.buffer_gated, c.marginal, -c.short_m))
     return HeadLift(
         crests=tuple(crests),
         consumers=len(plumbing.sinks),
@@ -454,4 +512,5 @@ def head_lift(projection: dict, game: GameData, graph) -> HeadLift:
         networks=plumbing.networks,
         gas_networks=plumbing.gas_networks,
         ambiguous_ports=plumbing.ambiguous,
+        undecided_buffers=plumbing.undecided_tanks,
     )

@@ -798,11 +798,11 @@ def test_the_same_machines_flip_from_flow_rate_to_head_lift_when_the_pumps_go_da
     assert rungs(head_lift(projection, game, graph)) == {FLOW_RATE: 32}
 
     plumbing = H._build(projection, game, powered=set())
-    reach, whence = H._spread(plumbing, H.MACHINE_MAX_HEAD_LIFT_M, True)
+    reach, whence, gated = H._spread(plumbing, H.MACHINE_MAX_HEAD_LIFT_M, True)
     cut = {n for n, _a in plumbing.sinks if n in H._fed(plumbing)} - set(reach)
     dark = dataclasses.replace(
         head_lift(projection, game, graph),
-        crests=tuple(H._crests(plumbing, reach, whence, cut, marginal=False)),
+        crests=tuple(H._crests(plumbing, reach, whence, cut, False, gated)),
     )
     assert len(dark.crests) == 5
     assert rungs(dark) == {HEAD_LIFT: 32}

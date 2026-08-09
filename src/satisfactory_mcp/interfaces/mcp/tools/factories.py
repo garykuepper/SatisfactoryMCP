@@ -872,7 +872,7 @@ def factory_health(
                 "holding less than 1.5 m of fluid outputs slower than it takes in, silently"
             )
         head = head_lift(st.projection, st.game, st.graph)
-        if head.crests:
+        if head.faults:
             chunks.append(
                 "## fluid lines that climb higher than their supply can push\n"
                 + render.table(
@@ -886,18 +886,50 @@ def factory_health(
                             len(c.consumers),
                             "marginal" if c.marginal else "cut off",
                         )
-                        for c in head.crests[start:end]
+                        for c in head.faults[start:end]
                     ],
-                    total=len(head.crests),
+                    total=len(head.faults),
                     offset=start,
                     limit=n,
                 )
             )
             notes.append(
-                f"{len(head.crests)} point(s) on the plumbing stand above the head lift "
+                f"{len(head.faults)} point(s) on the plumbing stand above the head lift "
                 "behind them, so nothing past them is supplied -- a pump placed BEFORE the "
                 "crest is the fix, and a second pump after it would add nothing"
             )
+        if head.buffer_lines:
+            chunks.append(
+                "## lines running on a part-full buffer's own head\n"
+                + render.table(
+                    ("fluid", "rises to m", "buffer surface m", "over by", "machines past it"),
+                    [
+                        (
+                            st.game.item_name(c.fluid) if c.fluid else "-",
+                            f"{c.crest_m:.1f}",
+                            f"{c.head_m:.1f}",
+                            f"{c.short_m:.1f}",
+                            len(c.consumers),
+                        )
+                        for c in head.buffer_lines[start:end]
+                    ],
+                    total=len(head.buffer_lines),
+                    offset=start,
+                    limit=n,
+                )
+            )
+            notes.append(
+                "a buffer passes incoming head on only when it is nearly full, so the line "
+                "above one gets the buffer's own fluid level and no more. These are NOT "
+                "called faults: the same shape runs at full uptime on this world, so the "
+                "reading is 'this line has no margin above its buffer', not 'it is broken'"
+            )
+            if head.undecided_buffers:
+                notes.append(
+                    f"{head.undecided_buffers} buffer(s) sit in the band between the fill "
+                    "measured not to pass head on and the one measured to, so a constant "
+                    "settled them rather than a measurement"
+                )
             if any(c.assumed for c in head.crests):
                 notes.append(
                     "some of those rest on the 10 m of head lift a normal machine is assumed "
