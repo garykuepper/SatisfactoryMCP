@@ -1044,5 +1044,5 @@ def test_the_same_machines_flip_from_flow_rate_to_head_lift_when_the_pumps_go_da
         head_lift(projection, game, graph),
         crests=tuple(H._crests(plumbing, reach, whence, cut, False, gated)),
     )
-    assert len(dark.crests) == 6
+    assert len(dark.crests) == 5
     assert rungs(dark) == {HEAD_LIFT: 32}

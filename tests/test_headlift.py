@@ -411,18 +411,31 @@ def test_a_buffer_inside_the_measured_bracket_is_counted_rather_than_decided_qui
     assert _verdict(_through_tank(2280.0, 25.0), game).undecided_buffers == 0
 
 
-def test_a_buffer_below_its_own_connectors_is_named_rather_than_dropped(game):
+def test_a_buffer_delivers_at_its_connectors_however_little_it_holds(game):
     """A buffer's connectors stand 1.75 m up its side, so under 14.6% of an Industrial one
-    its own surface does not reach them. The barrier is real either way; what is not
-    acceptable is answering with nothing, which is what dropping the node from the reachable
-    set did -- 161 consumers across nine of the owner's saves stood behind one and appeared
-    in no crest at all.
+    its own surface does not reach them -- and it delivers anyway. ``BUF_OUT`` measured
+    7.19 m3 crossing a flat pipe out of a buffer 4.3% full whose surface stood 1.40 m below
+    that pipe, in a closed pair conserved to 0.00001 m3 over 299 s.
+
+    So the surface is a FLOOR on what the buffer offers and never a cap below its own
+    outlet. The barrier above it is unchanged: a tenth full it still cannot lift a consumer
+    to 11 m, and it is still named rather than dropped.
     """
     (crest,) = _verdict(_tanked(240.0, 11.0, connector_z=1.75), game).crests
     assert crest.buffer_gated
-    assert crest.head_m == pytest.approx(1.2)  # a tenth of the 12 m column, below the 1.75
+    assert crest.head_m == pytest.approx(1.75)  # its connectors, above the 1.2 m it holds
     assert crest.crest_m == pytest.approx(11.0)
     assert crest.consumers == ("Build_GeneratorCoal_C_2",)
+
+
+def test_a_consumer_on_the_flat_at_a_near_empty_buffers_connectors_is_fed(game):
+    """The ``BUF_OUT`` rig in miniature, and the verdict the old rule got wrong.
+
+    A tenth-full Industrial Buffer stood 1.2 m in its own tank and its outlet is 1.75 m up,
+    so the head was 0.55 m short of a pipe leaving on the flat and everything past it was
+    called cut off. The owner's fuel line is exactly this shape at 400 m3 scale.
+    """
+    assert _verdict(_tanked(240.0, 1.75, connector_z=1.75), game).crests == ()
 
 
 def test_a_t_junction_is_a_body_and_not_a_machine_port(game):
@@ -517,8 +530,8 @@ def test_consumers_behind_one_hill_are_named_once_under_that_hill(game):
 def test_the_owners_base_reports_no_head_lift_problem(projection, game):
     """The acceptance test. A model that cries wolf on a working factory is wrong.
 
-    Swept over every save on the author's machine this holds for all 78 of them, 1,014 fluid
-    networks and 4,790 consumer ports -- see `docs/fluids_model.md`.
+    Swept over every save on the author's machine this holds for all 93 of them, 1,448 fluid
+    networks and 6,380 consumer ports -- see `docs/fluids_model.md`.
     """
     report = head_lift(projection, game, build_graph(projection))
     assert report.faults == ()
@@ -529,28 +542,27 @@ def test_the_owners_base_reports_no_head_lift_problem(projection, game):
     assert report.gas_networks == 0
 
 
-def test_the_fuel_line_runs_on_its_second_buffer_and_that_is_reported_as_no_fault(
-    projection, game
-):
-    """The one thing the buffer gate finds here, and why it is not called broken.
+def test_the_fuel_lines_twenty_generators_clear_the_buffer_they_sit_on(projection, game):
+    """Both gates on the owner's fuel line are now cleared, by two separate measurements.
 
-    The line is gated twice. A 400 m3 buffer sits in series between seven Packagers and the
-    Mk2 pump, and the pump's inlet stands above its surface -- but a powered pump draws, so
-    that one no longer binds. What binds is the SECOND 400 m3 buffer, in series again at
-    +15.351 under the generators' flat manifold: its connectors are 1.749 m up its side and
-    it is never more than 18.75% full, so its own surface never reaches its own outlet.
+    A 400 m3 buffer sits in series between seven Packagers and the Mk2 pump, and the pump's
+    inlet stands above its surface -- a powered pump draws, so that one does not bind. A
+    SECOND 400 m3 buffer sits in series at +15.351 under the generators' flat manifold, and
+    it is never more than 18.75% full, so its surface never reaches its own outlet 1.75 m
+    up. ``BUF_OUT`` measured a buffer delivering at its connectors at 4.3% fill, so that one
+    does not bind either, and the manifold is flat AT those connectors.
 
-    The twenty generators are nonetheless producing at 100% uptime here and in 47 other
-    saves, so the honest reading is that the line runs on what a buffer alone can give
-    rather than that it is cut off. Nothing rests on the constant: 10.47% is far below the
-    fill measured not to pass head on, so the undecided count is zero.
+    The twenty generators read 100% uptime here and in 47 other saves, and the model finally
+    agrees with them. The one crest left in this world is a Packager, and it is not short of
+    fuel: it is output-blocked, holding 100 Packaged Fuel on a full input box.
     """
     report = head_lift(projection, game, build_graph(projection))
-    line = next(c for c in report.buffer_lines if len(c.consumers) == 20)
-    assert line.fluid == "Desc_LiquidFuel_C"
-    assert line.head_m == pytest.approx(16.1882)  # the buffer's surface at 10.47% of 400 m3
-    assert line.crest_m == pytest.approx(17.1)  # its own connectors, 0.91 m above it
-    assert not line.assumed
+    assert report.faults == ()
+    assert not [c for c in report.crests if len(c.consumers) == 20]
+    (rest,) = report.crests
+    assert rest.fluid == "Desc_LiquidFuel_C"
+    assert rest.consumers == ("Build_Packager_C_2146899090",)
+    assert rest.buffer_gated
     assert report.undecided_buffers == 0
 
 
@@ -569,5 +581,5 @@ def test_the_reference_worlds_silence_is_a_verdict_and_not_an_empty_model(projec
     reach, whence, gated = H._spread(dark, fed, H.MACHINE_MAX_HEAD_LIFT_M, True)
     cut = {n for n, _a in dark.sinks if n in fed} - set(reach)
     crests = H._crests(dark, reach, whence, cut, False, gated)
-    assert sum(len(c.consumers) for c in crests) == 53
-    assert len(crests) == 6
+    assert sum(len(c.consumers) for c in crests) == 33
+    assert len(crests) == 5

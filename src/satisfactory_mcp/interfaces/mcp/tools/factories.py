@@ -901,7 +901,7 @@ def factory_health(
             chunks.append(
                 "## lines running on a part-full buffer's own head\n"
                 + render.table(
-                    ("fluid", "rises to m", "buffer surface m", "over by", "machines past it"),
+                    ("fluid", "rises to m", "buffer delivers at m", "over by", "machines past it"),
                     [
                         (
                             st.game.item_name(c.fluid) if c.fluid else "-",

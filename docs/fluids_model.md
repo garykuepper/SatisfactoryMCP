@@ -24,6 +24,7 @@ The propagated quantity is therefore a reachable altitude, and the rule at each 
 source machine at connector z   ->  z + machine_lift
 into a POWERED pump's inlet     ->  reached iff fluid ARRIVES there, at any altitude
 through a pump at its centre    ->  max(incoming, pump_centre + pump_lift)
+a buffer below capacity         ->  max(base + height * fill, its own connector z)
 along a pipe                    ->  unchanged
 consumer at z                   ->  reachable iff incoming >= z
 ```
@@ -31,6 +32,11 @@ consumer at z                   ->  reachable iff incoming >= z
 The second line is the one exception to the altitude test, and it is measured rather than
 assumed — see *A powered pump draws* below. Everything else keeps the test: a consumer, a
 plain pipe crest and a buffer all answer "is the incoming altitude at least mine?".
+
+The fourth line is a FLOOR and not an exception. A buffer below capacity still refuses to
+pass incoming head on, and what it offers instead is its own surface — but never less than
+the height of its own outlet, because it delivers there at any fill. See *A buffer delivers
+at its connectors* below.
 
 **A pump is a maximum, never a sum, and this is measured rather than argued** `[MEASURED]`.
 In `HL_PUMP` a Mk1 pump stands above a Water Extractor on one column. The two rules predict
@@ -213,7 +219,15 @@ the pipe it names — not inferred, which matters: a fallback to the actor posit
 | Water Extractor | **+2.400** | 4.600 | 23 |
 | Oil Extractor, Refinery | +1.750 | 7.600 / 9.220 | 83 |
 | Packager | +3.750 | 3.5 / 3.8 | 15 |
-| Fluid / Industrial Buffer | +1.750 | 2.0 / 6.0 | 10 |
+| Fluid / Industrial Buffer | **+1.75000** | 2.0 / 6.0 | 10 |
+
+The buffer's offset is **exact**, re-derived in `BUF_OUT` from the raw save rather than the
+projection: every one of the eight couplings on the five `Build_PipeStorageTank_C` in the
+owner's world puts the pipe endpoint at `base + 1.75000` to five decimals. Earlier notes in
+this file said 1.749, which was the projection rounding a pipe point to whole centimetres
+(1710 cm) while leaving the actor's own z unrounded. Nothing rested on the difference, but
+the threshold does: a buffer's surface reaches its own outlet at exactly **21.875%** of a
+400 m³ Fluid Buffer, and at 14.583% of a 2400 m³ Industrial one.
 
 A pump's zero is real, not missing data: a pump is built onto an existing pipe run, so its
 origin sits on the centreline and the pipe passes through it. Its body is 1.2 m tall centred
@@ -323,6 +337,88 @@ correctly read as "no measurable difference" rather than as a number. Stacking i
 This is the second independent confirmation of `max()` over `sum()`: once directly through a
 pump, once through a full buffer.
 
+### A buffer delivers at its connectors, however little it holds `[MEASURED]`
+
+`BUF_OUT` settles the question the buffer gate had left open since the pump rule shipped: a
+buffer whose surface is below its own outlet **still delivers out of it**. Its own head is
+therefore `max(base + height × fill, connector_z)`, and the fill-proportional term is a floor
+that the connector height overrides rather than a ceiling that suppresses it.
+
+**The rig.** Two 400 m³ Fluid Buffers on one flat pad, joined by a single Mk2 pipe and by
+nothing else. Walking the couplings in the save: the pipe's `PipelineConnection0` names
+`Build_PipeStorageTank_C_2147261040.ConnectionAny1` and its `PipelineConnection1` names
+`Build_PipeStorageTank_C_2147260764.ConnectionAny0`; the other connector on each buffer has
+no `mConnectedComponent` at all. **The pair is a closed system**, and the arithmetic below
+proves it independently.
+
+| | buffer #1 `…261040` | buffer #2 `…260764` | the pipe between |
+|---|---|---|---|
+| world position | (−62.000, −2833.000) | (−62.000, −2841.000) | — |
+| base z | **−16.99991** | **−16.99990** | — |
+| connector z | **−15.24991** | **−15.24990** | both ends |
+| connector offset | +1.75000 | +1.75000 | — |
+| length | — | — | **4.000000 m** |
+| Δz end to end | — | — | **0.00001 m** |
+| capacity | 400 m³ | 400 m³ | 7.433008 m³ |
+
+The pipe is horizontal to **10 µm** over 4 m, which is the one thing that had to be true: a
+slope would have let gravity explain the transfer, and interpolating a sloped pipe as a height
+is the trap that produced this project's one phantom reading.
+
+**The measurement.** Four saves, ordered by the header's in-game play duration
+(`play_duration_s`) rather than by filename, spanning **360 s**, all volumes in m³. The owner
+named two of them; the two autosaves that fell inside the window are the other two, and they
+are the ones that carry the result:
+
+| save | t (s) | Δt | fill pipe | #1 | #1 fill | #2 | #2 fill | pipe | **#1+#2+pipe** |
+|---|---|---|---|---|---|---|---|---|---|
+| `BUF_OUT_1` | 1198746 | — | **present** | 20.291323 | 5.0728% | 16.774395 | 4.1936% | 1.574422 | 38.640139 |
+| `BUF_OUT_2` | 1198807 | +61 | gone | 17.386824 | 4.3467% | 23.722454 | 5.9306% | 1.814996 | **42.924274** |
+| `autosave_0` | 1198808 | +1 | gone | 15.075508 | 3.7689% | 25.957424 | 6.4894% | 1.891332 | **42.924265** |
+| `autosave_1` | 1199106 | +298 | gone | 16.895760 | 4.2239% | 24.741213 | 6.1853% | 1.287293 | **42.924265** |
+
+**The fill pipe is gone in the last three, three ways over.** The actor
+`Build_PipelineMK2_NoIndicator_C_2147246576` — 12.28 m, ending on buffer #1's connector at
+(−62.000, −2831.000, −15.24991) — is in `BUF_OUT_1` and in none of the others. What remains of
+the extractor's line is a stub whose `Build_Valve_C.Connection1` has no `mConnectedComponent`,
+so it reaches nothing; the stub is also brim-full and static, 7.000000 of 7.000000 in the pipe
+and in the valve in all three saves, which is what a dead end looks like.
+
+**And the last three conserve the pair's total to 9 × 10⁻⁶ m³ across 299 s**, which is float32
+noise on a 42.9 m³ sum. That is the independent proof that nothing enters or leaves: no source
+could add 0.00001 m³ and stop.
+
+**And inside that closed, conserved system the fluid moves, in both directions.** Between
+`BUF_OUT_2` and `autosave_0` buffer #1 lost **2.311 m³** while buffer #2 gained **2.235** and
+the pipe took the remaining **0.076**. Over the 298 s that followed the flow reversed: buffer
+#2 gave **1.216 m³** back, buffer #1 took **1.820** and the pipe gave up **0.604**. Throughout,
+both surfaces stood **1.23–1.45 m below their own outlets**:
+
+| save | #1 surface | #1 short of its outlet | #2 surface | #2 short |
+|---|---|---|---|---|
+| `BUF_OUT_2` | −16.65217 | 1.402 m | −16.52545 | 1.276 m |
+| `autosave_0` | −16.69840 | 1.449 m | −16.48075 | 1.231 m |
+| `autosave_1` | −16.66199 | 1.412 m | −16.50507 | 1.256 m |
+
+The old rule capped each buffer's node at its surface, 1.4 m under a pipe whose crest is its
+own connector, and concluded that **nothing crosses**. 2.311 m³ crossed in about a second, and
+1.216 m³ crossed back. The rule is refuted at exactly the point it was suspected.
+
+**What this rig does not say.** It measures a floor and no more. The delivery pipe is *at*
+connector height, so the reading establishes `head ≥ connector_z` and cannot distinguish that
+from any larger value. `max(base + height × fill, connector_z)` is therefore the weakest rule
+the data supports, which is the right one to ship — and it is consistent with `HL_BUFFER_A`,
+where 18.8% fill puts the surface at `base + 1.504` against a connector at `base + 1.750`,
+a 0.246 m difference that sits inside the ±0.26 m bar a fill-derived surface supports.
+
+**One honest defect in the rig, and why it does not touch the verdict.** The fill pipe from
+the Water Extractor was dismantled **between** `BUF_OUT_1` and `BUF_OUT_2`, not before them, so
+that first 61 s interval is confounded: the pair's total rises 38.640 → 42.924 across it, and
+part of buffer #2's gain came from the extractor rather than from buffer #1. The two autosaves
+rescue the experiment entirely, and they are the stronger evidence anyway, because a closed
+system that conserves to five decimal places needs no argument about what else might be
+feeding it. `BUF_OUT_1` is reported here for completeness and carries none of the verdict.
+
 ### Output throttling is a separate mechanic `[ASSUMED]`
 
 A buffer needs 1.5 m of head to output as fast as it takes in: **75 m³** in a small buffer,
@@ -378,9 +474,8 @@ about fill.
    see the section below, which is the more important half. `BUFFER_TRANSMITS_ABOVE_FILL`
    gates it at capacity, `BUFFER_TRANSMIT_BRACKET` records the two fills the step was
    measured between, and `HeadLift.undecided_buffers` counts the buffers the constant rather
-   than a measurement settled. `_add_tank`'s own-head term is confirmed and unchanged, and
-   the pump rule needed no change: the 0.000 m connector offset is exact and `max()` is
-   doubly confirmed.
+   than a measurement settled. The pump rule needed no change: the 0.000 m connector offset
+   is exact and `max()` is doubly confirmed.
 3. ~~**The 10 m is labelled unreadable.**~~ **FIXED.** Parsed out of `mDescription` into
    `Building.machine_head_lift_m`, which is a separate field from the pump's `head_lift_m`
    because that one means "this is a pipeline pump" to the pump picker and the logistics
@@ -452,6 +547,11 @@ about fill.
    test unchanged — `HL_MACHINE`, `HL_PUMP` and `HL_FINE` all measure dead-end columns that
    stop at a definite height, and the buffer step is measured too. The scope is exactly one
    node type, and *A powered pump draws* argues why it is spelled ungated.
+7. ~~**A buffer's own head is its surface, even below its own outlet.**~~ **FIXED**
+   `[MEASURED]`. It is `max(base + height × fill, connector_z)`, because a buffer delivers at
+   its connectors at any fill. This was the model's last disagreement with the owner's working
+   base: it freed 1,000 machine-readings across 50 saves, moved no consumer into silence and
+   invented no fault. See *A buffer delivers at its connectors* and the calibration below.
 
 ---
 
@@ -521,11 +621,11 @@ the open alternative, and the experiment that would settle it is written down wi
 ## The buffer barrier is real, and "cut off" is not what it means `[MEASURED]`
 
 Switching the gate on turned a world-wide silence into crests naming the owner's fuel line in
-every save that holds it. Nearly all of the model's output on this machine is that one line,
-and it is worth stating in full because it is the only place the rigs and the owner's base
-disagree.
+every save that holds it. Nearly all of the model's output on this machine was that one line,
+and it is worth stating in full because it is where the rigs and the owner's base disagreed for
+longest — two gates, each one measured away by a rig built for it.
 
-**The line is gated twice, and only the second gate still binds.**
+**The line is gated twice, and neither gate binds any more.**
 
 **The lower gate, cleared by the pump rule.** A 400 m³ Fluid Buffer sits **in series** —
 confirmed by walking its couplings, not inferred — between seven Packagers and the Mk2 pump
@@ -545,24 +645,33 @@ buffer, which is why the pump rule and not the buffer rule had to give:
 | valve → rise | −12.77 → −11.90 | 23.06 | 22.50 | 98% |
 | **rise → pump inlet** | **−11.90 → −8.14** | **9.61** | **6.03** | **63%** |
 
-**The upper gate, which now binds.** A **second** 400 m³ Fluid Buffer sits in series again, at
-base +15.351 m, between the riser and the generators' flat manifold at +17.100 m. Its
-connectors are 1.749 m up its own side, so its surface does not reach **its own outlet** until
-it is **21.9% full** — and across the 48 saves it runs **1.60%–18.75%**, never once above that
-line. The model therefore says nothing leaves it, and the shortfall is **0.249 m at the
-fullest and 1.621 m at the emptiest**. The twenty generators run at 100% through all of it.
+**The upper gate, cleared by the buffer rule.** A **second** 400 m³ Fluid Buffer sits in series
+again, at base +15.351 m, between the riser and the generators' flat manifold at +17.100 m.
+Its connectors are 1.75000 m up its own side, so its surface does not reach **its own outlet**
+until it is **21.875% full** — and across the 48 saves it runs **1.60%–18.75%**, never once
+above that line. The model used to say nothing leaves it, with a shortfall of **0.249 m at the
+fullest and 1.621 m at the emptiest**, while the twenty generators ran at 100% through all of
+it. `BUF_OUT` settles it: the buffer delivers at its connectors at 4.3% fill, so the head there
+is +17.10135 and not +16.19.
 
-So the barrier reproduces on the owner's base and the consequence does not, at both buffers.
-Whatever carries fuel over that gap, a fill-derived altitude does not see it, and calling
-those generators cut off would be false 48 times over. Hence `Crest.buffer_gated` and
-`HeadLift.faults`: a crest whose head is a part-full buffer's surface is reported as *this line
-has no margin above its buffer* and is never counted as a fault.
+**And the manifold is flat at exactly that height**, which is worth stating plainly rather than
+quoting as a margin. The generators' run and the buffer's outlet are the same pipe altitude;
+the projection rounds both to 1710 cm, so the model's test is `17.10 >= 17.10` and passes as an
+equality. There is no climb at all on this line above the buffer — not a small one the model
+now squeaks past. A manifold a centimetre higher would still be called cut off, and this rig
+cannot say whether that verdict would be right.
 
-**The cross-check is clean in both directions.** Of the 965 machine-readings named across the
-91 saves, 960 are those generators and all of them were producing. The five remaining are the
-same Packager in five saves — and it is not starved either: its input holds a **full** 50 m³
-fuel box plus 100 canisters while its output sits at 100 Packaged Fuel. It is output-blocked.
-**Not one machine the model names is short of a fluid.**
+So both barriers reproduce on the owner's base and neither consequence does. **`Crest.buffer_gated`
+survives and means the same thing**: the head behind this crest is a part-full buffer's own
+delivery height rather than a source's, which is a line running on what a buffer alone can give
+and never a fault. What changed is how much of that height there is.
+
+**The cross-check is clean in both directions.** Of the 1,005 machine-readings named across the
+93 saves before the change, 1,000 were those generators and all of them were producing; after
+it, none of them is named. The five remaining are the same Packager in five saves — and it is
+not starved either: its input holds a **full** 50 m³ fuel box plus 100 canisters while its
+output sits at 100 Packaged Fuel. It is output-blocked. **Not one machine the model names is
+short of a fluid**, before or after.
 
 ---
 
@@ -584,16 +693,20 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 - ~~**What carries fuel over the 0.93 m.**~~ **ANSWERED for the pump: the pump does.** It
   draws, and the gap it draws over runs 0.93–7.34 m rather than 0.93. See *A powered pump
   draws*.
-- **What carries fuel out of a buffer that cannot clear its own connectors.** The question the
-  pump answer inherits, one buffer further up and 0.249 m smaller. A 400 m³ buffer's
-  connectors stand 1.749 m up its side, so under **21.9%** fill its own surface is below its
-  own outlet and the model says nothing leaves it — while twenty generators downstream of
-  exactly that buffer run at 100% in all 48 saves at fills of 1.60%–18.75%. Either a buffer
-  always delivers **at** its connector height whatever its fill (making its head
-  `max(base + height × fill, connector_z)`), or something else does. **Do not guess it**: the
-  rig is a buffer drained to a few percent with a flat capped pipe run off its outlet and a
-  consumer on the end, saved twice. Until then a buffer-gated crest stays a note rather than a
-  fault, which is the same posture the pump question was held in and for the same reason.
+- ~~**What carries fuel out of a buffer that cannot clear its own connectors.**~~ **ANSWERED:
+  the buffer does.** It delivers at its connectors at any fill, so its head is
+  `max(base + height × fill, connector_z)`. `BUF_OUT` measured 2.311 m³ leaving a buffer 4.3%
+  full whose surface stood 1.40 m below its own outlet, inside a closed pair conserved to
+  0.00001 m³ over 299 s. See *A buffer delivers at its connectors*.
+- **Is a buffer's delivery height bounded above its connectors, and by what?** The floor the
+  rig measured is `connector_z`; the pipe it delivered into was flat AT that height, so nothing
+  in `BUF_OUT` separates "exactly its connectors" from "its connectors plus some lift". The
+  owner's fuel line cannot separate them either — its manifold is flat at the same altitude, so
+  the model's test there is an equality and a climb of any size above it is untested. **The
+  rig:** the same two-buffer pad, with the receiving buffer replaced by a capped vertical
+  column off the flat pipe and the source buffer held near 5%. If the column stands at the
+  connector height the rule is exactly right; if it stands 10 or 11 m higher, a part-full
+  buffer is a source with a machine's own lift and the gate is far weaker than it looks.
 - **Is a pump's suction bounded, and by what?** The alternative spelling the fuel line could
   not separate: **(b)** an inlet is fed iff `incoming >= pump_centre − reach`, against the
   shipped **(a)** ungated. Nothing in the owner's world can decide it, so it needs a built rig.
@@ -639,11 +752,49 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
   pump at ×1.140 of its — and the pump passes its own stated ceiling. Ceilings are per-class
   measurements or they are nothing.
 
-## The calibration, before and after
+## The calibration of the buffer rule, before and after
 
-Every `.sav` on the machine, **91 of 92 parsed** (`ServerManager_V2.sav` is not a save), and
-compared over the 91 that did not rotate between the two passes — so the columns are the same
-worlds actor for actor rather than two sweeps of a moving target.
+Every `.sav` on the machine, **93 of 93 parsed**, over one set of projections cut once and read
+by both passes — so the columns are the same worlds actor for actor, and no save could rotate
+between them. The "before" pass was re-run from a pristine checkout of `master` and agrees with
+the in-flight one on every field of every save.
+
+| | before | after |
+|---|---|---|
+| fluid networks | 1,448 | 1,448 |
+| consumer ports | 6,380 | 6,380 |
+| unfed ports | 80 | 80 |
+| ambiguous ports | 0 | 0 |
+| marginal verdicts | 0 | 0 |
+| **crests called faults** | **0** | **0** |
+| consumers the model calls cut off | 1,005 | **5** |
+| …named by a crest | 1,005 | 5 |
+| …**named by nothing at all** | **0** | **0** |
+| crests, all buffer-gated | 55 | **5** |
+| distinct places a crest stands | 2 | **1** |
+| buffers inside the undecided band | 1 | 1 |
+
+**1,000 machine-readings move from cut off to fed, and nothing moves the other way.** All 1,000
+are the same twenty Fuel Generators, in the 50 saves that hold them, every one of which reads
+uptime 1.000000 — so the change agrees with the game 1,000 times and disagrees with it nowhere.
+**Fifty saves change; the other forty-three are identical field for field.** No consumer becomes
+silent, no crest becomes a fault, and the unfed, ambiguous and marginal counts do not move at
+all, which is what says the change is confined to the rule it names.
+
+The five crests left are the same output-blocked Packager in five saves, at
+(238.33, −1968.41, −14.01), and it is still buffer-gated: the head behind it is a part-full
+buffer's delivery height. That is the whole of the model's output on 6,380 consumer ports.
+
+**`HeadLift.undecided_buffers` is unmoved at 1**, and correctly so: the change touches what a
+buffer below the threshold offers, never where the threshold sits.
+
+---
+
+## The calibration of the pump rule, before and after
+
+The earlier sweep, kept because it is the pump rule's evidence and not this one's. Every `.sav`
+on the machine at the time, **91 of 92 parsed** (`ServerManager_V2.sav` is not a save), and
+compared over the 91 that did not rotate between the two passes.
 
 | | before | after |
 |---|---|---|
@@ -671,10 +822,11 @@ generators. One barrier, one location, one number.
 **161 readings were named by nothing before.** They were cut off by a buffer whose surface
 could not clear its own connectors, and `_walls` could not see that as an obstacle because the
 incoming head cleared the geometry — so twenty generators in eight saves, and one Packager in
-the committed fixture, were dropped in silence. A buffer now enters the reachable set at its
-own surface even when that surface is below its connectors, which changes no verdict and makes
-the barrier nameable. Without that, the pump rule alone would have taken the silent count from
-161 to **961**.
+the committed fixture, were dropped in silence. Making a buffer enter the reachable set at its
+own head even when that head is below its connectors changed no verdict and made the barrier
+nameable. Without it, the pump rule alone would have taken the silent count from 161 to **961**.
+The buffer rule has since raised that head to the connectors, which is why the table above
+starts from 1,005 named and none silent rather than from these figures.
 
 ---
 
