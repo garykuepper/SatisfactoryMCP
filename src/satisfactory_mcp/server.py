@@ -34,6 +34,7 @@ from .interfaces.mcp.app import (
 )
 from .interfaces.mcp.tools.factories import (
     _cand_row,
+    amend_factory,
     factory_health,
     factory_map,
     factory_query,
@@ -41,6 +42,7 @@ from .interfaces.mcp.tools.factories import (
     list_factories,
     name_factory,
     propose_factories,
+    rename_factory,
     select_machines,
     trace_upstream,
 )
@@ -104,6 +106,7 @@ __all__ = [
     "Limit",
     "advise_hard_drive_pick",
     "alternates_for_item",
+    "amend_factory",
     "bom",
     "collected_from_world",
     "commission_plan",
@@ -147,6 +150,7 @@ __all__ = [
     "rank_build_sites",
     "rank_unlocks",
     "recipe_detail",
+    "rename_factory",
     "rename_plan",
     "search_conduits",
     "search_items",
