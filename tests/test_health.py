@@ -24,6 +24,7 @@ from satisfactory_mcp.domain.factories.health import (
     OPEN,
     STATES,
     UNDETERMINED,
+    UNFED,
     assess,
 )
 from satisfactory_mcp.domain.world import headlift as H
@@ -936,6 +937,88 @@ def test_a_never_run_machine_backed_up_at_the_output_stays_quiet(game):
     )
     report = _beside(game, record)
     assert next(m for m in report.machines if m.instance == name).state == "unmonitored"
+
+
+# ----------------------------------- rung (1)'s second form: a network no source reaches
+#
+# Ten Oil Refineries on Alternate: Heavy Oil Residue, in two rows of five at +13 m, are the
+# whole population of this rule on the author's machine: the same ten actors in 8 of 98
+# saves, and no other unfed port in any of the other 90. Every one is wired, holds an empty
+# input AND an empty output, keeps no window, and has a pipe arriving from a real T junction
+# -- so the conduit graph is satisfied and only the head-lift model can see that nothing
+# anywhere puts crude into that network.
+
+
+def test_a_never_run_machine_on_a_network_no_source_reaches_is_starved(game):
+    """The pipe is REAL, so `_cut_off`'s conduit form declines it and the head-lift form
+    catches it. The cause has to say which fluid and that the network has no source, because
+    that is the actionable difference: the fix is a source, not a pump and not a pipe."""
+    name = "Build_OilRefinery_C_2145161411"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144913486", name, medium=ports.PIPE)],
+        heads=_heads(unfed=[name]),
+    )
+    machine = next(m for m in report.machines if m.instance == name)
+    assert machine.uptime is None
+    assert machine.state == "starved"
+    assert machine.cause == ("Crude Oil (connection: no source on its network)",)
+    assert [f.verdict for f in machine.feeds] == [UNFED]
+    # Still rung (1), so the ladder's own counts do not gain a fourth rung.
+    assert _rungs(report, name) == {"Crude Oil": CONNECTION}
+
+
+def test_a_never_run_machine_whose_network_has_a_source_stays_quiet(game):
+    """The case that must NOT promote, and it is the same record: a pipe arrives from a real
+    fitting and a source does reach it, so an empty buffer on a machine that has never run is
+    a build mid-commissioning rather than a fault."""
+    name = "Build_OilRefinery_C_2145162120"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144913767", name, medium=ports.PIPE)],
+        heads=_heads(),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_an_unfed_port_does_not_promote_a_missing_SOLID(game):
+    """``unfed_ports`` is a fact about pipes. A machine can stand on a dead fluid network and
+    lack a solid, and the belt bringing that solid is the head-lift model's blind spot."""
+    name = "Build_ConstructorMk1_C_2146956309"
+    report = _beside(
+        game,
+        _never_run(name, "Recipe_IronPlate_C"),
+        arriving=[_link("Build_ConveyorAttachmentSplitter_C_2146887273", name)],
+        heads=_heads(unfed=[name]),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_without_a_head_lift_model_the_unfed_form_promotes_nothing(game):
+    """Absent evidence is not a finding: `assess` takes ``heads`` optionally and /api/machines
+    supplies none, so the promotion must need the model rather than merely tolerate it."""
+    name = "Build_OilRefinery_C_2145162762"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144914070", name, medium=ports.PIPE)],
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_an_unfed_machine_holding_its_fluid_stays_quiet(game):
+    """A dead network is not a verdict on a machine that has what it needs -- which is what
+    keeps this rule off a Refinery that is merely paused between runs."""
+    name = "Build_OilRefinery_C_2145163705"
+    report = _beside(
+        game,
+        _never_run(name, held={"Desc_LiquidOil_C": 300}),
+        arriving=[_link("Build_PipelineJunction_T_C_2144918347", name, medium=ports.PIPE)],
+        heads=_heads(unfed=[name]),
+    )
+    assert _state_of(report, name) == "unmonitored"
 
 
 def test_the_reference_world_puts_no_fluid_on_the_ladder_at_all(projection, game):
