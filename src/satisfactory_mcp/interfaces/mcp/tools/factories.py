@@ -146,10 +146,10 @@ def _via(crossed: list) -> str:
 def _feed_row(machine, feed) -> tuple:
     """One starved input and the run that should be bringing it.
 
-    The three not-fed verdicts read differently on purpose: nothing arriving is a finding,
-    a run whose far end the save joins to no actor is not.
+    The not-fed verdicts read differently on purpose: nothing arriving is a finding and so is
+    a network no source reaches, while a run whose far end the save joins to no actor is not.
     """
-    from ....domain.factories.health import JOINED, NOTHING, OPEN
+    from ....domain.factories.health import JOINED, NOTHING, OPEN, UNFED
 
     carrier = "conveyor" if feed.medium == ports.CONVEYOR else "pipe"
     if feed.verdict == NOTHING:
@@ -159,6 +159,8 @@ def _feed_row(machine, feed) -> tuple:
         far = "far end joined to nothing" if feed.verdict == OPEN else f"{feed.far_name} {feed.far}"
         if feed.verdict == JOINED:
             far += " (which way is unresolved)"
+        if feed.verdict == UNFED:
+            far += " -- and NO source anywhere on this network"
         if feed.makes:
             far += " -- MAKES it"
     return (machine.instance, feed.item, arrives, far, feed.far_state)
@@ -751,6 +753,7 @@ def factory_health(
         OPEN,
         RUNGS,
         STATES,
+        UNFED,
         assess,
         summarise,
     )
@@ -1075,6 +1078,14 @@ def factory_health(
             notes.append(
                 f"{nothing} of these inputs have NO conduit of that medium arriving at all -- "
                 "the item cannot reach the machine, which is a build to finish, not a shortage"
+            )
+        sourceless = sum(1 for _m, f in supply if f.verdict == UNFED)
+        if sourceless:
+            notes.append(
+                f"{sourceless} of these inputs arrive by a pipe from a real fitting whose "
+                "network reaches NO source at all -- the conduit is fine and nothing "
+                "anywhere puts that fluid into it, so the fix is a source rather than a "
+                "pump or a reroute"
             )
         loose = sum(1 for _m, f in supply if f.verdict == OPEN)
         if loose:
