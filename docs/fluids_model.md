@@ -430,8 +430,13 @@ derivation** — a 6×6×8 m box is 288 m³ of space holding a stated 400 m³.
 
 ## What the save carries
 
-- **Pipe fill** is readable: every `Build_Pipeline*` actor carries `mFluidBox` in cubic
-  metres. The projection does **not** carry it yet; reading it needs a schema bump.
+- **Pipe fill** is readable, and **an absent `mFluidBox` is how a dry pipe is written**
+  `[MEASURED]`. A `Build_Pipeline*` actor carries the property in cubic metres only while it
+  holds something. Across the four suction saves, **745–747 of 1,576 pipes carry no `mFluidBox`
+  at all and not one pipe anywhere carries an explicit 0.0** — the smallest positive reading in
+  a save is 2.8 × 10⁻⁸ m³. Reading a missing property as "unknown" rather than as empty would
+  discard half of every column measured on this page. The projection does **not** carry pipe
+  fill yet; reading it needs a schema bump.
 - **Buffer fill** is in the projection as `storage[].stored_m3`, in cubic metres, with the
   class distinguishing small from industrial.
 - **Valve limits round-trip** `[MEASURED]`: `mUserFlowLimit` is written when set — 137 m³/min
@@ -618,6 +623,135 @@ the open alternative, and the experiment that would settle it is written down wi
 
 ---
 
+## A running pump fills its own suction line, and then passes nothing on `[MEASURED]`
+
+The rig built to settle *Is a pump's suction bounded, and by what?* did not settle it. It put a
+floor under a Mk1's suction, found no ceiling, and turned up a third mechanism that neither
+spelling of the suction question predicts — on the **discharge** side. All three results are
+written down here, including the one that is only a floor, because the alternative is that the
+rig gets built again from scratch.
+
+**The rig.** The `HL_BUFFER` column with everything upstream of it removed.
+
+| part | what it is |
+|---|---|
+| the tank `…2147405026` | `Build_PipeStorageTank_C` at (−59.000, −2774.000), base z **−16.999867**, connector **−15.249867**, 400 m³ over 8.0 m |
+| the feed | one Mk2 run `…2146794469`, tank connector up to the column's foot, **dxy 11.065 m** — sloped, and excluded from every altitude claim below |
+| the column | vertical at (−58.200, −2763.000), **−13.000 to +23.000**, capped at the top |
+| the pump | one Mk1 `Build_PipelinePump_C`, built into the column |
+
+**The system is closed, and the game says so rather than the arithmetic.** After the teardown
+the save's own `FGPipeNetwork` names exactly **13 members**: the tank, the sloped feed, the pump
+and ten pieces of column. No extractor, no second tank, no valve. Its total holding reads
+88.737458, 88.736905, 88.675617 and 88.672983 m³ across the four saves; across the 299 s in
+which **no actor changed at all** it loses **2.6 litres in 88.67 m³**, 0.003%. The one larger
+step, 61 litres, contains the pump rebuild, and rebuilding a pipe destroys what is in it.
+
+**The saves**, ordered by the header's `play_duration_s` rather than by filename — which matters,
+because `SUCK_LOW` was taken 65 s *after* the save called `SUCK_PRERUN`:
+
+| save | `play_duration_s` | Δt | pump | its centre | tank held | tank fill |
+|---|---|---|---|---|---|---|
+| `HL_BUFFER_SUCK_PREP` | 1199495 | — | none | — | 74.668922 | 18.667% |
+| `SUCK_PRERUN` (was `Han Solo_autosave_0`) | 1199702 | +207 | `…2147220482` | −8.493993 | 68.809410 | 17.202% |
+| `SUCK_LOW` (manual) | 1199767 | +65 | `…2147220482` | −8.493993 | 79.147163 | 19.787% |
+| `SUCK_CLIMB` (was `…autosave_1`) | 1200000 | +233 | `…2147203940` | **−9.591176** | 65.387756 | 16.347% |
+| `SUCK_DRAIN` (was `…autosave_2`) | 1200299 | +299 | `…2147203940` | −9.591176 | 79.804100 | 19.951% |
+
+`SUCK_CLIMB` is the only file that holds the climb. It is an autosave.
+
+### The first pump never ran, and a conclusion was drawn from it
+
+`…2147220482` carries `mTargetConsumption` **0.1 MW**, **no `mIsProducing` property at all**, and
+`mTimeSinceStartStopProducing` at the **FLT_MAX** sentinel, in both `SUCK_PRERUN` and `SUCK_LOW`.
+It has no `mFluidBox` either. It never started, and 0.1 MW is the standby figure a wired machine
+that is doing nothing draws — the same reading the deliberately-starved Refinery gives.
+
+The contrast is `…2147203940`, which replaced it: **4.0 MW**, `mIsProducing` = 16, and
+`mTimeSinceStartStopProducing` advancing **196.689 → 496.658** across the 299 s between
+`SUCK_CLIMB` and `SUCK_DRAIN` — 299.969 s of counter for 299 s of play, so it ran continuously
+with no start or stop in the window.
+
+An intermediate analysis read the 0.1 MW as "powered but idle" and concluded that the absence of
+downstream demand was what stopped the fluid. **That conclusion rested on a pump that had never
+turned over and is withdrawn.** Check `mIsProducing` and the running draw before concluding
+anything about a pump.
+
+### A Mk1 filled its suction line 5.66 m above the tank's delivery head, and then lost it
+
+In `SUCK_CLIMB` the vertical piece `…2147203939` — foot −12.999995, top **−9.591176**, which is
+the pump's own centre, `dxy` **0.000000** — holds **6.753194 m³**.
+
+| reading | value |
+|---|---|
+| against its declared capacity, floored at 7.0 | **96.474%** |
+| against `K × L` = 1.858252 × 3.408819 = 6.334444 | **106.6%** |
+| every "full" piece the trapped-air rigs measured | 90.3%–95.5% of capacity |
+
+Both readings put it above every full piece on this page, and the second needs no capacity model
+at all: the piece holds more water than a length-proportional column of its own length would.
+**So the piece was full and the waterline stood at or above its top, at the pump's inlet.**
+
+That is **≥5.658691 m above the tank's connector** and **≥6.100936 m above the tank's surface**
+at that instant. It is a floor. In `SUCK_DRAIN`, 299 s later with the pump still running, the
+same piece reads **2.8 × 10⁻⁸ m³** — empty. **A drained line is not a standing height, so no
+settled suction ceiling can be quoted from this rig; only the floor.**
+
+**Two things cut against over-crediting the pump, and both belong beside the finding.**
+
+*This rig had already put water above the tank's head with no running pump at all* — no pump in
+`HL_BUFFER_SUCK_PREP`, and in `SUCK_PRERUN` one that had never started. The piece
+`…2147394687` (−13.000 → −9.000) held 0.310757 m³ in the first and 2.033679 m³ in the second,
+waterlines **+2.417 m** and **+3.344 m** above the connector; assumption-free, the
+piece's own foot at −13.000 is **+2.250 m** up and there is water in it. So 5.66 m extends a
+transient this rig produces on its own rather than creating a new phenomenon.
+
+*The whole system oscillates, and so does a control with no pump in it.* The tank swings
+**65.388–79.804 m³** across the five saves with no monotone drain. Meanwhile the untouched
+`BUF_OUT` pair — two 400 m³ buffers, one 4 m horizontal pipe, no pump and no height difference —
+swings **15.602–29.558** and **10.964–25.374 m³** over the same 804 s while the pair's total
+holds at 42.9238–42.9241 m³. **Fourteen cubic metres moving inside a closed, flat, pumpless pair
+is this world's baseline.** Volume moved proves nothing here. Only the altitude in a vertical
+piece does, which is why the sloped feed `…2146794469` is excluded: its fill runs 33.5%–67.6%
+across the five saves and converting any of it to a height would repeat this project's one
+phantom reading.
+
+### Nothing crossed the outlet, and both spellings of the suction question fail
+
+The vertical piece immediately above the pump, `…2147203938` (−9.591176 → −8.999995), went
+**4.017 × 10⁻⁶ → 9.909 × 10⁻⁶ m³** over the 299 s. The pump's own box went 6.786 × 10⁻⁷ →
+1.653 × 10⁻⁶. Everything at or above the pump's centre held **11.6 millilitres** after the pump
+had drawn 4.0 MW for 496.658 s: about **1.2 millilitres a minute**, against a Mk2 pipe's rated
+600 m³ a minute. The **eight** pieces from −9.000 to +23.000 carry **no `mFluidBox` property at
+all** in either save, which is how this save format spells a dry pipe.
+
+| spelling | what it predicts here | why |
+|---|---|---|
+| **(a)** inlets are ungated | the column above the pump fills to **+13.210** | fluid demonstrably arrived at the inlet, so the outlet takes `max(incoming, centre + 22.801)` |
+| **(b)** fed iff `incoming ≥ centre − reach` | the same | `centre − reach` = −9.591176 − 22.801 = **−32.392**, and the incoming −15.250 clears it by 17.1 m |
+
+**Both fail on this save as they are written.** A third mechanism is binding and it is on the
+**discharge** side, not the suction side. The leading candidate is that a capped dead end with
+zero consumption is not a discharge at all — a pump with nowhere to put fluid does not move
+any — but that is a **candidate and not a finding**: nothing here separates it from a limit
+cycle, from a start-up transient, or from a rule about what a pump requires below its outlet.
+The two experiments that would separate them are in *Open*.
+
+### What this rig does not say
+
+It does not measure a suction ceiling, so nothing on this page changes: **(a)** still ships, and
+it ships for the reason it always did rather than because this rig confirmed it. It does not
+show a pump lifting more than the model already allows — the outlet rule is untouched. And it
+does not license reading any of the volumes above as a flow, for the reason the control gives.
+
+The one method slip worth carrying: the pump was **moved down 1.097183 m** in the same interval
+its power was turned on, so `SUCK_LOW` and `SUCK_CLIMB` differ by two things and no rate can be
+read across them. The actor diff is what caught it — six actors out, six in, **24,490 of 24,496
+in common** — and the six are mirrored exactly: three pipe pieces, the pump, its power line and
+its `FGPipeNetwork`, out and back in.
+
+---
+
 ## The buffer barrier is real, and "cut off" is not what it means `[MEASURED]`
 
 Switching the gate on turned a world-wide silence into crests naming the owner's fuel line in
@@ -707,16 +841,34 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
   column off the flat pipe and the source buffer held near 5%. If the column stands at the
   connector height the rule is exactly right; if it stands 10 or 11 m higher, a part-full
   buffer is a source with a machine's own lift and the gate is far weaker than it looks.
-- **Is a pump's suction bounded, and by what?** The alternative spelling the fuel line could
-  not separate: **(b)** an inlet is fed iff `incoming >= pump_centre − reach`, against the
-  shipped **(a)** ungated. Nothing in the owner's world can decide it, so it needs a built rig.
-  **The settling experiment:** drain the 400 m³ buffer to ≈19% (surface −15.5 m) and take two
-  saves with the Mk1 pump — measured reach 22.8–23.0 m — moved up the existing `HL_BUFFER`
-  column, once at **≈+6 m** (21.5 m above the surface, inside its reach) and once at
-  **≈+10 m** (25.5 m above, outside it), each with dry capped pipe above the pump. **Both
-  columns filling means inlets are ungated and (a) is right; only the low one filling means
-  suction is bounded and (b) is.** One rig, two saves, and it is the only question on this page
-  whose answer could turn a silence into a fault.
+- **Is a pump's suction bounded, and by what? PARTLY MEASURED, and blocked on a discharge-side
+  confound.** The alternative spelling the fuel line could not separate: **(b)** an inlet is fed
+  iff `incoming >= pump_centre − reach`, against the shipped **(a)** ungated. The rig was built,
+  and it measured a **floor of 5.66 m** under a running Mk1's suction and no ceiling at all — see
+  *A running pump fills its own suction line*. It cannot separate the two spellings, because on
+  that save **both of them predict a column above the pump that did not fill**: the pump passed
+  11.6 millilitres in 299 s. On a rig that moves nothing, "the column above the pump is dry" says
+  nothing about suction, so the discriminating half cannot be read yet.
+  **That discriminating half is designed and needs no construction:** `SUCK_HIGH`, the Mk1 moved
+  to a centre of **+10.000 m** — 25.25 m above the tank connector, **2.24 m past the 23.006
+  estimator** and **1.01 m past the assumption-free 24.244 ceiling** — with the column already
+  reaching +23.0, so no pipe need be added. **It must not be run until the bullet below is
+  answered.** This is still the only question on this page whose answer could turn a silence into
+  a fault.
+- **What does a running pump need downstream before it will pass fluid?** The question the
+  suction rig turned up, and it is now ahead of `SUCK_HIGH` in the queue. A Mk1 with a full inlet
+  drew 4.0 MW for 497 s and moved 11.6 millilitres past its own outlet into a capped dead-end
+  column with no consumer on it. The candidate is that a dead end with zero consumption is not a
+  discharge at all, and it is **not established** — a limit cycle and a start-up transient both
+  fit the two saves that exist. **Two experiments, in this order.** *The dense series:* change
+  nothing on the rig as it stands and save every ≈30 s for ≈5 minutes, reading the suction piece
+  each time. Two saves 299 s apart cannot tell a line that filled once and drained from a line
+  that fills and empties on a cycle, and everything above rests on that distinction. *The
+  discharge sink:* run a descending Mk2 pipe from the pump's outlet into a spare 400 m³ Fluid
+  Buffer, every crest **at or below `pump centre + 22.801` = +13.21 m** and never above the
+  column's +23.0 cap, so the pump has somewhere to put fluid and the sink is inside its reach by
+  construction. Reusing the `BUF_OUT` buffers would end that closed pair, which is a real cost:
+  it is the control this page leans on for what a pumpless, flat, closed system does on its own.
 - **The ten refineries on a network no source reaches still read `unmonitored`.** They keep no
   window and a pipe *does* arrive at each, so the never-run gate above declines them by
   construction — it asks the conduit graph and not the head-lift model, which is the only thing
@@ -847,6 +999,15 @@ The save file is the instrument; no in-game reading is needed.
    an altitude** — interpolating a long sloped pipe this way invents a plausible height, which
    is how one phantom reading got as far as being called an anomaly.
 6. Subtract the **connector** height, not the actor origin, using the table above.
+7. **Confirm the manual save reached the disk before trusting it.** One save in the suction
+   series was taken, believed and never written; `SUCK_CLIMB` is an autosave that happened to
+   fall inside the window and is the only file holding that measurement. Autosaves rotate in
+   about five minutes, so copy the one a rig needs to a stable name while the rig is still
+   running.
+8. **Change one thing between two saves.** The suction rig's pump was moved down 1.097183 m in
+   the same interval its power was turned on, so `SUCK_LOW` and `SUCK_CLIMB` differ by two
+   variables and no rate can be read across them. The actor diff is what caught it, and it is
+   worth taking every time: six actors out, six in, 24,490 of 24,496 in common.
 
 ---
 
