@@ -87,6 +87,38 @@ The interned actor list is derived from *edges*, so the **6 of 563** machines wi
 otherwise be absent from the graph entirely — and an isolated machine is exactly what a coverage
 report exists to surface.
 
+### 6.1a What the power layer can and cannot say about power
+
+`mHasPower` and `mCircuitID` are on **0 of 44,634 objects** — `UFGPowerInfoComponent` carries no
+`SaveGame` specifier at all, checked against Headers.zip (§13). So the file states nothing about
+whether a machine is *running on* power. What it does state is the **wire**, and reachability over
+the wires supports exactly one claim, in two shapes:
+
+| what `factory_health` reports | what it means | why the save supports it |
+|---|---|---|
+| `no power connection` | the actor is in no power edge | degree zero in `graph["power"]`, and `build_graph` seeds every machine record as a node so an isolated one is a node with no edges rather than an absence |
+| `no generator on its circuit` | wired, but no `generators` record is reachable over the wires | a breadth-first walk out from every generator; anything unreached has no source that could feed it, however the grid is loaded |
+
+**Everything else is refused.** A brownout, a tripped grid, a coal plant out of coal, a machine
+whose circuit is at 0 MW — none of these are in the file, and a machine some generator *can* reach
+is therefore never called unpowered no matter what the report otherwise says about it. An **open
+power switch** is the one known blind spot and it fails in the safe direction: the switch is a node
+joined to both sides, so a genuinely dark sub-circuit behind one reads as reached and is not
+reported. Under-report, never over-report.
+
+Two absences are also refused as findings. No graph supplied, no verdict. And **no generator
+anywhere in the projection**, which would make every actor in the world unreachable: that is a
+statement about the save — an early world, a hand-cut fixture — not a diagnosis of any one machine,
+so the whole check stands down and only the degree-zero half still reports.
+
+Measured over all **98 saves** on the author's machine, across three worlds and four years:
+**34 of them** carry at least one machine on a circuit no generator stands on, up to 32 at once.
+The clearest case is `HL_BUFFER_A` through `D`, where ten Oil Refineries in two rows of five are
+wired to each other and one pole and nothing else, and are wired into the grid by `HL_BUFFER_E`.
+The **committed fixture and the current save have none** — every wired machine there is on a circuit
+a generator stands on, which is the sharper sentence and the one the tool prints. The degree-zero
+half stands at 7 on the fixture and 8 on the current save.
+
 ### 6.2a Foundation slabs — the fourth signal
 
 A player builds a platform, then fills it. Belts and wires cross between platforms freely

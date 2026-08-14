@@ -7,12 +7,13 @@ pins the counter-example that corrected it.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from collections import Counter
 
 import pytest
 
 from satisfactory_mcp.core.saveio import ports
-from satisfactory_mcp.domain.factories.build import build_graph
+from satisfactory_mcp.domain.factories.build import build_graph, class_of
 from satisfactory_mcp.domain.factories.health import (
     CONNECTION,
     FED,
@@ -26,6 +27,7 @@ from satisfactory_mcp.domain.factories.health import (
     UNDETERMINED,
     assess,
 )
+from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
 from satisfactory_mcp.domain.world import headlift as H
 from satisfactory_mcp.domain.world.headlift import Crest, HeadLift, head_lift
 from satisfactory_mcp.domain.world.logistics import BY_ROLE, UNKNOWN, Link, build_physical_graph
@@ -60,15 +62,23 @@ def _machine(name, recipe, *, uptime=None, buffers=None, **extra):
     return record
 
 
+#: The one pole every `_Wires` node hangs off. Named because the stub has to answer from
+#: BOTH ends -- `assess` walks outwards from the generators, so a pole that led nowhere
+#: would leave every other machine on the same circuit unreachable and so sourceless.
+_POLE = "a pole"
+
+
 class _Wires:
-    """A ``FactoryGraph`` reduced to the one question `assess` asks it."""
+    """A ``FactoryGraph`` reduced to the one question `assess` asks it: one shared circuit."""
 
     def __init__(self, wired):
         self.wired = set(wired)
 
     def neighbours(self, node, layer="material"):
         assert layer == "power", "health asks about electricity and nothing else"
-        return ["a pole"] if node in self.wired else []
+        if node == _POLE:
+            return sorted(self.wired)
+        return [_POLE] if node in self.wired else []
 
 
 def _assess(game, machines=(), extractors=(), generators=(), graph=None, physical=None, heads=None):
@@ -414,6 +424,165 @@ def test_a_fully_wired_factory_reports_none(game):
         graph=_Wires({"Build_ConstructorMk1_C_95"}),
     )
     assert report.unwired == []
+
+
+# ---- and the wire that leads to no generator ------------------------------
+#
+# A wire is a wire whether or not a source hangs off it. Ten Oil Refineries in two rows of
+# five, on HL_BUFFER_A through D, are wired to each other and to one pole and to nothing
+# else -- and the current save has none, so the answer there is "every wired machine is on
+# a circuit a generator stands on", which is the sharper sentence. Measured: 34 of the 98
+# saves on this machine carry at least one, across three worlds; save-projection.md §6.1a.
+
+
+def _grid(*wires):
+    """A real ``FactoryGraph`` carrying the given power edges and nothing else."""
+    graph = FactoryGraph(cls={})
+    for a, b in wires:
+        graph.cls[a], graph.cls[b] = class_of(a), class_of(b)
+        graph.power.append(Edge(a=a, b=b))
+    return graph
+
+
+def _burner(name):
+    """A generator record, which is what makes a circuit a source of power."""
+    return _machine(name, "", buffers={"fuel": {"items": {"Desc_Leaves_C": 20}, "slots": 1}})
+
+
+def test_a_stall_on_a_circuit_no_generator_stands_on_says_which(game):
+    """The finding the degree-zero check cannot make: the wire is built, the source is not."""
+    lit = _fed("Build_ConstructorMk1_C_96")
+    stranded = _fed("Build_ConstructorMk1_C_97")
+    graph = _grid(
+        ("Build_GeneratorBiomass_C_98", "Build_PowerPoleMk1_C_1"),
+        ("Build_PowerPoleMk1_C_1", "Build_ConstructorMk1_C_96"),
+        ("Build_PowerPoleMk1_C_2", "Build_ConstructorMk1_C_97"),
+    )
+    report = _assess(
+        game,
+        machines=[lit, stranded],
+        generators=[_burner("Build_GeneratorBiomass_C_98")],
+        graph=graph,
+    )
+    causes = {m.instance: m.cause for m in report.machines}
+    assert causes["Build_ConstructorMk1_C_97"] == ("no generator on its circuit",)
+    assert causes["Build_ConstructorMk1_C_96"] == (), "a pole away from the burner is powered"
+    assert report.sourceless == ["Build_ConstructorMk1_C_97"]
+    assert report.unwired == [], "it is wired; that is the whole point of the second list"
+
+
+def test_the_two_lists_are_disjoint_and_name_different_builds(game):
+    """A machine on no wire is never also reported as being on a sourceless circuit: they
+    are two answers to "what is unbuilt", and one machine has one of them."""
+    graph = _grid(
+        ("Build_GeneratorBiomass_C_98", "Build_SmelterMk1_C_99"),
+        ("Build_PowerPoleMk1_C_2", "Build_ConstructorMk1_C_100"),
+    )
+    report = _assess(
+        game,
+        machines=[
+            _fed("Build_SmelterMk1_C_99"),
+            _fed("Build_ConstructorMk1_C_100"),
+            _fed("Build_ConstructorMk1_C_101"),
+        ],
+        generators=[_burner("Build_GeneratorBiomass_C_98")],
+        graph=graph,
+    )
+    assert report.unwired == ["Build_ConstructorMk1_C_101"]
+    assert report.sourceless == ["Build_ConstructorMk1_C_100"]
+
+
+def test_a_world_with_no_generator_anywhere_calls_nothing_sourceless(game):
+    """The second-order absence. With no source in the projection every actor is unreachable,
+    and "all 570 of your machines are dark" is a statement about the save, not a diagnosis --
+    so the whole check stands down and only the wire itself is still reported."""
+    graph = _grid(("Build_PowerPoleMk1_C_2", "Build_ConstructorMk1_C_102"))
+    report = _assess(game, machines=[_fed("Build_ConstructorMk1_C_102")], graph=graph)
+    assert report.sourceless == []
+    assert report.unwired == []
+    assert report.machines[0].cause == (), "the stall keeps its honest silence"
+
+
+def test_without_a_graph_nothing_is_called_sourceless(game):
+    """`unwired`'s rule, applied to the wider claim: no graph, no finding."""
+    report = _assess(
+        game,
+        machines=[_fed("Build_ConstructorMk1_C_103")],
+        generators=[_burner("Build_GeneratorBiomass_C_98")],
+    )
+    assert report.sourceless == []
+    assert report.machines[0].cause == ()
+
+
+def test_a_generator_four_poles_away_still_counts_as_reaching(game):
+    """Reachability, not adjacency: the whole point of the wires is that they carry."""
+    hops = [f"Build_PowerPoleMk1_C_{i}" for i in range(3, 7)]
+    chain = ["Build_GeneratorBiomass_C_98", *hops, "Build_ConstructorMk1_C_104"]
+    graph = _grid(*itertools.pairwise(chain))
+    report = _assess(
+        game,
+        machines=[_fed("Build_ConstructorMk1_C_104")],
+        generators=[_burner("Build_GeneratorBiomass_C_98")],
+        graph=graph,
+    )
+    assert report.sourceless == []
+    assert report.machines[0].cause == ()
+
+
+def test_being_on_a_sourceless_circuit_is_reported_whatever_the_state_is(game):
+    """`unwired`'s design, and for the same reason: the ten refineries that motivated this
+    are `unmonitored`, never having run, and a state would have hidden them behind that."""
+    idle = _machine("Build_OilRefinery_C_105", "Recipe_Alternate_HeavyOilResidue_C")
+    graph = _grid(
+        ("Build_GeneratorBiomass_C_98", "Build_PowerPoleMk1_C_1"),
+        ("Build_PowerPoleMk1_C_2", "Build_OilRefinery_C_105"),
+    )
+    report = _assess(
+        game,
+        machines=[idle],
+        generators=[_burner("Build_GeneratorBiomass_C_98")],
+        graph=graph,
+    )
+    assert _state_of(report, "Build_OilRefinery_C_105") == "unmonitored"
+    assert report.sourceless == ["Build_OilRefinery_C_105"]
+
+
+def _rewired(projection):
+    """The reference world with one wired machine moved onto a pole of its own.
+
+    A perturbation rather than a hand-built world, for the reason the fluid ladder's own
+    fixtures give: the rendering under test reaches for the graph, the labels and the
+    census, and a stub projection answers none of them. The fixture itself has no machine
+    on a sourceless circuit -- that is asserted in ``test_reference_counts`` -- so the case
+    has to be made rather than found.
+    """
+    graph = projection["graph"]
+    actors = [*graph["actors"], "Build_PowerPoleMk1_C_999999"]
+    victim = next(
+        a
+        for i, a in enumerate(graph["actors"])
+        if a.startswith("Build_OilRefinery_C_") and any(i in e[:2] for e in graph["power"])
+    )
+    index = graph["actors"].index(victim)
+    power = [e for e in graph["power"] if index not in e[:2]]
+    power.append([index, len(actors) - 1])
+    return dict(projection, graph=dict(graph, actors=actors, power=power)), victim
+
+
+def test_the_note_names_a_machine_on_a_circuit_with_no_source(monkeypatch, game, projection):
+    """End to end, because the sentence is the deliverable: the tool used to answer a stall
+    with "usually power" and now says which of the two unbuilt things it is."""
+    from satisfactory_mcp.domain.world.state import WorldState
+    from satisfactory_mcp.interfaces.mcp.tools import factories as tool
+
+    patched, victim = _rewired(projection)
+    monkeypatch.setattr(
+        tool, "_state", lambda save=None, world=None, as_of=None: WorldState(patched, game)
+    )
+    out = tool.factory_health(factory=f"machine:{victim}")
+    assert "1 machine(s) are wired to a circuit NO GENERATOR stands on" in out
+    assert victim in out
+    assert "have no electrical connection at all" not in out, "it is wired; say the right one"
 
 
 # ---- what feeds the input a starved machine lacks -------------------------

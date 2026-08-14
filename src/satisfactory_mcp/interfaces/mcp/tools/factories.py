@@ -33,11 +33,17 @@ BARE_TILE_FLOOR = 12
 #: sentence saying which window "measured" was measured over.
 FLOW_ASPECTS = frozenset({"summary", "balance", "outputs", "inputs", "internal"})
 
-#: How many unwired machines factory_health names before it counts the rest. Named at all
-#: because the instance name is what show_on_map and factory_query take back, so a list of
-#: eight is a list of eight things the reader can go and look at; a hundred of them is one
-#: unwired BLOCK, and its name is not in this note.
+#: How many unpowerable machines factory_health names before it counts the rest, per note.
+#: Named at all because the instance name is what show_on_map and factory_query take back,
+#: so a list of eight is a list of eight things the reader can go and look at; a hundred of
+#: them is one unwired BLOCK, and its name is not in this note.
 UNWIRED_NAMED = 8
+
+
+def _named(instances: list[str]) -> str:
+    """The first ``UNWIRED_NAMED`` instance names, and a count of the rest."""
+    rest = len(instances) - UNWIRED_NAMED
+    return ", ".join(instances[:UNWIRED_NAMED]) + (f", and {rest} more" if rest > 0 else "")
 
 
 def _z_range(slab) -> str:
@@ -719,9 +725,11 @@ def factory_health(
     `starved` (input empty), `stalled` (has input, output has room, still not running),
     `intermittent`, `saturated`, `unmonitored`.
 
-    A stalled machine that no wire reaches says so in its `cause`, and every machine wired
-    to nothing is named in a note whatever state it is in. The save records no "has power"
-    flag, so a machine that IS wired is never called unpowered here -- the wire is the only
+    A stalled machine no generator can reach over the wires says so in its `cause`, and
+    every such machine is named in a note whatever state it is in -- separately for "no
+    wire at all" and "wired to a circuit no generator stands on", which are different
+    builds to finish. The save records no "has power" flag, so a machine a generator CAN
+    reach is never called unpowered here whatever the grid is doing: the wire is the only
     electrical fact the file carries.
 
     For a STARVED machine it also says what physically feeds the input it lacks: the run
@@ -775,7 +783,7 @@ def factory_health(
 
         rows, notes = [], []
         blocked_total = 0
-        unwired_total = 0
+        dark_total = 0
         for label in sorted(st.labels.labels, key=lambda x: -len(x.anchors)):
             standing = [m for m in label.anchors if m in alive]
             report = assess(label.name, standing, st.game, st.projection, st.graph)
@@ -785,7 +793,7 @@ def factory_health(
                 report.by_state[s] for s in ("dead node", "no recipe", "starved", "stalled")
             )
             blocked_total += report.by_state["blocked"]
-            unwired_total += len(report.unwired)
+            dark_total += len(report.unwired) + len(report.sourceless)
             rows.append(
                 (
                     label.name,
@@ -814,13 +822,14 @@ def factory_health(
                 "That is what a factory nobody is drawing from looks like, not a fault. "
                 "Look at starved/stalled/no-recipe first."
             )
-        if unwired_total:
+        if dark_total:
             # No column for it: this table is sorted on accumulated values because a
             # column once moved and took the sort order with it, and a count that is
             # zero on a finished factory does not earn eleven more cells.
             notes.append(
-                f"{unwired_total} machine(s) across these factories have no electrical "
-                "connection at all. factory_health on the one factory names them"
+                f"{dark_total} machine(s) across these factories are on no circuit a "
+                "generator stands on -- no wire at all, or a wire to a circuit with no "
+                "source. factory_health on the one factory names them and says which"
             )
         chunks = [
             render.table(
@@ -1121,19 +1130,24 @@ def factory_health(
         notes.append(
             f"{report.by_state['stalled']} stalled: has input, output has room, still not "
             + (
-                f"producing, and {dark} of them are wired to nothing"
+                f"producing, and {dark} of them no generator can reach over the wires -- "
+                "their cause says whether that is no wire at all or a circuit with no source"
                 if dark
-                else "producing -- and every one of them IS wired, so power delivery, a "
-                "switch or a monitor that has not caught up, not a missing connection"
+                else "producing -- and every one of them is on a circuit some generator "
+                "stands on, so power delivery, a switch or a monitor that has not caught up, "
+                "not a connection left unbuilt"
             )
         )
     if report.unwired:
-        rest = len(report.unwired) - UNWIRED_NAMED
         notes.append(
             f"{len(report.unwired)} machine(s) have no electrical connection at all -- no wire "
-            "reaches them, whatever else they are doing: "
-            + ", ".join(report.unwired[:UNWIRED_NAMED])
-            + (f", and {rest} more" if rest > 0 else "")
+            "reaches them, whatever else they are doing: " + _named(report.unwired)
+        )
+    if report.sourceless:
+        notes.append(
+            f"{len(report.sourceless)} machine(s) are wired to a circuit NO GENERATOR stands "
+            "on, so the wire reaches them and no power does -- a different build to finish "
+            "from the row above: " + _named(report.sourceless)
         )
     if report.by_state["unmonitored"]:
         notes.append(

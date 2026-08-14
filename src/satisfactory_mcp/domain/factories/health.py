@@ -30,7 +30,17 @@ from ...core.gamedata.model import GameData
 from ...core.saveio import ports
 from ..power.report import NO_FUEL, dry_input_classes, dry_inputs
 
-__all__ = ["OK", "RUNGS", "STATES", "Feed", "MachineHealth", "assess", "summarise"]
+__all__ = [
+    "NO_SOURCE",
+    "NO_WIRE",
+    "OK",
+    "RUNGS",
+    "STATES",
+    "Feed",
+    "MachineHealth",
+    "assess",
+    "summarise",
+]
 
 #: Uptime at or above this counts as running flat out.
 SATURATED = 0.999
@@ -76,6 +86,13 @@ HEAD_LIFT = "head lift"
 FLOW_RATE = "flow rate"
 UNDETERMINED = ""
 RUNGS = (CONNECTION, HEAD_LIFT, FLOW_RATE)
+
+#: Why no power can reach a machine, and they are two different builds to finish -- see
+#: save-projection.md §6.1a. NOTHING WEAKER IS CLAIMED anywhere in this module: the wires
+#: are the only electrical fact the save carries, so a machine some generator can reach
+#: over them is never called unpowered here, however dark it is in the running game.
+NO_WIRE = "no power connection"
+NO_SOURCE = "no generator on its circuit"
 
 
 @dataclass(frozen=True)
@@ -132,12 +149,14 @@ class HealthReport:
     #: item name -> how many machines are blocked on it / starved of it
     blocked_on: Counter = field(default_factory=Counter)
     starved_of: Counter = field(default_factory=Counter)
-    #: Machines with no electrical connection at all, whatever state they are otherwise in.
-    #: Its own list rather than a state, because it cuts across all nine: a machine wired to
-    #: nothing can equally have no recipe, be paused, or keep no monitor, and every one of
-    #: those is still worth saying on its own terms. EMPTY when no graph was supplied -- see
-    #: `assess`, where absent evidence must not read as "wired to nothing".
+    #: Machines no generator can reach over the wires, split by which build is unfinished:
+    #: ``unwired`` have no power edge at all, ``sourceless`` are wired to a circuit no
+    #: generator stands on. Disjoint lists rather than states, because both cut across all
+    #: nine -- a machine nothing can power is as often paused, on no recipe or keeping no
+    #: monitor, and each of those is still worth saying on its own terms. BOTH EMPTY when no
+    #: graph was supplied -- see `assess`, where absent evidence must not read as a finding.
     unwired: list[str] = field(default_factory=list)
+    sourceless: list[str] = field(default_factory=list)
 
     @property
     def monitored(self) -> list[MachineHealth]:
@@ -240,7 +259,7 @@ def _cut_off(short: str, record: dict, recipe, game: GameData, conduits) -> bool
     )
 
 
-def _classify(key: str, record: dict, game: GameData, unwired: bool, short: str, conduits):
+def _classify(key: str, record: dict, game: GameData, dark: str, short: str, conduits):
     """One record's ``(state, cause, uptime, recipe)``, on the ladder in the module docstring."""
     recipe = game.recipes.get(record.get("recipe") or "")
     live = record.get("uptime") or {}
@@ -279,16 +298,39 @@ def _classify(key: str, record: dict, game: GameData, unwired: bool, short: str,
         state, cause = "blocked", backed
     elif missing:
         state, cause = "starved", missing
-    elif unwired:
-        # Has input, output has room, not running, and no wire reaches it. This is the one
-        # power fact the save states outright, so "usually power" stops being advice and
-        # becomes the cause.
-        state, cause = "stalled", ("no power connection",)
+    elif dark:
+        # Has input, output has room, not running, and no generator can reach it over the
+        # wires. This is the one power fact the save states outright, so "usually power"
+        # stops being advice and becomes the cause, in its own words.
+        state, cause = "stalled", (dark,)
     else:
         # Has input, output not full, still not running: power, or a monitor that has not
         # caught up.
         state, cause = "stalled", ()
     return state, tuple(cause), uptime, recipe
+
+
+def _lit(graph, sources: set[str]) -> set[str] | None:
+    """Every actor some generator reaches over the power wires, or ``None`` for no sources.
+
+    ``None`` guards a second-order absence. A projection carrying no generator at all leaves
+    every actor in the world unreached, and that is a statement about the save -- an early
+    world, a hand-built fixture -- rather than a finding about any one machine.
+
+    An OPEN power switch would still join the two sides here, so this under-reports rather
+    than over-reports, which is the direction it has to fail in.
+    """
+    if not sources:
+        return None
+    seen: set[str] = set()
+    stack = list(sources)
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(graph.neighbours(node, "power"))
+    return seen
 
 
 def _makes(record: dict, item_cls: str, game: GameData) -> bool:
@@ -412,7 +454,7 @@ def assess(
     """Classify every machine in a set. Extractors and generators are included when they
     carry a monitor, since a starved coal plant is exactly what one wants to see.
 
-    ``graph`` is a ``FactoryGraph`` and is what makes "wired to nothing" answerable;
+    ``graph`` is a ``FactoryGraph`` and is what makes "no generator reaches this" answerable;
     ``physical`` is a ``logistics.PhysicalGraph`` and is what makes "and this is what feeds
     the input it lacks" answerable; ``heads`` is a ``headlift.HeadLift`` and is what lets a
     missing fluid be diagnosed on the manual's ladder rather than at its bottom rung. All
@@ -424,15 +466,10 @@ def assess(
     """
     wanted = set(machines)
     report = HealthReport(name=name)
-    # Every machine in ``wanted``, so a machine wired to nothing is reported even when it is
-    # also paused or unbuilt. ``neighbours`` on an unknown name is empty, which is why this
-    # asks the graph about the machines rather than asking the machines about the graph:
-    # `build.py` puts every machine record into the graph precisely so an isolated one is a
-    # node rather than an absence.
-    unwired = {m for m in wanted if not graph.neighbours(m, "power")} if graph else set()
 
     # Every machine-like record in the world, not just the wanted ones: a starved machine's
-    # feeder is routinely outside the factory being asked about.
+    # feeder is routinely outside the factory being asked about, and every generator anywhere
+    # is a source the reachability below has to start from.
     everything: dict[str, tuple[str, dict]] = {}
     for key in ("machines", "extractors", "generators"):
         for record in projection.get(key, ()):
@@ -441,21 +478,34 @@ def assess(
     # What the never-run branch of `_classify` may read as "no run arrives". The feed rows
     # below keep the raw graph: they say NOTHING ARRIVES in their own words and always have.
     conduits = _Conduits.of(physical, everything) if physical is not None else None
+    sources = {s for s, (key, _r) in everything.items() if key == "generators"}
+    lit = _lit(graph, sources) if graph is not None else None
+
+    def dark_of(actor: str) -> str:
+        """Why nothing can power ``actor``, and empty where something can or nothing is known.
+
+        Asks the graph about the machine rather than the machine about the graph: `build.py`
+        puts every machine record in as a node precisely so an isolated one is a node with no
+        edges rather than an absence, and ``neighbours`` on an unknown name is empty too.
+        """
+        if graph is None:
+            return ""
+        if not graph.neighbours(actor, "power"):
+            return NO_WIRE
+        return NO_SOURCE if lit is not None and actor not in lit else ""
 
     def far_health(actor: str) -> tuple[dict | None, str]:
         found = everything.get(actor)
         if found is None:
             return None, ""
         key, record = found
-        dark = bool(graph) and not graph.neighbours(actor, "power")
-        return record, _classify(key, record, game, dark, actor, conduits)[0]
+        return record, _classify(key, record, game, dark_of(actor), actor, conduits)[0]
 
     for short, (key, record) in everything.items():
         if short not in wanted:
             continue
-        state, cause, uptime, recipe = _classify(
-            key, record, game, short in unwired, short, conduits
-        )
+        dark = dark_of(short)
+        state, cause, uptime, recipe = _classify(key, record, game, dark, short, conduits)
         entry = MachineHealth(
             instance=short,
             building=record.get("cls", "?"),
@@ -472,8 +522,10 @@ def assess(
             entry.cause = _laddered(entry.cause, entry.feeds)
         report.machines.append(entry)
         report.by_state[state] += 1
-        if short in unwired:
+        if dark == NO_WIRE:
             report.unwired.append(short)
+        elif dark == NO_SOURCE:
+            report.sourceless.append(short)
         if state == "blocked":
             for item in entry.cause:
                 report.blocked_on[item] += 1

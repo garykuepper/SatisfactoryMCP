@@ -107,7 +107,7 @@ One of seven is done. The rest are unchanged and still cheap.
 | Warnings channels reach a reader | hours | `GameData.warnings` reaches a bare `len()` (`tools/resources.py:32`); `projection["warnings"]` has zero consumers anywhere. Two note blocks in `world_summary` and the save resource. | open |
 | Unread-class census | hours | Fifteen lines mirroring the null-yaw census. **Must land in the same commit as the warnings readers or it is invisible by construction.** Needs a hand-built "seen and dismissed" allow-list or its first run is 4,300 berry bushes. | open |
 | Node-table forward build check | hours | `skew_from_meta` returns `None` unconditionally on the shipped table — the guard is structurally incapable of firing on the event it exists for. `installed_build()` returns the exact pin string every artifact records and still has no runtime caller. Ten lines closes it for five pinned artifacts. | open |
-| "These 8 machines are wired to nothing" in `factory_health` | hours | The one salvage from the killed electrical-islands pair. `stalled` today says "power, or a monitor that lies" and cannot check which (`domain/factories/health.py:185`). | open |
+| "These 8 machines are wired to nothing" in `factory_health` | hours | The one salvage from the killed electrical-islands pair. `stalled` said "power, or a monitor that lies" and could not check which. | DONE `deadb0b`, widened here from degree zero to *no generator reachable over the wires* — the claim and its two refusals are [save-projection.md](save-projection.md) §6.1a |
 | Comment-budget failure message | 15 min | The cheapest remedy for a failing ratchet is deleting an explanation, in a codebase whose prose is the design record. Change the message to name the intended remedy. Note: caps are per-*directory*, so "raise this file's cap" is not currently available. | open |
 | `docs_path()` raises instead of returning `G:\SteamLibrary` | hours | A function lying rather than failing (`config.py:25`). | open |
 
@@ -191,7 +191,10 @@ Unchanged, and the section most worth reading before proposing anything.
   components sized 563/5/5 — one grid. The "six islands" both pitches cite is `identity.py`'s
   towers-*removed* clustering heuristic, a factory-identity choice, not an electrical one. A
   per-island ledger would print one row and two strays. Salvage the single line it does expose
-  (§3, item 5).
+  (§3, item 5) — now done, and it turns out **the two strays were the finding**: five and five
+  are the two rows of Oil Refineries on `HL_BUFFER_A..D` that are wired to each other and to no
+  generator. A ledger would have printed them as circuits drawing 0 of 0 MW; `factory_health`
+  names them as a build to finish. save-projection.md §6.1a.
 - **The starved→producer chain as a new report.** "What feeds this" would then have four answers:
   `trace_upstream`'s recipe walk, `factory_health.starved_of`, this chain, and §21's physical
   graph. Build instead one health column on the walk `trace_upstream` already does. No new tool,

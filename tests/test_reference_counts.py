@@ -128,6 +128,38 @@ def test_the_seven_machines_no_wire_reaches(proj):
     assert sum(1 for n in names if not graph.neighbours(n, "power")) == 7
 
 
+def test_no_machine_on_this_fixture_is_on_a_sourceless_circuit(proj):
+    """Zero, and the zero is the point -- ``domain/factories/health.py`` and §6.1a.
+
+    The wider half of the same claim: a machine can be wired and still have no generator
+    anywhere on the circuit it is wired to. On this world every such component is a bare
+    pole chain, so the honest answer for the reference save is "every wired machine is on a
+    circuit a generator stands on". It is not vacuous code -- 34 of the 98 saves on the
+    author's machine carry one, up to 32 machines at a time, and ten Oil Refineries in two
+    rows of five on HL_BUFFER_A..D are what it was measured against. If this ever stops
+    being zero the fixture has been re-cut from a save where the check fires, and the
+    reference numbers quoted for the empty case go with it.
+    """
+    from satisfactory_mcp.domain.factories.build import build_graph
+
+    graph = build_graph(proj)
+    sources = {r["instance"].rsplit(".", 1)[-1] for r in proj["generators"]}
+    assert len(sources) == 62
+    reached: set[str] = set()
+    stack = list(sources)
+    while stack:
+        node = stack.pop()
+        if node not in reached:
+            reached.add(node)
+            stack.extend(graph.neighbours(node, "power"))
+    stranded = [
+        r["instance"].rsplit(".", 1)[-1]
+        for r in _records(proj)
+        if graph.neighbours(r["instance"].rsplit(".", 1)[-1], "power")
+    ]
+    assert [n for n in stranded if n not in reached] == []
+
+
 def test_the_lightweight_piece_count_four_modules_cite(proj):
     """8,347, and the 4,631 of them that sit at a yaw off the 90-degree grid.
 
