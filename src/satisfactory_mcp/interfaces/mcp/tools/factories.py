@@ -1506,8 +1506,8 @@ def amend_factory(
     # Before the attach, since ``covers`` reads every label including this one.
     if fresh and store.covers(fresh):
         warn.append(
-            f"covers() calls those {len(fresh)} machine(s) already-named ground -- the one "
-            "rule the map and propose_factories read for that question"
+            f"{len(fresh)} added machine(s) already have a name -- covers(), which the map "
+            "and propose_factories read for that same question"
         )
 
     going = set(unwanted) | ({m for m in before if m not in alive} if prune_missing else set())

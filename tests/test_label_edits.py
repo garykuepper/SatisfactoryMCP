@@ -216,7 +216,7 @@ def test_amend_factory_says_when_the_machines_added_are_already_named(live):
     st.labels.save()
     out = srv.amend_factory(name="north steel", add=[f"machine:{picked[3]},{picked[4]}"])
     assert "overlaps 'neighbour' on 2 machine(s)" in out
-    assert "covers() calls those 2 machine(s) already-named ground" in out
+    assert "2 added machine(s) already have a name -- covers()" in out
     assert len(_reload(st).find("north steel").anchors) == 5
 
 
