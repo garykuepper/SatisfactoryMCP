@@ -98,6 +98,33 @@ def _empty_platform(select: list[str], structures) -> str:
     )
 
 
+def _pick(st, terms: list[str], split: bool = False, expand: bool = False) -> list[str]:
+    """Resolve selector terms against one world state. Raises ``SelectorError``."""
+    from ....domain.factories import select as gsel
+
+    return gsel.select_machines(
+        terms,
+        st.graph,
+        st.game,
+        st.projection,
+        st.labels,
+        split=split,
+        expand=expand,
+        structures=st.structures,
+        proposals=st.proposals,
+    )
+
+
+def _overlaps(store, machines, name: str) -> list[str]:
+    """Which OTHER labels already hold the machines about to be named here."""
+    stolen: dict[str, int] = {}
+    for machine in machines:
+        other = store.label_for(machine)
+        if other and other.name.casefold() != name.strip().casefold():
+            stolen[other.name] = stolen.get(other.name, 0) + 1
+    return [f"overlaps {other!r} on {n} machine(s)" for other, n in sorted(stolen.items())]
+
+
 def _cand_row(c, store, labelled: set[str]) -> tuple:
     named = {store.label_for(m).name for m in c.machines if store.label_for(m)}
     covered = sum(1 for m in c.machines if m in labelled)
@@ -1264,21 +1291,10 @@ def select_machines(
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
-    from ....domain.factories import select as gsel
 
     try:
-        picked = gsel.select_machines(
-            select,
-            st.graph,
-            st.game,
-            st.projection,
-            st.labels,
-            split=split,
-            expand=expand,
-            structures=st.structures,
-            proposals=st.proposals,
-        )
-    except gsel.SelectorError as exc:
+        picked = _pick(st, select, split=split, expand=expand)
+    except SelectorError as exc:
         return f"! {exc}"
     if not picked:
         empty = _empty_platform(select, st.structures)
@@ -1334,39 +1350,24 @@ def name_factory(
 
     The label stores the machine instance ids, which are stable across saves, so it
     survives moving machines, adding to the factory, and autosave rotation. Calling
-    this again with the same name re-anchors it to the current selection.
+    this again with the same name RE-ANCHORS it to the current selection, dropping every
+    machine the new selector misses -- `amend_factory` adds or drops a few without that,
+    and `rename_factory` changes the name without touching the membership.
     """
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
     from ....domain.factories import identity
-    from ....domain.factories import select as gsel
 
     try:
-        picked = gsel.select_machines(
-            select,
-            st.graph,
-            st.game,
-            st.projection,
-            st.labels,
-            split=split,
-            expand=expand,
-            structures=st.structures,
-            proposals=st.proposals,
-        )
-    except gsel.SelectorError as exc:
+        picked = _pick(st, select, split=split, expand=expand)
+    except SelectorError as exc:
         return f"! {exc}"
     if not picked:
         return "! that selector matched no machines; nothing named"
 
     store = st.labels
-    stolen: dict[str, int] = {}
-    for machine in picked:
-        other = store.label_for(machine)
-        if other and other.name.casefold() != name.strip().casefold():
-            stolen[other.name] = stolen.get(other.name, 0) + 1
-
     cand = identity.describe(picked, st.graph, st.game, st.projection, "label")
     existing = store.find(name)
     verb = "would name" if dry_run else ("re-anchored" if existing else "named")
@@ -1375,7 +1376,7 @@ def name_factory(
         f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)} "
         f"(spread {cand.spread_m:.0f}m): {cand.name_hint()}"
     )
-    warn = [f"overlaps {other!r} on {n} machine(s)" for other, n in sorted(stolen.items())]
+    warn = _overlaps(store, picked, name)
     if existing and not dry_run:
         kept = len(set(existing.anchors) & set(picked))
         warn.append(
@@ -1391,6 +1392,175 @@ def name_factory(
     label.centroid = cand.centroid
     label.signature = dict(cand.buildings)
     path = store.save()
+    return render.envelope(f"# {head}", f"stored in {path}", warn)
+
+
+def _repoint_plans(st, was: str, now: str) -> list[str]:
+    """Point stored plans scoped to a factory at its new name.
+
+    ``Plan.factory`` is resolved by name every time ``diff_vs_save`` or ``plan_layout``
+    scopes itself to one, so a rename that left it behind would send both looking for a
+    factory nothing answers to.
+    """
+    moved = []
+    for plan in st.plans.plans:
+        if plan.factory and plan.factory.casefold() == was.casefold():
+            plan.factory = now
+            moved.append(plan.name)
+    if moved:
+        st.plans.save()
+    return moved
+
+
+@mcp.tool(structured_output=False)
+def rename_factory(
+    name: str,
+    to: Annotated[str, Field(description="the new name")],
+    save: str | None = None,
+    world: str | None = None,
+    as_of: AsOf = None,
+) -> str:
+    """Rename a factory label. The machines it holds are not touched and nothing re-anchors.
+
+    The label keeps its anchors, notes, centroid, signature and dates -- the name is the
+    only thing here a player picked, and correcting one used to mean naming the whole
+    selection again under a second name and forgetting the first.
+
+    Stored plans scoped to this factory follow the new name. Renaming onto a name this
+    world already uses is refused and says which label holds it.
+    """
+    try:
+        st = _state(save, world, as_of)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ....domain.factories.labels import LabelError
+
+    store = st.labels
+    label = store.find(name)
+    if label is None:
+        known = ", ".join(x.name for x in store.labels) or "(none)"
+        return f"! no label named {name!r}. Known: {known}"
+    if label.name == to.strip():
+        return f"factory {label.name!r} already has that name"
+    try:
+        was = store.rename(label, to)
+    except LabelError as exc:
+        return f"! {exc}"
+    path = store.save()
+    notes = [
+        (
+            f"recall it as factory={label.name!r}; its {len(label.anchors)} anchor "
+            "machine(s), notes and dates are untouched"
+        )
+    ]
+    if moved := _repoint_plans(st, was, label.name):
+        notes.append(f"{len(moved)} stored plan(s) followed it: {', '.join(moved)}")
+    return render.envelope(
+        f"# renamed factory {was!r} to {label.name!r}\nstored in {path}", "", notes
+    )
+
+
+@mcp.tool(structured_output=False)
+def amend_factory(
+    name: str,
+    add: Annotated[
+        list[str] | None,
+        Field(description=f"selector terms for what to ADD. {GRAPH_SELECTOR_HELP}"),
+    ] = None,
+    drop: Annotated[
+        list[str] | None, Field(description="selector terms for what to DROP, same grammar")
+    ] = None,
+    prune_missing: Annotated[
+        bool, Field(description="drop every anchor this save no longer has")
+    ] = False,
+    notes: str = "",
+    save: str | None = None,
+    world: str | None = None,
+    as_of: AsOf = None,
+    dry_run: bool = False,
+) -> str:
+    """Add or drop individual machines on a label, without re-anchoring the rest of it.
+
+    `name_factory` re-anchors a label to whatever its selector picks, so correcting one
+    wrongly-included machine meant re-selecting the whole factory. This edits the
+    membership: every anchor `add` and `drop` do not name is left exactly as it was,
+    including ids this save no longer has.
+
+    `add` runs first, then `drop`, then `prune_missing`, which clears the anchors
+    `list_factories` reports gone. One machine is `machine:<instance>` on either side.
+    Dropping the last machine is refused -- deleting a label is `forget_factory`.
+    """
+    try:
+        st = _state(save, world, as_of)
+    except Exception as exc:
+        return f"could not read save: {exc}"
+    from ....domain.factories import identity
+    from ....domain.factories.labels import LabelError
+
+    store = st.labels
+    label = store.find(name)
+    if label is None:
+        known = ", ".join(x.name for x in store.labels) or "(none)"
+        return f"! no label named {name!r}. Known: {known}"
+    if not (add or drop or prune_missing or notes):
+        return "! nothing to amend: pass add=, drop=, prune_missing=true or notes="
+    try:
+        wanted = _pick(st, add) if add else []
+        unwanted = _pick(st, drop) if drop else []
+    except SelectorError as exc:
+        return f"! {exc}"
+
+    alive = set(st.graph.machines())
+    before = list(label.anchors)
+    fresh = sorted(set(wanted) - set(before))
+    warn = _overlaps(store, fresh, label.name)
+    # Before the attach, since ``covers`` reads every label including this one.
+    if fresh and store.covers(fresh):
+        warn.append(
+            f"{len(fresh)} added machine(s) already have a name -- covers(), which the map "
+            "and propose_factories read for that same question"
+        )
+
+    going = set(unwanted) | ({m for m in before if m not in alive} if prune_missing else set())
+    try:
+        added = store.attach(label, wanted)
+        dropped = store.detach(label, going)
+    except LabelError as exc:
+        label.anchors = before
+        return f"! {exc}"
+
+    pruned = sum(1 for m in dropped if m not in alive)
+    standing = sorted(set(label.anchors) & alive)
+    cand = identity.describe(standing, st.graph, st.game, st.projection, "label")
+    head = (
+        f"{'would amend' if dry_run else 'amended'} {label.name!r}: "
+        f"{len(before)} -> {len(label.anchors)} anchor(s), +{len(added)} -{len(dropped)}"
+        + (f" ({pruned} of them already gone from this save)" if pruned else "")
+    )
+    if standing:
+        head += (
+            f"\n# {len(standing)} standing at "
+            f"{int(cand.centroid[0] / 100)},{int(cand.centroid[1] / 100)} "
+            f"(spread {cand.spread_m:.0f}m): {cand.name_hint()}"
+        )
+    if dry_run:
+        label.anchors = before
+        return render.envelope(f"# {head}", "", warn + ["dry run: nothing written"])
+    if not added and not dropped and not notes:
+        return render.envelope(f"# {head}", "", warn + ["nothing changed, so nothing written"])
+
+    if standing:
+        label.centroid = cand.centroid
+        label.signature = dict(cand.buildings)
+    if notes:
+        label.notes = notes
+    label.last_matched = str(st.header.get("save_datetime") or st.header.get("filename") or "")
+    path = store.save()
+    if left := len(set(label.anchors) - alive):
+        warn.append(
+            f"{left} anchor(s) still name machines this save does not have; "
+            "prune_missing=true drops them, and nothing else does it on its own"
+        )
     return render.envelope(f"# {head}", f"stored in {path}", warn)
 
 

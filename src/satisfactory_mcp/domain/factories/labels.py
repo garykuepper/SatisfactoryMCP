@@ -28,13 +28,21 @@ site inside a single belt-connected mass). Only an arbitrary machine set covers 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ... import config
 from ...core import atomic
 
-__all__ = ["MATCH_THRESHOLD", "NAMED_SHARE", "REANCHOR_THRESHOLD", "Label", "LabelStore"]
+__all__ = [
+    "MATCH_THRESHOLD",
+    "NAMED_SHARE",
+    "REANCHOR_THRESHOLD",
+    "Label",
+    "LabelError",
+    "LabelStore",
+]
 
 #: Above this share of a machine set covered by labels, the set is something the player has
 #: already named rather than something to offer them. The clusterer runs over the whole
@@ -52,6 +60,10 @@ MATCH_THRESHOLD = 0.5
 REANCHOR_THRESHOLD = 0.8
 
 SCHEMA = 1
+
+
+class LabelError(ValueError):
+    """An edit a label cannot take, with the thing that refused it named."""
 
 
 @dataclass
@@ -184,6 +196,58 @@ class LabelStore:
             return False
         self.labels.remove(label)
         return True
+
+    def rename(self, label: Label, to: str) -> str:
+        """Give a label a new name and change nothing else about it. Returns the old name.
+
+        The id moves with the name because ``find`` matches a slug as well as a name: a
+        label left holding its old slug would go on answering to the name it was renamed
+        away from, and the rename would be a rename in the listing only.
+        """
+        wanted = to.strip()
+        if not wanted:
+            raise LabelError("a factory name cannot be blank")
+        slug = slugify(wanted)
+        for other in self.labels:
+            if other is label:
+                continue
+            if other.name.casefold() == wanted.casefold():
+                raise LabelError(f"this world already has a factory named {other.name!r}")
+            if other.id == slug:
+                raise LabelError(
+                    f"{wanted!r} and the existing {other.name!r} both slug to {slug!r}, "
+                    "which find() cannot tell apart"
+                )
+        was = label.name
+        label.name, label.id = wanted, slug
+        return was
+
+    def attach(self, label: Label, machines: Iterable[str]) -> list[str]:
+        """Add machines to one label, leaving every other anchor of it alone.
+
+        Returns the ones that were not already on it. Nothing else re-anchors, which is
+        the whole difference from ``put``.
+        """
+        held = set(label.anchors)
+        added = sorted(set(machines) - held)
+        label.anchors = sorted(held | set(added))
+        return added
+
+    def detach(self, label: Label, machines: Iterable[str]) -> list[str]:
+        """Drop machines from one label. Returns the ones it actually held.
+
+        Emptying a label is refused rather than done: the name and its notes are the only
+        things in this file the player typed, and ``remove`` is how they say those go.
+        """
+        held = set(label.anchors)
+        dropped = sorted(held & set(machines))
+        if dropped and len(dropped) == len(held):
+            raise LabelError(
+                f"that would leave {label.name!r} with no machines at all; "
+                "forget_factory deletes a label, and dropping the last one will not"
+            )
+        label.anchors = sorted(held - set(dropped))
+        return dropped
 
     # ---- matching ------------------------------------------------------
 

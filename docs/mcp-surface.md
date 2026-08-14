@@ -19,7 +19,7 @@ testing contract. Section numbers are continuous with the rest of the spec;
 
 **Game data:** `search_items`, `search_recipes`, `recipe_detail`, `alternates_for_item`, `list_buildings`
 **Save state:** `list_worlds`, `world_summary`, `unlocked_recipes`, `power_report`, `factory_sites`, `whereami`, `phase_requirements`, `power_shards`, `collected_from_world`, `mam_research`, `somersloops`
-**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `list_factories`, `forget_factory`, `factory_floors`, `trace_upstream`
+**Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `rename_factory`, `amend_factory`, `list_factories`, `forget_factory`, `factory_floors`, `trace_upstream`
 **Inventory:** `stock`, `storage`, `crates`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`, `show_on_map`
 **Planning:** `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `rank_unlocks`, `list_plans`, `site_plan`, `rename_plan`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
