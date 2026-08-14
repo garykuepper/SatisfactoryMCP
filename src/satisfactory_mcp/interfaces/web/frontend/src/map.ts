@@ -135,6 +135,10 @@ export function writeHash(): void {
   if (pinned) parts.push("save=" + encodeURIComponent(pinned));
   if (state.floor) parts.push("floor=" + state.floor.platform + "/" + state.floor.band);
   if (state.mode) parts.push("mode=" + state.mode);
+  // The one part of the layer control the address carries, because a dozen pickup rows are off
+  // by default and a link about a drop pod is a link about a layer. Category names are the
+  // API's own snake_case, so joining them needs no escaping.
+  if (state.pickups.length) parts.push("pickups=" + state.pickups.join(","));
   var c = map.getCenter();
   parts.push("z=" + map.getZoom());
   parts.push("c=" + Math.round(c.lng * 10) / 10 + "," + Math.round(-c.lat * 10) / 10);

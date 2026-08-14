@@ -63,7 +63,18 @@ export interface PageState {
   imagery: boolean;
   /** The storey being sliced, or null for the whole world. See FloorAddress. */
   floor: FloorAddress | null;
+  /* Which collectible categories have their `pickup: ` row ticked, by the category name
+   * `/api/collectibles` groups by. Every one of those rows is off by default and there are a
+   * dozen of them, so this is the only part of the page a link about a slug or a drop pod can
+   * ask for -- and it is held here rather than read off the map because a fragment can name a
+   * category whose layer the current world has no rows for and therefore has not created. */
+  pickups: string[];
 }
+
+/* The selection lives in the URL fragment so a reload, a bookmark or a pasted link lands on the
+ * same world, save, layers and viewport. Read before `state` is built, because the boot values
+ * below are half of it. */
+export var BOOT: Record<string, string> = parseHash(location.hash);
 
 export var state: PageState = {
   world: "",
@@ -83,15 +94,12 @@ export var state: PageState = {
   mode: "",
   imagery: false,
   floor: null,
+  pickups: parseList(BOOT.pickups),
 };
 
-/* The selection lives in the URL fragment (#world=…&save=…&z=…&c=x,y) so a reload, a bookmark
- * or a pasted link lands on the same world, save and viewport.
- *
- * A function and not just the constant below it, because the fragment is read more than once:
- * `BOOT` is the one the page opened on, and fragment.ts re-reads it whenever the address bar
- * changes under an open tab. One parser, so a hand-typed fragment is read exactly the way a
- * bookmarked one is. */
+/* A function and not just `BOOT`, because the fragment is read more than once: `BOOT` is the one
+ * the page opened on, and fragment.ts re-reads it whenever the address bar changes under an open
+ * tab. One parser, so a hand-typed fragment is read exactly the way a bookmarked one is. */
 export function parseHash(hash: string): Record<string, string> {
   var out: Record<string, string> = {};
   hash
@@ -104,7 +112,16 @@ export function parseHash(hash: string): Record<string, string> {
   return out;
 }
 
-export var BOOT: Record<string, string> = parseHash(location.hash);
+/** A comma-separated fragment value as the list it spells, sorted and without blanks, so that
+ *  what the page writes back is the same string whatever order it was typed in. */
+export function parseList(raw: string | undefined): string[] {
+  return (raw || "")
+    .split(",")
+    .filter(function (piece) {
+      return !!piece;
+    })
+    .sort();
+}
 
 export function currentWorld(): WorldRow | null {
   var found: WorldRow | null = null;

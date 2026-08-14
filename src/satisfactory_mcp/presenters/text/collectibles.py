@@ -8,10 +8,87 @@ with their hazards, and the degraded save-only answer is a name-prefix guess.
 from __future__ import annotations
 
 from ...domain.collectibles.service import GENERATOR_COMMAND, CollectiblesView
-from ...domain.spatial import geo
+from ...domain.spatial import geo, maplink
 from . import primitives as render
 
 __all__ = ["render_collectibles"]
+
+
+def _scope(view: CollectiblesView) -> tuple[list[str], list[tuple[float, float]]]:
+    """The categories this answer is about, and every placement of theirs in centimetres.
+
+    A listing answers for the rows it printed; a census answers for the categories it
+    counted, whose placements have to be read back off the table because a census counts
+    without listing. Pedestals drop out of an unfiltered answer on the same grounds the
+    listing drops them: a shrine layer would draw a second marker a metre from the sphere.
+    """
+    table = view.table
+    if view.group:
+        cats = [view.group]
+    elif view.rows is not None:
+        cats = sorted({r["category"] for r in view.rows})
+    else:
+        cats = [c for c in sorted(table.by_category) if not table.pedestal_of(c)]
+    if view.rows:
+        return cats, [(r["pos"][0], r["pos"][1]) for r in view.rows]
+    return cats, [(r["x"], r["y"]) for c in cats for r in table.by_category.get(c, ())]
+
+
+def _map_links(st, view: CollectiblesView) -> tuple[str, list[str]]:
+    """Both map links for the placements this answer is about, the local one first.
+
+    Local first and unconditional because it is the only one of the two that knows what THIS
+    save has taken: it draws ``/api/collectibles?mode=remaining``, so its layer is what is
+    left. The public map draws the vanilla world's full placement list and cannot subtract a
+    save from it, which is why the note beside the link says so rather than the link being
+    quietly dropped.
+    """
+    cats, points = _scope(view)
+    if view.origin is not None:
+        centre, zoom = view.origin, 0.0
+    elif points:
+        centre = (
+            sum(p[0] for p in points) / len(points),
+            sum(p[1] for p in points) / len(points),
+        )
+        zoom = float(maplink.LOCAL_WORLD_ZOOM)
+    else:
+        centre, zoom = (0.0, 0.0), float(maplink.LOCAL_WORLD_ZOOM)
+
+    local = maplink.local_map_url(
+        centre[0] / 100, centre[1] / 100, zoom=zoom, world=st.world_id, pickups=cats
+    )
+    tokens = maplink.collectible_layers(cats)
+    body = f"local map: {local}\npublic map: {maplink.map_url(*centre, tokens)}"
+    if tokens:
+        body += "\n# public layers: " + ", ".join(tokens)
+
+    notes = [
+        "the local map is this project's own and switches the pickup layer on for "
+        + ", ".join(cats)
+        + ". It draws what is REMAINING in YOUR save, so a placement you already took is "
+        "not on it; the public map is satisfactory-calculator.com and draws the vanilla "
+        "world's full list, including everything you have collected"
+    ]
+    if not tokens:
+        notes.append(
+            "the public map has no collectible layer for "
+            + ", ".join(cats)
+            + ", so its link is centred and carries no overlay"
+        )
+    if view.mode == "collected":
+        notes.append(
+            "the rows below are gone and the local map's layer is what is LEFT, so none of "
+            "them is drawn on it. It answers the next question, not this one"
+        )
+    if "crashed_drop_pod" in cats:
+        notes.append(
+            "the pod layer is NOT a hard-drive layer: a looted pod stays standing, so the "
+            "map draws it exactly like a full one -- /api/collectibles carries no 'looted' "
+            "field. mode='remaining' group='crashed_drop_pod' has a holds column, and LOOTED "
+            "there means the drive is already yours"
+        )
+    return body, notes
 
 
 def _hazard_tokens(hazard: dict) -> str:
@@ -179,7 +256,10 @@ def _census(st, view: CollectiblesView, limit: int, offset: int) -> str:
     if group and (note := table.note_for(group)):
         notes.append(f"{group}: {note}")
 
+    links, link_notes = _map_links(st, view)
+    notes += link_notes
     body = [
+        links,
         render.table(
             (
                 "category",
@@ -191,7 +271,7 @@ def _census(st, view: CollectiblesView, limit: int, offset: int) -> str:
                 *(head for _key, head in extra),
             ),
             rows,
-        )
+        ),
     ]
     if group is None:
         stems = [
@@ -277,6 +357,8 @@ def _listing(st, view: CollectiblesView, limit: int, offset: int) -> str:
             "two rows a metre apart for one find. Ask for it by group to see them"
         )
 
+    links, link_notes = _map_links(st, view)
+    notes += link_notes
     return render.envelope(
         f"# {st.age_note}\n"
         f"# mode={mode}"
@@ -284,7 +366,9 @@ def _listing(st, view: CollectiblesView, limit: int, offset: int) -> str:
         + (f" from {where}" if origin else "")
         + "\n"
         + render.kv([("rows", len(rows)), *sorted(counts.items())]),
-        _placement_table(page, g, origin is not None, total=len(rows), limit=n, offset=start),
+        links
+        + "\n\n"
+        + _placement_table(page, g, origin is not None, total=len(rows), limit=n, offset=start),
         notes,
     )
 
@@ -315,6 +399,11 @@ def _save_only(st, view: CollectiblesView, limit: int, offset: int) -> str:
             "sphere). Splitting them by name would be invention; the map table splits them"
         ),
         "'dropped_pickup' is loot the player dropped and re-collected, not a map collectible",
+        (
+            "no map link either: the web map's pickup layers are drawn from that same table, "
+            "so a link would open a layer that is empty because nothing was generated -- "
+            "which on a map reads as 'you have taken them all'"
+        ),
     ]
     if removed.get("other"):
         notes.append(
