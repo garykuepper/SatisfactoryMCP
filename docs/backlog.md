@@ -138,10 +138,14 @@ Three closed, three narrowed by an alias rather than settled, two open.
   class of bug by matching on `Building.native`, where the T and the cross are one class.
 - **Plans: no rename, no way to read a stored plan's arguments — DONE** (`0dd05e4`).
   `rename_plan`, and a detail view that reads one stored plan in full without solving it.
-- **Labels: no rename; cannot add or drop one machine — OPEN.** `LabelStore` still exposes only
-  `put`, `remove`, `find`, `label_for` and `review`, and `name_factory`'s own docstring says
-  calling it again with the same name re-anchors the label to the current selection. Re-anchoring
-  a whole selection to correct one machine is the workflow this is meant to remove.
+- **Labels: no rename; cannot add or drop one machine — DONE.** `rename_factory` and
+  `amend_factory` (`add=`/`drop=`/`prune_missing=`, the selector grammar on both sides). A label
+  holds a materialised id set, so membership is set arithmetic and nothing had to be
+  re-anchored. Rename refuses a taken name *and* a taken slug, because `find` matches both, and
+  the id moves with the name or the old one goes on resolving. Dropping the last machine is
+  refused and names `forget_factory`. A stale anchor goes only when `prune_missing` asks.
+  "Already named" goes through `covers()`, per item 9. Stored plans scoped to the factory follow
+  the rename.
 - **Sitings: `list_plans` showed `x,y` only — DONE.** Yaw and footprint are in the row.
 - **`factory_sites` rows carried no identifier — DONE** (`85a3776`), with altitude back.
 - **`maplink.COLLECTIBLES` is dead code — OPEN, unchanged.** Its only reference anywhere is an
