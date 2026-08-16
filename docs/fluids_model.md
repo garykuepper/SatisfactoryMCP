@@ -558,6 +558,54 @@ about fill.
    base: it freed 1,000 machine-readings across 50 saves, moved no consumer into silence and
    invented no fault. See *A buffer delivers at its connectors* and the calibration below.
 
+8. ~~**The never-run gate cannot see an unfed network.**~~ **FIXED, and measured before it
+   shipped** `[MEASURED]`.
+
+   Ten Oil Refineries on `Alternate: Heavy Oil Residue` read `unmonitored`. They keep no
+   productivity window, so item 4's branch decides them, and that branch asks the conduit
+   graph — which is satisfied, because a real pipe from a real T junction arrives at every
+   one of them. What it cannot see is that nothing anywhere puts crude into the network that
+   pipe belongs to. `_cut_off` therefore asks the head-lift model as well: a required
+   ingredient at zero is unreachable when no run of its medium arrives **or** it is a fluid
+   and the machine's port is in `HeadLift.unfed_ports`. That is rung (1) in its second form,
+   which `_rung` has described in prose since the ladder shipped and nothing acted on.
+
+   **It is ten machines, not a wall.** Every `.sav` on this machine, 98 of 98 parsed and
+   paired save by save: **80 of 42,504 machine-readings change state**, every one of them
+   `unmonitored` → `starved`, and they are **ten distinct actors in eight saves**. No other
+   save on the disk has an unfed port at all, no already-starved machine's cause moves, and
+   no other state moves anywhere. The `unfed ports 80` that item 7's calibration already
+   carries is these same ten — 10 actors × 8 saves — counted for two rounds and never named.
+
+   **It is independent of item 7, and that was measured rather than argued.** The buffer rule
+   moved 1,000 readings from cut off to fed and left the unfed count at exactly 80, because
+   `_fed` is connectivity and `_spread` is height. The populations are disjoint on the data
+   too: the five crests that survive the buffer rule name one consumer each, all five the
+   same output-blocked Packager, and it is not one of the ten. Re-run on the merged tree the
+   delta is the same 80 readings, the same ten actors and the same eight saves.
+
+   **Not one of the ten is producing, and the evidence is per machine rather than per class.**
+   Each is wired; each holds an **empty input and an empty output**, so nothing is
+   output-blocked and nothing has ever been made; each keeps no window; and each has
+   **exactly one ingredient and it is a fluid**, so there is no solid input quietly running
+   underneath. `mTimeSinceStartStopProducing` was not consulted — it is FLT_MAX on 770 of
+   1,023 carriers and 353 of those also hold a closed window, so it separates nothing.
+
+   **The timeline is the strongest check available and it was not designed for.** The ten
+   appear in 31 saves. They are unfed in the eight from 2026-08-02 19:50 to 2026-08-08 09:35.
+   In `HL_REFINERY.sav` at 10:45 — the very next save — the crude line is connected, `unfed`
+   drops to 0, and in all **23** saves since they read `blocked`, `stalled` or `intermittent`,
+   every one of which requires a window, so this branch does not even reach them. **The
+   verdict fires exactly across the window where the build was unfinished and goes silent the
+   moment it was finished.**
+
+   **What it prints, and why it is not merely "connection".** `Crude Oil (connection: no
+   source on its network)`. Naming the fluid and the absent source is the actionable
+   difference from every other starvation verdict: the fix is a source, not a pump and not a
+   reroute. `Feed.rung` deliberately stays `CONNECTION`, so the ladder still counts three
+   rungs; the new fact rides on a fourth `Feed` verdict, `UNFED`, which also puts it in the
+   feed table beside the run and the fitting that do arrive.
+
 ---
 
 ## A powered pump draws `[MEASURED]`
@@ -869,12 +917,11 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
   column's +23.0 cap, so the pump has somewhere to put fluid and the sink is inside its reach by
   construction. Reusing the `BUF_OUT` buffers would end that closed pair, which is a real cost:
   it is the control this page leans on for what a pumpless, flat, closed system does on its own.
-- **The ten refineries on a network no source reaches still read `unmonitored`.** They keep no
-  window and a pipe *does* arrive at each, so the never-run gate above declines them by
-  construction — it asks the conduit graph and not the head-lift model, which is the only thing
-  that can see an unfed network. Promoting on `HeadLift.unfed_ports` would be the second form
-  of rung (1) and would light exactly those ten. Whether ten at once is a finding or a wall is
-  the same question this rule was measured against, and it has not been measured for them.
+- ~~**The ten refineries on a network no source reaches still read `unmonitored`.**~~
+  **ANSWERED: ten, and a finding rather than a wall** `[MEASURED]`. Promoted on
+  `HeadLift.unfed_ports`, which is rung (1)'s second form. Eighty machine-readings move
+  world-wide and they are those ten actors in eight saves; nothing else on the disk has an
+  unfed port at all. See item 8 above and the calibration below.
 - ~~**Does 11 m generalise?**~~ **CLOSED** — two classes, two fluids, two datums, 67 mm apart.
 - **The rating itself is untested.** A dead end measures only the ceiling. The game's
   description is the sole source for 10 m.
@@ -903,6 +950,48 @@ manufactures a plausible number.** Only a vertical piece measures an altitude.
 - **No single tolerance multiplier fits.** The machine sits at ×1.102 of its rating, the Mk1
   pump at ×1.140 of its — and the pump passes its own stated ceiling. Ceilings are per-class
   measurements or they are nothing.
+
+## The calibration of the unfed promotion, before and after
+
+Every `.sav` on the machine, **98 of 98 parsed** and all 98 paired. Both passes ran on the
+same merged tree with only `factories/health.py` and the tool's rendering differing, so the
+columns are the same worlds actor for actor. This is a superset of the 93 the buffer rule was
+swept over, and it reproduces that rule's "after" column exactly — five cut off, five crests,
+one place — which is the cross-check that the two sweeps measure the same thing.
+
+| | before | after |
+|---|---|---|
+| fluid networks | 1,608 | 1,608 |
+| gas networks | 0 | 0 |
+| consumer ports | 6,910 | 6,910 |
+| unfed ports | 80 | 80 |
+| ambiguous ports | 0 | 0 |
+| marginal verdicts | 0 | 0 |
+| **crests called faults** | **0** | **0** |
+| consumers the model calls cut off | 5 | 5 |
+| …named by a crest | 5 | 5 |
+| …**named by nothing at all** | **0** | **0** |
+| crests, all buffer-gated | 5 | 5 |
+| distinct places a crest stands | 1 | 1 |
+| buffers inside the undecided band | 1 | 1 |
+| machine-readings, all saves | 42,504 | 42,504 |
+| …`unmonitored` | 6,566 | **6,486** |
+| …`starved` | 1,420 | **1,500** |
+| distinct actors that change state | — | **10** |
+| saves in which any state changes | — | **8** |
+
+**Every fluid column is unchanged and that is the finding, not an absence of one.** This
+change lives in `factories/health.py` and touches no rule in `world/headlift.py`, so a moved
+crest, a new fault or a moved cut-off count would each have been a bug. The one crest place
+is the same output-blocked Packager at (238.33, −1968.41, −14.01) in five saves that the
+buffer rule's calibration ends on.
+
+The 80 readings that do change are 10 actors × 8 saves, and the state counts move by exactly
+that much and no more: `unmonitored` 6,566 → 6,486, `starved` 1,420 → 1,500. No
+already-starved machine's cause string moves, and no machine outside the ten changes state in
+any save.
+
+---
 
 ## The calibration of the buffer rule, before and after
 

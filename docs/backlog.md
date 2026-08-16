@@ -138,16 +138,30 @@ Three closed, three narrowed by an alias rather than settled, two open.
   class of bug by matching on `Building.native`, where the T and the cross are one class.
 - **Plans: no rename, no way to read a stored plan's arguments — DONE** (`0dd05e4`).
   `rename_plan`, and a detail view that reads one stored plan in full without solving it.
-- **Labels: no rename; cannot add or drop one machine — OPEN.** `LabelStore` still exposes only
-  `put`, `remove`, `find`, `label_for` and `review`, and `name_factory`'s own docstring says
-  calling it again with the same name re-anchors the label to the current selection. Re-anchoring
-  a whole selection to correct one machine is the workflow this is meant to remove.
+- **Labels: no rename; cannot add or drop one machine — DONE.** `rename_factory` and
+  `amend_factory` (`add=`/`drop=`/`prune_missing=`, the selector grammar on both sides). A label
+  holds a materialised id set, so membership is set arithmetic and nothing had to be
+  re-anchored. Rename refuses a taken name *and* a taken slug, because `find` matches both, and
+  the id moves with the name or the old one goes on resolving. Dropping the last machine is
+  refused and names `forget_factory`. A stale anchor goes only when `prune_missing` asks.
+  "Already named" goes through `covers()`, per item 9. Stored plans scoped to the factory follow
+  the rename.
 - **Sitings: `list_plans` showed `x,y` only — DONE.** Yaw and footprint are in the row.
 - **`factory_sites` rows carried no identifier — DONE** (`85a3776`), with altitude back.
-- **`maplink.COLLECTIBLES` is dead code — OPEN, unchanged.** Its only reference anywhere is an
-  assertion in `tests/test_maplink.py`; `layers_for()` reads `LAYERS`, `WELL_STEMS` and
-  `WELL_ONLY` and never touches it. "Where are the hard drives" still gets a map link from
-  neither surface.
+- **`maplink.COLLECTIBLES` was dead because its keys were a vocabulary nothing else spoke —
+  DONE.** It said `hard_drives` and `slugs_green` where the placement table says
+  `crashed_drop_pod` and `power_slug_blue`, so the join was impossible rather than merely
+  unwritten. Re-keyed to the table's own categories. `collected_from_world` now emits a local
+  map link first and the public one after, and the page grew a `pickups=` fragment key so a
+  link can tick a layer that starts off. The structural lesson holds — a projection key is not
+  finished until both interfaces read it — and here neither did, because the key was spelt in
+  a third language.
+- **`/api/collectibles` carries no `looted`, so the map cannot tell an empty drop pod from a
+  full one — OPEN.** 99 pods remain on the reference world and many are already looted; the
+  layer draws them alike, and the text answer has to apologise for the map. Add
+  `looted: bool | None` to `CollectibleRow`, regenerate `api-schema.d.ts` (web-wire rule 6),
+  and draw a looted pod as a hollow ring. Until then `collected_from_world` prints "the pod
+  layer is NOT a hard-drive layer".
 
 ## P5 — capability already built, not yet reachable: WIRE IT UP
 

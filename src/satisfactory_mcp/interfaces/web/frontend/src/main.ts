@@ -26,6 +26,7 @@ import { declutter } from "./labels";
 import { isBatching, onSettled } from "./layercontrol";
 import { loadLive, loadRegions, loadStatic } from "./load";
 import { map, writeHash } from "./map";
+import { notePickupChoice } from "./markers";
 import { noteRegionChoice, updateRegionBlend } from "./regions";
 import { ROUTE_LAYERS, sinkRoutes, styleRoutes } from "./routes";
 import { listen } from "./sse";
@@ -44,7 +45,7 @@ import { loadWorlds } from "./worlds";
  * DELETING A LINE HERE DELETES ITS LAYER, silently: each module registers what it wants
  * fetched as it is evaluated, load.ts imports none of them, and Rollup drops what nothing
  * imports -- no compile error, no runtime one. `test_architecture.py` checks this list
- * against the set of modules that call `registerFetch`, in both directions. Two of these are
+ * against the set of modules that call `registerFetch`, in both directions. Three of these are
  * imported by name above as well, and are repeated here anyway: a rule with exceptions in it
  * is a rule nobody can check at a glance. */
 import "./crates";
@@ -66,9 +67,9 @@ import "./routes";
  *
  *   zoomend            writeHash, styleRoutes, declutter
  *   overlayadd         (the control's own decorator), noteRegionChoice, noteFloorChoice,
- *                      styleRoutes + sinkRoutes, declutter
+ *                      notePickupChoice, styleRoutes + sinkRoutes, declutter
  *   overlayremove      (the control's own decorator), noteRegionChoice, noteFloorChoice,
- *                      declutter
+ *                      notePickupChoice, declutter
  *
  * The control's decorator is not in this list because it is registered while the control is
  * being built, which is the only moment it can be, and it therefore always comes first.
@@ -81,6 +82,8 @@ map.on("overlayadd overlayremove", noteRegionChoice);
 // The same question for floor mode -- and a layer ticked on mid-mode owes the floor filter a
 // pass, which this does too.
 map.on("overlayadd overlayremove", noteFloorChoice);
+// ...and for the pickup rows, which the fragment carries: see notePickupChoice.
+map.on("overlayadd overlayremove", notePickupChoice);
 map.on("zoomend", styleRoutes);
 
 /* A layer added long after both fetches landed is appended to the canvas' draw list, i.e. on
