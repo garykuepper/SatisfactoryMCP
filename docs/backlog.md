@@ -65,25 +65,28 @@ All closed.
 
 ## P2 — the two halves disagree, or one half is blind
 
-One item open, and only half of it.
+All closed.
 
-**15 — OPEN, power only.** Floors, storage contents and crates are closed: `factory_floors`
-(`interfaces/mcp/tools/floors.py`), `storage` and `crates`
-(`interfaces/mcp/tools/inventory.py`), landed by `4f47e33`, `571a59a` and `3678718`.
+**15 — CLOSED.** Floors, storage contents and crates were closed first: `factory_floors`
+(`interfaces/mcp/tools/floors.py`), `storage` and `crates` (`interfaces/mcp/tools/inventory.py`),
+landed by `4f47e33`, `571a59a` and `3678718`.
 
-The power half was less blind than this row claimed, and the correction matters because the
-remedy is different. Power ISLANDS already reach text: `domain/factories/identity.py::bases`
-calls `graph.machine_components("power", skip=graph.towers())` and `factory_map show=candidates`
-prints them under `## power islands (bases)`. What no MCP tool exposes is the pole and wire
-graph itself — spans, and generation and draw per circuit — read today only by
-`interfaces/web/routers/power.py`.
+The power half was less blind than this row originally claimed, and the correction mattered
+because it changed the remedy. Power ISLANDS already reached text:
+`domain/factories/identity.py::bases` calls `graph.machine_components("power",
+skip=graph.towers())` and `factory_map show=candidates` prints them under
+`## power islands (bases)`.
 
-Before building that, read [roadmap.md](roadmap.md) §5. The per-circuit ledger is **measured
-false**, not merely unbuilt: `machine_components("power")` with the towers left IN returns three
-components of 563 / 5 / 5, which is one grid and two strays. The six "islands" are an artifact of
-the towers-REMOVED clustering above, which is a factory-identity heuristic and not an electrical
-fact. The salvage worth having is one line in `factory_health` — "these 8 machines are wired to
-nothing" — because `stalled` today says "power, or a monitor that lies" and cannot check which.
+What landed instead is the salvage [roadmap.md](roadmap.md) §5 asked for, in two steps.
+`deadb0b` named the machines **no wire reaches**. `9201bc9` widened it to the case `deadb0b`
+could not see: a machine can be wired and still have **no generator anywhere on its circuit**.
+Two disjoint lists, `unwired` and `no_generator`, are reported beside every state, and
+`stalled`'s old "power, or a monitor that lies" is now precise in both directions.
+
+It is deliberately **not** the per-circuit ledger, which stays **measured false** — and the
+widening explains §5's "two strays of 5/5": they are two rows of five Oil Refineries wired to
+each other and to no generator at all. The claim, its two refusals and the open-switch blind
+spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 | # | What it was | Closed by |
 |---|---|---|
