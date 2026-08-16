@@ -31,6 +31,7 @@ from ...core.saveio import ports
 from ..power.report import NO_FUEL, dry_input_classes, dry_inputs
 
 __all__ = [
+    "NO_GENERATOR",
     "NO_SOURCE",
     "NO_WIRE",
     "OK",
@@ -68,11 +69,12 @@ STATES = (
 #: States that need no action.
 OK = frozenset({"saturated", "unmonitored"})
 
-#: What a starved input's supply came to. ``NOTHING`` is a FINDING -- no run of that medium
-#: reaches the machine, so nothing delivers the item. The other three are not: a run does
-#: reach it, and ``OPEN`` means the save joins the far end to no actor at all, which is a
-#: feeder unknown rather than a feeder absent.
+#: What a starved input's supply came to. ``NOTHING`` and ``UNFED`` are FINDINGS: no run of
+#: that medium reaches the machine, or a pipe does and no source anywhere reaches the network
+#: it belongs to. The other three are not; ``OPEN`` means the save joins the far end to no
+#: actor at all, which is a feeder unknown rather than a feeder absent.
 NOTHING = "nothing"
+UNFED = "unfed"
 OPEN = "open"
 JOINED = "joined"
 FED = "fed"
@@ -87,12 +89,19 @@ FLOW_RATE = "flow rate"
 UNDETERMINED = ""
 RUNGS = (CONNECTION, HEAD_LIFT, FLOW_RATE)
 
+#: How a cause spells rung (1) in the form only the head-lift model can see. Not a fourth
+#: rung -- ``Feed.rung`` stays ``CONNECTION``, which is what ``RUNGS`` counts -- because the
+#: fitting is real and the fix is a source rather than a pipe.
+NO_SOURCE = f"{CONNECTION}: no source on its network"
+
 #: Why no power can reach a machine, and they are two different builds to finish -- see
-#: save-projection.md §6.1a. NOTHING WEAKER IS CLAIMED anywhere in this module: the wires
-#: are the only electrical fact the save carries, so a machine some generator can reach
-#: over them is never called unpowered here, however dark it is in the running game.
+#: save-projection.md §6.1a. The fluid twin above is a different subject and the two must
+#: not be read for each other: that one is a pipe network no fluid source reaches, this one
+#: is a wire network no generator stands on. NOTHING WEAKER IS CLAIMED for either: the wires
+#: are the only electrical fact the save carries, so a machine some generator can reach over
+#: them is never called unpowered here, however dark it is in the running game.
 NO_WIRE = "no power connection"
-NO_SOURCE = "no generator on its circuit"
+NO_GENERATOR = "no generator on its circuit"
 
 
 @dataclass(frozen=True)
@@ -150,13 +159,13 @@ class HealthReport:
     blocked_on: Counter = field(default_factory=Counter)
     starved_of: Counter = field(default_factory=Counter)
     #: Machines no generator can reach over the wires, split by which build is unfinished:
-    #: ``unwired`` have no power edge at all, ``sourceless`` are wired to a circuit no
+    #: ``unwired`` have no power edge at all, ``no_generator`` are wired to a circuit no
     #: generator stands on. Disjoint lists rather than states, because both cut across all
     #: nine -- a machine nothing can power is as often paused, on no recipe or keeping no
     #: monitor, and each of those is still worth saying on its own terms. BOTH EMPTY when no
     #: graph was supplied -- see `assess`, where absent evidence must not read as a finding.
     unwired: list[str] = field(default_factory=list)
-    sourceless: list[str] = field(default_factory=list)
+    no_generator: list[str] = field(default_factory=list)
 
     @property
     def monitored(self) -> list[MachineHealth]:
@@ -245,21 +254,28 @@ class _Conduits:
         return any(link.medium == medium for link in self.graph.feeds(actor))
 
 
-def _cut_off(short: str, record: dict, recipe, game: GameData, conduits) -> bool:
-    """Whether a required ingredient is at zero and NO run of its medium reaches the machine.
+def _cut_off(short: str, record: dict, recipe, game: GameData, conduits, heads) -> bool:
+    """Whether every required ingredient at zero can reach this machine from nowhere.
 
-    Rung (1) of the manual's ladder, asked of a machine with no productivity window: an empty
-    buffer alone is weak evidence there, because nothing has ever flowed through it.
+    Rung (1) of the manual's ladder in BOTH its forms, asked of a machine with no
+    productivity window: no run of that medium arrives at all, or -- for a fluid -- a pipe
+    does arrive and the head-lift model finds no source anywhere on its network, which the
+    conduit graph cannot see. An empty buffer alone is weak evidence here, because nothing
+    has ever flowed through it.
     """
     if recipe is None or conduits is None or (record.get("buffers") or {}).get("in") is None:
         return False
-    missing = [cls for cls, _name in _missing_classes(record, recipe, game)]
-    return bool(missing) and not any(
-        conduits.may_arrive(short, _medium(game, cls)) for cls in missing
+    sourceless = heads is not None and short in heads.unfed_ports
+    missing = [_medium(game, cls) for cls, _name in _missing_classes(record, recipe, game)]
+    return bool(missing) and all(
+        not conduits.may_arrive(short, medium) or (sourceless and medium == ports.PIPE)
+        for medium in missing
     )
 
 
-def _classify(key: str, record: dict, game: GameData, dark: str, short: str, conduits):
+def _classify(
+    key: str, record: dict, game: GameData, dark: str, short: str, conduits, heads=None
+):
     """One record's ``(state, cause, uptime, recipe)``, on the ladder in the module docstring."""
     recipe = game.recipes.get(record.get("recipe") or "")
     live = record.get("uptime") or {}
@@ -284,7 +300,7 @@ def _classify(key: str, record: dict, game: GameData, dark: str, short: str, con
     elif uptime is None:
         # A machine that has NEVER produced carries no window at all and never will: this
         # branch is permanent, not a monitor yet to catch up.
-        cut = _cut_off(short, record, recipe, game, conduits)
+        cut = _cut_off(short, record, recipe, game, conduits, heads)
         state, cause = ("starved", missing) if cut else ("unmonitored", ())
     elif uptime >= SATURATED:
         state, cause = "saturated", ()
@@ -386,6 +402,7 @@ def _feed_rows(
     for item_cls, item_name in missing_items:
         medium = _medium(game, item_cls)
         fluid = medium == ports.PIPE
+        sourceless = fluid and heads is not None and short in heads.unfed_ports
         arriving = [link for link in physical.feeds(short) if link.medium == medium]
         found: list[Feed] = []
         if not arriving:
@@ -400,7 +417,7 @@ def _feed_rows(
             found.append(
                 Feed(
                     item=item_name,
-                    verdict=JOINED if link.basis == UNKNOWN else FED,
+                    verdict=UNFED if sourceless else (JOINED if link.basis == UNKNOWN else FED),
                     run=link.ident,
                     medium=medium,
                     pieces=link.pieces,
@@ -439,6 +456,7 @@ def _missing_classes(record: dict, recipe, game: GameData) -> list[tuple[str, st
 def _laddered(cause: tuple[str, ...], feeds: tuple[Feed, ...]) -> tuple[str, ...]:
     """The missing items, each fluid one carrying the rung its diagnosis stopped at."""
     rung_of = {feed.item: feed.rung for feed in feeds if feed.rung}
+    rung_of.update({feed.item: NO_SOURCE for feed in feeds if feed.verdict == UNFED})
     return tuple(f"{item} ({rung_of[item]})" if item in rung_of else item for item in cause)
 
 
@@ -457,8 +475,9 @@ def assess(
     ``graph`` is a ``FactoryGraph`` and is what makes "no generator reaches this" answerable;
     ``physical`` is a ``logistics.PhysicalGraph`` and is what makes "and this is what feeds
     the input it lacks" answerable; ``heads`` is a ``headlift.HeadLift`` and is what lets a
-    missing fluid be diagnosed on the manual's ladder rather than at its bottom rung. All
-    three optional, for one reason: without them the answer is UNKNOWN rather than negative.
+    missing fluid be diagnosed on the manual's ladder rather than at its bottom rung, and is
+    the only thing that sees a network no source reaches at all. All three optional, for one
+    reason: without them the answer is UNKNOWN rather than negative.
     The save records no ``mHasPower`` and no ``mCircuitID``, so the one positive electrical
     fact it carries is the wire; a caller who supplies no conduit must not have silence read
     as "nothing feeds this"; and without the head-lift model no input is called a flow-rate
@@ -492,20 +511,22 @@ def assess(
             return ""
         if not graph.neighbours(actor, "power"):
             return NO_WIRE
-        return NO_SOURCE if lit is not None and actor not in lit else ""
+        return NO_GENERATOR if lit is not None and actor not in lit else ""
 
     def far_health(actor: str) -> tuple[dict | None, str]:
         found = everything.get(actor)
         if found is None:
             return None, ""
         key, record = found
-        return record, _classify(key, record, game, dark_of(actor), actor, conduits)[0]
+        return record, _classify(key, record, game, dark_of(actor), actor, conduits, heads)[0]
 
     for short, (key, record) in everything.items():
         if short not in wanted:
             continue
         dark = dark_of(short)
-        state, cause, uptime, recipe = _classify(key, record, game, dark, short, conduits)
+        state, cause, uptime, recipe = _classify(
+            key, record, game, dark, short, conduits, heads
+        )
         entry = MachineHealth(
             instance=short,
             building=record.get("cls", "?"),
@@ -524,8 +545,8 @@ def assess(
         report.by_state[state] += 1
         if dark == NO_WIRE:
             report.unwired.append(short)
-        elif dark == NO_SOURCE:
-            report.sourceless.append(short)
+        elif dark == NO_GENERATOR:
+            report.no_generator.append(short)
         if state == "blocked":
             for item in entry.cause:
                 report.blocked_on[item] += 1

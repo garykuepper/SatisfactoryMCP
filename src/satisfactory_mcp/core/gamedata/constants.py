@@ -99,9 +99,11 @@ CAPABILITY_SCHEMATICS: dict[str, str] = {
 BUFFER_BALANCE_HEAD_M: float = 1.5
 
 #: Fill fraction at and above which a buffer passes INCOMING head lift on unchanged. Below it
-#: the line above a buffer gets only the buffer's own fill-proportional head, and this is a
-#: step rather than a blend -- a blend is excluded arithmetically by 11 m. [MEASURED], see
-#: `docs/fluids_model.md`. The bracket below is 0.7 points wide and CONTAINS this value, so
+#: the line above a buffer gets only the buffer's own head -- its fill-proportional surface or
+#: its connectors 1.75 m up its side, whichever is the higher, since ``BUF_OUT`` measured one
+#: delivering at 4.3% fill. A step rather than a blend, and a blend is excluded arithmetically
+#: by 11 m. [MEASURED], see `docs/fluids_model.md`.
+#: The bracket below is 0.7 points wide and CONTAINS this value, so
 #: capacity is where the step was measured rather than a conservative reading of a wide
 #: bracket. Spelled ``>=`` and never an equality: the game overfills, every reading measured
 #: transmitting is strictly above 1.0 and the highest measured not transmitting is 0.99903.

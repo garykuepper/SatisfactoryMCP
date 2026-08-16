@@ -4,7 +4,8 @@ Head lift is an ABSOLUTE HEIGHT rather than a budget: a source at ``z`` pushes f
 ``z + lift`` anywhere in a full pipe, so this propagates a maximum reachable altitude and a
 pump is ``max(incoming, its own centre + its lift)`` and never a sum. A buffer is the one
 element that BLOCKS an altitude: below ``BUFFER_TRANSMITS_ABOVE_FILL`` the line above it gets
-only the buffer's own fill-proportional head. The finding is the CREST that stops a line,
+the buffer's own head, which is its fill-proportional surface or its connectors, whichever is
+the higher. The finding is the CREST that stops a line,
 named once with every consumer behind it, because that is where a pump would go. The rules,
 the exclusions and what a reading does not mean are in `docs/fluids_model.md`.
 """
@@ -67,10 +68,10 @@ class Crest:
     #: Where the crest stands, in world metres, or ``None`` when a device rather than a pipe
     #: is the obstacle.
     pos: tuple[float, float, float] | None
-    #: Whether the head behind it is a part-full buffer's own surface. NOT a fault: the rig
-    #: and the owner's base disagree here and the base wins on 48 saves, so this is "the line
-    #: runs on what the buffer alone can give" rather than "these machines are cut off". See
-    #: `docs/fluids_model.md`.
+    #: Whether the head behind it is a part-full buffer's own delivery height rather than a
+    #: source's. NOT a fault: a buffer that cannot pass incoming head on is still an
+    #: unbounded supply at its own connectors, so this reads "the line runs on what the
+    #: buffer alone can give" and not "these machines are cut off".
     buffer_gated: bool = False
 
     @property
@@ -131,7 +132,7 @@ class _Plumbing:
     #: (node, actor, the head lift its class STATES, or 0.0 where it states none).
     sources: list = field(default_factory=list)
     sinks: list = field(default_factory=list)
-    #: (node, base altitude, height of the fluid standing in it, whether it passes head on).
+    #: (node, the altitude it delivers at, whether it passes head on).
     tanks: list = field(default_factory=list)
     networks: int = 0
     gas_networks: int = 0
@@ -319,14 +320,12 @@ def _add_tank(out: _Plumbing, game: GameData, cls: str, row, node) -> None:
     low, high = BUFFER_TRANSMIT_BRACKET
     if low <= fill < high:
         out.undecided_tanks += 1
-    out.tanks.append(
-        (
-            node,
-            base,
-            building.footprint.height_m * min(1.0, fill),
-            fill >= BUFFER_TRANSMITS_ABOVE_FILL,
-        )
-    )
+    # A tank delivers at its connectors however little it holds, so its own surface is a
+    # FLOOR on the altitude it offers and never a cap below one. `BUF_OUT` measured 7.19 m3
+    # crossing a flat pipe out of a buffer 4.3% full, whose surface stood 1.40 m under that
+    # pipe. ``out.z[node]`` is the connector height, averaged over the pipes that meet there.
+    surface = base + building.footprint.height_m * min(1.0, fill)
+    out.tanks.append((node, max(surface, out.z[node]), fill >= BUFFER_TRANSMITS_ABOVE_FILL))
 
 
 def _adjacency(plumbing: _Plumbing):
@@ -372,9 +371,7 @@ def _spread(
     gated: dict = {}
     #: A buffer too empty to pass head on caps the altitude AT its node rather than only what
     #: it emits, so the crest search reads the same height the line above it actually gets.
-    capped = {
-        node: base + column for node, base, column, transmits in plumbing.tanks if not transmits
-    }
+    capped = {node: head for node, head, transmits in plumbing.tanks if not transmits}
 
     def centre(inlet, outlet) -> float:
         return (z.get(inlet, 0.0) + z.get(outlet, 0.0)) / 2.0
@@ -383,12 +380,7 @@ def _spread(
         own = capped.get(node)
         if own is not None and own < height:
             height, from_machine, from_buffer = own, False, True
-        if height <= reach.get(node, _LOW):
-            return False
-        # A buffer stands in what it holds, so its surface settles its own node even when
-        # that surface is below its connectors -- which is what makes the barrier a CREST
-        # the report can name rather than a node that quietly never arrives.
-        if height < z.get(node, _LOW) and own is None:
+        if height <= reach.get(node, _LOW) or height < z.get(node, _LOW):
             return False
         reach[node] = height
         assumed[node] = from_machine
@@ -400,8 +392,8 @@ def _spread(
         # on one class and inherited, so it is never taken below a stated rating.
         lift = max(stated, machine_lift) if ceiling else (stated or machine_lift)
         raise_to(node, z.get(node, 0.0) + lift, not stated, False)
-    for node, base, column, transmits in plumbing.tanks:
-        raise_to(node, base + column, False, not transmits)
+    for node, head, transmits in plumbing.tanks:
+        raise_to(node, head, False, not transmits)
     for inlet, outlet, rated, tolerance, powered in plumbing.devices:
         # A POWERED PUMP DRAWS. Its inlet is settled by rung (1) -- fluid arrives there --
         # and not by the altitude test every other node keeps, so it lifts from its own

@@ -128,7 +128,7 @@ def test_the_seven_machines_no_wire_reaches(proj):
     assert sum(1 for n in names if not graph.neighbours(n, "power")) == 7
 
 
-def test_no_machine_on_this_fixture_is_on_a_sourceless_circuit(proj):
+def test_no_machine_on_this_fixture_is_on_a_generator_less_circuit(proj):
     """Zero, and the zero is the point -- ``domain/factories/health.py`` and §6.1a.
 
     The wider half of the same claim: a machine can be wired and still have no generator

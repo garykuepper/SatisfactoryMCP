@@ -25,6 +25,7 @@ from satisfactory_mcp.domain.factories.health import (
     OPEN,
     STATES,
     UNDETERMINED,
+    UNFED,
     assess,
 )
 from satisfactory_mcp.domain.factories.model import Edge, FactoryGraph
@@ -64,7 +65,7 @@ def _machine(name, recipe, *, uptime=None, buffers=None, **extra):
 
 #: The one pole every `_Wires` node hangs off. Named because the stub has to answer from
 #: BOTH ends -- `assess` walks outwards from the generators, so a pole that led nowhere
-#: would leave every other machine on the same circuit unreachable and so sourceless.
+#: would leave every other machine on the same circuit unreachable and so dark.
 _POLE = "a pole"
 
 
@@ -467,12 +468,13 @@ def test_a_stall_on_a_circuit_no_generator_stands_on_says_which(game):
     causes = {m.instance: m.cause for m in report.machines}
     assert causes["Build_ConstructorMk1_C_97"] == ("no generator on its circuit",)
     assert causes["Build_ConstructorMk1_C_96"] == (), "a pole away from the burner is powered"
-    assert report.sourceless == ["Build_ConstructorMk1_C_97"]
+    assert report.no_generator == ["Build_ConstructorMk1_C_97"]
     assert report.unwired == [], "it is wired; that is the whole point of the second list"
 
 
 def test_the_two_lists_are_disjoint_and_name_different_builds(game):
-    """A machine on no wire is never also reported as being on a sourceless circuit: they
+    """A machine on no wire is never also reported as being on a generator-less circuit:
+    they
     are two answers to "what is unbuilt", and one machine has one of them."""
     graph = _grid(
         ("Build_GeneratorBiomass_C_98", "Build_SmelterMk1_C_99"),
@@ -489,28 +491,28 @@ def test_the_two_lists_are_disjoint_and_name_different_builds(game):
         graph=graph,
     )
     assert report.unwired == ["Build_ConstructorMk1_C_101"]
-    assert report.sourceless == ["Build_ConstructorMk1_C_100"]
+    assert report.no_generator == ["Build_ConstructorMk1_C_100"]
 
 
-def test_a_world_with_no_generator_anywhere_calls_nothing_sourceless(game):
+def test_a_world_with_no_generator_anywhere_reports_no_dark_circuit(game):
     """The second-order absence. With no source in the projection every actor is unreachable,
     and "all 570 of your machines are dark" is a statement about the save, not a diagnosis --
     so the whole check stands down and only the wire itself is still reported."""
     graph = _grid(("Build_PowerPoleMk1_C_2", "Build_ConstructorMk1_C_102"))
     report = _assess(game, machines=[_fed("Build_ConstructorMk1_C_102")], graph=graph)
-    assert report.sourceless == []
+    assert report.no_generator == []
     assert report.unwired == []
     assert report.machines[0].cause == (), "the stall keeps its honest silence"
 
 
-def test_without_a_graph_nothing_is_called_sourceless(game):
+def test_without_a_graph_no_circuit_is_called_generator_less(game):
     """`unwired`'s rule, applied to the wider claim: no graph, no finding."""
     report = _assess(
         game,
         machines=[_fed("Build_ConstructorMk1_C_103")],
         generators=[_burner("Build_GeneratorBiomass_C_98")],
     )
-    assert report.sourceless == []
+    assert report.no_generator == []
     assert report.machines[0].cause == ()
 
 
@@ -525,11 +527,11 @@ def test_a_generator_four_poles_away_still_counts_as_reaching(game):
         generators=[_burner("Build_GeneratorBiomass_C_98")],
         graph=graph,
     )
-    assert report.sourceless == []
+    assert report.no_generator == []
     assert report.machines[0].cause == ()
 
 
-def test_being_on_a_sourceless_circuit_is_reported_whatever_the_state_is(game):
+def test_being_on_a_generator_less_circuit_is_reported_whatever_the_state_is(game):
     """`unwired`'s design, and for the same reason: the ten refineries that motivated this
     are `unmonitored`, never having run, and a state would have hidden them behind that."""
     idle = _machine("Build_OilRefinery_C_105", "Recipe_Alternate_HeavyOilResidue_C")
@@ -544,7 +546,7 @@ def test_being_on_a_sourceless_circuit_is_reported_whatever_the_state_is(game):
         graph=graph,
     )
     assert _state_of(report, "Build_OilRefinery_C_105") == "unmonitored"
-    assert report.sourceless == ["Build_OilRefinery_C_105"]
+    assert report.no_generator == ["Build_OilRefinery_C_105"]
 
 
 def _rewired(projection):
@@ -553,7 +555,7 @@ def _rewired(projection):
     A perturbation rather than a hand-built world, for the reason the fluid ladder's own
     fixtures give: the rendering under test reaches for the graph, the labels and the
     census, and a stub projection answers none of them. The fixture itself has no machine
-    on a sourceless circuit -- that is asserted in ``test_reference_counts`` -- so the case
+    on a generator-less circuit -- asserted in ``test_reference_counts`` -- so the case
     has to be made rather than found.
     """
     graph = projection["graph"]
@@ -1107,6 +1109,88 @@ def test_a_never_run_machine_backed_up_at_the_output_stays_quiet(game):
     assert next(m for m in report.machines if m.instance == name).state == "unmonitored"
 
 
+# ----------------------------------- rung (1)'s second form: a network no source reaches
+#
+# Ten Oil Refineries on Alternate: Heavy Oil Residue, in two rows of five at +13 m, are the
+# whole population of this rule on the author's machine: the same ten actors in 8 of 98
+# saves, and no other unfed port in any of the other 90. Every one is wired, holds an empty
+# input AND an empty output, keeps no window, and has a pipe arriving from a real T junction
+# -- so the conduit graph is satisfied and only the head-lift model can see that nothing
+# anywhere puts crude into that network.
+
+
+def test_a_never_run_machine_on_a_network_no_source_reaches_is_starved(game):
+    """The pipe is REAL, so `_cut_off`'s conduit form declines it and the head-lift form
+    catches it. The cause has to say which fluid and that the network has no source, because
+    that is the actionable difference: the fix is a source, not a pump and not a pipe."""
+    name = "Build_OilRefinery_C_2145161411"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144913486", name, medium=ports.PIPE)],
+        heads=_heads(unfed=[name]),
+    )
+    machine = next(m for m in report.machines if m.instance == name)
+    assert machine.uptime is None
+    assert machine.state == "starved"
+    assert machine.cause == ("Crude Oil (connection: no source on its network)",)
+    assert [f.verdict for f in machine.feeds] == [UNFED]
+    # Still rung (1), so the ladder's own counts do not gain a fourth rung.
+    assert _rungs(report, name) == {"Crude Oil": CONNECTION}
+
+
+def test_a_never_run_machine_whose_network_has_a_source_stays_quiet(game):
+    """The case that must NOT promote, and it is the same record: a pipe arrives from a real
+    fitting and a source does reach it, so an empty buffer on a machine that has never run is
+    a build mid-commissioning rather than a fault."""
+    name = "Build_OilRefinery_C_2145162120"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144913767", name, medium=ports.PIPE)],
+        heads=_heads(),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_an_unfed_port_does_not_promote_a_missing_SOLID(game):
+    """``unfed_ports`` is a fact about pipes. A machine can stand on a dead fluid network and
+    lack a solid, and the belt bringing that solid is the head-lift model's blind spot."""
+    name = "Build_ConstructorMk1_C_2146956309"
+    report = _beside(
+        game,
+        _never_run(name, "Recipe_IronPlate_C"),
+        arriving=[_link("Build_ConveyorAttachmentSplitter_C_2146887273", name)],
+        heads=_heads(unfed=[name]),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_without_a_head_lift_model_the_unfed_form_promotes_nothing(game):
+    """Absent evidence is not a finding: `assess` takes ``heads`` optionally and /api/machines
+    supplies none, so the promotion must need the model rather than merely tolerate it."""
+    name = "Build_OilRefinery_C_2145162762"
+    report = _beside(
+        game,
+        _never_run(name),
+        arriving=[_link("Build_PipelineJunction_T_C_2144914070", name, medium=ports.PIPE)],
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
+def test_an_unfed_machine_holding_its_fluid_stays_quiet(game):
+    """A dead network is not a verdict on a machine that has what it needs -- which is what
+    keeps this rule off a Refinery that is merely paused between runs."""
+    name = "Build_OilRefinery_C_2145163705"
+    report = _beside(
+        game,
+        _never_run(name, held={"Desc_LiquidOil_C": 300}),
+        arriving=[_link("Build_PipelineJunction_T_C_2144918347", name, medium=ports.PIPE)],
+        heads=_heads(unfed=[name]),
+    )
+    assert _state_of(report, name) == "unmonitored"
+
+
 def test_the_reference_world_puts_no_fluid_on_the_ladder_at_all(projection, game):
     """The calibration record, and it is a fact about the world rather than about the code.
 
@@ -1213,5 +1297,5 @@ def test_the_same_machines_flip_from_flow_rate_to_head_lift_when_the_pumps_go_da
         head_lift(projection, game, graph),
         crests=tuple(H._crests(plumbing, reach, whence, cut, False, gated)),
     )
-    assert len(dark.crests) == 6
+    assert len(dark.crests) == 5
     assert rungs(dark) == {HEAD_LIFT: 32}
