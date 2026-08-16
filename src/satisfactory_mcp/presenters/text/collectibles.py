@@ -17,15 +17,15 @@ __all__ = ["render_collectibles"]
 def _scope(view: CollectiblesView) -> tuple[list[str], list[tuple[float, float]]]:
     """The categories this answer is about, and every placement of theirs in centimetres.
 
-    A listing answers for the rows it printed; a census answers for the categories it
-    counted, whose placements have to be read back off the table because a census counts
-    without listing. Pedestals drop out of an unfiltered answer on the same grounds the
-    listing drops them: a shrine layer would draw a second marker a metre from the sphere.
+    A listing answers for the rows it printed; a census, and a listing that printed nothing,
+    answer for every category, whose placements have to be read back off the table. Pedestals
+    drop out of an unfiltered answer on the same grounds the listing drops them: a shrine
+    layer would draw a second marker a metre from the sphere.
     """
     table = view.table
     if view.group:
         cats = [view.group]
-    elif view.rows is not None:
+    elif view.rows:
         cats = sorted({r["category"] for r in view.rows})
     else:
         cats = [c for c in sorted(table.by_category) if not table.pedestal_of(c)]
