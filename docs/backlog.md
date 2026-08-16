@@ -12,6 +12,11 @@ P2 but the power half of item 15. What is left is item 15's power topology, item
 remaining ablation knob, and five of the thirteen P3/P4 bullets — three of which are deliberate
 and are marked so.
 
+**Added 2026-08-10: P6, items 37–42** — in-game measurements the fluid model is waiting on.
+They are not code defects and are not counted in the 36 of 40 above; they are here because each
+one is a concrete thing to build, and the alternative is that they are remembered rather than
+findable.
+
 Each closed row names the commit that closed it. The claims below were re-verified against the
 code on 2026-08-06 rather than taken from the commit titles, and two of them turned out to have
 been wrong when they were written; those are marked.
@@ -174,6 +179,76 @@ What is genuinely left is `drop_actor=`, which nothing passes anywhere, and the 
 row asked for: that ablating each knob degrades the riser-violation count. Today the test proves
 the two models agree, not that either is doing work. It is still **not a surface feature** — its
 honest home is that test file.
+
+## P6 — measurements the model is waiting on
+
+Rigs to build in the owner's world, parked with the fluid experiment. [fluids_model.md](fluids_model.md)
+is the authority for every constant and every rule these would move, and rows 37–39 and 41 name
+the section that holds the design rather than repeating it; rows 40 and 42 are written out in
+full because that document does not carry them yet. **The save file is the instrument** — the
+method, including the two ways this experiment has already lost a measurement, is that
+document's *How to measure this again*.
+
+Order matters at the top of the list. **37 and 38 both unblock 39, and 39 must not be run before
+one of them lands.** 40, 41 and 42 are independent of all three and of each other.
+
+**37 — The dense series on the suction rig. OPEN, and the cheapest thing on this list.** The rig
+is already standing: `HL_BUFFER` column, tank drained to ≈19%, feed severed, one Mk1 at centre
+−9.591176. Change nothing, and save every ≈30 s for ≈5 minutes, copying each autosave to a stable
+name as it appears. Read the suction piece `…2147203939` in each. Two saves 299 s apart show that
+piece full and then empty, and cannot tell a line that filled once and drained from one that
+fills and empties on a cycle — the whole reading of the rig turns on which it is. See
+*A running pump fills its own suction line* and the discharge bullet in *Open*.
+
+**38 — The discharge sink. OPEN.** The same rig, given somewhere to put fluid: a descending Mk2
+pipe from the pump's outlet into a spare 400 m³ Fluid Buffer, **every crest at or below
+`pump centre + 22.801` = +13.21 m** and never above the column's +23.0 cap, so the sink is inside
+the pump's measured reach by construction and a failure cannot be blamed on height. This tests
+the leading candidate for why a pump drawing 4.0 MW for 497 s moved 11.6 millilitres: that a
+capped dead end with no consumer is not a discharge at all. **Cost to weigh first:** reusing the
+`BUF_OUT` buffers would end that closed pair, which is the control the model document leans on
+for what a pumpless, flat, closed system does on its own.
+
+**39 — `SUCK_HIGH`. BLOCKED on 37 or 38.** The second half of the suction rig, designed and
+needing no construction: move the Mk1 to a centre of **+10.000 m**, which is 25.25 m above the
+tank connector — 2.24 m past the 23.006 estimator and 1.01 m past the assumption-free 24.244
+ceiling — with the column already reaching +23.0. It decides whether a pump's inlet is ungated or
+bounded by its own reach, which is the only open question in the model that could turn a silence
+into a fault. **It cannot be read on a rig that passes nothing**: "the column above the pump is
+dry" says nothing about suction until the rig is shown to move fluid at all.
+
+**40 — Flow versus height, with a Fluid Buffer as the flow meter. OPEN, and not yet in the model
+document.** The rating behind `machine_head_lift_m` is the one constant on that page taken purely
+from the game's own prose: a dead-end column measures the **ceiling** and says nothing about the
+10 m rating. **The rig:** one Water Extractor, one pipe, one **Fluid Buffer** — no power on the
+line, no solids, no recipe, nothing that can throttle. `Δstored_m3` between two saves ≥60 s apart
+is the delivered flow, and the buffer is passive as long as it is read between **20% and 80%**
+fill (above 100% it transmits head and stops being a sink). Three climbs, rebuilding only the top
+of the run: **2 m** as the control, which must read the nameplate; **10.5 m**, which is the
+question; **11.5 m**, which must read zero and so proves the rig can fail. Buffer base =
+extractor connector + climb − 1.75000. **This supersedes an earlier four-machine design that
+could not have worked:** one extractor at 120 m³/min feeding one Coal Generator at 45 has 2.7×
+headroom, so the flow could halve twice and the generator would still read 100% uptime.
+
+**41 — The 8 m trapped-air rig. OPEN.** Whether the deficit below a waterline is a fixed **volume**
+per piece or a fixed **fraction** of its capacity — the one question `HL_FINE` could not answer,
+because the 7.0 m³ capacity floor makes a 2 m piece hold nearly as much as a 4 m one. **The rig
+uses LONGER pieces, not shorter**, which is the opposite of the standing assumption: an 8 m column
+has capacity 14.87 m³, safely above the knee, and the two hypotheses predict estimator gaps of
+≈1.85 m and ≈0.92 m — 18× the noise apart. Design and arithmetic are in *Open* in
+[fluids_model.md](fluids_model.md).
+
+**42 — The free control: dismantle two pumps on one coal network. OPEN, not yet in the model
+document, and it costs about thirty seconds in-game.** Thirty-two Coal Generators in the owner's
+base sit **8.150 m above their extractors** at 100% uptime and 96% supply utilisation, which is
+the most flow-sensitive load he has — but every one of those networks has pumps on it, so none of
+them is currently evidence about machine head lift. Two of the networks carry only **two pumps
+each** (numbered components 0 and 18 by the walk that found them, so re-derive the numbering
+rather than trusting the index). Dismantling both pumps on **one** of them leaves 8 generators
+machine-fed over 81.5% of the stated 10 m rating, with the other three coal plants standing as
+untouched controls. If those eight keep running, the rating carries a real load at 8.15 m; if
+they starve, the model has its first measurement of the rating rather than the ceiling. This is
+the only item on this list that needs no new construction at all.
 
 ## Not doing, and why
 
