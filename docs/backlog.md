@@ -148,10 +148,20 @@ Three closed, three narrowed by an alias rather than settled, two open.
   the rename.
 - **Sitings: `list_plans` showed `x,y` only — DONE.** Yaw and footprint are in the row.
 - **`factory_sites` rows carried no identifier — DONE** (`85a3776`), with altitude back.
-- **`maplink.COLLECTIBLES` is dead code — OPEN, unchanged.** Its only reference anywhere is an
-  assertion in `tests/test_maplink.py`; `layers_for()` reads `LAYERS`, `WELL_STEMS` and
-  `WELL_ONLY` and never touches it. "Where are the hard drives" still gets a map link from
-  neither surface.
+- **`maplink.COLLECTIBLES` was dead because its keys were a vocabulary nothing else spoke —
+  DONE.** It said `hard_drives` and `slugs_green` where the placement table says
+  `crashed_drop_pod` and `power_slug_blue`, so the join was impossible rather than merely
+  unwritten. Re-keyed to the table's own categories. `collected_from_world` now emits a local
+  map link first and the public one after, and the page grew a `pickups=` fragment key so a
+  link can tick a layer that starts off. The structural lesson holds — a projection key is not
+  finished until both interfaces read it — and here neither did, because the key was spelt in
+  a third language.
+- **`/api/collectibles` carries no `looted`, so the map cannot tell an empty drop pod from a
+  full one — OPEN.** 99 pods remain on the reference world and many are already looted; the
+  layer draws them alike, and the text answer has to apologise for the map. Add
+  `looted: bool | None` to `CollectibleRow`, regenerate `api-schema.d.ts` (web-wire rule 6),
+  and draw a looted pod as a hollow ring. Until then `collected_from_world` prints "the pod
+  layer is NOT a hard-drive layer".
 
 ## P5 — capability already built, not yet reachable: WIRE IT UP
 
