@@ -9,13 +9,13 @@
 
 import { code, popup } from "./dom";
 import { regionLine, shortResource } from "./format";
-import { registerSection } from "./layercontrol";
+import { batch, registerSection } from "./layercontrol";
 import { L } from "./leaflet";
 import { BAND, layer } from "./layers";
-import { xy } from "./map";
+import { map, xy } from "./map";
 import { declareColours } from "./palette";
 import { registerFetch } from "./registry";
-import { state } from "./state";
+import { parseList, state } from "./state";
 import { fail } from "./toast";
 
 import type { OnMap } from "./leaflet-private";
@@ -240,6 +240,17 @@ var PICKUP_FALLBACK = declareColours("markers", { "pickup fallback": "#7fd1b9" }
   "pickup fallback"
 ];
 
+/* The prefix that makes a layer name a pickup row, and the whole of the join between a
+ * category as `/api/collectibles` names it and a row in the control. Named because the
+ * fragment speaks the category and the control speaks the row, and three literals is how the
+ * two drift apart. The trailing space is load-bearing; see Section.prefix. */
+var PICKUP_PREFIX = "pickup: ";
+
+/** The category a layer name is about, or "" for a layer that is not a pickup row. */
+function pickupCategory(name: string): string {
+  return name.indexOf(PICKUP_PREFIX) === 0 ? name.slice(PICKUP_PREFIX.length) : "";
+}
+
 export function drawCollectibles(data: CollectiblesResponse): void {
   var byCategory: Record<string, CollectibleRow[]> = {};
   data.rows.forEach(function (r) {
@@ -248,9 +259,8 @@ export function drawCollectibles(data: CollectiblesResponse): void {
   Object.keys(state.layers).forEach(function (name) {
     // A category this world has none of (all collected, or never present) must not keep
     // showing another world's markers under a still-ticked box.
-    if (name.indexOf("pickup: ") === 0 && !byCategory[name.slice("pickup: ".length)]) {
-      state.layers[name]!.clearLayers();
-    }
+    var stale = pickupCategory(name);
+    if (stale && !byCategory[stale]) state.layers[name]!.clearLayers();
   });
   Object.keys(byCategory)
     .sort()
@@ -260,8 +270,12 @@ export function drawCollectibles(data: CollectiblesResponse): void {
       var colour = PICKUP_COLOUR[category] || PICKUP_FALLBACK;
       // Slot 0 and alphabetical for the same reason the node rows are, one band lower: ten
       // categories of thing lying on the ground, in no order anyone could guess at.
-      var name = "pickup: " + category;
-      var group = layer(name, false, colour, [BAND.pickup, 0, name]);
+      var name = PICKUP_PREFIX + category;
+      // `layer` honours the second argument only when it CREATES the group, which is exactly
+      // right: the fragment decides what a fresh row opens as, and after that the checkbox
+      // the reader clicked survives every refetch.
+      var wanted = state.pickups.indexOf(category) >= 0;
+      var group = layer(name, wanted, colour, [BAND.pickup, 0, name]);
       byCategory[category]!.forEach(function (r) {
         var here = xy(r);
         var mark: L.Path = r.collected
@@ -295,7 +309,44 @@ export function drawCollectibles(data: CollectiblesResponse): void {
 
 /* The `pickup: ` rows as a family, on the same terms as the node one above and shut for the
  * same reason -- ten rows, nine of them normally off, and a count that says so folded. */
-registerSection({ key: "pickups", prefix: "pickup: ", title: "pickups", startOpen: false });
+registerSection({ key: "pickups", prefix: PICKUP_PREFIX, title: "pickups", startOpen: false });
+
+/* Which pickup rows are ticked, kept in `state.pickups` so that writeHash can put them in the
+ * address bar without map.ts having to know what a pickup is.
+ *
+ * One category per event rather than a re-read of every row, and that is the whole reason this
+ * is an event handler at all: a fragment may name a category the loaded world has no rows for,
+ * whose row therefore does not exist, and a re-read would drop that request on the first tick
+ * of any other layer -- including the ticks `drawCollectibles` itself causes as it creates the
+ * rows the fragment asked for. */
+export function notePickupChoice(event: L.LeafletEvent): void {
+  var group = (event as L.LayersControlEvent).layer;
+  var category = pickupCategory(state.layerName[L.Util.stamp(group)] || "");
+  if (!category) return;
+  var kept = state.pickups.filter(function (other) {
+    return other !== category;
+  });
+  if (event.type === "overlayadd") kept.push(category);
+  state.pickups = kept.sort();
+}
+
+/** The `pickups=` half of a fragment: the categories to draw, as the whole truth about which
+ *  rows are ticked. Absent means none, so deleting it from the address bar puts them away. */
+export function applyPickupFragment(asked: string | undefined): void {
+  // Snapshotted, because every add and remove below runs notePickupChoice on the way past and
+  // that handler's whole job is to rewrite the list this loop is reading.
+  var want = parseList(asked);
+  state.pickups = want.slice();
+  batch(function () {
+    Object.keys(state.layers).forEach(function (name) {
+      var category = pickupCategory(name);
+      if (!category) return;
+      var group = state.layers[name]!;
+      if (want.indexOf(category) >= 0) map.addLayer(group);
+      else map.removeLayer(group);
+    });
+  });
+}
 
 /* The live wave, because a pickup is collected between one autosave and the next, and
  * `mode=remaining` because the question the layer answers is "what is left". */
@@ -304,7 +355,7 @@ registerFetch<CollectiblesResponse>({
   rank: 20,
   path: "/api/collectibles?mode=remaining",
   label: "collectibles",
-  clears: ["pickup: "],
+  clears: [PICKUP_PREFIX],
   refilters: true,
   draw: drawCollectibles,
 });

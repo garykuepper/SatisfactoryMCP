@@ -15,13 +15,27 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-__all__ = ["BASE", "COLLECTIBLES", "LAYERS", "LOCAL_BASE", "layers_for", "local_map_url", "map_url"]
+__all__ = [
+    "BASE",
+    "COLLECTIBLES",
+    "LAYERS",
+    "LOCAL_BASE",
+    "LOCAL_WORLD_ZOOM",
+    "collectible_layers",
+    "layers_for",
+    "local_map_url",
+    "map_url",
+]
 
 BASE = "https://satisfactory-calculator.com/en/interactive-map"
 
 #: This project's own web map. The port duplicates the one pinned in
 #: ``interfaces.web.__main__``, because domain may not import from interfaces.
 LOCAL_BASE = "http://127.0.0.1:8712/"
+
+#: The local page's own whole-world framing (``HOME_VIEW`` in ``map.ts``). A link whose point
+#: is a layer has to open far enough out for the layer to be the picture.
+LOCAL_WORLD_ZOOM = -3
 
 #: The site's layer group resource markers live on; it has others (map/game).
 GROUP = "gameLayer"
@@ -52,14 +66,17 @@ WELL_STEMS = frozenset({"oil", "nitrogenGas", "water"})
 #: Resources that appear ONLY as wells, so a bare ``<stem><Purity>`` token does not exist.
 WELL_ONLY = frozenset({"nitrogenGas", "water"})
 
-#: Collectibles, each a single token with no purity.
+#: Collectibles, each a single token with no purity, keyed by the placement table's own
+#: category name: the two vocabularies disagree and neither side is free to move -- the site
+#: calls the Mk1 slug green where the game data calls it blue, and a hard drive is only ever
+#: found in a crashed drop pod. Categories the site draws no layer for are absent.
 COLLECTIBLES: dict[str, str] = {
-    "slugs_green": "greenSlugs",
-    "slugs_yellow": "yellowSlugs",
-    "slugs_purple": "purpleSlugs",
-    "hard_drives": "hardDrives",
-    "mercer_spheres": "mercerSpheres",
-    "somersloops": "somersloops",
+    "power_slug_blue": "greenSlugs",
+    "power_slug_yellow": "yellowSlugs",
+    "power_slug_purple": "purpleSlugs",
+    "crashed_drop_pod": "hardDrives",
+    "mercer_sphere": "mercerSpheres",
+    "somersloop": "somersloops",
 }
 
 _PURITIES = ("Impure", "Normal", "Pure")
@@ -87,6 +104,12 @@ def layers_for(resources: list[str], kinds: list[str] | None = None) -> list[str
     return list(dict.fromkeys(out))
 
 
+def collectible_layers(categories: list[str]) -> list[str]:
+    """Sublayer tokens for collectible categories, in the order asked. One the site cannot
+    draw is dropped, never spelt from its name; the docstring above says why."""
+    return list(dict.fromkeys(tok for cat in categories if (tok := COLLECTIBLES.get(cat))))
+
+
 def map_url(
     x_cm: float,
     y_cm: float,
@@ -104,17 +127,29 @@ def map_url(
     return f"{BASE}#{quote(fragment, safe=';|.-')}"
 
 
-def local_map_url(x_m: float, y_m: float, zoom: float = 1, world: str = "") -> str:
+def local_map_url(
+    x_m: float,
+    y_m: float,
+    zoom: float = 1,
+    world: str = "",
+    pickups: list[str] | None = None,
+) -> str:
     """A deep link into this project's own web map, centred on a coordinate in METRES.
 
     The fragment matches the frontend's own writer (``writeHash`` in ``map.ts``):
-    ``#world=…&z=…&c=x,y``, with ``c`` in metres on save axes, rounded to one decimal.
-    ``save`` is omitted, so an absent save means "follow the newest" -- which is what a
-    link pasted later should do.
+    ``#world=…&pickups=…&z=…&c=x,y``, with ``c`` in metres on save axes, rounded to one
+    decimal. ``save`` is omitted, so an absent save means "follow the newest" -- which is what
+    a link pasted later should do.
+
+    ``pickups`` names collectible categories, which the page turns on as its own
+    ``pickup: <category>`` rows. Those rows are off by default, so a link about a collectible
+    that omits this opens the map with nothing of what it is about drawn on it.
     """
     parts = []
     if world:
         parts.append("world=" + quote(world, safe=""))
+    if pickups:
+        parts.append("pickups=" + quote(",".join(pickups), safe=","))
     parts.append(f"z={zoom:g}")
     parts.append(f"c={round(x_m, 1):g},{round(y_m, 1):g}")
     return LOCAL_BASE + "#" + "&".join(parts)
