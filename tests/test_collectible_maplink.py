@@ -242,13 +242,16 @@ def test_a_collected_listing_says_the_layer_shows_what_is_left_instead(
     assert "the local map's layer is what is LEFT" in out
 
 
-def test_a_pod_answer_says_the_layer_cannot_tell_a_looted_pod_from_a_full_one(
+def test_a_pod_answer_says_which_of_the_two_maps_can_tell_a_looted_pod_from_a_full_one(
     world, tmp_path, monkeypatch
 ):
-    """A looted pod stays standing and stays remaining, and ``/api/collectibles`` carries no
-    ``looted`` field -- so the layer draws pods, not hard drives, and has to say so."""
+    """A looted pod stays standing and stays remaining, so a pod is not a hard drive on either
+    map -- but only one of them still has to apologise. The local layer reads ``looted`` and
+    draws the three apart; the public one draws the vanilla placement list and cannot."""
     out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", mode="remaining")
-    assert "NOT a hard-drive layer" in out
+    assert "hollow ring" in out
+    assert "public map" in out and "alike" in out
+    assert "carries no" not in out
 
 
 # ------------------------------------------------------ and the two dataset failures
@@ -300,3 +303,17 @@ def test_the_fragment_key_the_link_writes_is_the_one_the_page_reads():
     writer = (FRONTEND / "map.ts").read_text(encoding="utf-8")
     assert f"asked.{key}" in reader, f"fragment.ts does not read {key}= out of the fragment"
     assert f'"{key}="' in writer, f"writeHash does not put {key}= back into the address bar"
+
+
+def test_the_page_tells_the_three_loot_states_apart():
+    """The same kind of join, one field along: ``looted`` reaches the page as three values.
+
+    Null is the trap. It means the flag was never read, not that the pod is full, so a page
+    that tests truthiness alone draws a pod nobody has ever streamed in exactly like one with
+    a drive still in it -- and the category name is the other half, because null on a mushroom
+    is not a claim about a mushroom at all.
+    """
+    drawing = (FRONTEND / "markers.ts").read_text(encoding="utf-8")
+    assert 'POD_CATEGORY = "crashed_drop_pod"' in drawing, "the page spells the category itself"
+    assert "r.looted === true" in drawing, "markers.ts does not single out a looted pod"
+    assert "r.looted === null" in drawing, "markers.ts draws an unread flag as a full pod"

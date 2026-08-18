@@ -900,6 +900,11 @@ export interface components {
          *     loaded one, and it is null both for a row this save has collected and for a state this
          *     build does not know. ``distance_m`` is populated only by ``mode=nearest``, the one mode
          *     that resolves an origin; elsewhere it is null rather than zero.
+         *
+         *     ``looted`` is a pod's own ``mHasBeenLooted``, and null means one thing: no loot flag was
+         *     read for this placement. Only ``crashed_drop_pod`` writes one, and only a save that had
+         *     the pod loaded records it, so ``looted`` is non-null exactly on a pod whose ``observed``
+         *     is ``"standing"``. **Null is never "not looted"** -- that is ``false``.
          */
         CollectibleRow: {
             /** Category */
@@ -916,6 +921,8 @@ export interface components {
             collected: boolean;
             /** Observed */
             observed: string | null;
+            /** Looted */
+            looted: boolean | null;
             /** Distance M */
             distance_m: number | null;
         };

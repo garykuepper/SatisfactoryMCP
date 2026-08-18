@@ -251,6 +251,40 @@ function pickupCategory(name: string): string {
   return name.indexOf(PICKUP_PREFIX) === 0 ? name.slice(PICKUP_PREFIX.length) : "";
 }
 
+/* The one category whose rows carry `looted`. Every other category sends null there for want
+ * of the property, which is not the same claim as a null on a pod, so the two must not reach
+ * the same style. See CollectibleRow for what null means. */
+var POD_CATEGORY = "crashed_drop_pod";
+
+/* A pickup that is still there. Fill is how much is in it, and pods are the only rows that
+ * vary: solid is what every other category keeps. A hollow ring is a looted pod, which is what
+ * a looted pod is -- the shell still standing with the drive gone. A faint disc is a pod no
+ * save has had loaded, whose flag was never read, and a solid one there would promise a hard
+ * drive nothing has seen.
+ *
+ * Fill and not a dash: dashed already means locked, paused or planned on this page, and an
+ * emptied pod is none of those. */
+function pickupDot(here: L.LatLngTuple, colour: string, r: CollectibleRow): L.CircleMarker {
+  var pod = r.category === POD_CATEGORY;
+  var hollow = pod && r.looted === true;
+  var faint = pod && r.looted === null;
+  return L.circleMarker(here, {
+    radius: 4,
+    color: colour,
+    // A 4 px disc with its fill taken away is a smudge at weight 1.
+    weight: hollow ? 2 : 1,
+    fillOpacity: hollow ? 0 : faint ? 0.2 : 0.7,
+  });
+}
+
+/** What a pod's loot flag says, or null for a row that never had one to read. */
+function lootLine(r: CollectibleRow): string | null {
+  if (r.category !== POD_CATEGORY || r.collected) return null;
+  if (r.looted === true) return "LOOTED — the hard drive is already yours";
+  if (r.looted === false) return "unlooted — the hard drive is still in it";
+  return "unknown — no save has had this pod loaded, so its loot flag was never read";
+}
+
 export function drawCollectibles(data: CollectiblesResponse): void {
   var byCategory: Record<string, CollectibleRow[]> = {};
   data.rows.forEach(function (r) {
@@ -292,13 +326,14 @@ export function drawCollectibles(data: CollectiblesResponse): void {
               ],
               { color: "#6b7078", weight: 1 }
             )
-          : L.circleMarker(here, { radius: 4, color: colour, weight: 1, fillOpacity: 0.7 });
+          : pickupDot(here, colour, r);
         mark
           .bindPopup(
             popup([
               ["pickup", category],
               ["name", code(r.name)],
               ["state", r.collected ? "collected" : r.observed || "unknown"],
+              ["holds", lootLine(r)],
               ["at", r.x_m + ", " + r.y_m + " m"],
             ])
           )

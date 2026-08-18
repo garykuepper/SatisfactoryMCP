@@ -83,10 +83,11 @@ def _map_links(st, view: CollectiblesView) -> tuple[str, list[str]]:
         )
     if "crashed_drop_pod" in cats:
         notes.append(
-            "the pod layer is NOT a hard-drive layer: a looted pod stays standing, so the "
-            "map draws it exactly like a full one -- /api/collectibles carries no 'looted' "
-            "field. mode='remaining' group='crashed_drop_pod' has a holds column, and LOOTED "
-            "there means the drive is already yours"
+            "a looted pod stays standing, so a pod on either map is not a hard drive. The "
+            "local map tells them apart -- a looted one is a hollow ring, one no save has "
+            "had loaded is faint, and only a solid dot still holds a drive; the public map "
+            "draws all three alike. mode='remaining' group='crashed_drop_pod' has a holds "
+            "column, and LOOTED there means the drive is already yours"
         )
     return body, notes
 
