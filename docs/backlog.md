@@ -7,8 +7,13 @@ both citations. Numbers are stable and are cited elsewhere, so a closed item kee
 rather than being deleted. Parked FEATURES are [parked.md](parked.md) §21 and §22; work that is
 not a defect is [roadmap.md](roadmap.md).
 
-**State, 2026-08-10: 39 of 40 closed, and item 36 is the one remaining — a test-file
-assertion, not a surface feature.** P0, P1, P2 and P5 are done outright. What is left is four
+**State, 2026-08-10: 39 of the original 40 closed, and item 36 is the one remaining — a
+test-file assertion, not a surface feature.** Items 37 and above were filed later and are not
+part of that count.
+
+**P7 is new:** thirteen items that lived only in [roadmap.md](roadmap.md), in the parked
+ledgers or in conversation, and were therefore invisible to anyone reading this file. Filed on
+2026-08-10 so that one document answers "what is left". P0, P1, P2 and P5 are done outright. What is left is four
 of the fourteen P3/P4 bullets, three of which are deliberate surface decisions and are marked
 so, plus one new P4 row that this round's work uncovered rather than left behind. P6 is not
 defects at all: it is the six rigs the fluid model is waiting on, and every one of them needs
@@ -268,6 +273,106 @@ machine-fed over 81.5% of the stated 10 m rating, with the other three coal plan
 untouched controls. If those eight keep running, the rating carries a real load at 8.15 m; if
 they starve, the model has its first measurement of the rating rather than the ceiling. This is
 the only item on this list that needs no new construction at all.
+
+## P7 — filed late: work the audits found and this ledger never carried
+
+Everything above came from the three audits of 2026-08-02 and the client field report. These
+did not: they are items that lived only in [roadmap.md](roadmap.md), in the parked ledgers, or
+in the running conversation, and were therefore invisible to anyone reading the backlog. Filed
+on 2026-08-10 at the owner's instruction so that one document answers "what is left".
+
+**Numbers quoted from memory rather than from a measurement are marked so.** This project has
+been wrong about a cost by 100× in both directions, so a figure without a source is a hypothesis
+about performance and not a reason to build anything.
+
+### The modules that are finished and read by nobody
+
+This is the structural defect that explained a third of P0–P5, recurring: **a projection key, or
+a domain module, is not finished until both interfaces read it.**
+
+**43 — `domain/world/timeline.py` has no tool.** Roadmap §2.3. The row, the identity key that
+survives autosave rotation, the index file and the pairwise comparison all shipped; measured at
+112 s to index 50 saves cold, for 101 kB. What is missing is a tool and **the window note every
+answer must print with it**. The value is real and it grew: a 300 s window in one save is a
+reading, a series of them is a rate, so "when did this stop", "at this rate, N hours" and sink
+points-per-minute become honest only once there is a second sample. **The hard corollary is
+undischarged and binds whoever takes this: do not build ETA-from-a-300 s-window before the
+timeline is consumed.** That is a forecast dressed as a reading, and it is the exact class of
+confidently-wrong answer this project exists to avoid.
+
+**44 — `domain/world/logistics.py` has no tool.** Roadmap §2.2, [parked.md](parked.md) §21.
+`Link`, `PhysicalGraph.feeds/drains` and `build_physical_graph` are correct and cached and reach
+no surface. Note that §21's original geometric-join prescription was **struck** after being
+measured 28.7% wrong, so read the parked entry for what survived before designing anything on
+top of it.
+
+**45 — `GameData.warnings` and `projection["warnings"]` reach no reader.** Roadmap §3. The first
+reaches a bare `len()` in `tools/resources.py:32`; the second has zero consumers anywhere. Two
+note blocks, in `world_summary` and in the save resource, close it.
+
+**46 — The unread-class census.** Roadmap §3. Fifteen lines mirroring the null-yaw census.
+**It must land in the same commit as item 45 or it is invisible by construction.** It also needs
+a hand-built "seen and dismissed" allow-list, or its first run reports 4,300 berry bushes.
+
+### Things that lie rather than fail
+
+**47 — `skew_from_meta` returns `None` unconditionally on the shipped table.** Roadmap §3. The
+guard is structurally incapable of firing on the event it exists for. `installed_build()`
+returns the exact pin string every artifact records and still has no runtime caller. Ten lines
+closes it for five pinned artifacts — and this is the guard that would announce a map update
+having moved the pinned node and collectible tables, which is a failure mode that has already
+bitten.
+
+**48 — `docs_path()` raises instead of returning `G:\SteamLibrary`.** Roadmap §3,
+`config.py:25`. A function lying rather than failing.
+
+**49 — The comment-budget failure message names no remedy.** Roadmap §3, fifteen minutes. The
+cheapest way to satisfy a failing ratchet is to delete an explanation, in a codebase whose prose
+is the design record. The message should name the intended remedy instead. Caps are
+per-**directory**, so "raise this file's cap" is not available and the message must not imply it.
+
+### Fluid work that is not the head-lift model
+
+**50 — Pipe build review, a build-advice tool.** Roadmap §3b, from the FICSIT Plumbing Manual.
+Two mistakes the manual names, both decidable from the contracted runs and machine positions
+already held, and neither performed by any tool in the ecosystem: *a feed pipeline built below
+its machine inputs* (Lesson 8 — head lift is the same for every pipe in a network, so a feed
+line below its machines starves all of them the moment the level drops), and *pumps stacked with
+no vertical separation* (pump lift does not stack pump-to-pump — three Mk2 pumps in a row give
+50 m, not 150 — it stacks only with gravity gained after the pump). The output is **advice about
+what was built, not a fault**, so it wants its own tool rather than a column on a health report.
+
+**51 — Byproduct remedies in `explain_byproducts`.** Roadmap §3b, Lesson 9. The LP balances a
+byproduct as an equality and is mathematically right while being physically naive: it has no
+idea the second refinery clogs when its output is fed back to the first. The manual ranks four
+remedies — underclock the extractors and cap them with a valve (stable only at 100% efficiency),
+dedicate refineries to the byproduct (most stable), feed it to other machines, or package and
+sink it (worst). A planner change, unrelated to the head-lift model.
+
+**52 — Pipe fill is not in the projection.** Every fluid measurement to date has had to parse
+the raw `.sav` with `pioneersav`, because the projection does not carry `mFluidBox`. That is the
+right call while the model is moving and the wrong one once it settles. **It needs a
+`SCHEMA_VERSION` bump, so it must be coordinated** — a second Claude instance has been doing
+belt work in parallel and the two changes must not collide.
+
+### Reported without a measurement, and needing one first
+
+**53 — Belt instances have no stable ident.** A belt can be addressed as `chain:N` but an
+individual belt actor cannot, and giving it one is believed to need an `actorIndex` in the
+projection — hence a `SCHEMA_VERSION` bump and the same coordination as item 52. **Re-derive the
+requirement before bumping**: this was stated in conversation and never written down against the
+code.
+
+**54 — Derived views are rebuilt on every MCP start.** Recorded in conversation as **≈815 ms**,
+and that figure is **[UNVERIFIED]** — measure it before designing a cache. The single-flight
+memoisation and the `SaveWatcher` pre-warm already landed and cut a cold read from 8.40 s to
+4.19 s and a warm `load_projection` from 98.8 ms to 0.44 ms, so the remaining start-up cost may
+already be smaller than remembered.
+
+**55 — A terrain water-lift column, and a valve splitter check.** Both were named in
+conversation and neither has a written specification. **Write down what each would claim, and
+what save evidence supports it, before either is built.** Filed so they are not lost, not
+because they are ready.
 
 ## Not doing, and why
 
