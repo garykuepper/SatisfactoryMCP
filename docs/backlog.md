@@ -7,10 +7,12 @@ both citations. Numbers are stable and are cited elsewhere, so a closed item kee
 rather than being deleted. Parked FEATURES are [parked.md](parked.md) §21 and §22; work that is
 not a defect is [roadmap.md](roadmap.md).
 
-**State, 2026-08-06: 36 of 40 closed.** Everything in P0, P1 and P5 is done, and everything in
-P2 but the power half of item 15. What is left is item 15's power topology, item 36's one
-remaining ablation knob, and five of the thirteen P3/P4 bullets — three of which are deliberate
-and are marked so.
+**State, 2026-08-10: 39 of 40 closed, and item 36 is the one remaining — a test-file
+assertion, not a surface feature.** P0, P1, P2 and P5 are done outright. What is left is four
+of the fourteen P3/P4 bullets, three of which are deliberate surface decisions and are marked
+so, plus one new P4 row that this round's work uncovered rather than left behind. P6 is not
+defects at all: it is the six rigs the fluid model is waiting on, and every one of them needs
+the owner in the game.
 
 **Added 2026-08-10: P6, items 37–42** — in-game measurements the fluid model is waiting on.
 They are not code defects and are not counted in the 36 of 40 above; they are here because each
