@@ -38,6 +38,31 @@ def test_collectibles_can_be_scoped_to_one_group_and_to_collected(client):
     assert all(r["collected"] for r in body["rows"])
 
 
+def test_only_a_standing_pod_carries_a_loot_flag(client):
+    """The contract ``CollectibleRow`` states, checked against the whole reference table.
+
+    Three states reach the wire and the invariant is what keeps null single-valued: the flag
+    is a live pod body's own ``mHasBeenLooted``, so it is there exactly when some save has had
+    that pod loaded -- which is what ``observed == "standing"`` says. Anywhere else, including
+    every category that has no such property, null means the flag was never read.
+    """
+    rows = client.get("/api/collectibles", params={"mode": "remaining"}).json()["rows"]
+    pods = [r for r in rows if r["category"] == "crashed_drop_pod"]
+    assert {r["looted"] for r in pods} == {True, False, None}, "the world has all three"
+    assert all(r["looted"] is None for r in rows if r["category"] != "crashed_drop_pod")
+    for r in pods:
+        assert (r["looted"] is not None) == (r["observed"] == "standing"), r
+
+
+def test_a_collected_pod_says_nothing_about_what_it_held(client):
+    """A dismantled pod is not a looted one, and the save records only that it is gone."""
+    rows = client.get(
+        "/api/collectibles", params={"mode": "collected", "group": "crashed_drop_pod"}
+    ).json()["rows"]
+    assert rows
+    assert all(r["looted"] is None for r in rows)
+
+
 def test_an_unknown_mode_is_refused_with_the_tools_own_wording(client):
     r = client.get("/api/collectibles", params={"mode": "sideways"})
     assert r.status_code == 400

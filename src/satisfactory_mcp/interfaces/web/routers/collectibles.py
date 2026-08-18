@@ -35,6 +35,11 @@ class CollectibleRow(TypedDict):
     loaded one, and it is null both for a row this save has collected and for a state this
     build does not know. ``distance_m`` is populated only by ``mode=nearest``, the one mode
     that resolves an origin; elsewhere it is null rather than zero.
+
+    ``looted`` is a pod's own ``mHasBeenLooted``, and null means one thing: no loot flag was
+    read for this placement. Only ``crashed_drop_pod`` writes one, and only a save that had
+    the pod loaded records it, so ``looted`` is non-null exactly on a pod whose ``observed``
+    is ``"standing"``. **Null is never "not looted"** -- that is ``false``.
     """
 
     category: str
@@ -44,6 +49,7 @@ class CollectibleRow(TypedDict):
     z_m: float
     collected: bool
     observed: str | None
+    looted: bool | None
     distance_m: float | None
 
 
@@ -101,6 +107,7 @@ def collectibles(
             **_xyz(r["pos"]),
             "collected": r["collected"],
             "observed": r["observed"],
+            "looted": r["looted"],
             "distance_m": round(r["distance_m"], 1) if r.get("distance_m") is not None else None,
         }
         for r in (view.rows or ())
