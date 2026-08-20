@@ -29,6 +29,10 @@ IN_THE_FIELD = (2000, -2400)
 OPEN_OCEAN = (-3500, 3500)
 
 
+def _at(point: tuple[float, float]) -> str:
+    return f"{point[0]},{point[1]}"
+
+
 @pytest.fixture
 def points(state):
     return elevation.sample_points(nodes_mod.load_nodes(), state)
@@ -153,7 +157,7 @@ def test_the_median_resists_a_spire(points):
 
 
 def test_describe_location_reports_elevation(game):
-    out = srv.describe_location(*ON_PLATFORM)
+    out = srv.describe_location(_at(ON_PLATFORM))
     assert "built_elevation_m=" in out
     assert "samples=" in out
     assert "structure" in out
@@ -182,7 +186,7 @@ def test_the_measured_terrain_is_reported_where_the_field_reaches(game, monkeypa
             heightfield.Reading(z_m=118.3, provenance=heightfield.PROV_LANDSCAPE, accuracy_m=0.2)
         ),
     )
-    out = srv.describe_location(*ON_PLATFORM)
+    out = srv.describe_location(_at(ON_PLATFORM))
     assert "terrain_m=118.3 (landscape, +-0.2m)" in out
 
 
@@ -202,7 +206,7 @@ def test_water_depth_is_quoted_only_where_the_bed_was_measured(game, monkeypatch
             )
         ),
     )
-    out = srv.describe_location(*OPEN_OCEAN)
+    out = srv.describe_location(_at(OPEN_OCEAN))
     assert "water_surface_m=-2.0" in out
     assert "water_depth_m=unknown" in out
     assert "too coarse" in out
@@ -220,14 +224,14 @@ def test_water_depth_is_quoted_only_where_the_bed_was_measured(game, monkeypatch
             )
         ),
     )
-    assert "water_depth_m=15.0" in srv.describe_location(*OPEN_OCEAN)
+    assert "water_depth_m=15.0" in srv.describe_location(_at(OPEN_OCEAN))
 
 
 def test_without_a_field_it_names_the_gap_rather_than_denying_terrain_exists(game, monkeypatch):
     """The standing rule: name what the data cannot do. What it must NOT do any more is
     state that no terrain data exists -- it exists, this machine has not extracted it."""
     monkeypatch.setattr(heightfield, "load_field", lambda: None)
-    out = srv.describe_location(*ON_PLATFORM)
+    out = srv.describe_location(_at(ON_PLATFORM))
     assert "no terrain field on this machine" in out
     assert "SAMPLED from things standing nearby" in out
 
@@ -235,26 +239,27 @@ def test_without_a_field_it_names_the_gap_rather_than_denying_terrain_exists(gam
 def test_unsurveyed_ground_says_unknown_rather_than_guessing(game):
     """The nearest-land guess is exactly the failure describe_location already refuses for
     region naming. Elevation gets the same treatment."""
-    out = srv.describe_location(*OPEN_OCEAN)
+    out = srv.describe_location(_at(OPEN_OCEAN))
     assert "no known elevation" in out
     assert "elevation_m=" not in out
     assert "off-map or ocean" in out
 
 
 def test_the_radius_is_the_callers_to_widen(game):
-    tight = srv.describe_location(*IN_THE_FIELD, radius_m=50)
-    wide = srv.describe_location(*IN_THE_FIELD, radius_m=800)
+    tight = srv.describe_location(_at(IN_THE_FIELD), radius_m=50)
+    wide = srv.describe_location(_at(IN_THE_FIELD), radius_m=800)
     assert "no known elevation within 50m" in tight
     assert "ground_elevation_m=" in wide
 
 
-def test_a_place_can_be_given_instead_of_two_floats(game):
-    """Every other tool on this surface takes a place; this one took two numbers, and it
-    is the tool the "something is wrong here" journey ends on."""
-    out = srv.describe_location(at=f"{IN_THE_FIELD[0]},{IN_THE_FIELD[1]}")
-    assert "at=2000,-2400" in out
+def test_a_place_is_the_only_way_to_say_where(game):
+    """Every other tool on this surface takes a place; this one also declared two floats,
+    so a client reading the schema met two ways to say one thing. The floats are gone, and
+    a bare coordinate through `at=` answers exactly what they answered."""
+    out = srv.describe_location(at=_at(IN_THE_FIELD))
+    assert "at=2000,-2400  region=" in out, "a coordinate resolves to itself; name it once"
     assert "region=Spire Coast" in out
-    assert srv.describe_location().startswith("! describe_location needs")
+    assert srv.describe_location().startswith("! describe_location needs at=")
 
 
 def test_a_bare_platform_is_a_place_this_tool_accepts(game, live):
@@ -269,7 +274,7 @@ def test_a_bare_platform_is_a_place_this_tool_accepts(game, live):
 def test_region_naming_still_works_exactly_as_before(game):
     """Elevation is an addition. The region answer that callers already depend on must be
     untouched, including its confidence word."""
-    out = srv.describe_location(*IN_THE_FIELD)
+    out = srv.describe_location(_at(IN_THE_FIELD))
     assert "region=Spire Coast" in out
     assert "confidence=interior" in out
     assert "grid=X5Y5" in out

@@ -88,8 +88,8 @@ def test_a_selector_records_the_nodes_it_resolved_to(table):
 def test_each_selector_is_recorded_separately_with_the_filters_folded_in(table):
     """Which selector moved is the actionable half. One total for a two-selector spec
     would say the field changed and leave the reader to work out which name did it."""
-    field = prov.record(_World().game, _World(), [BOX, "near:1000,1000,50", "kind:node"])
-    assert [e["selector"] for e in field["selectors"]] == [BOX, "near:1000,1000,50"]
+    field = prov.record(_World().game, _World(), [BOX, "near:1000,1000@50", "kind:node"])
+    assert [e["selector"] for e in field["selectors"]] == [BOX, "near:1000,1000@50"]
     assert [e["count"] for e in field["selectors"]] == [3, 1]
 
 
@@ -338,9 +338,9 @@ def test_a_plan_saved_now_records_its_field_and_recalls_silently(tmp_path, monke
 
     monkeypatch.setattr(store_mod.config, "plans_dir", lambda: tmp_path)
     out = srv.plan_factory(
-        sources=["near:1475,-2098,300"], exports=["MW"], save_as="probe", limit=2
+        sources=["near:1475,-2098@300"], exports=["MW"], save_as="probe", limit=2
     )
-    assert "Field recorded: near:1475,-2098,300=" in out
+    assert "Field recorded: near:1475,-2098@300=" in out
 
     stored = PlanStore.load(live.plans.world_id).find("probe")
     assert prov.recorded(stored)

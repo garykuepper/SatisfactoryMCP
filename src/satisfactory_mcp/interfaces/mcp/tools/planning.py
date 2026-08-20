@@ -484,7 +484,7 @@ def plan_factory(
 
         ["north"]                        everything in the northern half
         ["region:Northern Forest"]       one named region
-        ["near:0,-2000,900"]             within 900 m of (0, -2000) metres
+        ["near:0,-2000@900"]             within 900 m of (0, -2000) metres
         ["node:BP_ResourceNode30_103"]   one exact node (repeatable)
         ["grid:X3Y4", "grid:X3Y5"]       specific grid cells
         ["north", "resource:Crude Oil"]  narrow a location to one resource

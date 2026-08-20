@@ -38,7 +38,7 @@ def test_missing_pawn_reports_none_rather_than_a_default(state):
 def test_near_me_selects_around_the_player(state):
     table = nodes_mod.load_nodes()
     x, y, _ = state.player_position()
-    sel = select_nodes(["near:me,500"], table.nodes, player=(x, y))
+    sel = select_nodes(["near:me@500"], table.nodes, player=(x, y))
     assert sel.nodes
     assert not sel.errors
     for n in sel.nodes:
@@ -49,8 +49,8 @@ def test_near_me_matches_an_explicit_circle_at_the_same_point(state):
     """near:me is sugar, not a different rule."""
     table = nodes_mod.load_nodes()
     x, y, _ = state.player_position()
-    a = select_nodes(["near:me,400"], table.nodes, player=(x, y))
-    b = select_nodes([f"near:{x / 100:.4f},{y / 100:.4f},400"], table.nodes)
+    a = select_nodes(["near:me@400"], table.nodes, player=(x, y))
+    b = select_nodes([f"near:{x / 100:.4f},{y / 100:.4f}@400"], table.nodes)
     assert {n["instance"] for n in a.nodes} == {n["instance"] for n in b.nodes}
 
 
@@ -58,7 +58,7 @@ def test_near_me_without_a_position_is_refused_not_silently_widened(state):
     """No pawn means the scope is unknown. Falling back to the whole map would plan
     against the entire world while claiming to plan around the player."""
     table = nodes_mod.load_nodes()
-    sel = select_nodes(["near:me,500"], table.nodes, player=None)
+    sel = select_nodes(["near:me@500"], table.nodes, player=None)
     assert sel.nodes == []
     assert any("player position" in e for e in sel.errors)
 

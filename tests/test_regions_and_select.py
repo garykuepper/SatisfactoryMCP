@@ -402,7 +402,7 @@ def test_multiple_node_ids_union(table):
 
 
 def test_near_selector(table):
-    sel = select_nodes(["near:0,0,1000"], table.nodes)
+    sel = select_nodes(["near:0,0@1000"], table.nodes)
     for n in sel.nodes:
         assert geo.distance_m((n["x"], n["y"]), (0.0, 0.0)) <= 1000
 

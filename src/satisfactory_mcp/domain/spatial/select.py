@@ -1,9 +1,10 @@
 """Resolve human source selectors to a concrete set of resource nodes.
 
 A *source spec* is a list of selectors. Location selectors union together; filter
-selectors narrow the result. So ``["Northern Forest", "near:0,-2000,800",
+selectors narrow the result. So ``["Northern Forest", "near:0,-2000@800",
 "resource:Crude Oil"]`` means "crude oil in the Northern Forest, plus any crude
-within 800 m of (0, -2000)".
+within 800 m of (0, -2000)". The full grammar, shared with the machine selectors, is
+in `docs/selectors.md`.
 
 Supported selectors (prefix optional where unambiguous)::
 
@@ -11,9 +12,9 @@ Supported selectors (prefix optional where unambiguous)::
     region:Northern Forest                          named region (advisory names)
     grid:X3Y4                                       exact 1.024 km biome grid cell
     node:BP_ResourceNode26_99                       one specific node, by instance
-    near:<x_m>,<y_m>,<radius_m>                      circle, metres
-    near:me,<radius_m>                               circle around the player
-    bbox:<x1>,<y1>,<x2>,<y2>                         rectangle, metres
+    near:<x_m>,<y_m>@<radius_m>                     circle, metres
+    near:me@<radius_m>                              circle around the player
+    bbox:<x1>,<y1>,<x2>,<y2>                        rectangle, metres
     resource:Crude Oil                              filter: resource type
     purity:pure|normal|impure                       filter: purity
     kind:node|well_sat|geyser                       filter: node kind
@@ -28,13 +29,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import geo
+from .origin import NEAR_GRAMMAR, PLAYER_WORDS, parse_near
 from .regions import load_regions
 
 __all__ = ["SELECTOR_HELP", "Selection", "select_nodes", "split_spec"]
 
 SELECTOR_HELP = (
     "selectors: north|south|east|west|northeast|... , region:<name>, grid:X3Y4, "
-    "node:<instance>, near:<x_m>,<y_m>,<radius_m>, bbox:<x1>,<y1>,<x2>,<y2>, "
+    "node:<instance>, near:<x_m>,<y_m>@<radius_m>, bbox:<x1>,<y1>,<x2>,<y2>, "
     "resource:<name>, purity:pure|normal|impure, kind:node|well_sat|geyser, all"
 )
 
@@ -218,13 +220,12 @@ def select_nodes(
 
         # ---- circle ----------------------------------------------------
         if prefix == "near":
-            # `x,y@r` is the machine selectors' spelling of the same circle, accepted here
-            # so a radius copied out of either tool's help parses on both sides.
-            head, at, tail = value.partition("@")
-            if at:
-                value = f"{head.strip()},{tail.strip()}"
-            parts = [x.strip() for x in value.split(",")]
-            if parts and parts[0].casefold() == "me":
+            try:
+                place, radius = parse_near(value)
+            except ValueError as exc:
+                sel.errors.append(str(exc))
+                continue
+            if place.casefold() in PLAYER_WORDS:
                 # "where I am standing" is the most natural scope a player has, and
                 # it is the one thing the map alone cannot supply.
                 if player is None:
@@ -232,29 +233,18 @@ def select_nodes(
                         "near:me needs a player position, and none was found in the save"
                     )
                     continue
-                radius_txt = parts[1] if len(parts) > 1 else ""
-                try:
-                    radius = float(radius_txt)
-                except ValueError:
-                    sel.errors.append(f"near:me expects a radius in metres, got {value!r}")
+                centre, where = player, "you"
+            else:
+                nums = _numbers(place, 2)
+                if nums is None:
+                    sel.errors.append(f"near: {place!r} is not an x,y pair. {NEAR_GRAMMAR}")
                     continue
-                cx, cy = player
-                hits = [n for n in nodes if geo.distance_m((n["x"], n["y"]), (cx, cy)) <= radius]
-                location_seen = True
-                picked.update({n["instance"]: n for n in hits})
-                sel.described.append(f"within {radius:g}m of you ({len(hits)} nodes)")
-                continue
-            nums = _numbers(value, 3)
-            if nums is None:
-                sel.errors.append(f"near: expects <x_m>,<y_m>,<radius_m>, got {value!r}")
-                continue
-            cx, cy, radius = nums[0] * 100, nums[1] * 100, nums[2]
-            hits = [n for n in nodes if geo.distance_m((n["x"], n["y"]), (cx, cy)) <= radius]
+                centre = (nums[0] * 100, nums[1] * 100)
+                where = f"({nums[0]:g},{nums[1]:g})m"
+            hits = [n for n in nodes if geo.distance_m((n["x"], n["y"]), centre) <= radius]
             location_seen = True
             picked.update({n["instance"]: n for n in hits})
-            sel.described.append(
-                f"within {radius:g}m of ({nums[0]:g},{nums[1]:g})m ({len(hits)} nodes)"
-            )
+            sel.described.append(f"within {radius:g}m of {where} ({len(hits)} nodes)")
             continue
 
         # ---- rectangle -------------------------------------------------
