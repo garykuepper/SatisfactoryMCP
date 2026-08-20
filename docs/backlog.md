@@ -167,11 +167,15 @@ Three closed, three narrowed by an alias rather than settled, two open.
   finished until both interfaces read it — and here neither did, because the key was spelt in
   a third language.
 - **`/api/collectibles` carries no `looted`, so the map cannot tell an empty drop pod from a
-  full one — OPEN.** 99 pods remain on the reference world and many are already looted; the
-  layer draws them alike, and the text answer has to apologise for the map. Add
-  `looted: bool | None` to `CollectibleRow`, regenerate `api-schema.d.ts` (web-wire rule 6),
-  and draw a looted pod as a hollow ring. Until then `collected_from_world` prints "the pod
-  layer is NOT a hard-drive layer".
+  full one — DONE** (`3b46170`). `CollectibleRow.looted: bool | None`, schema regenerated.
+  Non-null **exactly** on a `crashed_drop_pod` whose `observed` is `"standing"`, because the
+  flag is a live pod body's own `mHasBeenLooted` — 30 looted, 58 unlooted and 11 never streamed,
+  of the 99 remaining. **Null means one thing, that no loot flag was read, and never "not
+  looted"**, which is `false`. The map draws it on the fill axis: a hollow ring is looted, a
+  faint disc was never read, and only a solid dot still holds a drive. Dashed was refused
+  because it already means locked on a node, paused on a machine and planned on a plan. The
+  text note is narrowed rather than deleted, because the public map still draws all three
+  alike.
 
 ## P5 — capability already built, not yet reachable: WIRE IT UP
 
