@@ -11,18 +11,21 @@ not a defect is [roadmap.md](roadmap.md).
 test-file assertion, not a surface feature.** Items 37 and above were filed later and are not
 part of that count.
 
-**P7 is new:** thirteen items that lived only in [roadmap.md](roadmap.md), in the parked
-ledgers or in conversation, and were therefore invisible to anyone reading this file. Filed on
-2026-08-10 so that one document answers "what is left". P0, P1, P2 and P5 are done outright. What is left is four
-of the fourteen P3/P4 bullets, three of which are deliberate surface decisions and are marked
-so, plus one new P4 row that this round's work uncovered rather than left behind. P6 is not
-defects at all: it is the six rigs the fluid model is waiting on, and every one of them needs
-the owner in the game.
+P0, P1, P2 and P5 are done outright. What is left of the original list is five of the fourteen
+P3/P4 bullets: three that are deliberate surface decisions rather than unfinished work, marked
+so where they stand, and two — the two radius grammars and `describe_location`'s float pair —
+that the owner authorised as **breaks** on 2026-08-10, wanting one vocabulary rather than two
+kept alive by an alias.
 
-**Added 2026-08-10: P6, items 37–42** — in-game measurements the fluid model is waiting on.
-They are not code defects and are not counted in the 36 of 40 above; they are here because each
-one is a concrete thing to build, and the alternative is that they are remembered rather than
-findable.
+**Two sections were added on 2026-08-10 and are deliberately not counted above.**
+
+**P6, items 37–42** — in-game measurements the fluid model is waiting on. Not code defects at
+all: each is a rig to build in the owner's world, and every one of them needs him in the game.
+They are here because the alternative is that they are remembered rather than findable.
+
+**P7, items 43–55** — thirteen items that lived only in [roadmap.md](roadmap.md), in the parked
+ledgers or in conversation, and were therefore invisible to anyone reading this file. Filed so
+that one document answers "what is left".
 
 Each closed row names the commit that closed it. The claims below were re-verified against the
 code on 2026-08-06 rather than taken from the commit titles, and two of them turned out to have
