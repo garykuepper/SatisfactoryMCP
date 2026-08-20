@@ -16,6 +16,46 @@ RUN_PREFIXES = ("chain", "pipe")
 #: Foundation platforms, by the index ``factory_map show=slabs`` prints.
 SLAB_PREFIX = "slab"
 
+#: The player, spelled the same wherever a place is taken.
+PLAYER_WORDS = ("me", "player", "here")
+
+#: The one spelling of a circle, for node selectors and machine selectors alike. ``@``
+#: separates the place from the radius so that a comma always means a coordinate or an
+#: alternative and never a distance.
+NEAR_GRAMMAR = (
+    "A circle is near:<place>@<radius_m> -- e.g. near:-1069,-1273@200, near:me@500, "
+    "near:steel factory@150. The radius follows '@', never a comma"
+)
+
+
+def parse_near(spec: str) -> tuple[str, float]:
+    """Split a ``near:`` body into its place and its radius in metres.
+
+    Splits on the LAST ``@`` so a label may contain one. The retired ``x,y,r`` spelling is
+    recognised only to name its replacement: a stored plan written that way must fail
+    loudly rather than resolve to a circle it no longer describes.
+    """
+    place, at, radius_txt = spec.rpartition("@")
+    if not at:
+        raise ValueError(f"near:{spec!r} has no radius. {_retired(spec)}{NEAR_GRAMMAR}")
+    place, radius_txt = place.strip(), radius_txt.strip()
+    if not place:
+        raise ValueError(f"near:{spec!r} has no place before '@'. {NEAR_GRAMMAR}")
+    try:
+        radius_m = float(radius_txt)
+    except ValueError:
+        raise ValueError(
+            f"near: radius must be a number in metres, got {radius_txt!r}. {NEAR_GRAMMAR}"
+        ) from None
+    return place, radius_m
+
+
+def _retired(spec: str) -> str:
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) == 3 or (len(parts) == 2 and parts[0].casefold() in PLAYER_WORDS):
+        return f"Write near:{','.join(parts[:-1])}@{parts[-1]} instead. "
+    return ""
+
 
 def player_xy(st) -> tuple[float, float] | None:
     """Player XY for the near:me selector, or None if the save has no pawn."""
@@ -86,7 +126,7 @@ def resolve_origin(st, near: str) -> tuple[tuple[float, float], str]:
             raise ValueError(f"{near!r} is not an x,y pair in metres") from exc
         return (x_m * 100.0, y_m * 100.0), f"{int(x_m)},{int(y_m)}"
 
-    if text.casefold() in ("me", "player", "here"):
+    if text.casefold() in PLAYER_WORDS:
         here = player_xy(st)
         if here is None:
             raise ValueError("this save has no player pawn, so 'me' cannot be resolved")

@@ -121,6 +121,13 @@ def test_tool_descriptions_stay_short():
         assert len(first) <= 120, (tool.name, first)
 
 
+def test_describe_location_declares_one_way_to_say_where():
+    """It declared `x_m`/`y_m` AND `at=`, which strictly subsumes them, so a client reading
+    the schema met two spellings of one thing and had to guess which the tool preferred."""
+    tool = next(t for t in _run(srv.mcp.list_tools()) if t.name == "describe_location")
+    assert set(tool.inputSchema["properties"]) == {"at", "radius_m", "save", "world", "as_of"}
+
+
 @pytest.mark.parametrize(
     "uri",
     [
@@ -149,7 +156,7 @@ def test_docs_summary_reports_no_normalisation_warnings():
         ("alternates_for_item", {"item": "Plastic"}),
         ("list_buildings", {"kind": "generator"}),
         ("list_regions", {}),
-        ("describe_location", {"x_m": 239, "y_m": -1928}),
+        ("describe_location", {"at": "239,-1928"}),
         ("world_summary", {}),
         ("power_report", {}),
         ("unlocked_recipes", {}),

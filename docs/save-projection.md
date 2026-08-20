@@ -423,10 +423,9 @@ sometimes several components (Christmas) and sometimes part of one (steel inside
 Persisted per world under `saveIdentifier` in `user_data_dir/labels/`, deliberately **not** under
 `cache_dir` (which `cache_prune` wipes) and **not** in the repo.
 
-Selection uses a small query language (`graph/select.py`): `product:`, `recipe:`, `building:`,
-`near:x,y@m` / `near:x,y,m` / `near:<label>@m`, `base:n`, `line:n`, `slab:n`, `proposal:n`, `label:`,
-`machine:<instance>`, `all`. Terms are ANDed, commas inside
-one term are ORed, a leading `-` excludes. `machine:` is checked against the graph, so an
+Selection uses a small query language (`factories/select.py`), tabulated in
+[selectors.md](selectors.md) alongside the node selectors it shares a spelling with. Terms are ANDed,
+commas inside one term are ORed, a leading `-` excludes. `machine:` is checked against the graph, so an
 unknown id is an error rather than a selection of nothing. Intersection rather than union because carving is
 subtractive in practice — the player starts from something too big and narrows it.
 

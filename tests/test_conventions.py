@@ -1,9 +1,9 @@
 """One spelling per question, across the whole tool surface.
 
 Every entry here cost a client a retry: it asked for a view with the word the last tool
-used, or wrote a radius the way the last tool's help wrote it, and got an error. The old
-spellings all still work -- renaming a parameter breaks stored calls -- so what is pinned
-is that BOTH forms reach the same answer.
+used, or wrote a radius the way the last tool's help wrote it, and got an error. Where an
+alias was added, what is pinned is that BOTH forms reach the same answer. Where a spelling
+was retired, what is pinned is that it ERRORS and names its replacement.
 """
 
 from __future__ import annotations
@@ -19,16 +19,31 @@ BASE = "near:-1069,-1273"
 
 def test_a_radius_is_written_the_same_way_on_both_sides_of_the_surface():
     """Node selectors spelled a circle `x,y,r` and machine selectors spelled it `x,y@r`,
-    so a radius copied out of one tool's help was a parse error in the next."""
-    comma = srv.search_resource_nodes(sources=["near:0,-2000,900"], mode="nodes", limit=3)
-    at = srv.search_resource_nodes(sources=["near:0,-2000@900"], mode="nodes", limit=3)
-    assert comma == at
-    assert "no nodes" not in comma
+    so a radius copied out of one tool's help was a parse error in the next. `@` is the
+    one spelling now, and it is the one both sides accept."""
+    nodes = srv.search_resource_nodes(sources=["near:0,-2000@900"], mode="nodes", limit=3)
+    assert "no nodes" not in nodes and "!" not in nodes.splitlines()[0]
+    assert "0 machines" not in srv.factory_query(factory=f"{BASE}@200", of="summary")
 
-    machines_at = srv.factory_query(factory=f"{BASE}@200", of="summary")
-    machines_comma = srv.factory_query(factory=f"{BASE},200", of="summary")
-    # The echoed selector differs because it echoes what was asked; the answer must not.
-    assert machines_at.split("\n", 2)[2] == machines_comma.split("\n", 2)[2]
+
+@pytest.mark.parametrize(
+    ("call", "wanted"),
+    [
+        (
+            lambda: srv.search_resource_nodes(sources=["near:0,-2000,900"], mode="nodes", limit=3),
+            "near:0,-2000@900",
+        ),
+        (lambda: srv.search_resource_nodes(sources=["near:me,500"], mode="nodes"), "near:me@500"),
+        (lambda: srv.factory_query(factory=f"{BASE},200", of="summary"), f"{BASE}@200"),
+    ],
+)
+def test_the_retired_comma_radius_errors_and_names_its_replacement(call, wanted):
+    """A radius as a third comma value is gone from both sides. It must not resolve to a
+    circle it no longer describes, and the error has to carry the rewrite: a stored plan
+    written in the old grammar is the thing that meets this message."""
+    out = call()
+    assert "@" in out and wanted in out, out
+    assert "Write near:" in out or "radius" in out
 
 
 @pytest.mark.parametrize(

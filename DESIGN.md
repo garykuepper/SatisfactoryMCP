@@ -31,10 +31,13 @@ resolves through this table wherever it is written, in a document or in a docstr
 | §23 | [docs/residency.md](docs/residency.md) | what an autosave costs the two processes, and why the answer is a pre-warming watcher rather than a resident daemon |
 | §24 | [docs/plumbing.md](docs/plumbing.md) | head lift and flow: which of the manual's constants the dump confirms, the one it does not carry, what the save measures about pipes, buffers and pumps, and the connection → head lift → flow rate ladder a missing fluid is diagnosed on |
 
-Three documents carry no section numbers of their own. Two are ledgers rather than design:
+Four documents carry no section numbers of their own. Two are ledgers rather than design:
 [docs/backlog.md](docs/backlog.md) is every known defect with the commit that closed it, and
 [docs/roadmap.md](docs/roadmap.md) is what to build next, what not to, and the measurements
-behind both. The third is one model stated in one place:
+behind both. The other two each state one thing in one place, so that it is not restated
+anywhere else. [docs/selectors.md](docs/selectors.md) is the selector grammar — the three
+vocabularies this surface uses to point at nodes, machines and places, the rules all three
+obey, and the divergences between them that are deliberate.
 [docs/fluids_model.md](docs/fluids_model.md) is the fluid model — how head lift propagates,
 every constant marked as stated by the game, measured in-game, or assumed, the experiments
 behind the measurements, what the model still gets wrong, and how to measure it again.

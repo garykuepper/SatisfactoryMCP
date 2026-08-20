@@ -81,15 +81,13 @@ def list_regions(with_resource: str | None = None) -> str:
 
 @mcp.tool(structured_output=False)
 def describe_location(
-    x_m: float | None = None,
-    y_m: float | None = None,
     at: Annotated[
-        str | None,
+        str,
         Field(
-            description="a place instead of x_m/y_m: 'x,y' in metres, 'me', a named "
-            "factory, 'slab:<n>', or a run id like 'chain:7'"
+            description="the place: 'x,y' in metres, 'me', a named factory, "
+            "'slab:<n>', or a run id like 'chain:7'"
         ),
-    ] = None,
+    ] = "",
     radius_m: Annotated[
         float, Field(description="how far to look for known elevations, metres")
     ] = 200.0,
@@ -99,8 +97,8 @@ def describe_location(
 ) -> str:
     """Name the region at a place, sample its elevation, and count what runs through.
 
-    Give it `x_m`/`y_m` in metres, or `at=` for anything else this project prints an id
-    for: a named factory, `slab:<n>` from `factory_map show=slabs` -- including the bare
+    `at=` takes `'x,y'` in metres, or anything else this project prints an id for: `me`,
+    a named factory, `slab:<n>` from `factory_map show=slabs` -- including the bare
     platforms nothing else would take -- or a `chain:`/`pipe:` run from `search_conduits`.
 
     Returns 'off-map or ocean' rather than guessing the nearest land region.
@@ -128,15 +126,15 @@ def describe_location(
     except Exception:
         pass
 
-    if at is not None:
-        try:
-            (x, y), where = resolve_origin(st, at)
-        except ValueError as exc:
-            return f"! {exc}"
-    elif x_m is None or y_m is None:
-        return "! describe_location needs x_m and y_m in metres, or at=<place>"
-    else:
-        x, y, where = x_m * 100, y_m * 100, ""
+    if not at.strip():
+        return (
+            "! describe_location needs at=<place>: 'x,y' in metres, 'me', a named "
+            "factory, 'slab:<n>', or a run id like 'chain:7'"
+        )
+    try:
+        (x, y), where = resolve_origin(st, at)
+    except ValueError as exc:
+        return f"! {exc}"
 
     rm = regions_mod.load_regions()
     label = rm.label_for(x, y)
@@ -144,10 +142,12 @@ def describe_location(
     field = heightfield.load_field()
     near = elevation.probe(x, y, elevation.sample_points(table, st), radius_m, terrain_field=field)
 
+    # Echoed because `at=` can resolve to somewhere the caller never typed, and every
+    # number below is about THAT point. A bare coordinate resolves to itself, so naming it
+    # twice would read as two facts.
+    here = f"{x / 100:.0f},{y / 100:.0f}"
     fields = [
-        # Echoed because `at=` can resolve to somewhere the caller never typed, and every
-        # number below is about THAT point.
-        ("at", f"{x / 100:.0f},{y / 100:.0f}" + (f" ({where})" if where else "")),
+        ("at", here + (f" ({where})" if where and where != here else "")),
         ("region", label.describe()),
         ("confidence", label.confidence),
         ("grid", geo.grid_cell(x, y)),
@@ -587,7 +587,7 @@ def search_resource_nodes(
 
         ["north"]                          northern half of the map
         ["region:Northern Forest"]         one named region
-        ["near:0,-2000,800"]               within 800 m of (0, -2000) metres
+        ["near:0,-2000@800"]               within 800 m of (0, -2000) metres
         ["grid:X3Y4"]                      one 1.024 km grid cell
         ["node:BP_ResourceNode26_99"]      one specific node
         ["north", "resource:Crude Oil"]    crude oil in the north
@@ -1133,7 +1133,7 @@ def whereami(
 
     Position comes from the Char_Player_C pawn in the save, so it is wherever you
     were when it was written -- an autosave can be several minutes stale. Use
-    ``near:me,<radius>`` as a source selector in the planning tools to scope work to
+    ``near:me@<radius>`` as a source selector in the planning tools to scope work to
     here.
     """
     g = game()
@@ -1175,7 +1175,7 @@ def whereami(
         key=lambda r: geo.distance_m((r["pos"][0], r["pos"][1]), (x, y)),
         default=None,
     )
-    notes = [f"use near:me,{radius_m:g} as a source selector to plan around here"]
+    notes = [f"use near:me@{radius_m:g} as a source selector to plan around here"]
     # Distances here are measured FROM the table's coordinates, so a stale row makes
     # "nearest node" quietly wrong. Scoped to what is actually within radius_m.
     notes += nodes_mod.skew_notes(

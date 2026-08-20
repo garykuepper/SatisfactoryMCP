@@ -230,21 +230,11 @@ read 480 in one tool and 240 in the other.
 
 **Decision: one selector language, used by every spatial and planning tool.** `plan_factory` takes no
 `direction` parameter; it takes `sources`, a list of selectors that say which nodes may feed the plan.
-Implemented in `spatial/select.py`.
-
-| selector | meaning |
-|---|---|
-| `north`, `northeast`, … | compass hemisphere, or a 60° cone when an origin is supplied |
-| `region:Northern Forest` | named region (layer 2; a bare name also works) |
-| `grid:X3Y4` | exact 1.024 km biome grid cell |
-| `node:BP_ResourceNode30_103` | one specific node, repeatable |
-| `near:<x_m>,<y_m>,<radius_m>` | circle, metres |
-| `bbox:<x1>,<y1>,<x2>,<y2>` | rectangle, metres |
-| `resource:` / `purity:` / `kind:` | filters, not locations |
-| `all` | every node |
+Implemented in `spatial/select.py`. The terms themselves are tabulated once, next to the machine
+selectors and the place grammar they share a spelling with, in [selectors.md](selectors.md).
 
 **Locations union; filters intersect.** So `["north", "resource:Crude Oil"]` is "crude oil in the
-northern half", and `["region:Spire Coast", "near:120,-2020,1500"]` is the union of two areas.
+northern half", and `["region:Spire Coast", "near:120,-2020@1500"]` is the union of two areas.
 
 Two rules that matter more than the syntax:
 

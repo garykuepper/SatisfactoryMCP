@@ -1403,7 +1403,7 @@ to use it at the margin.
 **Player position** comes from the `Char_Player_C` pawn's transform, never from
 `BP_PlayerState_C` — that actor sits at the world origin, so reading it would report every player at
 (0, 0). With several pawns the one holding a build gun wins, since that is the one being played.
-Exposed as `whereami` and as the `near:me,<radius>` selector.
+Exposed as `whereami` and as the `near:me@<radius>` selector.
 
 > **The trap, which I walked into.** The player position must be passed to `select_nodes` as `player`,
 > *not* as `origin`. `origin` also turns direction selectors into cones, so supplying it silently

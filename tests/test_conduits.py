@@ -403,7 +403,7 @@ def test_open_ocean_answers_zero_not_silence(game, live):
     assert "0 conduit run(s)" in out
     assert "nothing runs there" in out
 
-    described = srv.describe_location(-3500, 3500)
+    described = srv.describe_location("-3500,3500")
     assert "conduits=0 belt run(s), 0 pipe run(s) within 200m" in described
 
 
@@ -411,7 +411,7 @@ def test_open_ocean_answers_zero_not_silence(game, live):
 def test_describe_location_counts_what_runs_through_a_built_site(game, live):
     from satisfactory_mcp import server as srv
 
-    out = srv.describe_location(239, -1928)
+    out = srv.describe_location("239,-1928")
     assert "conduits=" in out
     assert "belt run(s)" in out and "pipe run(s)" in out
 

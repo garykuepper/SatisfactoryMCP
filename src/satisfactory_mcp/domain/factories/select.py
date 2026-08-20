@@ -23,9 +23,9 @@ Terms combine as an intersection, and any term may be negated with a leading ``-
     ["base:0", "-label:steel factory"]                the base minus what is named
 
 Intersection rather than union because carving is subtractive in practice: the player
-starts from something too big and narrows it. Comma-separated values inside one term
-are the OR, which is enough without becoming a parser -- a factory is usually "these
-four products, over there"::
+starts from something too big and narrows it. A comma inside one term is therefore always
+the OR (or a coordinate pair), never a radius -- the radius follows ``@``, the same way
+node selectors spell it. The whole grammar is written out in `docs/selectors.md`::
 
     ["product:Steel Ingot,Steel Pipe,Encased Industrial Beam,Steel Beam",
      "near:-1069,-1273@250"]
@@ -34,7 +34,7 @@ four products, over there"::
 from __future__ import annotations
 
 from ...core.gamedata.model import GameData
-from ..spatial import geo
+from ..spatial import geo, origin
 from .identity import bases, cluster_machines
 from .labels import LabelStore
 from .model import FactoryGraph
@@ -54,7 +54,7 @@ INDEX_WARNING = (
 
 SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
-    "near:<x,y@radius_m or label@radius_m> | base:<n> | line:<n> | slab:<n> | "
+    "near:<x,y or label>@<radius_m> | base:<n> | line:<n> | slab:<n> | "
     "proposal:<n> | "
     "label:<name> | machine:<instance> | all. Terms are ANDed; comma-separated values "
     "inside one term are ORed; prefix a term with '-' to exclude it"
@@ -136,30 +136,25 @@ def _by_building(graph: FactoryGraph, game: GameData, spec: str) -> set[str]:
 def _by_near(
     graph: FactoryGraph, projection: dict, store: LabelStore | None, spec: str
 ) -> set[str]:
-    body, _, radius_txt = spec.partition("@")
-    # `x,y,r` is the node selectors' spelling of the same circle. Both are accepted on both
-    # sides, because a caller who has just read a radius out of one tool's help writes it
-    # the way that tool wrote it.
-    parts = [p.strip() for p in body.split(",")]
-    if not radius_txt and len(parts) == 3:
-        body, radius_txt = ",".join(parts[:2]), parts[2]
     try:
-        radius_m = float(radius_txt) if radius_txt else 150.0
+        body, radius_m = origin.parse_near(spec)
     except ValueError as exc:
-        raise SelectorError(f"bad radius in near:{spec!r}") from exc
+        raise SelectorError(str(exc)) from exc
 
     pos = _positions(projection)
     if "," in body:
         try:
             x_m, y_m = (float(v) for v in body.split(",", 1))
         except ValueError as exc:
-            raise SelectorError(f"bad coordinate in near:{spec!r}") from exc
+            raise SelectorError(f"bad coordinate in near:{spec!r}. {origin.NEAR_GRAMMAR}") from exc
         # Coordinates are quoted in metres everywhere in this MCP; the save is in cm.
         centre = (x_m * 100.0, y_m * 100.0)
     else:
         label = store.find(body) if store else None
         if label is None:
-            raise SelectorError(f"near:{body!r} is neither an x,y pair nor a known label")
+            raise SelectorError(
+                f"near:{body!r} is neither an x,y pair nor a known label. {origin.NEAR_GRAMMAR}"
+            )
         pts = [pos[m][:2] for m in label.anchors if m in pos]
         if not pts:
             raise SelectorError(f"label {label.name!r} has no machines left to centre on")
