@@ -137,7 +137,7 @@ and on every recall of a sited plan; the numbers it prints never move the plan's
 Once sited: every recall prints it, `list_plans` grows a `sited(m)` column,
 `diff_vs_save plan=...` adds an **ON SITE** census — counts by building class inside the
 (properly rotated) footprint against the plan's bill, named *approximate* because it
-checks neither recipes nor clocks — and `show_on_map target='plan:<name>'` centres both
+checks neither recipes nor clocks — and `show_on_map at='plan:<name>'` centres both
 the public map and this project's own web map (`#z=…&c=x,y`) on the origin. Old plan
 files load unchanged; no siting is an ordinary state, not an error.
 

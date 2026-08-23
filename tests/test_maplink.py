@@ -129,7 +129,7 @@ def test_every_target_gets_this_projects_own_map_link(game):
     sited plan got a link to the map that can, though local_map_url was right there."""
     from satisfactory_mcp import server as srv
 
-    for target in ("0,0", "Crude Oil"):
+    for target in ("0,0", "resource:Crude Oil"):
         out = srv.show_on_map(target)
         assert "local map: " + maplink.LOCAL_BASE + "#" in out, target
         assert "public map: " + maplink.BASE + "#" in out, target
@@ -160,3 +160,50 @@ def test_well_variants_are_offered_only_where_wells_exist(game):
         "coalPure",
     ]
     assert all("Well" in t for t in maplink.layers_for(["Desc_NitrogenGas_C"], ["well"]))
+
+
+# ---------------------------------------------------- the place `at` takes
+
+
+def _fixed_state(monkeypatch, st):
+    from satisfactory_mcp.interfaces.mcp.tools import spatial as stools
+
+    monkeypatch.setattr(stools, "_state", lambda save=None, world=None, as_of=None: st)
+
+
+def test_at_takes_the_shared_place_vocabulary(monkeypatch, state, game):
+    """`show_on_map` used to spell its place `target=` and resolve a set of its own.
+    It now takes what every other place-taking tool takes, under the same name."""
+    from satisfactory_mcp import server as srv
+
+    _fixed_state(monkeypatch, state)
+    for place in ("0,0", "me", "slab:0", state.conduit_runs[0].ident):
+        out = srv.show_on_map(place)
+        assert out.startswith("# ") and "local map: " in out, place
+
+
+def test_a_node_place_lights_up_that_nodes_own_resource(monkeypatch, state, game):
+    """The overlay is read off the node rather than guessed, which is the one thing
+    `at` needs beyond the point the resolver hands back."""
+    from satisfactory_mcp import server as srv
+    from satisfactory_mcp.domain.spatial import nodes as nodes_mod
+
+    _fixed_state(monkeypatch, state)
+    node = next(n for n in nodes_mod.load_nodes().nodes if n["resource"] == "Desc_Coal_C")
+    out = srv.show_on_map("node:" + node["instance"].rsplit(".", 1)[-1])
+    assert "Coal" in out
+    assert "# layers: " in out and "coal" in out.split("# layers: ")[1]
+
+
+def test_a_resource_is_show_on_maps_own_kind_and_says_so(monkeypatch, state, game):
+    """A resource name centres on the centroid of EVERY node of it, which is a viewport
+    and not a place -- so it is prefixed like every other kind and lives only here."""
+    from satisfactory_mcp import server as srv
+
+    _fixed_state(monkeypatch, state)
+    out = srv.show_on_map("resource:Crude Oil")
+    assert "node(s)" in out and "centroid of every node" in out
+    # The bare name is gone rather than kept as a second spelling: unprefixed, it is a
+    # factory label like anywhere else, and there is no factory by that name.
+    refused = srv.show_on_map("Crude Oil")
+    assert refused.startswith("! ") and "does not name a place" in refused

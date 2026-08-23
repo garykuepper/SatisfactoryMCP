@@ -97,20 +97,19 @@ def match_recipes(game: GameData, pattern: str, pool: list[str]) -> list[str]:
 def select_for(game: GameData, state: WorldState, sources: list[str] | None) -> Selection:
     """Resolve a source spec against this world -- the ONE place that wiring lives.
 
-    The player position goes in as ``player``, NOT as ``origin``: origin would also turn
-    every direction selector into a cone from the player, so "north" would stop meaning the
+    The world state goes in as ``st``, NOT as ``origin``: origin would also turn every
+    direction selector into a cone from the player, so "north" would stop meaning the
     northern half of the map and start meaning "north of where I am standing".
 
     ``planning.provenance`` re-resolves through here too: a staleness check taking any
     other route would measure a field the plan does not plan over.
     """
     table = nodes_mod.load_nodes()
-    here = state.player_position()
     return select_nodes(
         sources,
         table.nodes,
         resolve_resource=lambda q: resolve_item(game, q),
-        player=(here[0], here[1]) if here else None,
+        st=state,
     )
 
 

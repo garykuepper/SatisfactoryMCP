@@ -8,8 +8,9 @@ settled: the shared rules first, then each vocabulary in full, then the differen
 remain and are deliberate.
 
 Implemented in `domain/spatial/select.py` (nodes), `domain/factories/select.py` (machines)
-and `domain/spatial/origin.py` (places). The parser for the one construct all three share,
-a circle, lives in `origin.py` and is called from both selector modules.
+and `domain/spatial/origin.py` (places). Both selector modules are handed the world state
+and call `origin.py` for the one construct all three share -- a circle around a place --
+so the place table below is the whole of "where" for the entire surface.
 
 ## The rules every selector obeys
 
@@ -36,23 +37,33 @@ near:steel factory@150. The radius follows '@', never a comma
 
 ## Places — `at=`, `near=`, `site_at=`
 
-A **place** is a single point. Resolved by `resolve_origin`, and taken by every tool that
-asks where: `describe_location(at=)`, `site_plan(at=)`, `plan_factory(site_at=)`,
-`search_conduits(near=, to=)`, `search_resource_nodes(near=)`, `storage(near=)` and
-`collected_from_world(near=)`. `show_on_map(target=)` resolves the same places and three
-more of its own -- a node id, a resource name, and `plan:<name>` for a sited plan.
+A **place** is a single point, and there is exactly one vocabulary for one. Resolved by
+`resolve_origin`, and taken by every tool that asks where: `describe_location(at=)`,
+`show_on_map(at=)`, `site_plan(at=)`, `plan_factory(site_at=)`, `search_conduits(near=,
+to=)`, `search_resource_nodes(near=)`, `storage(near=)` and `collected_from_world(near=)`
+-- **and by the `near:` term of both selector languages below**, which is what makes the
+place table the only table a reader needs for "where".
 
-| place | resolves to |
-|---|---|
-| `x,y` | that coordinate, in metres |
-| `me` | the player pawn's position in the save |
-| `<factory name>` | the centroid of a named factory's machines |
-| `slab:<n>` | a foundation platform's tile mean, by the index `factory_map show=slabs` prints |
-| `chain:<n>` / `pipe:<n>` | the midpoint of a conduit run, by the ident `search_conduits` prints |
+| place | resolves to | needs a save |
+|---|---|---|
+| `x,y` | that coordinate, in metres | no |
+| `node:<instance>` | one resource node, by the id `search_resource_nodes` prints | no |
+| `me` | the player pawn's position in the save | yes |
+| `<factory name>` | the centroid of a named factory's machines | yes |
+| `slab:<n>` | a foundation platform's tile mean, by the index `factory_map show=slabs` prints | yes |
+| `chain:<n>` / `pipe:<n>` | the midpoint of a conduit run, by the ident `search_conduits` prints | yes |
+| `plan:<name>` | a stored plan's recorded site origin (see `site_plan`) | yes |
 
-Every form but a bare coordinate needs a readable save. The point a place resolved to is
-echoed back with the name that produced it, because `at=` can land somewhere the caller
-never typed.
+The two map facts resolve with no save at all; the rest name what they are missing rather
+than falling back. The point a place resolved to is echoed back with the name that
+produced it, because `at=` can land somewhere the caller never typed.
+
+`show_on_map(at=)` takes one kind **more**: `resource:Crude Oil` centres on the centroid
+of every node of that resource and switches its overlays on. That is a viewport rather
+than a place -- it names a *set*, and the centroid of a scattered set can be open water,
+which the answer says -- so it is not in `resolve_origin` and no other tool accepts it.
+Spelled with the `:` of rule 4 like everything else; the bare resource name it replaces
+is retired, and unprefixed text is a factory label here as it is everywhere.
 
 ## Which nodes — `sources=`
 
@@ -66,8 +77,7 @@ A **source spec** is a list of selectors, and it is what every `sources=` parame
 | `region:Northern Forest` | named region; a bare name also works |
 | `grid:X3Y4` | one exact 1.024 km biome grid cell |
 | `node:BP_ResourceNode30_103` | one specific node, repeatable |
-| `near:<x_m>,<y_m>@<radius_m>` | a circle |
-| `near:me@<radius_m>` | a circle around the player |
+| `near:<place>@<radius_m>` | a circle around any place in the table above |
 | `bbox:<x1>,<y1>,<x2>,<y2>` | a rectangle, corners in metres |
 | `resource:Crude Oil` | filter: resource type |
 | `purity:pure\|normal\|impure` | filter: purity |
@@ -92,8 +102,7 @@ are interchangeable there.
 | `product:Steel Pipe` | everything making it, anywhere |
 | `recipe:Alternate: Solid Steel Ingot` | by recipe name or id, substring allowed |
 | `building:Foundry` | by display name or class |
-| `near:<x_m>,<y_m>@<radius_m>` | a circle |
-| `near:<factory name>@<radius_m>` | a circle around a named factory's centroid |
+| `near:<place>@<radius_m>` | a circle around any place in the table above |
 | `base:<n>` | a power island, largest first |
 | `line:<n>` | a material component, largest first |
 | `slab:<n>` | a foundation platform, by its own printed index |
@@ -120,13 +129,17 @@ ids.
 
 Named here so that the next reader knows it is a known state and not an oversight.
 
-- **`near:` takes different places on each side.** Node selectors take a coordinate or
-  `me`; machine selectors take a coordinate or a factory name. Neither takes the other's,
-  because neither module is handed what it would need — the node selector never sees the
-  label store, and the machine selector never sees the player pawn. The *syntax* is
-  identical; the set of places is not.
+- **`near:` no longer differs.** Both selector modules hand the whole world state to
+  `resolve_origin` and take the same seven places, so a `near:` term copied from one
+  works in the other. Neither module resolves a place itself; a second resolver is what
+  the divergence was made of.
 - **Indices are machine-side only.** `base:`, `line:`, `slab:` and `proposal:` have no
-  meaning over resource nodes, which are map facts rather than save facts.
+  meaning over resource nodes, which are map facts rather than save facts. `slab:<n>` is
+  the exception that proves it: as a *place* it works everywhere, and only as a
+  standalone selector -- "the machines standing on that platform" -- is it machine-side.
+- **`resource:` means two things, on purpose.** As a node *filter* it narrows a selection
+  to one resource type; as `show_on_map(at=)`'s own place kind it centres on the centroid
+  of every node of that resource. Same noun, one selecting and one pointing.
 - **`kind:` here is a node-kind filter**, and `kind=` as a tool parameter means five other
   vocabularies elsewhere on the surface. That is tracked in
   [backlog.md](backlog.md) under P3, not settled here.

@@ -10,7 +10,7 @@ from ....domain.spatial import elevation, geo, heightfield
 from ....domain.spatial import nodes as nodes_mod
 from ....domain.spatial import ranking as ranking_mod
 from ....domain.spatial import regions as regions_mod
-from ....domain.spatial.origin import player_xy, resolve_origin
+from ....domain.spatial.origin import NODE_PREFIX, resolve_origin
 from ....domain.spatial.select import SELECTOR_HELP, select_nodes
 from ....presenters.text import primitives as render
 from ..app import (
@@ -635,7 +635,7 @@ def search_resource_nodes(
     if mode == "nearest" and origin is None:
         return "! mode='nearest' needs near=<x,y | me | factory name> to measure from"
 
-    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, player=player_xy(st))
+    sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, st=st)
     if sel.errors and not sel.nodes:
         return render.envelope("# no nodes selected", "", [*sel.errors, SELECTOR_HELP])
 
@@ -842,12 +842,12 @@ def search_resource_nodes(
 
 @mcp.tool(structured_output=False)
 def show_on_map(
-    target: Annotated[
+    at: Annotated[
         str,
         Field(
-            description="'x,y' in metres, 'me', a factory label, a node id, a resource "
-            "name like 'Crude Oil', 'slab:<n>', 'chain:<n>'/'pipe:<n>', or "
-            "'plan:<name>' for a sited plan's origin"
+            description="any place -- 'x,y' in metres, 'me', a factory label, "
+            "'node:<id>', 'slab:<n>', 'chain:<n>'/'pipe:<n>', 'plan:<name>' -- or "
+            "'resource:Crude Oil' for every node of one resource"
         ),
     ],
     layers: Annotated[
@@ -861,16 +861,15 @@ def show_on_map(
 ) -> str:
     """Map links centred on something: this project's own map, and the public one.
 
-    Two links for every target. The LOCAL one opens this project's web map, which draws
+    Two links for every place. The LOCAL one opens this project's web map, which draws
     the reader's own save -- their machines, their belts, their siting. The
     satisfactory-calculator.com one opens a third-party map of the vanilla world, which
     knows the terrain and the nodes and nothing the player built.
 
-    `target` accepts a coordinate in metres, `me`, one of your named factories, a node
-    id from `search_resource_nodes`, a resource name — the last centres on that
-    resource's nodes and switches its overlays on — `slab:<n>` for a platform from
-    `factory_map show=slabs`, `chain:<n>`/`pipe:<n>` for a run from `search_conduits`,
-    or `plan:<name>` for a plan that has a recorded siting (see site_plan).
+    `at` is the same place vocabulary every other tool takes (see docs/selectors.md),
+    plus one kind of its own: `resource:<name>` centres on the centroid of EVERY node of
+    that resource and switches its overlays on, which is a viewport rather than a place
+    and is why no other tool accepts it.
 
     Only the Crude Oil layer tokens are confirmed; the rest follow the same pattern and
     are flagged. A wrong token still opens the map in the right place, just without that
@@ -887,36 +886,14 @@ def show_on_map(
     table = nodes_mod.load_nodes()
     notes: list[str] = []
     resources: list[str] = []
-    text = target.strip()
+    text = at.strip()
+    kind, _sep, value = text.partition(":")
 
-    # A node id centres on that node and lights up its own resource.
-    by_instance = {k.rsplit(".", 1)[-1]: v for k, v in table.by_instance().items()}
-    node = by_instance.get(text)
-    if text.casefold().startswith("plan:"):
-        from ....domain.planning import siting as siting_mod
-
-        if st is None:
-            return "! reading a plan needs a readable save"
-        pname = text[5:].strip()
-        stored = st.plans.find(pname)
-        if stored is None:
-            known = ", ".join(x.name for x in st.plans.plans) or "(none)"
-            return f"! no saved plan named {pname!r}. Saved: {known}"
-        sit = siting_mod.parse(stored)
-        if sit is None:
-            return (
-                f"! plan {stored.name!r} has no siting recorded -- set one with "
-                f"site_plan, or plan_factory site_at=... save_as={stored.name!r}"
-            )
-        node = None
-        origin = (sit.x_m * 100, sit.y_m * 100)
-        where = f"plan {stored.name!r} site ({sit.describe()})"
-    elif node is not None:
-        origin = (node["x"], node["y"])
-        where = f"{text} ({g.item_name(node['resource'])}, {node['purity']})"
-        resources = [node["resource"]]
-    elif (item := _item_id(text)) and item in maplink.LAYERS:
-        # A resource name: centre on its nodes so the link lands somewhere useful.
+    node = None
+    if kind.casefold() == "resource":
+        item = _item_id(value.strip())
+        if not item or item not in maplink.LAYERS:
+            return f"! no map layer for resource {value.strip()!r}"
         rows = table.by_resource(item)
         if not rows:
             return f"! no {g.item_name(item)} nodes on the map"
@@ -928,13 +905,21 @@ def show_on_map(
         resources = [item]
         notes.append(
             "centred on the centroid of every node of that resource, which may be open "
-            "water if they are spread across the map -- pass a node id or x,y to pin it"
+            "water if they are spread across the map -- pass node:<id> or x,y to pin it"
         )
     else:
         try:
             origin, where = resolve_origin(st, text)
         except ValueError as exc:
             return f"! {exc}"
+        # The resolver answers with a point; the overlay wants the node's own resource,
+        # so a node place is looked up again HERE rather than given a second grammar.
+        if kind.casefold() == NODE_PREFIX:
+            short = {k.rsplit(".", 1)[-1]: v for k, v in table.by_instance().items()}
+            node = short.get(value.strip())
+        if node is not None:
+            resources = [node["resource"]]
+            where = f"{where} -- {g.item_name(node['resource'])}"
 
     # Which variants a resource actually HAS, read from the node table rather than
     # assumed: Coal is node-only, so emitting coalWellPure would be a token invented for
@@ -1012,7 +997,7 @@ def rank_build_sites(
         )
 
     spec = [*(sources or []), f"resource:{rid}"]
-    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id, player=player_xy(st))
+    sel = select_nodes(spec, table.nodes, resolve_resource=_item_id, st=st)
     if sel.errors and not sel.nodes:
         return render.envelope("# no candidates", "", [*sel.errors, SELECTOR_HELP])
 

@@ -20,15 +20,7 @@ def resolve_factory(st, factory: str):
         alive = set(st.graph.machines())
         return label.name, [m for m in label.anchors if m in alive]
     try:
-        picked = gsel.select_machines(
-            [factory],
-            st.graph,
-            st.game,
-            st.projection,
-            st.labels,
-            structures=st.structures,
-            proposals=st.proposals,
-        )
+        picked = gsel.select_machines([factory], st)
     except gsel.SelectorError as exc:
         known = ", ".join(x.name for x in st.labels.labels) or "(none named yet)"
         raise gsel.SelectorError(f"{exc}. Named factories: {known}") from exc

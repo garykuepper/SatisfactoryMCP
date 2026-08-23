@@ -13,6 +13,7 @@ this system exists to fix:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from itertools import pairwise
 
 import pytest
@@ -152,8 +153,31 @@ def test_unassigned_is_every_machine_no_label_covers(graph):
 # ------------------------------------------------------------- selectors
 
 
+@dataclass
+class _World:
+    """The facets ``select_machines`` reads, without a save behind them.
+
+    A stand-in rather than a real ``WorldState`` because these tests are built on a
+    hand-written projection: the point is what the selector does with the terms, and a
+    facet no term reaches is left None so that reaching it fails loudly.
+    """
+
+    graph: object
+    game: object = None
+    projection: dict = field(default_factory=dict)
+    labels: object = None
+    structures: object = None
+    proposals: object = None
+    plans: object = None
+    conduit_runs: tuple = ()
+
+    def player_position(self):
+        return None
+
+
 def _sel(terms, graph, game, projection, store=None, **kw):
-    return select_machines(terms, graph, game, projection, store, **kw)
+    store = store if store is not None else LabelStore(world_id="TESTWORLD")
+    return select_machines(terms, _World(graph, game, projection, store), **kw)
 
 
 def test_terms_are_anded(graph, game, projection):
@@ -539,7 +563,7 @@ def test_a_bare_platform_answers_a_slab_selector_instead_of_refusing_it(game, mo
     }
     st = WorldState(projection=projection, game=game)
     assert st.structures.machines_on(0) == [], "slab 0 is the big empty one"
-    assert _sel(["slab:0"], st.graph, game, projection, structures=st.structures) == []
+    assert select_machines(["slab:0"], st) == []
 
     monkeypatch.setattr(ftools, "_state", lambda save=None, world=None, as_of=None: st)
     out = ftools.select_machines(["slab:0"])
@@ -824,9 +848,8 @@ def test_proposal_selector_names_exactly_what_was_proposed():
         Proposal(machines=sorted(STEEL_CONCRETE)),
     ]
     graph = build_graph(_slab_projection())
-    picked = select_machines(
-        ["proposal:1"], graph, None, _slab_projection(), None, proposals=proposals
-    )
+    world = _World(graph, projection=_slab_projection(), proposals=proposals)
+    picked = select_machines(["proposal:1"], world)
     assert picked == sorted(STEEL_CONCRETE)
 
 
@@ -836,9 +859,9 @@ def test_proposal_selector_reports_a_bad_index():
 
     graph = build_graph(_slab_projection())
     with pytest.raises(SelectorError, match="out of range"):
-        select_machines(["proposal:9"], graph, None, {}, None, proposals=[Proposal(machines=["a"])])
+        select_machines(["proposal:9"], _World(graph, proposals=[Proposal(machines=["a"])]))
     with pytest.raises(SelectorError, match="needs the proposal list"):
-        select_machines(["proposal:0"], graph, None, {}, None)
+        select_machines(["proposal:0"], _World(graph))
 
 
 def test_index_selectors_are_documented_as_volatile():

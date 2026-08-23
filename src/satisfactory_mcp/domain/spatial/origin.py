@@ -1,12 +1,13 @@
-"""Where "near" points: a coordinate, the player, a factory, a conduit run, a platform.
+"""Where a place is: a coordinate, the player, a factory, a node, a run, a slab, a plan.
 
-Lives with the map code rather than with any one tool group because the map tools and
-the node tools both ask the same question.
+The ONE place vocabulary. Every tool that takes a place and both selector languages
+resolve through ``resolve_origin``, so a term that works in one of them works in all of
+them. The grammar it implements is written out in `docs/selectors.md`.
 """
 
 from __future__ import annotations
 
-from . import geo
+from . import geo, nodes
 
 #: The conduit-run spelling this project settles on, everywhere: ``chain:<n>`` for a belt
 #: chain and ``pipe:<n>`` for a pipeline piece, which is the ident ``search_conduits``
@@ -16,8 +17,22 @@ RUN_PREFIXES = ("chain", "pipe")
 #: Foundation platforms, by the index ``factory_map show=slabs`` prints.
 SLAB_PREFIX = "slab"
 
+#: One resource node, by the instance id ``search_resource_nodes`` prints -- the same
+#: spelling the node selectors use to pick that node OUT of a field.
+NODE_PREFIX = "node"
+
+#: A stored plan's recorded site, by the plan's own name.
+PLAN_PREFIX = "plan"
+
 #: The player, spelled the same wherever a place is taken.
 PLAYER_WORDS = ("me", "player", "here")
+
+#: What a term that named no place should have said, so rule 6 of the grammar holds
+#: wherever a place is taken rather than only where a tool remembered to list them.
+PLACE_GRAMMAR = (
+    "A place is x,y in metres, 'me', a factory name, node:<id>, slab:<n>, "
+    "chain:<n>/pipe:<n>, or plan:<name>"
+)
 
 #: The one spelling of a circle, for node selectors and machine selectors alike. ``@``
 #: separates the place from the radius so that a comma always means a coordinate or an
@@ -104,21 +119,65 @@ def _slab_origin(st, text: str) -> tuple[tuple[float, float], str]:
     )
 
 
+def _node_origin(text: str) -> tuple[tuple[float, float], str]:
+    """Centre on one resource node, by the id ``search_resource_nodes`` prints.
+
+    Map data rather than save data, so this is the one place kind that resolves with no
+    save at all. The short id is accepted beside the full instance path because that is
+    the half the tools print.
+    """
+    want = text.partition(":")[2].strip()
+    table = nodes.load_nodes()
+    for instance, node in table.by_instance().items():
+        if want in (instance, instance.rsplit(".", 1)[-1]):
+            return (node["x"], node["y"]), f"node:{want} ({node['purity']} {node['kind']})"
+    raise ValueError(f"no resource node called {want!r}; search_resource_nodes lists the ids")
+
+
+def _plan_origin(st, text: str) -> tuple[tuple[float, float], str]:
+    """Centre on a stored plan's recorded site, which only a sited plan has."""
+    # Imported here because planning.siting imports this module: the plan record is
+    # parsed in one place, and that place is above this one.
+    from ..planning import siting
+
+    if st is None:
+        raise ValueError(f"{text!r} names a stored plan, which needs a readable save")
+    name = text.partition(":")[2].strip()
+    stored = st.plans.find(name)
+    if stored is None:
+        known = ", ".join(x.name for x in st.plans.plans) or "(none)"
+        raise ValueError(f"no saved plan named {name!r}. Saved: {known}")
+    sited = siting.parse(stored)
+    if sited is None:
+        raise ValueError(
+            f"plan {stored.name!r} has no siting recorded -- set one with site_plan, or "
+            f"plan_factory site_at=... save_as={stored.name!r}"
+        )
+    return (sited.x_m * 100.0, sited.y_m * 100.0), f"plan {stored.name!r} site ({sited.describe()})"
+
+
 def resolve_origin(st, near: str) -> tuple[tuple[float, float], str]:
-    """Resolve a location: "x,y" in metres, "me", a factory, a conduit run, or a slab.
+    """Resolve a place to a point in centimetres, paired with what it resolved FROM.
 
     A factory name is the useful one now that factories exist -- "nearest coal to the
     coal powerplant" is the question actually being asked, and hand-copying a centroid
-    out of another tool's output is how the wrong coordinate gets used. A run ident --
-    ``chain:7``, ``pipe:333`` -- and a platform index -- ``slab:12`` -- close the same
-    loop for two more sets of ids that other tools print and nothing would take back.
+    out of another tool's output is how the wrong coordinate gets used. A node id, a run
+    ident, a platform index and a plan name close the same loop for four more sets of
+    ids that other tools print and nothing would take back.
     """
     text = near.strip()
     head = text.partition(":")[0].casefold()
-    if ":" in text and head in RUN_PREFIXES:
-        return _run_origin(st, text)
-    if ":" in text and head == SLAB_PREFIX:
-        return _slab_origin(st, text)
+    if ":" in text:
+        # Only a KNOWN prefix is claimed here; anything else falls through to the label
+        # lookup, because a factory may be named with a colon in it.
+        if head in RUN_PREFIXES:
+            return _run_origin(st, text)
+        if head == SLAB_PREFIX:
+            return _slab_origin(st, text)
+        if head == NODE_PREFIX:
+            return _node_origin(text)
+        if head == PLAN_PREFIX:
+            return _plan_origin(st, text)
     if "," in text:
         try:
             x_m, y_m = (float(v) for v in text.split(",", 1))
@@ -136,8 +195,8 @@ def resolve_origin(st, near: str) -> tuple[tuple[float, float], str]:
     if label is None:
         known = ", ".join(x.name for x in st.labels.labels) if st else ""
         raise ValueError(
-            f"{near!r} is neither an x,y pair, 'me', nor a named factory"
-            + (f". Named: {known}" if known else "")
+            f"{near!r} does not name a place. {PLACE_GRAMMAR}"
+            + (f". Named factories: {known}" if known else "")
         )
     pos = {}
     for key in ("machines", "extractors", "generators"):

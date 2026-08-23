@@ -12,8 +12,7 @@ Supported selectors (prefix optional where unambiguous)::
     region:Northern Forest                          named region (advisory names)
     grid:X3Y4                                       exact 1.024 km biome grid cell
     node:BP_ResourceNode26_99                       one specific node, by instance
-    near:<x_m>,<y_m>@<radius_m>                     circle, metres
-    near:me@<radius_m>                              circle around the player
+    near:<place>@<radius_m>                         circle around any place
     bbox:<x1>,<y1>,<x2>,<y2>                        rectangle, metres
     resource:Crude Oil                              filter: resource type
     purity:pure|normal|impure                       filter: purity
@@ -29,14 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import geo
-from .origin import NEAR_GRAMMAR, PLAYER_WORDS, parse_near
+from .origin import parse_near, resolve_origin
 from .regions import load_regions
 
 __all__ = ["SELECTOR_HELP", "Selection", "select_nodes", "split_spec"]
 
 SELECTOR_HELP = (
     "selectors: north|south|east|west|northeast|... , region:<name>, grid:X3Y4, "
-    "node:<instance>, near:<x_m>,<y_m>@<radius_m>, bbox:<x1>,<y1>,<x2>,<y2>, "
+    "node:<instance>, near:<place>@<radius_m>, bbox:<x1>,<y1>,<x2>,<y2>, "
     "resource:<name>, purity:pure|normal|impure, kind:node|well_sat|geyser, all"
 )
 
@@ -107,7 +106,7 @@ def select_nodes(
     resolve_resource=None,
     origin: tuple[float, float] | None = None,
     half_angle: float = 60.0,
-    player: tuple[float, float] | None = None,
+    st=None,
 ) -> Selection:
     """Apply a source spec to ``nodes``.
 
@@ -116,8 +115,9 @@ def select_nodes(
 
     ``origin`` turns direction selectors into cones from that point; leaving it None
     keeps them as map hemispheres, which is the better reading of "what oil is in the
-    north". ``player`` is separate and deliberately narrow -- it only resolves
-    ``near:me``, so supplying it can never silently reinterpret a direction.
+    north". ``st`` is separate and deliberately narrow -- it only resolves the PLACE
+    inside a ``near:`` term, so supplying it can never silently reinterpret a direction.
+    Without it only the place kinds that need no save resolve, and the rest say so.
     """
     sel = Selection()
     if spec is None:
@@ -222,25 +222,10 @@ def select_nodes(
         if prefix == "near":
             try:
                 place, radius = parse_near(value)
+                centre, where = resolve_origin(st, place)
             except ValueError as exc:
                 sel.errors.append(str(exc))
                 continue
-            if place.casefold() in PLAYER_WORDS:
-                # "where I am standing" is the most natural scope a player has, and
-                # it is the one thing the map alone cannot supply.
-                if player is None:
-                    sel.errors.append(
-                        "near:me needs a player position, and none was found in the save"
-                    )
-                    continue
-                centre, where = player, "you"
-            else:
-                nums = _numbers(place, 2)
-                if nums is None:
-                    sel.errors.append(f"near: {place!r} is not an x,y pair. {NEAR_GRAMMAR}")
-                    continue
-                centre = (nums[0] * 100, nums[1] * 100)
-                where = f"({nums[0]:g},{nums[1]:g})m"
             hits = [n for n in nodes if geo.distance_m((n["x"], n["y"]), centre) <= radius]
             location_seen = True
             picked.update({n["instance"]: n for n in hits})

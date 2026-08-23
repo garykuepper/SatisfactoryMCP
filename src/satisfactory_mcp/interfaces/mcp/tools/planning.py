@@ -324,7 +324,7 @@ def site_plan(
     largest floor, and the record keeps track of whether it was measured or derived.
 
     Once sited: plan recalls print the siting; ``diff_vs_save plan=<name>`` adds an
-    approximate what-stands-on-the-pad census; ``show_on_map target='plan:<name>'``
+    approximate what-stands-on-the-pad census; ``show_on_map at='plan:<name>'``
     centres a map link on the origin.
 
     The siting is a RECORD of your decision, not a constraint on the solve -- re-running
@@ -409,7 +409,7 @@ def site_plan(
         [
             (
                 f"diff_vs_save plan={stored.name!r} now reports what stands inside this "
-                f"footprint; show_on_map target='plan:{stored.name}' centres on it"
+                f"footprint; show_on_map at='plan:{stored.name}' centres on it"
             ),
             (
                 "the siting is a record, not a constraint: re-solving the plan neither "
@@ -541,7 +541,7 @@ def plan_factory(
     It never changes a number the LP produced -- how many extractors a body of water holds
     is placement geometry no data here carries. With ``save_as`` it is also recorded, with
     yaw and footprint, so later calls can answer "does what stands there match it"
-    (diff_vs_save) and "show me" (show_on_map target='plan:<name>'); a recalled plan that
+    (diff_vs_save) and "show me" (show_on_map at='plan:<name>'); a recalled plan that
     was sited is measured at its own site without being told again. Use site_plan to set or
     move the siting of an already-stored plan.
     """

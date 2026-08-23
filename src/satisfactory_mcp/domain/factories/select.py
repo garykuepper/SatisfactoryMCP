@@ -7,11 +7,11 @@ can say which machines they mean without listing 50 instance ids. Hence selector
     product:Steel Pipe            everything making it, anywhere
     recipe:Alternate: Solid Steel Ingot
     building:Foundry
-    near:-1069,-1273@200          within 200 m of a map coordinate, in metres
-    near:steel@150                within 150 m of an existing label's centroid
+    near:-1069,-1273@200          within 200 m of any place -- a coordinate, me, a
+    near:steel@150                factory, node:<id>, slab:<n>, chain:<n>, plan:<name>
     base:0                        power island, largest first
     line:3                        material component, largest first
-    slab:2                        foundation platform, largest first
+    slab:2                        foundation platform, by its own printed index
     proposal:7                    the nth cluster from propose_factories
     label:steel factory           what a label already covers
     machine:Build_SmelterMk1_C_3  named instances, exactly as the tools print them
@@ -36,7 +36,6 @@ from __future__ import annotations
 from ...core.gamedata.model import GameData
 from ..spatial import geo, origin
 from .identity import bases, cluster_machines
-from .labels import LabelStore
 from .model import FactoryGraph
 
 __all__ = ["INDEX_WARNING", "SELECTOR_HELP", "SelectorError", "select_machines"]
@@ -54,7 +53,7 @@ INDEX_WARNING = (
 
 SELECTOR_HELP = (
     "product:<item> | recipe:<name> | building:<class or name> | "
-    "near:<x,y or label>@<radius_m> | base:<n> | line:<n> | slab:<n> | "
+    "near:<place>@<radius_m> | base:<n> | line:<n> | slab:<n> | "
     "proposal:<n> | "
     "label:<name> | machine:<instance> | all. Terms are ANDed; comma-separated values "
     "inside one term are ORed; prefix a term with '-' to exclude it"
@@ -133,33 +132,14 @@ def _by_building(graph: FactoryGraph, game: GameData, spec: str) -> set[str]:
     return {m for m in graph.machines() if graph.cls.get(m) in classes}
 
 
-def _by_near(
-    graph: FactoryGraph, projection: dict, store: LabelStore | None, spec: str
-) -> set[str]:
+def _by_near(st, graph: FactoryGraph, projection: dict, spec: str) -> set[str]:
+    """A circle around any place, resolved by the one place resolver every tool uses."""
     try:
         body, radius_m = origin.parse_near(spec)
+        centre, _where = origin.resolve_origin(st, body)
     except ValueError as exc:
         raise SelectorError(str(exc)) from exc
-
     pos = _positions(projection)
-    if "," in body:
-        try:
-            x_m, y_m = (float(v) for v in body.split(",", 1))
-        except ValueError as exc:
-            raise SelectorError(f"bad coordinate in near:{spec!r}. {origin.NEAR_GRAMMAR}") from exc
-        # Coordinates are quoted in metres everywhere in this MCP; the save is in cm.
-        centre = (x_m * 100.0, y_m * 100.0)
-    else:
-        label = store.find(body) if store else None
-        if label is None:
-            raise SelectorError(
-                f"near:{body!r} is neither an x,y pair nor a known label. {origin.NEAR_GRAMMAR}"
-            )
-        pts = [pos[m][:2] for m in label.anchors if m in pos]
-        if not pts:
-            raise SelectorError(f"label {label.name!r} has no machines left to centre on")
-        centre = geo.centroid(pts)
-
     return {
         m for m in graph.machines() if m in pos and geo.distance_m(pos[m][:2], centre) <= radius_m
     }
@@ -175,15 +155,9 @@ def _indexed(groups: list[list[str]], spec: str, what: str) -> set[str]:
     return set(groups[index])
 
 
-def _resolve(
-    term: str,
-    graph: FactoryGraph,
-    game: GameData,
-    projection: dict,
-    store: LabelStore | None,
-    structures=None,
-    proposals=None,
-) -> set[str]:
+def _resolve(term: str, st, graph: FactoryGraph, game: GameData, projection: dict) -> set[str]:
+    # Every facet is read from ``st`` INSIDE the branch that wants it: ``st.proposals`` is
+    # the half-second view, and reading it up here would cost that on every term.
     if term.casefold() in ("all", "*"):
         return set(graph.machines())
 
@@ -206,12 +180,13 @@ def _resolve(
     if kind == "building":
         return _by_building(graph, game, value)
     if kind == "near":
-        return _by_near(graph, projection, store, value)
+        return _by_near(st, graph, projection, value)
     if kind == "base":
         return _indexed(bases(graph), value, "base")
     if kind == "line":
         return _indexed(graph.machine_components("material"), value, "line")
     if kind == "slab":
+        structures = st.structures
         if structures is None:
             raise SelectorError("slab: needs the structure layer; re-read the save")
         # The slab's OWN index, which is what factory_map prints. Indexing into a list
@@ -228,6 +203,7 @@ def _resolve(
         # that table point at a selector it had just told the reader to use.
         return set(structures.machines_on(index))
     if kind == "proposal":
+        proposals = st.proposals
         if proposals is None:
             raise SelectorError("proposal: needs the proposal list; re-read the save")
         try:
@@ -238,6 +214,7 @@ def _resolve(
             raise SelectorError(f"proposal:{index} out of range (0..{len(proposals) - 1})")
         return set(proposals[index].machines)
     if kind == "label":
+        store = st.labels
         label = store.find(value) if store else None
         if label is None:
             raise SelectorError(f"no label named {value!r}")
@@ -276,16 +253,16 @@ def expand_to_components(machines: set[str], graph: FactoryGraph) -> set[str]:
 
 def select_machines(
     selectors: list[str],
-    graph: FactoryGraph,
-    game: GameData,
-    projection: dict,
-    store: LabelStore | None = None,
+    st,
     split: bool = False,
     expand: bool = False,
-    structures=None,
-    proposals=None,
 ) -> list[str]:
     """Intersect the positive terms, then subtract the negated ones.
+
+    Takes the whole world state rather than six of its facets, because ``near:`` resolves
+    its place through the shared resolver and that resolver reads the save's labels, its
+    slabs, its conduit runs, its plans and its player pawn. Handing over the pieces one
+    call at a time is what left the two selector languages with different vocabularies.
 
     With ``split`` the result keeps only the largest spatial cluster. That is the
     escape hatch for a product that is made in several places at once -- 17 machines
@@ -299,6 +276,7 @@ def select_machines(
     if not selectors:
         raise SelectorError("no selector given. " + SELECTOR_HELP)
 
+    graph, game, projection = st.graph, st.game, st.projection
     include: set[str] | None = None
     exclude: set[str] = set()
     for raw in selectors:
@@ -306,15 +284,7 @@ def select_machines(
         if not term:
             continue
         negate = term.startswith("-")
-        resolved = _resolve(
-            term[1:].strip() if negate else term,
-            graph,
-            game,
-            projection,
-            store,
-            structures,
-            proposals,
-        )
+        resolved = _resolve(term[1:].strip() if negate else term, st, graph, game, projection)
         if negate:
             exclude |= resolved
         elif include is None:

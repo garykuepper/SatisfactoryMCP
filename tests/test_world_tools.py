@@ -64,7 +64,7 @@ def test_a_site_row_carries_a_selector_the_other_tools_accept(tools, state, game
     biggest = rows[0]
     selector = biggest[5]
     assert selector.startswith("near:") and "@" in selector
-    hits = select_machines([selector], state.graph, game, state.projection)
+    hits = select_machines([selector], state)
     # The site holds 461 machines and a circle is not a cluster, so this is "most of it",
     # not "all of it" -- which is what the row's own note tells the reader to check.
     assert len(hits) > 0.9 * int(biggest[3])

@@ -144,8 +144,9 @@ answering a different question than the one asked is worse than refusing.
 
 ### 7.2b Map deep links
 
-`show_on_map(target)` builds a satisfactory-calculator.com interactive-map link centred on
-a coordinate, `me`, a named factory, a node id, or a resource name, with the relevant
+`show_on_map(at=)` builds a satisfactory-calculator.com interactive-map link centred on
+any place the shared resolver takes ([selectors.md](selectors.md)), plus one kind of its
+own — `resource:<name>`, the centroid of every node of that resource — with the relevant
 overlays switched on.
 
 Fragment format, read off a working link the player supplied:

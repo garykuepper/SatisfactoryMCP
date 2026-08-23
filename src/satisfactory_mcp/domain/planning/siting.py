@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ...core.gamedata.model import GameData
-from ..spatial.origin import resolve_origin
+from ..spatial.origin import PLAYER_WORDS, resolve_origin
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checkers
     from ..world.state import WorldState
@@ -175,11 +175,12 @@ def parse_footprint(text: str) -> tuple[float, float]:
 
 
 def resolve_site_origin(st: WorldState, at: str) -> tuple[float, float, float | None, str]:
-    """Resolve a site origin: 'x,y' or 'x,y,z' in metres, 'me', or a factory name.
+    """Resolve a site origin: any place, plus the 'x,y,z' form only a site can use.
 
-    Returns (x_m, y_m, z_m-or-None, label). The three-part form is handled here because
-    ``spatial.origin.resolve_origin`` deliberately takes only pairs; 'me' is handled here
-    too because the player pawn is the one origin that DOES carry a height worth keeping.
+    Returns (x_m, y_m, z_m-or-None, label). Two forms are handled here rather than in the
+    shared resolver: the three-part coordinate, because ``resolve_origin`` deliberately
+    answers with pairs, and 'me', because the player pawn is the one place that DOES carry
+    a height worth keeping. Everything else is the one place vocabulary.
     """
     text = at.strip()
     if "," in text:
@@ -192,7 +193,7 @@ def resolve_site_origin(st: WorldState, at: str) -> tuple[float, float, float | 
             raise ValueError(f"{at!r} is not 'x,y' or 'x,y,z' in metres") from exc
         z = values[2] if len(values) == 3 else None
         return values[0], values[1], z, f"{values[0]:g},{values[1]:g}"
-    if text.casefold() in ("me", "player", "here"):
+    if text.casefold() in PLAYER_WORDS:
         here = st.player_position()
         if here is None:
             raise ValueError("this save has no player pawn, so 'me' cannot be resolved")

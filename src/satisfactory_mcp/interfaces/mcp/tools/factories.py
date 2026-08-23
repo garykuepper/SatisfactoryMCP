@@ -108,17 +108,7 @@ def _pick(st, terms: list[str], split: bool = False, expand: bool = False) -> li
     """Resolve selector terms against one world state. Raises ``SelectorError``."""
     from ....domain.factories import select as gsel
 
-    return gsel.select_machines(
-        terms,
-        st.graph,
-        st.game,
-        st.projection,
-        st.labels,
-        split=split,
-        expand=expand,
-        structures=st.structures,
-        proposals=st.proposals,
-    )
+    return gsel.select_machines(terms, st, split=split, expand=expand)
 
 
 def _overlaps(store, machines, name: str) -> list[str]:
