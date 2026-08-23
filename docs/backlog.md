@@ -11,11 +11,14 @@ not a defect is [roadmap.md](roadmap.md).
 test-file assertion, not a surface feature.** Items 37 and above were filed later and are not
 part of that count.
 
-P0, P1, P2 and P5 are done outright. What is left of the original list is five of the fourteen
-P3/P4 bullets: three that are deliberate surface decisions rather than unfinished work, marked
-so where they stand, and two — the two radius grammars and `describe_location`'s float pair —
-that the owner authorised as **breaks** on 2026-08-10, wanting one vocabulary rather than two
-kept alive by an alias.
+P0, P1, P2 and P5 are done outright. What is left is P3, and only P3.
+
+**On 2026-08-10 the owner withdrew this file's standing posture on convention drift** — *"I
+want a unified and sleek interface, no duplicate vocabulary even to keep backwards compat."*
+The two radius grammars and `describe_location`'s float pair closed that day as **breaks**, not
+aliases: the retired spellings error and name the replacement. Unifying the syntax then exposed
+three divergences underneath it, which are filed rather than assumed, and two deliberate rows
+survive because settling them is a judgement about the surface and not a defect.
 
 **Two sections were added on 2026-08-10 and are deliberately not counted above.**
 
@@ -113,9 +116,9 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 ## P3 — convention drift
 
-Five closed, two narrowed by an alias rather than settled, one open. The two that closed on
-2026-08-10 closed as **breaks**: the owner asked for one vocabulary rather than two kept alive
-by an alias, so the retired spellings error rather than working quietly.
+Five closed, one narrowed by an alias rather than settled, five open. Two of the five open are
+deliberate and say so. The other three were **uncovered by closing the first two** — unifying a
+syntax showed what was still divided under it — and they are the live work.
 
 - **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
   preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
