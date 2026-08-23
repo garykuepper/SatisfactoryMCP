@@ -15,10 +15,12 @@ P0, P1, P2 and P5 are done outright. What is left is P3, and only P3.
 
 **On 2026-08-10 the owner withdrew this file's standing posture on convention drift** — *"I
 want a unified and sleek interface, no duplicate vocabulary even to keep backwards compat."*
-The two radius grammars and `describe_location`'s float pair closed that day as **breaks**, not
-aliases: the retired spellings error and name the replacement. Unifying the syntax then exposed
-three divergences underneath it, which are filed rather than assumed, and two deliberate rows
-survive because settling them is a judgement about the surface and not a defect.
+Five rows closed that day as **breaks** rather than aliases: the retired spellings error and
+name their replacement. They closed in a chain, and the chain is the point — settling the
+radius syntax exposed that the two sides accepted different *places*, and settling that removed
+the last place resolver in the codebase that was not `resolve_origin`. **There is now one place
+grammar, one radius grammar and one resolver.** Two deliberate rows survive, because settling
+them is a judgement about the surface and not a defect.
 
 **Two sections were added on 2026-08-10 and are deliberately not counted above.**
 
@@ -116,9 +118,10 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 ## P3 — convention drift
 
-Five closed, one narrowed by an alias rather than settled, five open. Two of the five open are
-deliberate and say so. The other three were **uncovered by closing the first two** — unifying a
-syntax showed what was still divided under it — and they are the live work.
+Eight closed, one narrowed by an alias rather than settled, two open — and both of the two are
+deliberate and say so. Three of the eight were **uncovered by closing the first two**: unifying
+a syntax showed what was still divided under it, and closing that in turn removed the last
+place resolver that was not `resolve_origin`.
 
 - **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
   preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
@@ -145,20 +148,26 @@ syntax showed what was still divided under it — and they are the live work.
   in `gamedata.py`; `with_resource=` is still the only spelling in `list_regions`; and `group=`
   carries two unrelated meanings — a real category filter in `collected_from_world`, and a
   deprecated alias for `mode=` in `search_resource_nodes`. Deliberately left alone, same reason.
-- **`near:` accepts a different set of PLACES on each side — OPEN.** The syntax is one
-  grammar since `538f08f`; the vocabulary is not. Node selectors take `x,y` and the player
-  words, machine selectors take `x,y` and a factory name, and neither takes the other's.
-  Closing it means threading the player position into `select_machines` and the label store
-  into `select_nodes` — real plumbing, and a second resolver would recreate the defect being
-  removed.
-- **A fourth spelling of "which place": `show_on_map(target=)` — OPEN.** Not `at=` and not
-  `near=`, and it resolves a **superset**: a node id, a resource name and `plan:<name>`. So it
-  is not a rename. Either the superset belongs in the shared resolver, making every tool able
-  to take a node id, or `show_on_map` is a different question wearing a similar coat — and
-  whichever it is has to be said out loud in [selectors.md](selectors.md).
-- **`factories/select.py`'s module docstring says slabs sort "largest first" by machine
-  count — OPEN.** They are indexed by **tile** count, and `_resolve`'s own code comment says
-  so. A one-word docstring bug, pre-existing.
+- **`near:` accepts a different set of PLACES on each side — CLOSED** (`798efca`). Both
+  selector modules are handed the world state and call `origin.resolve_origin`; **neither
+  resolves a place itself any more**, which is what the divergence was actually made of. Seven
+  kinds work everywhere `near:` appears — `x,y`, `me`, a factory, `node:<id>`, `slab:<n>`,
+  `chain:<n>`/`pipe:<n>`, `plan:<name>` — and the two map facts among them resolve with no save
+  at all. `select_machines` stopped taking six facets and takes the world state, which also
+  made `st.proposals` lazy: that half-second view was previously built on every call, by both
+  callers, whatever the term said.
+- **A fourth spelling of "which place": `show_on_map(target=)` — CLOSED as a split**
+  (`798efca`). The superset was not one thing. `node:<id>` and `plan:<name>` are points and
+  moved into the shared resolver, so every place-taking tool now accepts them, and the
+  parameter is `at=`. The resource name **stayed**, respelled `resource:<name>`: it centres on
+  the centroid of EVERY node of a resource, which names a set rather than a place. The answer
+  already had to warn that such a centroid can be open water, and in the shared resolver it
+  would let `plan_factory(site_at=)` site a factory in the sea. The bare name is retired, so
+  unprefixed text is a factory label here as everywhere. Both halves are argued in
+  [selectors.md](selectors.md).
+- **`factories/select.py`'s module docstring said slabs sort "largest first" — DONE**
+  (`798efca`). It says "by its own printed index", which is what `_resolve`'s code comment
+  always said.
 - **`rank_build_sites(top=)` unbounded — DONE.** It takes `Limit`; `top=` is a deprecated alias.
 - **`render.table`'s `limit=` a documented no-op — DONE** (`91c4d90`). It truncates.
 - **Three off-map spellings — DONE.** One `OFF_MAP` constant in `domain/spatial/regions.py`.
