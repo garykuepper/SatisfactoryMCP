@@ -113,15 +113,21 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 ## P3 — convention drift
 
-Three closed, three narrowed by an alias rather than settled, two open.
+Five closed, two narrowed by an alias rather than settled, one open. The two that closed on
+2026-08-10 closed as **breaks**: the owner asked for one vocabulary rather than two kept alive
+by an alias, so the retired spellings error rather than working quietly.
 
-- **Two radius grammars — OPEN.** `near:0,-2000,900` for node selectors
-  (`domain/spatial/select.py`) against `near:-1069,-1273@200` for machine selectors
-  (`domain/factories/select.py::_by_near`). Untouched.
-- **`describe_location`'s two floats — narrowed.** It still declares `x_m`/`y_m`, but now also
-  takes `at=`, which accepts `"x,y"`, `me`, a factory, `slab:<n>` or `chain:7` like every other
-  tool. What remains is demoting the float pair, which is a compatibility decision rather than a
-  fix.
+- **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
+  preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
+  as a third comma value made `near:` the one exception to a rule the language already had.
+  `near:<place>@<radius_m>` on both sides, parsed by one shared `origin.parse_near`, and the
+  radius is now **required** — the machine side's undocumented 150 m default was the same
+  complaint one level down. The comma form errors with the rewrite generated from the input.
+  The grammar is written out in [selectors.md](selectors.md).
+- **`describe_location`'s two floats — CLOSED** (`538f08f`). `x_m`/`y_m` are removed. `at=`
+  strictly subsumed them and is what every other tool speaks. No web router called it. One
+  echo fell out with them: `at="239,-1928"` used to print the coordinate twice, and the repeat
+  is now suppressed when the resolved name is the coordinate itself.
 - **Five spellings of "which view" — narrowed.** Every one gained a `show=` alias (`294c820`).
   The four originals — `of=`, `detail=`, `mode=`, `status=` — are still the declared primaries,
   so a client reading the schema still meets five spellings and a client writing `show=` always
@@ -136,6 +142,20 @@ Three closed, three narrowed by an alias rather than settled, two open.
   in `gamedata.py`; `with_resource=` is still the only spelling in `list_regions`; and `group=`
   carries two unrelated meanings — a real category filter in `collected_from_world`, and a
   deprecated alias for `mode=` in `search_resource_nodes`. Deliberately left alone, same reason.
+- **`near:` accepts a different set of PLACES on each side — OPEN.** The syntax is one
+  grammar since `538f08f`; the vocabulary is not. Node selectors take `x,y` and the player
+  words, machine selectors take `x,y` and a factory name, and neither takes the other's.
+  Closing it means threading the player position into `select_machines` and the label store
+  into `select_nodes` — real plumbing, and a second resolver would recreate the defect being
+  removed.
+- **A fourth spelling of "which place": `show_on_map(target=)` — OPEN.** Not `at=` and not
+  `near=`, and it resolves a **superset**: a node id, a resource name and `plan:<name>`. So it
+  is not a rename. Either the superset belongs in the shared resolver, making every tool able
+  to take a node id, or `show_on_map` is a different question wearing a similar coat — and
+  whichever it is has to be said out loud in [selectors.md](selectors.md).
+- **`factories/select.py`'s module docstring says slabs sort "largest first" by machine
+  count — OPEN.** They are indexed by **tile** count, and `_resolve`'s own code comment says
+  so. A one-word docstring bug, pre-existing.
 - **`rank_build_sites(top=)` unbounded — DONE.** It takes `Limit`; `top=` is a deprecated alias.
 - **`render.table`'s `limit=` a documented no-op — DONE** (`91c4d90`). It truncates.
 - **Three off-map spellings — DONE.** One `OFF_MAP` constant in `domain/spatial/regions.py`.
