@@ -25,7 +25,12 @@ from ..app import (
 
 
 @mcp.tool(structured_output=False)
-def list_regions(with_resource: str | None = None) -> str:
+def list_regions(
+    resource: str | None = None,
+    with_resource: Annotated[
+        str | None, Field(description="retired -- write resource= instead")
+    ] = None,
+) -> str:
     """Named map regions, optionally only those containing a given resource.
 
     Region names are ADVISORY: the boundaries are the game's own map areas, downsampled
@@ -37,12 +42,14 @@ def list_regions(with_resource: str | None = None) -> str:
     a concave region's mean lands on its neighbour's ground, and the map has drawn its
     names at the anchor all along.
     """
+    if gone := retired(("with_resource", with_resource, "resource")):
+        return gone
     g = game()
     rm = regions_mod.load_regions()
     table = nodes_mod.load_nodes()
-    rid = _item_id(with_resource) if with_resource else None
-    if with_resource and rid is None:
-        return f"no resource matching {with_resource!r}"
+    rid = _item_id(resource) if resource else None
+    if resource and rid is None:
+        return f"no resource matching {resource!r}"
 
     pool = table.by_resource(rid) if rid else table.nodes
     rows = []

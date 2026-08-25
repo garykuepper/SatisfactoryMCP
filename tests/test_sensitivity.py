@@ -149,7 +149,7 @@ def test_it_says_how_many_were_checked_and_found_irrelevant(game):
 
 
 def test_an_unmatched_search_refuses_rather_than_sweeping_everything(game):
-    assert srv.rank_unlocks(search="no such recipe", **SPIRE).startswith("! no LOCKED")
+    assert srv.rank_unlocks(query="no such recipe", **SPIRE).startswith("! no LOCKED")
 
 
 def test_an_infeasible_plan_has_nothing_to_rank(game):

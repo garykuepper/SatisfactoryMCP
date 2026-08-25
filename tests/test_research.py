@@ -255,7 +255,7 @@ def test_it_marks_which_research_gates_a_capability(locked):
     that row rather than treating the MAM as a pile of optional recipes."""
     # Narrowed with `search` rather than a big limit: Limit is schema-capped at 25 and
     # there are 120 MAM nodes, so the row would fall off the bottom of an unfiltered call.
-    out = srv.mam_research(show="all", search="Production Amplifier")
+    out = srv.mam_research(show="all", query="Production Amplifier")
     assert "LOCKS production_boost" in out
 
 
@@ -288,7 +288,7 @@ def test_an_unknown_status_lists_the_choices(game):
 
 
 def test_search_filters_by_name(game):
-    out = srv.mam_research(show="all", search="amplifier")
+    out = srv.mam_research(show="all", query="amplifier")
     rows = [x for x in out.splitlines() if "\t" in x][1:]
     assert rows
     assert all("mplifier" in r for r in rows)
@@ -358,14 +358,14 @@ def test_a_node_in_an_unopened_tree_is_not_called_ready(constructed, state):
     constructed(unlocked_trees=shut)
     # show=todo, so the FICSMAS nodes this world already finished are out of it: a
     # finished node is finished whatever its tree says now.
-    out = srv.mam_research(show="todo", search="FICSMAS", limit=25)
+    out = srv.mam_research(show="todo", query="FICSMAS", limit=25)
     statuses = {row[0] for row in _rows(out)}
     assert statuses == {"TREE SHUT"}, statuses
     assert "TREE SHUT means" in out
 
     # And with the tree open again, the same rows go back to being ordinary work.
     constructed(unlocked_trees=open_trees)
-    reopened = {row[0] for row in _rows(srv.mam_research(show="todo", search="FICSMAS"))}
+    reopened = {row[0] for row in _rows(srv.mam_research(show="todo", query="FICSMAS"))}
     assert reopened and "TREE SHUT" not in reopened
 
 
@@ -383,7 +383,7 @@ def test_research_already_under_way_says_so_and_says_how_long(constructed, game)
     running = "Research_Sulfur_RocketFuel_C"
     constructed(ongoing=[{"schematic": running, "seconds_left": 420.0}])
     name = game.schematics[running].name
-    out = srv.mam_research(show="all", search=name)
+    out = srv.mam_research(show="all", query=name)
     (row,) = _rows(out)
     assert row[0] == "RUNNING 420s"
     assert "RUNNING is research already under way" in out

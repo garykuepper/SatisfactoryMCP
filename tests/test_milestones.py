@@ -151,7 +151,7 @@ def test_an_unknown_status_lists_the_choices(tool):
 def test_the_aliases_the_rest_of_the_surface_uses_work_here_too(tool):
     """`show=` and `query=` are the settled spellings for a view and a name filter, and a
     client that learned them on mam_research must not get a parse error here."""
-    assert tool(show="all", query="hoverpack") == tool(show="all", search="hoverpack")
+    assert "Hoverpack" in tool(show="all", query="hoverpack")
     assert "Hoverpack" in tool(query="hoverpack")
 
 

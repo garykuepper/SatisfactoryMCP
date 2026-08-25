@@ -1154,10 +1154,10 @@ def rank_unlocks(
     only_recipes: list[str] | None = None,
     water_extractors: int | None = None,
     sloops: int = 0,
-    search: Annotated[
+    query: Annotated[
         str | None, Field(description="only test alternates whose name matches")
     ] = None,
-    query: Annotated[str | None, Field(description="alias for search=")] = None,
+    search: Annotated[str | None, Field(description="retired -- write query= instead")] = None,
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
@@ -1179,6 +1179,8 @@ def rank_unlocks(
     hard drive are flagged, which is the difference between "worth having" and "claimable
     now".
     """
+    if gone := retired(("search", search, "query")):
+        return gone
     g = game()
     try:
         st = _state(save, world, as_of)
@@ -1215,12 +1217,11 @@ def rank_unlocks(
         )
 
     pool = st.locked_alternates
-    search = search or query
-    if search:
-        needle = search.strip().casefold()
+    if query:
+        needle = query.strip().casefold()
         pool = [r for r in pool if needle in r.name.casefold()]
         if not pool:
-            return f"! no LOCKED alternate matches {search!r}"
+            return f"! no LOCKED alternate matches {query!r}"
 
     sweep = sweep_unlocks(prepared.request, st, pool)
     # The candidates by id, so the granted-by cell is answered off the same recipe the
@@ -1324,7 +1325,7 @@ def rank_unlocks(
             rows,
             total=len(movers),
             limit=render.clamp(limit, default=15),
-            hint="raise limit, or narrow with search= -- a ranking has no offset",
+            hint="raise limit, or narrow with query= -- a ranking has no offset",
         ),
         notes,
     )

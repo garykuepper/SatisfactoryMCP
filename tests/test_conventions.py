@@ -99,10 +99,41 @@ def test_all_means_no_filter_wherever_kind_is_a_filter():
     assert srv.storage(kind="all", limit=3) == srv.storage(limit=3)
 
 
-def test_query_is_accepted_wherever_a_name_filter_lives():
-    """search_items and search_recipes take `query=`; mam_research and rank_unlocks spelled
-    the same thing `search=`."""
-    assert srv.mam_research(query="Depot", limit=5) == srv.mam_research(search="Depot", limit=5)
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda **kw: srv.search_items(limit=3, **kw),
+        lambda **kw: srv.search_recipes(limit=3, **kw),
+        lambda **kw: srv.mam_research(limit=3, **kw),
+        lambda **kw: srv.milestones(limit=3, **kw),
+    ],
+)
+def test_query_is_the_only_name_filter(call):
+    """Matching a row by the text in its name is one question, and `search=` was a second
+    spelling of it on three tools -- on two of which the tool is itself called `search_`."""
+    assert not call(query="Depot").startswith("! ")
+
+
+@pytest.mark.parametrize(
+    ("call", "old", "new", "value"),
+    [
+        (lambda **kw: srv.mam_research(limit=3, **kw), "search", "query", "Depot"),
+        (lambda **kw: srv.milestones(limit=3, **kw), "search", "query", "Depot"),
+        (lambda **kw: srv.rank_unlocks(**kw), "search", "query", "Recycled"),
+        (lambda **kw: srv.list_regions(**kw), "with_resource", "resource", "Coal"),
+    ],
+)
+def test_a_retired_name_filter_names_its_replacement(call, old, new, value):
+    """`with_resource=` filtered by resource type, which the rest of the surface spells
+    `resource=`; `search=` filtered by name, which it spells `query=`."""
+    out = call(**{old: value})
+    assert out == f"! {old}={value!r} is retired -- write {new}={value!r} instead", out
+
+
+def test_group_means_one_thing_now():
+    """It was a real category filter on collected_from_world and a second spelling of the
+    view on search_resource_nodes -- one parameter name, two unrelated questions."""
+    assert "power_slug_blue" in srv.collected_from_world(group="power_slug_blue", limit=3)
 
 
 def test_nowhere_the_map_names_is_spelled_two_ways():

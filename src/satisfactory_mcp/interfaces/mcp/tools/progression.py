@@ -26,7 +26,7 @@ LADDER_VIEWS = ("all", "todo", "affordable")
 def _select(
     rungs: list[Rung],
     wanted: str,
-    search: str | None,
+    query: str | None,
     startable: Callable[[Rung], bool] = lambda r: True,
 ) -> list[Rung]:
     """One ladder view. ``affordable`` keeps BLOCKED rungs, because their bill IS covered
@@ -36,7 +36,7 @@ def _select(
     for r in rungs:
         if wanted != "all" and r.done:
             continue
-        if search and search.strip().casefold() not in (r.schematic.name or "").casefold():
+        if query and query.strip().casefold() not in (r.schematic.name or "").casefold():
             continue
         if wanted == "affordable" and (r.missing or r.done or not startable(r)):
             continue
@@ -300,8 +300,8 @@ def mam_research(
     show: Annotated[
         str, Field(description="all | todo | affordable -- todo hides finished research")
     ] = "todo",
-    search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
-    query: Annotated[str | None, Field(description="alias for search=")] = None,
+    query: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
+    search: Annotated[str | None, Field(description="retired -- write query= instead")] = None,
     status: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     save: str | None = None,
     world: str | None = None,
@@ -321,7 +321,7 @@ def mam_research(
     rows are marked LOCKS so it is obvious which research gates a tool argument rather
     than just adding a recipe.
     """
-    if gone := retired(("status", status, "show")):
+    if gone := retired(("status", status, "show"), ("search", search, "query")):
         return gone
     try:
         st = _state(save, world, as_of)
@@ -329,7 +329,6 @@ def mam_research(
         return f"could not read save: {exc}"
 
     g = st.game
-    search = search or query
     start = max(0, offset)
     n = render.clamp(limit, default=25)
     wanted = (show or "todo").strip().casefold()
@@ -351,7 +350,7 @@ def mam_research(
     for rung in _select(
         ladder,
         wanted,
-        search,
+        query,
         startable=lambda r: r.schematic.cls not in ongoing and not shut[r.schematic.cls],
     ):
         cls = rung.schematic.cls
@@ -443,8 +442,8 @@ def milestones(
     tier: Annotated[
         int | None, Field(description="one HUB tier, 1-9. Omit for all of them")
     ] = None,
-    search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
-    query: Annotated[str | None, Field(description="alias for search=")] = None,
+    query: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
+    search: Annotated[str | None, Field(description="retired -- write query= instead")] = None,
     status: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     save: str | None = None,
     world: str | None = None,
@@ -462,7 +461,7 @@ def milestones(
     deliveries, that gate is in no shipped data, and `phase_requirements` is where the
     elevator stands.
     """
-    if gone := retired(("status", status, "show")):
+    if gone := retired(("status", status, "show"), ("search", search, "query")):
         return gone
     try:
         st = _state(save, world, as_of)
@@ -470,7 +469,6 @@ def milestones(
         return f"could not read save: {exc}"
 
     g = st.game
-    search = search or query
     start = max(0, offset)
     n = render.clamp(limit, default=25)
     wanted = (show or "todo").strip().casefold()
@@ -487,7 +485,7 @@ def milestones(
         if not rungs:
             tiers = sorted({r.schematic.tier for r in every})
             return f"! no milestones in tier {tier}. Tiers are {tiers[0]}-{tiers[-1]}"
-    picked = _select(rungs, wanted, search)
+    picked = _select(rungs, wanted, query)
     outstanding = [r for r in rungs if not r.done]
     ready = [r for r in outstanding if r.status == "READY"]
 
