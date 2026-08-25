@@ -21,20 +21,20 @@ def test_a_radius_is_written_the_same_way_on_both_sides_of_the_surface():
     """Node selectors spelled a circle `x,y,r` and machine selectors spelled it `x,y@r`,
     so a radius copied out of one tool's help was a parse error in the next. `@` is the
     one spelling now, and it is the one both sides accept."""
-    nodes = srv.search_resource_nodes(sources=["near:0,-2000@900"], mode="nodes", limit=3)
+    nodes = srv.search_resource_nodes(sources=["near:0,-2000@900"], show="nodes", limit=3)
     assert "no nodes" not in nodes and "!" not in nodes.splitlines()[0]
-    assert "0 machines" not in srv.factory_query(factory=f"{BASE}@200", of="summary")
+    assert "0 machines" not in srv.factory_query(factory=f"{BASE}@200", show="summary")
 
 
 @pytest.mark.parametrize(
     ("call", "wanted"),
     [
         (
-            lambda: srv.search_resource_nodes(sources=["near:0,-2000,900"], mode="nodes", limit=3),
+            lambda: srv.search_resource_nodes(sources=["near:0,-2000,900"], show="nodes", limit=3),
             "near:0,-2000@900",
         ),
-        (lambda: srv.search_resource_nodes(sources=["near:me,500"], mode="nodes"), "near:me@500"),
-        (lambda: srv.factory_query(factory=f"{BASE},200", of="summary"), f"{BASE}@200"),
+        (lambda: srv.search_resource_nodes(sources=["near:me,500"], show="nodes"), "near:me@500"),
+        (lambda: srv.factory_query(factory=f"{BASE},200", show="summary"), f"{BASE}@200"),
     ],
 )
 def test_the_retired_comma_radius_errors_and_names_its_replacement(call, wanted):
@@ -46,20 +46,49 @@ def test_the_retired_comma_radius_errors_and_names_its_replacement(call, wanted)
     assert "Write near:" in out or "radius" in out
 
 
+#: Every tool with more than one view of its own answer, and one value each. The value sets
+#: differ per tool on purpose -- `show=` asks "which of YOUR views", not "which kind of
+#: thing" -- so what is pinned here is the parameter, never a shared vocabulary.
 @pytest.mark.parametrize(
-    ("call", "native", "value"),
+    ("call", "value"),
     [
-        (lambda **kw: srv.factory_query(factory=BASE + "@200", **kw), "of", "power"),
-        (lambda **kw: srv.search_resource_nodes(resource="Coal", limit=3, **kw), "mode", "nodes"),
-        (lambda **kw: srv.mam_research(limit=3, **kw), "status", "all"),
-        (lambda **kw: srv.collected_from_world(limit=3, **kw), "mode", "census"),
+        (lambda **kw: srv.factory_query(factory=BASE + "@200", **kw), "power"),
+        (lambda **kw: srv.search_resource_nodes(resource="Coal", limit=3, **kw), "nodes"),
+        (lambda **kw: srv.mam_research(limit=3, **kw), "all"),
+        (lambda **kw: srv.milestones(limit=3, **kw), "all"),
+        (lambda **kw: srv.collected_from_world(limit=3, **kw), "census"),
+        (lambda **kw: srv.factory_map(limit=3, **kw), "named"),
+        (
+            lambda **kw: srv.search_conduits(near="-1069,-1273", radius_m=300.0, limit=3, **kw),
+            "runs",
+        ),
     ],
 )
-def test_show_asks_for_a_view_wherever_a_tool_has_one(call, native, value):
-    """Five spellings of "which view" -- show=, of=, detail=, mode=, status=. The native
-    word stays, because it reads better in place and stored calls use it, but `show=`
-    now works on all of them so one guess is enough."""
-    assert call(show=value) == call(**{native: value})
+def test_show_is_the_only_way_to_ask_for_a_view(call, value):
+    """`of=`, `detail=`, `mode=` and `status=` were four more spellings of this one question,
+    and giving each a `show=` alias left a client reading the schema meeting five rather than
+    fewer. `show=` is the parameter now, on every tool that has a view at all."""
+    assert not call(show=value).startswith("! ")
+
+
+@pytest.mark.parametrize(
+    ("call", "old", "value"),
+    [
+        (lambda **kw: srv.factory_query(factory=BASE + "@200", **kw), "of", "power"),
+        (lambda **kw: srv.plan_layout(**kw), "detail", "materials"),
+        (lambda **kw: srv.mam_research(limit=3, **kw), "status", "all"),
+        (lambda **kw: srv.milestones(limit=3, **kw), "status", "all"),
+        (lambda **kw: srv.collected_from_world(limit=3, **kw), "mode", "census"),
+        (lambda **kw: srv.search_resource_nodes(resource="Coal", limit=3, **kw), "mode", "nodes"),
+        (lambda **kw: srv.search_resource_nodes(resource="Coal", limit=3, **kw), "group", "nodes"),
+    ],
+)
+def test_a_retired_view_spelling_names_show_and_echoes_what_was_written(call, old, value):
+    """A retirement that only listed the valid set would leave the caller to work out which
+    of their arguments was refused. The message carries the line to write instead."""
+    out = call(**{old: value})
+    assert out.startswith(f"! {old}={value!r} is retired"), out
+    assert f"show={value!r}" in out, out
 
 
 def test_all_means_no_filter_wherever_kind_is_a_filter():

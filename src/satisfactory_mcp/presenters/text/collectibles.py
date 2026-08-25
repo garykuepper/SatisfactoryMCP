@@ -86,7 +86,7 @@ def _map_links(st, view: CollectiblesView) -> tuple[str, list[str]]:
             "a looted pod stays standing, so a pod on either map is not a hard drive. The "
             "local map tells them apart -- a looted one is a hollow ring, one no save has "
             "had loaded is faint, and only a solid dot still holds a drive; the public map "
-            "draws all three alike. mode='remaining' group='crashed_drop_pod' has a holds "
+            "draws all three alike. show='remaining' group='crashed_drop_pod' has a holds "
             "column, and LOOTED there means the drive is already yours"
         )
     return body, notes
@@ -237,7 +237,7 @@ def _census(st, view: CollectiblesView, limit: int, offset: int) -> str:
             f"{pods['category']}: {pods['looted_and_standing']} of the {pods['standing']} "
             "standing ones are already LOOTED. A pod stays in the world after it is emptied "
             "-- only a dismantled one is destroyed -- so its remaining is not a count of "
-            f"hard drives left. Use mode='remaining' group='{pods['category']}' to see which"
+            f"hard drives left. Use show='remaining' group='{pods['category']}' to see which"
         )
     if removed["unresolved"]:
         notes.append(
@@ -349,7 +349,7 @@ def _listing(st, view: CollectiblesView, limit: int, offset: int) -> str:
         notes.append(f"{group}: {note}")
     if group is None:
         notes.append(
-            "every category at once. Pass group= to narrow it -- the names are in mode='census'"
+            "every category at once. Pass group= to narrow it -- the names are in show='census'"
         )
     if hidden:
         notes.append(
@@ -362,7 +362,7 @@ def _listing(st, view: CollectiblesView, limit: int, offset: int) -> str:
     notes += link_notes
     return render.envelope(
         f"# {st.age_note}\n"
-        f"# mode={mode}"
+        f"# show={mode}"
         + (f" group={group}" if group else " all categories")
         + (f" from {where}" if origin else "")
         + "\n"
@@ -392,7 +392,7 @@ def _save_only(st, view: CollectiblesView, limit: int, offset: int) -> str:
         (
             "collected, not remaining: without the map table nothing here knows how many of "
             "anything exists, so these are absolute counts and not a fraction of a total. "
-            "mode=remaining and mode=nearest need the table and are unavailable"
+            "show=remaining and show=nearest need the table and are unavailable"
         ),
         (
             "'artifact_unsplit' is names of the shape BP_WAT<n>, where the placement counter "

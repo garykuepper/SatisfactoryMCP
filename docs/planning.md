@@ -691,7 +691,7 @@ failing.
 
 `logistics` already counts LINES -- `ceil(rate / capacity)` -- which is the right total and
 says nothing about which nodes share one, and the layout schematic starts at the factory
-edge with the crude already arrived. `plan_layout detail="trunks"` fills the gap:
+edge with the crude already arrived. `plan_layout show="trunks"` fills the gap:
 
 | trunk | nodes | rate | run | head |
 |---|---|---|---|---|
@@ -905,7 +905,7 @@ argue with each other.
 ### 8.5f What a plan costs to build
 
 The startup re-frame separated running cost from construction cost (§ 8.5d), and only the
-first had ever been measured. `plan_layout detail="materials"` measures the second:
+first had ever been measured. `plan_layout show="materials"` measures the second:
 
 ```
 machines=821  foundations=4719  distinct_parts=15
@@ -1162,7 +1162,7 @@ of its own. A joint LP with no per-site cap would collapse all three into one �
 collapse would be **correct**, because nothing in the model prices distance. Honouring a
 preference the user never expressed as a constraint would be the optimiser being wrong.
 
-So `plan_layout detail="sites"` builds the half with a defensible answer: declare a
+So `plan_layout show="sites"` builds the half with a defensible answer: declare a
 partition, report what crosses it.
 
 ```
@@ -1256,7 +1256,7 @@ LINE COUNT — pumps serve one pipe each, so 10,300 m³/min of water is eighteen
 stacks are built and their real pump counts compared, and the head order is discarded if it
 does not win. Two floor builds, against 40,320 if the search itself counted pumps.
 
-**And the risers are now in the bill.** Pumps were absent from `detail="materials"`
+**And the risers are now in the bill.** Pumps were absent from `show="materials"`
 entirely, so a fluid-heavy plan understated its own build by 46 buildings. Metres come from
 the floors actually crossed rather than storeys times an assumed storey, head per pump from
 `mDesignPressure`, and the tier is the best the save can place. Still a lower bound: pipe

@@ -120,26 +120,24 @@ and a regression suite must not stand on one.
 Also: 200 m single-linkage recovers the real oil fields, but one cluster merges 6 well satellites with a
 standalone node 85 m away — so **node kind must never be inferred from one cluster member**.
 
-### 7.2a Node lookup — one tool, three modes
+### 7.2a Node lookup — one tool, three views
 
-`search_resource_nodes` answers three different questions through a `mode` parameter,
+`search_resource_nodes` answers three different questions through its `show` parameter,
 rather than splitting into separate tools that share 90% of their body:
 
-| mode | ranks by | answers |
+| show | ranks by | answers |
 |---|---|---|
 | `fields` (default) | yield | "where is there a lot of iron" — 200 m clusters |
 | `nodes` | yield | "which individual nodes", with ids reusable as selectors |
 | `nearest` | **distance** | "what is closest" — requires `near` |
 
 `near` takes a coordinate in metres, `me` for the player pawn, or **the name of a labelled
-factory**. The last is the reason the mode has this shape: "the nearest free coal to the
+factory**. The last is the reason the view has this shape: "the nearest free coal to the
 coal powerplant" is the question actually asked, and hand-copying a centroid out of another
-tool's output is how the wrong coordinate gets used. Supplying `near` in any mode adds a
+tool's output is how the wrong coordinate gets used. Supplying `near` in any view adds a
 distance column headed with the origin's name, so the number is never ambiguous.
 
-`group="node"` predates `mode` and still resolves — a stored call must not break.
-
-`mode="nearest"` without `near` is an **error**, not a silent fall back to yield order:
+`show="nearest"` without `near` is an **error**, not a silent fall back to yield order:
 answering a different question than the one asked is worse than refusing.
 
 ### 7.2b Map deep links

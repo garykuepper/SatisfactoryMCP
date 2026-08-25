@@ -138,7 +138,7 @@ def test_an_unknown_pump_head_reports_no_count(plan, game):
 # The two tool tests below need the reference plan, and they used to skip on the TOOL'S
 # ANSWER: any string starting with "! " was read as "not saved on this machine". That
 # predicate is far wider than the condition it names. ``plan_layout`` refuses with "! " for a
-# plan whose solution will not load, for an unknown ``detail``, for a layout it cannot build --
+# plan whose solution will not load, for an unknown ``show``, for a layout it cannot build --
 # so a real regression in any of those turned this file green with a reassuring skip reason
 # instead of red, which is the one outcome a test must never have. A skip is a claim about the
 # MACHINE, so it has to be decided by asking the machine.
@@ -157,7 +157,7 @@ def _needs_reference_plan(live) -> None:
 def test_the_bill_now_charges_the_risers(game, live):
     """They were missing entirely, so a fluid-heavy plan understated its own build."""
     _needs_reference_plan(live)
-    out = srv.plan_layout(plan=REFERENCE_PLAN, detail="materials", order_floors_by="head")
+    out = srv.plan_layout(plan=REFERENCE_PLAN, show="materials", order_floors_by="head")
     assert not out.startswith("! "), out
     assert "for the fluid risers" in out
     assert "Pipeline Pump" in out

@@ -110,7 +110,7 @@ def test_the_deck_is_charged_per_floor_not_per_site(game):
     """`Layout.foundations` is the PEAK floor, which sizes the ground you need because
     floors stack. Concrete is poured for every floor, so charging the peak would
     understate the deck by however many storeys the stack has."""
-    out = srv.plan_layout(detail="materials", limit=30, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=30, **SPIRE)
     peak = int(
         next(x for x in out.split() if x.startswith("peak_floor_foundations=")).split("=")[1]
     )
@@ -147,7 +147,7 @@ def test_holding_enough_makes_a_line_covered(game):
 
 
 def test_the_tool_prints_a_bill(game):
-    out = srv.plan_layout(detail="materials", limit=20, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=20, **SPIRE)
     assert not out.startswith("! ")
     assert "item\tneed\thave\tshort\tfor" in out
     assert "Concrete" in out
@@ -155,21 +155,21 @@ def test_the_tool_prints_a_bill(game):
 
 
 def test_it_says_what_you_are_short_of(game):
-    out = srv.plan_layout(detail="materials", limit=20, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=20, **SPIRE)
     assert "short of" in out or "afford every part" in out
 
 
 def test_it_distinguishes_itself_from_the_diff_cost_table(game):
     """They answer different questions and a reader who conflates them will think the
     plant is cheaper than it is -- the diff prices only what is LEFT to place."""
-    out = srv.plan_layout(detail="materials", limit=20, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=20, **SPIRE)
     assert "NOT the same question as diff_vs_save" in out
 
 
 def test_belts_and_pipes_are_refused_rather_than_estimated(game):
     """Their cost is per metre and there is no route. A length guessed here would be the
     largest invented number in the project."""
-    out = srv.plan_layout(detail="materials", limit=20, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=20, **SPIRE)
     assert "belts and pipes are NOT costed" in out
     assert "Conveyor Belt" not in out.split("item\tneed")[1]
 
@@ -177,14 +177,14 @@ def test_belts_and_pipes_are_refused_rather_than_estimated(game):
 def test_it_points_at_bom_rather_than_flattening_to_ore(game):
     """Recycled Plastic and Recycled Rubber are a real 2-cycle, so a tree walk here has no
     correct depth limit. The LP in `bom` is the only honest expansion."""
-    out = srv.plan_layout(detail="materials", limit=20, **SPIRE)
+    out = srv.plan_layout(show="materials", limit=20, **SPIRE)
     assert "not ore" in out
     assert "bom" in out
 
 
-def test_the_other_detail_modes_still_work(game):
+def test_the_other_views_still_work(game):
     """materials is an addition; the modes callers already use must be untouched."""
     for mode in ("floors", "blocks", "buses", "trunks"):
-        out = srv.plan_layout(detail=mode, limit=6, **SPIRE)
+        out = srv.plan_layout(show=mode, limit=6, **SPIRE)
         assert not out.startswith("! "), mode
         assert FOUNDATION_ID not in out

@@ -370,7 +370,7 @@ def test_a_drifted_row_is_named_in_the_tool_output(tool, state):
     if not skew or not skew.moved_cm:
         pytest.skip("this table records no drifted row against the reference save")
     worst = max(skew.moved_cm, key=lambda i: skew.moved_cm[i])
-    out = tool.search_resource_nodes(sources=[f"node:{_leaf(worst)}"], mode="nodes")
+    out = tool.search_resource_nodes(sources=[f"node:{_leaf(worst)}"], show="nodes")
     assert "moved in a game update" in out, out
     assert _leaf(worst) in out
 
@@ -384,7 +384,7 @@ def test_an_answer_with_no_drifted_row_says_nothing_about_drift(tool, state):
         for n in nodes_mod.load_nodes().nodes
         if n["kind"] == "node" and n["instance"] not in drifted
     )
-    out = tool.search_resource_nodes(sources=[f"node:{_leaf(clean['instance'])}"], mode="nodes")
+    out = tool.search_resource_nodes(sources=[f"node:{_leaf(clean['instance'])}"], show="nodes")
     assert "game update" not in out, out
 
 
@@ -398,7 +398,7 @@ def test_the_unjoinable_node_is_still_returned_by_the_tool(tool, state):
     if not skew or not skew.unjoinable:
         pytest.skip("this table has no unjoinable row")
     orphan = _leaf(skew.unjoinable[0])
-    out = tool.search_resource_nodes(sources=[f"node:{orphan}"], mode="nodes")
+    out = tool.search_resource_nodes(sources=[f"node:{orphan}"], show="nodes")
     assert "1 node(s)" in out
     assert orphan in out
     assert "not in this save under that name" in out, out

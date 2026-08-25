@@ -255,7 +255,7 @@ def test_it_marks_which_research_gates_a_capability(locked):
     that row rather than treating the MAM as a pile of optional recipes."""
     # Narrowed with `search` rather than a big limit: Limit is schema-capped at 25 and
     # there are 120 MAM nodes, so the row would fall off the bottom of an unfiltered call.
-    out = srv.mam_research(status="all", search="Production Amplifier")
+    out = srv.mam_research(show="all", search="Production Amplifier")
     assert "LOCKS production_boost" in out
 
 
@@ -273,8 +273,8 @@ def test_a_locked_capability_gets_a_note_with_its_bill(locked):
 
 
 def test_affordable_narrows_to_what_can_be_done_now(game):
-    everything = srv.mam_research(status="all", limit=80)
-    ready = srv.mam_research(status="affordable", limit=80)
+    everything = srv.mam_research(show="all", limit=80)
+    ready = srv.mam_research(show="affordable", limit=80)
     assert "DONE" in everything
     # Status is the FIRST column of a data row. Matching the bare word would hit the
     # "short by" column HEADER, which is always present and says nothing about the rows.
@@ -284,11 +284,11 @@ def test_affordable_narrows_to_what_can_be_done_now(game):
 
 
 def test_an_unknown_status_lists_the_choices(game):
-    assert "all, todo, affordable" in srv.mam_research(status="bogus")
+    assert "all, todo, affordable" in srv.mam_research(show="bogus")
 
 
 def test_search_filters_by_name(game):
-    out = srv.mam_research(status="all", search="amplifier")
+    out = srv.mam_research(show="all", search="amplifier")
     rows = [x for x in out.splitlines() if "\t" in x][1:]
     assert rows
     assert all("mplifier" in r for r in rows)
@@ -356,24 +356,24 @@ def test_a_node_in_an_unopened_tree_is_not_called_ready(constructed, state):
     open_trees = sorted(state.research.unlocked_trees)
     shut = [t for t in open_trees if t != "BPD_ResearchTree_XMas_C"]
     constructed(unlocked_trees=shut)
-    # status=todo, so the FICSMAS nodes this world already finished are out of it: a
+    # show=todo, so the FICSMAS nodes this world already finished are out of it: a
     # finished node is finished whatever its tree says now.
-    out = srv.mam_research(status="todo", search="FICSMAS", limit=25)
+    out = srv.mam_research(show="todo", search="FICSMAS", limit=25)
     statuses = {row[0] for row in _rows(out)}
     assert statuses == {"TREE SHUT"}, statuses
     assert "TREE SHUT means" in out
 
     # And with the tree open again, the same rows go back to being ordinary work.
     constructed(unlocked_trees=open_trees)
-    reopened = {row[0] for row in _rows(srv.mam_research(status="todo", search="FICSMAS"))}
+    reopened = {row[0] for row in _rows(srv.mam_research(show="todo", search="FICSMAS"))}
     assert reopened and "TREE SHUT" not in reopened
 
 
 def test_a_shut_tree_is_never_offered_as_affordable(constructed, state):
-    """status=affordable answers 'what can I do right now', so a node behind a closed tree
+    """show=affordable answers 'what can I do right now', so a node behind a closed tree
     belongs out of it however cheap it is."""
     constructed(unlocked_trees=[])
-    out = srv.mam_research(status="affordable", limit=25)
+    out = srv.mam_research(show="affordable", limit=25)
     assert _rows(out) == []
 
 
@@ -383,12 +383,12 @@ def test_research_already_under_way_says_so_and_says_how_long(constructed, game)
     running = "Research_Sulfur_RocketFuel_C"
     constructed(ongoing=[{"schematic": running, "seconds_left": 420.0}])
     name = game.schematics[running].name
-    out = srv.mam_research(status="all", search=name)
+    out = srv.mam_research(show="all", search=name)
     (row,) = _rows(out)
     assert row[0] == "RUNNING 420s"
     assert "RUNNING is research already under way" in out
     # Paid for and started: not something the player can go and do now.
-    assert name not in srv.mam_research(status="affordable", limit=25)
+    assert name not in srv.mam_research(show="affordable", limit=25)
 
 
 def test_an_older_projection_says_it_cannot_judge_the_trees(game, projection, monkeypatch):

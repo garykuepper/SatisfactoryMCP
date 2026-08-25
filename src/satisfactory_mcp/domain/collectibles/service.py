@@ -91,7 +91,7 @@ def collect_view(
     if wanted not in ("census", "collected", "remaining", "nearest"):
         return CollectiblesView(
             mode=wanted,
-            error=f"! unknown mode {mode!r}. Choose from: census, collected, remaining, nearest",
+            error=f"! unknown view {mode!r}. Choose from: census, collected, remaining, nearest",
         )
 
     table = st.collectibles
@@ -133,10 +133,10 @@ def collect_view(
             mode=wanted,
             group=group,
             error=(
-                f"! mode={wanted!r} needs the map's own placement table and "
+                f"! the {wanted!r} view needs the map's own placement table and "
                 "data/world_collectibles.json has never been generated, so nothing here "
-                "knows how many collectibles exist or where they are. Only mode=census and "
-                f"mode=collected work from a save alone. Generate it with {GENERATOR_COMMAND}"
+                "knows how many collectibles exist or where they are. Only the census and "
+                f"collected views work from a save alone. Generate it with {GENERATOR_COMMAND}"
             ),
         )
 
@@ -169,7 +169,7 @@ def collect_view(
                     mode=wanted,
                     group=group,
                     error=(
-                        "! mode='nearest' needs an origin and this save has no player pawn: "
+                        "! the 'nearest' view needs an origin and this save has no player pawn: "
                         "pass near='x,y' in metres or a named factory"
                     ),
                 )

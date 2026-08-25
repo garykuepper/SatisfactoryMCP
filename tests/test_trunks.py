@@ -180,7 +180,7 @@ def test_a_node_id_stays_pasteable(spire):
 
 
 def test_plan_layout_renders_trunks(game):
-    out = srv.plan_layout(detail="trunks", limit=12, **SPIRE)
+    out = srv.plan_layout(show="trunks", limit=12, **SPIRE)
     assert not out.startswith("! ")
     assert "trunk\titem\tnodes" in out
     assert "UP 40m" in out
@@ -191,7 +191,7 @@ def test_a_climbing_trunk_gets_a_real_pump_count(game):
     """This used to assert that NO count was given, on the grounds that head-per-pump had
     no data behind it. It does: mDesignPressure, 20 m on a Mk1 pump and 50 m on a Mk2. The
     40 m Spire climb is therefore one Mk2."""
-    out = srv.plan_layout(detail="trunks", limit=12, **SPIRE)
+    out = srv.plan_layout(show="trunks", limit=12, **SPIRE)
     assert "UP 40m (1x Pipeline Pump Mk.2)" in out
     assert "mDesignPressure" in out
     assert "LOWER bound" in out
@@ -241,7 +241,7 @@ def test_pump_counts_round_up_per_pump_head(game):
 def test_a_belt_trunk_reports_no_head(game):
     """A belt does not care that its sulfur climbs 218 m, and printing a number there
     invites a pump that cannot exist."""
-    out = srv.plan_layout(detail="trunks", limit=12, **SPIRE)
+    out = srv.plan_layout(show="trunks", limit=12, **SPIRE)
     rows = [line.split("\t") for line in out.splitlines() if line.startswith("T")]
     assert rows
     for row in rows:

@@ -522,8 +522,8 @@ def test_the_tool_explains_the_unresolved_records_including_dropped_loot(tool, t
 
 
 def test_the_tool_lists_remaining_placements_with_coordinates(tool, table):
-    out = tool(group="somersloop", mode="remaining", limit=5)
-    assert "mode=remaining group=somersloop" in out
+    out = tool(group="somersloop", show="remaining", limit=5)
+    assert "show=remaining group=somersloop" in out
     assert "rows=88" in out
     assert "standing=66" in out and "never_streamed=22" in out
     assert "category\tname\tobserved\tgrid\tx,y\tz" in out
@@ -533,7 +533,7 @@ def test_the_tool_lists_remaining_placements_with_coordinates(tool, table):
 def test_the_tool_measures_nearest_from_the_player_by_default(tool, table):
     """The projection already knows where the player is, so the common question needs no
     coordinates. Distances are metres and ascending."""
-    out = tool(group="somersloop", mode="nearest", limit=5)
+    out = tool(group="somersloop", show="nearest", limit=5)
     assert "from you" in out
     assert "distance is planar metres from you" in out
     metres = [
@@ -546,22 +546,22 @@ def test_the_tool_measures_nearest_from_the_player_by_default(tool, table):
 
 
 def test_the_tool_measures_nearest_from_a_coordinate_in_metres(tool, table):
-    out = tool(group="power_slug_purple", mode="nearest", near="120,-340", limit=3)
+    out = tool(group="power_slug_purple", show="nearest", near="120,-340", limit=3)
     assert "from 120,-340" in out
-    assert "mode=nearest group=power_slug_purple" in out
+    assert "show=nearest group=power_slug_purple" in out
 
 
 def test_an_ungrouped_listing_hides_the_pedestals_and_says_it_did(tool, table):
     """Otherwise every sphere comes with a shrine row a metre away -- the double-count the
     census warns about, in listing form."""
-    out = tool(mode="nearest", limit=5)
+    out = tool(show="nearest", limit=5)
     assert "row(s) are not shown" in out
     assert "mercer_shrine" in out
-    assert tool(group="mercer_shrine", mode="nearest", limit=3).count("mercer_shrine\t") >= 1
+    assert tool(group="mercer_shrine", show="nearest", limit=3).count("mercer_shrine\t") >= 1
 
 
 def test_a_collected_listing_says_the_coordinates_are_where_it_was(tool, table):
-    out = tool(group="somersloop", mode="collected", limit=5)
+    out = tool(group="somersloop", show="collected", limit=5)
     assert "rows=18" in out
     assert "collected=18" in out
     assert "the coordinates say where they WERE" in out
@@ -596,9 +596,9 @@ def test_an_unknown_group_returns_the_known_names_and_no_table(tool, table):
     assert "whole_world_collected" not in out
 
 
-def test_an_unknown_mode_is_refused_with_the_valid_ones(tool, table):
-    out = tool(mode="everything")
-    assert out.startswith("! unknown mode 'everything'.")
+def test_an_unknown_view_is_refused_with_the_valid_ones(tool, table):
+    out = tool(show="everything")
+    assert out.startswith("! unknown view 'everything'.")
     assert "nearest" in out
 
 
@@ -641,7 +641,7 @@ def test_without_the_map_table_the_census_degrades_to_names_and_says_so(save_onl
 
 
 def test_the_degraded_tool_labels_itself_and_refuses_what_it_cannot_do(monkeypatch, save_only):
-    """It must not answer a narrower question quietly: mode=remaining and mode=nearest are
+    """It must not answer a narrower question quietly: show=remaining and show=nearest are
     refused outright, because without the map nothing knows how many exist.
 
     Both the label and the refusal name the command that fixes it. "Regenerate it" is not
@@ -656,9 +656,9 @@ def test_the_degraded_tool_labels_itself_and_refuses_what_it_cannot_do(monkeypat
     assert "'dropped_pickup' is loot the player dropped" in census
     assert GENERATOR_COMMAND in census
 
-    for mode in ("remaining", "nearest"):
-        refused = collected_from_world(mode=mode)
-        assert refused.startswith(f"! mode={mode!r} needs the map's own placement table")
+    for view in ("remaining", "nearest"):
+        refused = collected_from_world(show=view)
+        assert refused.startswith(f"! the {view!r} view needs the map's own placement table")
         assert GENERATOR_COMMAND in refused
         assert "total_removed" not in refused
 

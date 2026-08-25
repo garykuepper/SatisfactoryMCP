@@ -19,7 +19,7 @@ from ....domain.factories.select import SelectorError
 from ....domain.factories.trace import power_at_risk, trace
 from ....domain.spatial import nodes as nodes_mod
 from ....presenters.text import primitives as render
-from ..app import AsOf, Limit, _state, game, mcp
+from ..app import AsOf, Limit, _state, game, mcp, retired
 
 #: Bare (machine-less) slabs at or above this many tiles are listed individually by
 #: factory_map; smaller ones are one summary line. 12 tiles is a 3x4 pour of 8 m
@@ -417,10 +417,10 @@ def factory_map(
 @mcp.tool(structured_output=False)
 def factory_query(
     factory: Annotated[str, Field(description="a label name, or any selector e.g. 'proposal:3'")],
-    of: Annotated[
+    show: Annotated[
         str, Field(description="comma-separated: " + ", ".join(QUERY_ASPECTS))
     ] = "summary",
-    show: Annotated[str | None, Field(description="alias for of=")] = None,
+    of: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     limit: Limit = 15,
     offset: int = 0,
     save: str | None = None,
@@ -429,7 +429,7 @@ def factory_query(
 ) -> str:
     """Ask one thing about one factory: what it makes, needs, draws, or touches.
 
-    `of` accepts several at once, e.g. "balance,power,links". `offset` pages every
+    `show` accepts several at once, e.g. "balance,power,links". `offset` pages every
     table in the answer at once, so asking for one aspect at a time is what you want
     when a factory has more machines than fit.
 
@@ -455,6 +455,8 @@ def factory_query(
     """
     from ....domain.factories.query import build_view
 
+    if gone := retired(("of", of, "show")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
@@ -467,7 +469,7 @@ def factory_query(
         return f"! {factory!r} resolved to no machines that still exist in this save"
 
     view = build_view(name, machines, st.graph, st.game, st.projection, st.labels)
-    asked = [a.strip().casefold() for a in (show or of).split(",") if a.strip()]
+    asked = [a.strip().casefold() for a in show.split(",") if a.strip()]
     unknown = [a for a in asked if a not in QUERY_ASPECTS]
     if unknown:
         return f"! unknown aspect(s) {unknown}. Choose from: {', '.join(QUERY_ASPECTS)}"

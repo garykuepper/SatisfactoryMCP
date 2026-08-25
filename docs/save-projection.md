@@ -313,11 +313,11 @@ parameter is not resting on a fit.
 ### 6.2c Querying a factory
 
 One tool, not eight: every question shares the same two steps — resolve a machine set,
-then read something off it. `factory_query(factory, of=...)` takes a label name, a
-selector, or a proposal index, and `of` accepts several aspects at once.
+then read something off it. `factory_query(factory, show=...)` takes a label name, a
+selector, or a proposal index, and `show` accepts several aspects at once.
 
 ```
-factory_query("steel factory", of="summary,balance")
+factory_query("steel factory", show="summary,balance")
   -> makes: Steel Ingot 405/min, Steel Beam 81/min, Steel Pipe 60/min, EIB 48/min
      needs: Coal 975/min, Iron Ingot 840/min, Concrete 288/min, Iron Ore 135/min
 ```

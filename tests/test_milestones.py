@@ -132,26 +132,26 @@ def test_the_shortfall_is_printed_in_full_rather_than_truncated(tool):
 
 
 def test_tier_narrows_the_view_and_an_empty_tier_says_which_exist(tool):
-    tiers = {r.split("\t")[1] for r in tool(status="all", tier=8).splitlines() if "\t" in r}
+    tiers = {r.split("\t")[1] for r in tool(show="all", tier=8).splitlines() if "\t" in r}
     assert tiers == {"tier", "8"}
     assert "Tiers are 1-9" in tool(tier=99)
 
 
 def test_affordable_hides_everything_with_a_bill_outstanding(tool):
     statuses = {
-        r.split("\t")[0] for r in tool(status="affordable", limit=25).splitlines() if "\t" in r
+        r.split("\t")[0] for r in tool(show="affordable", limit=25).splitlines() if "\t" in r
     }
     assert statuses == {"status", "READY"}
 
 
 def test_an_unknown_status_lists_the_choices(tool):
-    assert "all, todo, affordable" in tool(status="bogus")
+    assert "all, todo, affordable" in tool(show="bogus")
 
 
 def test_the_aliases_the_rest_of_the_surface_uses_work_here_too(tool):
     """`show=` and `query=` are the settled spellings for a view and a name filter, and a
     client that learned them on mam_research must not get a parse error here."""
-    assert tool(show="all", query="hoverpack") == tool(status="all", search="hoverpack")
+    assert tool(show="all", query="hoverpack") == tool(show="all", search="hoverpack")
     assert "Hoverpack" in tool(query="hoverpack")
 
 

@@ -16,11 +16,11 @@ from ....domain.collectibles.service import collect_view
 from ....domain.progression.ladder import Rung, SchematicLadder
 from ....presenters.text import primitives as render
 from ....presenters.text.collectibles import render_collectibles
-from ..app import AsOf, Limit, _state, mcp
+from ..app import AsOf, Limit, _state, mcp, retired
 
 #: The three views onto a schematic ladder, spelled the same way by both tools that walk
 #: one. Adding a fourth here without teaching ``_select`` about it silently shows everything.
-LADDER_STATUS = ("all", "todo", "affordable")
+LADDER_VIEWS = ("all", "todo", "affordable")
 
 
 def _select(
@@ -297,12 +297,12 @@ def power_shards(
 
 @mcp.tool(structured_output=False)
 def mam_research(
-    status: Annotated[
+    show: Annotated[
         str, Field(description="all | todo | affordable -- todo hides finished research")
     ] = "todo",
     search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
     query: Annotated[str | None, Field(description="alias for search=")] = None,
-    show: Annotated[str | None, Field(description="alias for status=")] = None,
+    status: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
@@ -321,6 +321,8 @@ def mam_research(
     rows are marked LOCKS so it is obvious which research gates a tool argument rather
     than just adding a recipe.
     """
+    if gone := retired(("status", status, "show")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
@@ -330,9 +332,9 @@ def mam_research(
     search = search or query
     start = max(0, offset)
     n = render.clamp(limit, default=25)
-    wanted = (show or status or "todo").strip().casefold()
-    if wanted not in LADDER_STATUS:
-        return f"! unknown status {status!r}. Choose from: all, todo, affordable"
+    wanted = (show or "todo").strip().casefold()
+    if wanted not in LADDER_VIEWS:
+        return f"! unknown show {show!r}. Choose from: all, todo, affordable"
 
     gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
     ladder = SchematicLadder(game=g, unlocks=st.unlocks, inventory=st.inventory).rungs("EST_MAM")
@@ -421,7 +423,7 @@ def mam_research(
         f"# {st.age_note}\n# {n_todo} MAM research node(s) outstanding"
         + (f", {n_running} under way" if n_running else "")
         + (f", {n_shut} in an unopened tree" if n_shut else "")
-        + f", showing status={wanted}",
+        + f", showing {wanted}",
         render.table(
             ("status", "research", "capability", "cost", "short by", "blocked by"),
             rows[start : start + n],
@@ -435,7 +437,7 @@ def mam_research(
 
 @mcp.tool(structured_output=False)
 def milestones(
-    status: Annotated[
+    show: Annotated[
         str, Field(description="all | todo | affordable -- todo hides finished milestones")
     ] = "todo",
     tier: Annotated[
@@ -443,7 +445,7 @@ def milestones(
     ] = None,
     search: Annotated[str | None, Field(description="filter by name, case-insensitive")] = None,
     query: Annotated[str | None, Field(description="alias for search=")] = None,
-    show: Annotated[str | None, Field(description="alias for status=")] = None,
+    status: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
@@ -460,6 +462,8 @@ def milestones(
     deliveries, that gate is in no shipped data, and `phase_requirements` is where the
     elevator stands.
     """
+    if gone := retired(("status", status, "show")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
@@ -469,9 +473,9 @@ def milestones(
     search = search or query
     start = max(0, offset)
     n = render.clamp(limit, default=25)
-    wanted = (show or status or "todo").strip().casefold()
-    if wanted not in LADDER_STATUS:
-        return f"! unknown status {status!r}. Choose from: all, todo, affordable"
+    wanted = (show or "todo").strip().casefold()
+    if wanted not in LADDER_VIEWS:
+        return f"! unknown show {show!r}. Choose from: all, todo, affordable"
 
     ladder = SchematicLadder(game=g, unlocks=st.unlocks, inventory=st.inventory)
     every = sorted(
@@ -529,7 +533,7 @@ def milestones(
 
     return render.envelope(
         f"# {st.age_note}\n"
-        f"# {len(outstanding)} milestone(s) outstanding, showing status={wanted}"
+        f"# {len(outstanding)} milestone(s) outstanding, showing {wanted}"
         + (f" tier={tier}" if tier is not None else "")
         + "\n"
         + render.kv(
@@ -653,15 +657,15 @@ def collected_from_world(
         str | None,
         Field(description="one category, e.g. 'power_slug_blue'. Omit to see them all"),
     ] = None,
-    mode: Annotated[
+    show: Annotated[
         str,
         Field(description="census | collected | remaining | nearest"),
     ] = "census",
-    show: Annotated[str | None, Field(description="alias for mode=")] = None,
+    mode: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     near: Annotated[
         str | None,
         Field(
-            description="origin for mode=nearest: 'x,y' in metres, 'me', or a factory name. "
+            description="origin for show=nearest: 'x,y' in metres, 'me', or a factory name. "
             "Defaults to where the player is standing"
         ),
     ] = None,
@@ -682,7 +686,7 @@ def collected_from_world(
       still lying there -- so its destroyed-actor list *is* the collected list, and it is
       exact too. ``remaining`` is the subtraction of the two.
 
-    Modes: ``census`` (default) counts every category; ``collected`` and ``remaining`` list
+    Views: ``census`` (default) counts every category; ``collected`` and ``remaining`` list
     individual placements with coordinates; ``nearest`` lists the remaining ones by distance
     from ``near``, defaulting to the player.
 
@@ -690,10 +694,12 @@ def collected_from_world(
     ``never_streamed``. It is never called present -- the map says where it is and nothing
     on disk says whether it is still there.
     """
+    if gone := retired(("mode", mode, "show")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc}"
 
-    view = collect_view(st, group, show or mode, near)
+    view = collect_view(st, group, show, near)
     return render_collectibles(st, view, limit, offset=offset)

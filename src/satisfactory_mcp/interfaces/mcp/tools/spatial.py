@@ -20,6 +20,7 @@ from ..app import (
     _state,
     game,
     mcp,
+    retired,
 )
 
 
@@ -562,20 +563,20 @@ def search_resource_nodes(
     purity: str | None = None,
     kind: str | None = None,
     only_free: bool = False,
-    mode: Annotated[str, Field(description="fields | nodes | nearest")] = "fields",
+    show: Annotated[str, Field(description="fields | nodes | nearest")] = "fields",
     near: Annotated[
         str | None,
-        Field(description="origin for mode=nearest: 'x,y' in metres, 'me', or a factory name"),
+        Field(description="origin for show=nearest: 'x,y' in metres, 'me', or a factory name"),
     ] = None,
-    group: Annotated[str | None, Field(description="deprecated alias for mode")] = None,
-    show: Annotated[str | None, Field(description="alias for mode=")] = None,
+    mode: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
+    group: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
 ) -> str:
-    """Resource nodes, in one of three modes.
+    """Resource nodes, in one of three views.
 
     - **fields** (default) clusters nodes within 200 m and ranks by yield -- "where is
       there a lot of iron".
@@ -595,24 +596,24 @@ def search_resource_nodes(
 
     `near` accepts a coordinate in metres, `me` for the player, or the name of a
     labelled factory -- "the nearest free coal to the coal powerplant" needs no
-    coordinates. Giving `near` in any mode adds a distance column.
+    coordinates. Giving `near` in any view adds a distance column.
 
-    All three modes page with `offset=`; the ranking is stable, so the tail of 127 iron
+    All three views page with `offset=`; the ranking is stable, so the tail of 127 iron
     nodes is reachable 25 at a time.
 
     **Water is the exception to everything above.** Open water carries no node, so asking
     for it returns only the fracking satellites; the bodies already being pumped, the pumps
     on each and the measured sea level are printed beside them instead.
     """
+    if gone := retired(("mode", mode, "show"), ("group", group, "show")):
+        return gone
     g = game()
     table = nodes_mod.load_nodes()
 
-    # `group` predates `mode` and meant the same thing. Accepted rather than broken,
-    # since a stored call using it should keep working.
-    mode = (show or group or mode or "fields").strip().casefold()
-    mode = {"field": "fields", "node": "nodes"}.get(mode, mode)
-    if mode not in ("fields", "nodes", "nearest"):
-        return f"! unknown mode {mode!r}. Choose from: fields, nodes, nearest"
+    view = (show or "fields").strip().casefold()
+    view = {"field": "fields", "node": "nodes"}.get(view, view)
+    if view not in ("fields", "nodes", "nearest"):
+        return f"! unknown show {show!r}. Choose from: fields, nodes, nearest"
 
     spec = list(sources or [])
     for extra, value in (("resource", resource), ("purity", purity), ("kind", kind)):
@@ -632,8 +633,8 @@ def search_resource_nodes(
             origin, where = resolve_origin(st, near)
         except ValueError as exc:
             return f"! {exc}"
-    if mode == "nearest" and origin is None:
-        return "! mode='nearest' needs near=<x,y | me | factory name> to measure from"
+    if view == "nearest" and origin is None:
+        return "! show='nearest' needs near=<x,y | me | factory name> to measure from"
 
     sel = select_nodes(spec or None, table.nodes, resolve_resource=_item_id, st=st)
     if sel.errors and not sel.nodes:
@@ -690,8 +691,8 @@ def search_resource_nodes(
 
     start = max(0, offset)
     n = render.clamp(limit, default=25)
-    if mode in ("nodes", "nearest"):
-        if mode == "nearest":
+    if view in ("nodes", "nearest"):
+        if view == "nearest":
             rows_all.sort(key=lambda r: r["_d"])
         else:
             rows_all.sort(key=lambda r: (-r["rate"], r["instance"]))
@@ -767,7 +768,7 @@ def search_resource_nodes(
             "note",
         )
         body = render.table(headers, crows, total=len(clusters), offset=start, limit=n)
-        notes.append('mode="nodes" lists individual nodes; mode="nearest" ranks by distance')
+        notes.append('show="nodes" lists individual nodes; show="nearest" ranks by distance')
 
     # Elevation matters for fluids and nothing else: a pipe running downhill is free and
     # one running uphill needs head. The SPAN is reported, never a pump count -- head per
@@ -1195,7 +1196,7 @@ def whereami(
             limit=render.clamp(limit, default=8),
             hint=(
                 "raise limit or shrink radius_m; for the whole tail use "
-                "search_resource_nodes(mode='nearest', near='me'), which pages"
+                "search_resource_nodes(show='nearest', near='me'), which pages"
             ),
         ),
         notes,

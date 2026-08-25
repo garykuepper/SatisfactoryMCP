@@ -1,7 +1,7 @@
-"""A layout report as TSV: the stack, and whichever table ``detail`` asked for.
+"""A layout report as TSV: the stack, and whichever table ``show`` asked for.
 
 Six tables share one header and one pile of caveats, because they are six views of the SAME
-schematic -- change ``detail`` and the plan underneath does not move. The caveats are what
+schematic -- change ``show`` and the plan underneath does not move. The caveats are what
 stop a schematic being read as a blueprint: there is no terrain data here, so routing,
 lengths and world coordinates are absent.
 """
@@ -22,7 +22,7 @@ def render_layout(
     report: LayoutReport,
     *,
     objective: str,
-    detail: str,
+    show: str,
     limit: int,
     plan_name: str = "",
     plan_notes: list[str] | None = None,
@@ -111,7 +111,7 @@ def render_layout(
             + ", ".join(g.buildings[c].name for c in needed if c in g.buildings)
         )
 
-    if detail == "blocks":
+    if show == "blocks":
         rows = [
             (
                 b.name[:36],
@@ -141,11 +141,11 @@ def render_layout(
             total=len(lay.blocks),
             limit=limit,
         )
-    elif detail == "sites":
-        sp = report.detail_payload
+    elif show == "sites":
+        sp = report.show_payload
         if sp is None:
             return render.envelope(
-                "# detail='sites' needs sites=",
+                "# show='sites' needs sites=",
                 "",
                 [
                     (
@@ -207,8 +207,8 @@ def render_layout(
             "site net_MW excludes the AWESOME Sink charge, which belongs to the plan as a "
             "whole and cannot be attributed to one site"
         )
-    elif detail == "materials":
-        bill = report.detail_payload
+    elif show == "materials":
+        bill = report.show_payload
         riser_pumps = sum(row["pumps"] for row in report.climbing)
         rows = [
             (
@@ -260,15 +260,15 @@ def render_layout(
             )
         notes.append(
             "belts and pipes are NOT costed: their cost is per metre and there is no "
-            "route, so a length here would be invented. Use detail='buses' for line "
-            "counts and detail='trunks' for a straight-line lower bound on the runs"
+            "route, so a length here would be invented. Use show='buses' for line "
+            "counts and show='trunks' for a straight-line lower bound on the runs"
         )
         notes.append(
             "these are build-gun components, not ore. Call bom on any row to expand it "
             "-- flattening here would have to guess a depth through the Recycled loop"
         )
-    elif detail == "trunks":
-        tp = report.detail_payload
+    elif show == "trunks":
+        tp = report.show_payload
         pump_head, pump_name = report.pump_head_m, report.pump_name
         rows = []
         for i, t in enumerate(tp.trunks, 1):
@@ -313,7 +313,7 @@ def render_layout(
                 "node, so they get no trunk -- water comes from water volumes, which "
                 "carry no geometry here. Site them at the shore and pipe inward"
             )
-    elif detail == "buses":
+    elif show == "buses":
         rows = [
             (
                 b.name[:24],
@@ -372,8 +372,8 @@ def render_layout(
             limit=limit,
         )
         notes.append(
-            'detail="blocks" for every module, detail="buses" for item flows, '
-            'detail="trunks" for which nodes share a pipe, detail="materials" for '
+            'show="blocks" for every module, show="buses" for item flows, '
+            'show="trunks" for which nodes share a pipe, show="materials" for '
             "what it costs to build"
         )
 

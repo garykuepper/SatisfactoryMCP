@@ -120,7 +120,7 @@ def world(projection) -> WorldState:
 def _answer(world, tmp_path, monkeypatch, payload=TABLE_PAYLOAD, **kwargs) -> str:
     _install(tmp_path, monkeypatch, payload)
     view = collect_view(
-        world, kwargs.get("group"), kwargs.get("mode", "census"), kwargs.get("near")
+        world, kwargs.get("group"), kwargs.get("view", "census"), kwargs.get("near")
     )
     return render_collectibles(world, view, limit=25)
 
@@ -191,7 +191,7 @@ def test_a_hard_drive_answer_carries_a_local_link_with_the_pod_layer_on(
     world, tmp_path, monkeypatch
 ):
     out = _answer(
-        world, tmp_path, monkeypatch, group="crashed_drop_pod", mode="remaining"
+        world, tmp_path, monkeypatch, group="crashed_drop_pod", view="remaining"
     )
     local = _line(out, "local map: ")
     assert maplink.LOCAL_BASE + "#" in local
@@ -204,7 +204,7 @@ def test_the_local_link_leads_because_it_is_the_only_one_that_knows_this_save(
     world, tmp_path, monkeypatch
 ):
     """Backlog item 2's rule, now applying to the collectibles surface too."""
-    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", mode="remaining")
+    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", view="remaining")
     assert out.index("local map:") < out.index("public map:")
 
 
@@ -236,8 +236,8 @@ def test_a_collected_listing_says_the_layer_shows_what_is_left_instead(
     world, tmp_path, monkeypatch
 ):
     """The one mode whose link answers a different question than the rows do. The page's
-    pickup layers are drawn from ``mode=remaining``, so a collected placement is not on them."""
-    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", mode="collected")
+    pickup layers are drawn from ``show=remaining``, so a collected placement is not on them."""
+    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", view="collected")
     assert "local map: " in out
     assert "the local map's layer is what is LEFT" in out
 
@@ -248,7 +248,7 @@ def test_a_pod_answer_says_which_of_the_two_maps_can_tell_a_looted_pod_from_a_fu
     """A looted pod stays standing and stays remaining, so a pod is not a hard drive on either
     map -- but only one of them still has to apologise. The local layer reads ``looted`` and
     draws the three apart; the public one draws the vanilla placement list and cannot."""
-    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", mode="remaining")
+    out = _answer(world, tmp_path, monkeypatch, group="crashed_drop_pod", view="remaining")
     assert "hollow ring" in out
     assert "public map" in out and "alike" in out
     assert "carries no" not in out

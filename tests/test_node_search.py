@@ -1,4 +1,4 @@
-"""search_resource_nodes in mode="nearest", and how its origin is resolved.
+"""search_resource_nodes in show="nearest", and how its origin is resolved.
 
 Distance ranking lives in the same tool as the yield-ranked field and node views: one
 surface, three modes. The location grammar is the part worth pinning. Accepting a factory
@@ -128,7 +128,7 @@ def _dist(row: dict) -> int:
 
 def test_nodes_come_back_nearest_first(game):
     """The whole point of the mode: the other two rank by yield."""
-    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=8)
+    out = srv.search_resource_nodes(resource="Coal", show="nearest", near="0,0", limit=8)
     assert not out.startswith("! ")
     distances = [_dist(r) for r in _rows(out)]
     assert distances, out
@@ -137,7 +137,7 @@ def test_nodes_come_back_nearest_first(game):
 
 def test_distance_is_measured_from_the_given_origin(game):
     """A node's reported distance must match its reported coordinate."""
-    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=3)
+    out = srv.search_resource_nodes(resource="Coal", show="nearest", near="0,0", limit=3)
     rows = _rows(out)
     assert rows
     for row in rows:
@@ -147,33 +147,33 @@ def test_distance_is_measured_from_the_given_origin(game):
 
 def test_the_distance_column_names_the_origin(game):
     """So a reader of the table knows what the number is measured from."""
-    out = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=2)
+    out = srv.search_resource_nodes(resource="Coal", show="nearest", near="0,0", limit=2)
     assert any(k.startswith("dist to ") for k in _rows(out)[0])
 
 
 def test_nearest_without_an_origin_says_so(game):
     """Silently falling back to yield order would answer a different question."""
-    out = srv.search_resource_nodes(resource="Coal", mode="nearest")
-    assert out.startswith("! mode='nearest' needs near=")
+    out = srv.search_resource_nodes(resource="Coal", show="nearest")
+    assert out.startswith("! show='nearest' needs near=")
 
 
-def test_an_unknown_mode_lists_the_modes(game):
-    out = srv.search_resource_nodes(resource="Coal", mode="bogus")
+def test_an_unknown_view_lists_the_views(game):
+    out = srv.search_resource_nodes(resource="Coal", show="bogus")
     assert "fields, nodes, nearest" in out
 
 
-def test_the_old_group_argument_still_works(game):
-    """`group` predates `mode` and meant the same thing; a stored call must not break."""
-    old = srv.search_resource_nodes(resource="Coal", group="node", limit=3)
-    new = srv.search_resource_nodes(resource="Coal", mode="nodes", limit=3)
-    assert old == new
+def test_the_old_group_argument_names_show(game):
+    """`group` predated `mode`, which `show` has now replaced -- and `group` still means a
+    real category filter on collected_from_world, so one word meant two things."""
+    out = srv.search_resource_nodes(resource="Coal", group="nodes", limit=3)
+    assert out == "! group='nodes' is retired -- write show='nodes' instead"
 
 
 def test_a_tapped_node_names_the_miner_on_it_and_its_clock(game):
     """``tapped_by`` and ``tapped_clock`` were computed for every node on every call and
     then rendered as the bare word "tapped", so "which miner is on that node, at what
     clock, is it worth reclaiming" was thrown away on each one."""
-    rows = _rows(srv.search_resource_nodes(resource="Coal", mode="nodes", limit=25))
+    rows = _rows(srv.search_resource_nodes(resource="Coal", show="nodes", limit=25))
     tapped = [r for r in rows if r["status"] == "tapped"]
     assert tapped, "no coal node on this save is tapped, so this proves nothing"
     assert all("@" in r["occupant"] for r in tapped), tapped
@@ -218,9 +218,9 @@ def test_a_switched_off_miner_is_not_a_producing_one(game):
 
 
 def test_only_free_narrows_the_nearest_list(game):
-    everything = srv.search_resource_nodes(resource="Coal", mode="nearest", near="0,0", limit=25)
+    everything = srv.search_resource_nodes(resource="Coal", show="nearest", near="0,0", limit=25)
     free_only = srv.search_resource_nodes(
-        resource="Coal", mode="nearest", near="0,0", limit=25, only_free=True
+        resource="Coal", show="nearest", near="0,0", limit=25, only_free=True
     )
     assert "tapped" in everything
     assert "tapped" not in free_only
@@ -237,7 +237,7 @@ def test_node_rows_carry_elevation(game):
 
     table = nodes_mod.load_nodes()
     assert all("z" in n for n in table.nodes)
-    out = srv.search_resource_nodes(resource="Crude Oil", mode="nodes", limit=3)
+    out = srv.search_resource_nodes(resource="Crude Oil", show="nodes", limit=3)
     assert "z(m)" in out
 
 
@@ -245,7 +245,7 @@ def test_a_fluid_field_reports_its_head_span(game):
     """The number that decides pump counts. Reported as a SPAN, never as a pump count:
     head per pump is a game rule this project has no data for."""
     out = srv.search_resource_nodes(
-        resource="Crude Oil", sources=list(REFERENCE_FIELD), mode="nodes", limit=1
+        resource="Crude Oil", sources=list(REFERENCE_FIELD), show="nodes", limit=1
     )
     assert "elevation" in out
     assert "span 40m" in out, out.splitlines()[2]
@@ -254,7 +254,7 @@ def test_a_fluid_field_reports_its_head_span(game):
 
 def test_a_solid_field_says_nothing_about_head(game):
     """Elevation is a fluid concern. A coal field climbing 200 m costs a belt nothing."""
-    out = srv.search_resource_nodes(resource="Coal", mode="nodes", limit=1)
+    out = srv.search_resource_nodes(resource="Coal", show="nodes", limit=1)
     assert "elevation" not in out
 
 
@@ -262,7 +262,7 @@ def test_no_pump_count_is_invented(game):
     """The tool must not turn a head span into a number of pumps until head-per-pump is
     sourced. Naming the cost is the deliverable; guessing it is not."""
     out = srv.search_resource_nodes(
-        resource="Crude Oil", sources=list(REFERENCE_FIELD), mode="nodes", limit=1
+        resource="Crude Oil", sources=list(REFERENCE_FIELD), show="nodes", limit=1
     )
     header = out[: out.index("node_id")]
     assert "pumps needed" not in header
@@ -279,8 +279,8 @@ def test_the_iron_tail_is_reachable(game):
 
     Pinned on the ids rather than the count: a page that repeated the first page's rows
     would satisfy a length check and still answer the wrong question."""
-    first = srv.search_resource_nodes(resource="Iron Ore", mode="nodes", limit=5)
-    second = srv.search_resource_nodes(resource="Iron Ore", mode="nodes", limit=5, offset=5)
+    first = srv.search_resource_nodes(resource="Iron Ore", show="nodes", limit=5)
+    second = srv.search_resource_nodes(resource="Iron Ore", show="nodes", limit=5, offset=5)
     assert "showing 5 from offset 0." in first
     assert "call again with offset=5" in first
     assert "showing 5 from offset 5." in second

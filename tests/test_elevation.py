@@ -1,7 +1,7 @@
 """Elevation: measured where the extracted terrain field reaches, sampled everywhere else.
 
 `search_resource_nodes` already reports a fluid field's head span, and `plan_layout
-detail="trunks"` attaches it to a pipe. This closes the other half: what a bare coordinate
+show="trunks"` attaches it to a pipe. This closes the other half: what a bare coordinate
 is at. The whole risk here is the same one twice -- a plausible single number invented from
 too few points reads as measured, so every assertion below is about refusing to do that,
 and about keeping the field's one texel apart from the population standing near it.

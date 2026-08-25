@@ -3,7 +3,7 @@
 ``build_layout`` turns a solution into blocks, buses and floors. What sat around it in
 the tool was a second job: solving the plan in the first place, finding the best pump
 this save can place so a riser count is against a real tier, asking which fluids the
-floor order makes climb, and then -- per ``detail`` -- one more domain question each.
+floor order makes climb, and then -- per ``show`` -- one more domain question each.
 Those questions are genuinely different (a site partition, a construction bill, a trunk
 plan, a fit against an existing platform) but they are all lookups, not sentences, so
 they answer here and the presenter decides which of them is worth a table.
@@ -30,7 +30,7 @@ __all__ = ["LayoutReport", "build_layout_report"]
 
 @dataclass
 class LayoutReport:
-    """A solved plan, its schematic, and whatever ``detail`` asked on top."""
+    """A solved plan, its schematic, and whatever ``show`` asked on top."""
 
     #: ``None`` only when the carrier tiers did not resolve, which is answered before
     #: anything is solved.
@@ -48,10 +48,10 @@ class LayoutReport:
     pump_head_m: float = 0.0
     #: ``fluid_head`` rows the floor order makes climb; the rest fall and cost nothing.
     climbing: list[dict] = field(default_factory=list)
-    #: The one ``detail``-specific answer: a SitePlan, a MaterialsBill or a TrunkPlan.
-    #: ``None`` for the detail modes the layout already answers by itself -- and for
-    #: detail='sites' with no sites, which is a question that cannot be asked.
-    detail_payload: object | None = None
+    #: The one ``show``-specific answer: a SitePlan, a MaterialsBill or a TrunkPlan.
+    #: ``None`` for the show modes the layout already answers by itself -- and for
+    #: show='sites' with no sites, which is a question that cannot be asked.
+    show_payload: object | None = None
     fit: object | None = None
     #: The factory the fit was assessed against -- named, or recalled from the plan --
     #: under the canonical name the selector resolved it to.
@@ -65,14 +65,14 @@ def build_layout_report(
     tiers: TierChoice,
     *,
     objective: str = "",
-    detail: str = "floors",
+    show: str = "floors",
     sites: dict[str, list[str]] | None = None,
     max_floor_foundations: int = 0,
     order_floors_by: str = "chain",
     factory: str | None = None,
     plan: str | None = None,
 ) -> LayoutReport:
-    """Solve ``plan_kwargs``, schematise it, and answer whatever ``detail`` needs.
+    """Solve ``plan_kwargs``, schematise it, and answer whatever ``show`` needs.
 
     A ``SelectorError`` from a named factory propagates: an unresolvable selector is the
     caller's mistake, not a fact about the layout.
@@ -129,13 +129,13 @@ def build_layout_report(
         report.pump_head_m = pump.head_lift_m
     report.climbing = [d for d in fluid_head(lay, report.pump_head_m) if d["direction"] == "climbs"]
 
-    if detail == "sites":
+    if show == "sites":
         if not sites:
             # Nothing further is worth computing: without a partition there is no
             # question to answer, and the caller has to be told how to ask it.
             return report
-        report.detail_payload = partition(prepared, g, sites)
-    elif detail == "materials":
+        report.show_payload = partition(prepared, g, sites)
+    elif show == "materials":
         # Foundations live here and nowhere else -- they are not machines, so no build
         # table counts them, and at 5 Concrete each a big deck outweighs most of the
         # machine bill. This is why the construction bill hangs off plan_layout rather
@@ -154,10 +154,10 @@ def build_layout_report(
             if pump is not None and riser_pumps
             else []
         )
-        report.detail_payload = build_materials(
+        report.show_payload = build_materials(
             g, [*sol.processes, *extra], st.stock(), lay.total_foundations
         )
-    elif detail == "trunks":
+    elif show == "trunks":
         # The destination decides which end of each chain is "far", so it decides the
         # sign of every lift. A named factory is the honest answer when there is one;
         # otherwise the field's own centroid, said out loud rather than assumed.
@@ -171,7 +171,7 @@ def build_layout_report(
                     sum(p[1] for p in pts) / len(pts),
                 )
                 target_label = resolved_name
-        report.detail_payload = plan_trunks(prepared, g, target, target_label)
+        report.show_payload = plan_trunks(prepared, g, target, target_label)
 
     report.scope_name = factory
     if report.scope_name is None and plan:

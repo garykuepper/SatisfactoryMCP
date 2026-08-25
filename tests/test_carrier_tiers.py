@@ -105,7 +105,7 @@ def test_halving_the_pipe_doubles_the_trunks(game):
         sources=list(REFERENCE_FIELD),
         exports=["MW"],
         extractor_clocks=[1, 1.5, 2, 2.5],
-        detail="trunks",
+        show="trunks",
         limit=25,
     )
     mk2 = srv.plan_layout(pipe_tier="Mk2", **kw)

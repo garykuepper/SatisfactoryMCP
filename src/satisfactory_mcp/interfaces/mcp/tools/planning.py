@@ -33,7 +33,7 @@ from ....presenters.text.compare import render_comparison
 from ....presenters.text.diff import ENERGISED_CAVEAT, RANGE_CAVEAT, render_diff
 from ....presenters.text.layout import render_layout
 from ....presenters.text.plan_factory import render_plan_factory
-from ..app import AsOf, Limit, _item_id, _state, game, mcp
+from ..app import AsOf, Limit, _item_id, _state, game, mcp, retired
 
 #: The stored-argument defaults, re-exported under their old home for ``server``. The
 #: two stage caveats keep their old home too: they were read from here before they had
@@ -664,8 +664,8 @@ def plan_layout(
     sources: list[str] | None = None,
     exports: list[str] | None = None,
     export_minimums: dict[str, float] | None = None,
-    detail: str = "floors",
-    show: Annotated[str | None, Field(description="alias for detail=")] = None,
+    show: str = "floors",
+    detail: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     only_free_nodes: bool = False,
     allow_sinks: bool = True,
     exclude_recipes: list[str] | None = None,
@@ -688,7 +688,7 @@ def plan_layout(
         dict[str, list[str]] | None,
         Field(
             description=(
-                'detail="sites": {"rig": ["Heavy Oil Residue", ...], "hall": ["MW"]} '
+                'show="sites": {"rig": ["Heavy Oil Residue", ...], "hall": ["MW"]} '
                 "-- MW/power claims every generator"
             )
         ),
@@ -718,7 +718,7 @@ def plan_layout(
 ) -> str:
     """Turn a plan into a buildable schematic: blocks, buses and floors.
 
-    Same arguments as plan_factory, plus ``detail``: "floors" (default, the stack),
+    Same arguments as plan_factory, plus ``show``: "floors" (default, the stack),
     "blocks" (every module with its size and rates), "buses" (item flows),
     "trunks" (which resource nodes share each pipe or belt run into the site),
     "materials" (what the whole thing costs to build, machines plus deck), or
@@ -733,7 +733,8 @@ def plan_layout(
     chain depth, with a logistics deck between each pair of production floors.
     """
     g = game()
-    detail = show or detail
+    if gone := retired(("detail", detail, "show")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
@@ -746,7 +747,7 @@ def plan_layout(
             st,
             LayoutReport(prepared=None, tiers=tiers),
             objective=objective,
-            detail=detail,
+            show=show,
             limit=limit,
         )
 
@@ -791,7 +792,7 @@ def plan_layout(
             plan_kwargs,
             tiers,
             objective=objective,
-            detail=detail,
+            show=show,
             sites=sites,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
@@ -806,7 +807,7 @@ def plan_layout(
         st,
         report,
         objective=objective,
-        detail=detail,
+        show=show,
         limit=limit,
         plan_name=plan_name,
         plan_notes=plan_notes,

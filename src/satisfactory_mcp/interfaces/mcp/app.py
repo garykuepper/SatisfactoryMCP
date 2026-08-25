@@ -66,6 +66,19 @@ def _item_id(query: str) -> str | None:
     return resolve_item(game(), query)
 
 
+def retired(*renamed: tuple[str, object, str]) -> str | None:
+    """The refusal a retired parameter answers with, or ``None`` when none was passed.
+
+    Each triple is ``(old spelling, what the caller passed, new spelling)``. The caller's own
+    value is echoed into the rewrite, because the thing that meets this message is a stored
+    call or a copied example and the useful answer is the line to write instead.
+    """
+    for old, value, new in renamed:
+        if value is not None:
+            return f"! {old}={value!r} is retired -- write {new}={value!r} instead"
+    return None
+
+
 @lru_cache(maxsize=1)
 def stale_artifact_notes() -> tuple[str, ...]:
     """Whether the generated tables under ``data/`` still describe the build installed here.

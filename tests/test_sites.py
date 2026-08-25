@@ -113,7 +113,7 @@ def test_a_process_claimed_twice_is_reported_not_resolved(decoupled, game):
 
 def test_the_tool_says_when_the_table_is_complete(game):
     out = srv.plan_layout(
-        plan="spire-coast-full", detail="sites", sites=THREE, sources=list(REFERENCE_FIELD)
+        plan="spire-coast-full", show="sites", sites=THREE, sources=list(REFERENCE_FIELD)
     )
     if out.startswith("! "):
         pytest.skip("the reference plan is not saved on this machine")
@@ -122,7 +122,7 @@ def test_the_tool_says_when_the_table_is_complete(game):
 
 
 def test_the_tool_refuses_without_a_spec(game):
-    out = srv.plan_layout(plan="spire-coast-full", detail="sites")
+    out = srv.plan_layout(plan="spire-coast-full", show="sites")
     assert "needs sites=" in out
     assert "exclude_recipes" in out
 
@@ -133,7 +133,7 @@ def test_the_tool_refuses_without_a_spec(game):
 def test_a_shared_flow_is_split_by_share_and_says_so(game):
     """The LP gives net balances and never who fed whom, so an exact producer-consumer
     pairing would be invented -- the same reason a layout models a bus."""
-    out = srv.plan_layout(plan="spire-coast-full", detail="sites", sites=THREE)
+    out = srv.plan_layout(plan="spire-coast-full", show="sites", sites=THREE)
     if out.startswith("! "):
         pytest.skip("the reference plan is not saved on this machine")
     assert "split between consumers by SHARE" in out
@@ -144,7 +144,7 @@ def test_site_power_excludes_the_sink_charge(decoupled, game):
     site. Prorating it would invent an attribution."""
     sp = partition(decoupled, game, THREE)
     assert all(s.slice.sink_mw == 0.0 for s in sp.sites)
-    out = srv.plan_layout(plan="spire-coast-full", detail="sites", sites=THREE)
+    out = srv.plan_layout(plan="spire-coast-full", show="sites", sites=THREE)
     assert "excludes the AWESOME Sink charge" in out
 
 

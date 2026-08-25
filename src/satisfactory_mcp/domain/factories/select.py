@@ -229,7 +229,7 @@ def _resolve(term: str, st, graph: FactoryGraph, game: GameData, projection: dic
         if missing:
             raise SelectorError(
                 f"no machine {', '.join(repr(v) for v in missing)} in this save -- an id is "
-                "the full instance name, as factory_query(of='machines') and trace_upstream "
+                "the full instance name, as factory_query(show='machines') and trace_upstream "
                 "print it"
             )
         return set(wanted)

@@ -63,10 +63,12 @@ def test_a_collected_pod_says_nothing_about_what_it_held(client):
     assert all(r["looted"] is None for r in rows)
 
 
-def test_an_unknown_mode_is_refused_with_the_tools_own_wording(client):
+def test_an_unknown_view_is_refused_with_the_tools_own_wording(client):
+    """The refusal names no parameter, because the two callers spell it differently: this
+    wire says `mode=` and the MCP tool says `show=`, and one shared message cannot say both."""
     r = client.get("/api/collectibles", params={"mode": "sideways"})
     assert r.status_code == 400
-    assert r.json()["error"].startswith("! unknown mode 'sideways'")
+    assert r.json()["error"].startswith("! unknown view 'sideways'")
 
 
 def test_remaining_is_refused_when_the_map_table_is_absent(state, game, monkeypatch):

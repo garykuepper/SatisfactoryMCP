@@ -21,7 +21,7 @@ Please re-examine against these rather than your session notes:**
    left. New tool: `rank_unlocks`.
 3. **Pump counts are real now.** `mDesignPressure` was in the dump all along: Mk1 lifts
    20 m, Mk2 lifts 50 m. Your one climbing crude trunk needs 1× Mk2. `plan_layout
-   detail="trunks"` reports it.
+   show="trunks"` reports it.
 4. **Carrier tiers are read from the save, and `belt_tier`/`pipe_tier` never worked before
    today** — they silently fell through to Mk5/Mk2 regardless of what you passed. Your
    assumption happened to be correct (both unlocked), so your pipe counts stand.

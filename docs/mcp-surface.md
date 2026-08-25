@@ -35,7 +35,7 @@ plan_factory(objective="max_mw", target_item=None, sources=[...],
      + a logistics table of `limit` flows, plus any logistics_items pinned
 
 search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
-                      only_free=False, mode="fields"|"nodes"|"nearest", near=None,
+                      only_free=False, show="fields"|"nodes"|"nearest", near=None,
                       limit=25, offset=0)
   -> per-field clusters (region, grid, centre, purity mix, total/free, spread)
      or per-node rows whose ids feed straight back in as node: selectors
