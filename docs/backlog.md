@@ -118,10 +118,16 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 ## P3 — convention drift
 
-Eight closed, one narrowed by an alias rather than settled, two open — and both of the two are
-deliberate and say so. Three of the eight were **uncovered by closing the first two**: unifying
-a syntax showed what was still divided under it, and closing that in turn removed the last
-place resolver that was not `resolve_origin`.
+Eight closed, three open. Three of the eight were **uncovered by closing the first two**:
+unifying a syntax showed what was still divided under it, and closing that in turn removed the
+last place resolver that was not `resolve_origin`.
+
+**A correction about the three that remain.** Until 2026-08-10 two of them read "deliberately
+left alone" and the third read "narrowed". None of that was a decision anyone took: the words
+were written on 2026-08-08 by the pass that closed the other rows, in this file's voice, and a
+reader — including the assistant, later, out loud to the owner — took them for the owner's
+ruling. They are open, they were never examined, and the standing instruction since 2026-08-10
+is the opposite: **one vocabulary, no alias kept alive for compatibility.**
 
 - **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
   preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
@@ -134,20 +140,25 @@ place resolver that was not `resolve_origin`.
   strictly subsumed them and is what every other tool speaks. No web router called it. One
   echo fell out with them: `at="239,-1928"` used to print the coordinate twice, and the repeat
   is now suppressed when the resolved name is the coordinate itself.
-- **Five spellings of "which view" — narrowed.** Every one gained a `show=` alias (`294c820`).
-  The four originals — `of=`, `detail=`, `mode=`, `status=` — are still the declared primaries,
-  so a client reading the schema still meets five spellings and a client writing `show=` always
-  succeeds.
+- **Five spellings of "which view" — OPEN, and "narrowed" flattered it.** Every one gained a
+  `show=` alias (`294c820`), but the four originals — `of=`, `detail=`, `mode=`, `status=` — are
+  still the declared primaries. Adding a fifth spelling made a client that writes `show=` always
+  succeed and left a client that **reads the schema** meeting five. That is one more spelling
+  than before, not fewer.
 - **`kind=` means four vocabularies — OPEN, and it is five now.** `search_recipes`
   (`part|building|manual|all`), `list_buildings` (eleven values), `storage` (`solid|fluid|all`),
   `search_conduits` (`belt|pipe|all`), and `search_resource_nodes`, which forwards a `kind:`
   selector term that still errors with `kind must be node|well_sat|geyser, got 'all'` — the one
-  that rejects `"all"`. Deliberately left alone; settling it is a surface break, not a bug fix.
+  that rejects `"all"`. **Marked "deliberately left alone" on 2026-08-08 by the pass that wrote
+  this section, and that marking was never a decision anyone took** — it was one agent's
+  judgement written in this file's voice, which reads like the owner's. Corrected 2026-08-10;
+  the row is open and unexamined.
 - **Name filters: `query=`, `search=`, `with_resource=`, `group=` — OPEN.** All four survive.
   `query=` is now an alias for `search=` in `planning.py` and `progression.py` but stays primary
   in `gamedata.py`; `with_resource=` is still the only spelling in `list_regions`; and `group=`
   carries two unrelated meanings — a real category filter in `collected_from_world`, and a
-  deprecated alias for `mode=` in `search_resource_nodes`. Deliberately left alone, same reason.
+  deprecated alias for `mode=` in `search_resource_nodes`. **Same false marking as the row
+  above, corrected the same day and for the same reason.**
 - **`near:` accepts a different set of PLACES on each side — CLOSED** (`798efca`). Both
   selector modules are handed the world state and call `origin.resolve_origin`; **neither
   resolves a place itself any more**, which is what the divergence was actually made of. Seven
