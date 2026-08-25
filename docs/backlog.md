@@ -118,16 +118,17 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 
 ## P3 — convention drift
 
-Eight closed, three open. Three of the eight were **uncovered by closing the first two**:
-unifying a syntax showed what was still divided under it, and closing that in turn removed the
-last place resolver that was not `resolve_origin`.
+**All eleven closed**, in one chain on 2026-08-10 under the owner's instruction: *one
+vocabulary, no alias kept alive for compatibility.* Each unification exposed the next
+divergence under it — the radius syntax showed that the two sides accepted different **places**,
+closing that removed the last place resolver which was not `resolve_origin`, and the inventory
+taken for the last three rows turned up a fourth family nobody had named.
 
-**A correction about the three that remain.** Until 2026-08-10 two of them read "deliberately
-left alone" and the third read "narrowed". None of that was a decision anyone took: the words
-were written on 2026-08-08 by the pass that closed the other rows, in this file's voice, and a
-reader — including the assistant, later, out loud to the owner — took them for the owner's
-ruling. They are open, they were never examined, and the standing instruction since 2026-08-10
-is the opposite: **one vocabulary, no alias kept alive for compatibility.**
+**A correction, kept because the ledger is a record and not a scoreboard.** Until 2026-08-10
+three of these rows read "deliberately left alone" and "narrowed". **Nobody ever decided that.**
+The words were written on 2026-08-08 by the pass that closed the rows around them, in this
+file's voice, and a reader — including the assistant, later, out loud to the owner — took them
+for his ruling. They were open and unexamined the whole time.
 
 - **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
   preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
@@ -140,25 +141,28 @@ is the opposite: **one vocabulary, no alias kept alive for compatibility.**
   strictly subsumed them and is what every other tool speaks. No web router called it. One
   echo fell out with them: `at="239,-1928"` used to print the coordinate twice, and the repeat
   is now suppressed when the resolved name is the coordinate itself.
-- **Five spellings of "which view" — OPEN, and "narrowed" flattered it.** Every one gained a
-  `show=` alias (`294c820`), but the four originals — `of=`, `detail=`, `mode=`, `status=` — are
-  still the declared primaries. Adding a fifth spelling made a client that writes `show=` always
-  succeed and left a client that **reads the schema** meeting five. That is one more spelling
-  than before, not fewer.
-- **`kind=` means four vocabularies — OPEN, and it is five now.** `search_recipes`
-  (`part|building|manual|all`), `list_buildings` (eleven values), `storage` (`solid|fluid|all`),
-  `search_conduits` (`belt|pipe|all`), and `search_resource_nodes`, which forwards a `kind:`
-  selector term that still errors with `kind must be node|well_sat|geyser, got 'all'` — the one
-  that rejects `"all"`. **Marked "deliberately left alone" on 2026-08-08 by the pass that wrote
-  this section, and that marking was never a decision anyone took** — it was one agent's
-  judgement written in this file's voice, which reads like the owner's. Corrected 2026-08-10;
-  the row is open and unexamined.
-- **Name filters: `query=`, `search=`, `with_resource=`, `group=` — OPEN.** All four survive.
-  `query=` is now an alias for `search=` in `planning.py` and `progression.py` but stays primary
-  in `gamedata.py`; `with_resource=` is still the only spelling in `list_regions`; and `group=`
-  carries two unrelated meanings — a real category filter in `collected_from_world`, and a
-  deprecated alias for `mode=` in `search_resource_nodes`. **Same false marking as the row
-  above, corrected the same day and for the same reason.**
+- **Five spellings of "which view" — CLOSED** (`c78125b`). `show=` is the parameter; `of=`,
+  `detail=`, `mode=`, `status=` and `group=`-as-a-view are retired and error with the caller's
+  own value rewritten. The value sets stay per tool **on argument rather than by omission**:
+  `show=` asks "which of *your* views", not "which kind of thing", and the only two words that
+  recur across the eight tools — `all` and `nearest` — already agree.
+- **`kind=` meant five vocabularies — CLOSED as a split** (`b5de971`). They were five
+  questions about five row types, so they stopped sharing the word: `recipe_kind=`,
+  `building_kind=`, `container_kind=`, `conduit_kind=`, one grammar so a schema reader knows
+  which vocabulary to expect. `search_resource_nodes(kind=)` keeps the bare word and is now the
+  surface's only `kind`, because it is shorthand for the node selector's `kind:` term and
+  renaming the parameter alone would have given one tool two spellings of one filter. **The
+  `"all"` bug is fixed at the selector** — every filter term reads `all` as "no filter" — so it
+  cannot come back per tool. Two things fell out: `search_recipes` used to treat an unknown kind
+  as a filter matching nothing, so `recipe_kind="parts"` printed an empty table that read as
+  "the game has no such recipe", and it raises now; and the undocumented `any`/`both` are gone.
+- **Name filters — CLOSED** (`41d31e2`). `query=` is the one name filter and `search=` is
+  retired; `query=` was already primary on the two tools whose own name is `search_`.
+  `with_resource=` was a second spelling of `resource=`, which is the axis three other places
+  already use, and is retired. `group=` **stays** on `collected_from_world`, where it is a real
+  category filter and where the wire, the JSON envelope and the domain view all already spell it
+  `group` — renaming only the MCP parameter would have made that agreement worse. Its second,
+  unrelated meaning went with the view row above.
 - **`near:` accepts a different set of PLACES on each side — CLOSED** (`798efca`). Both
   selector modules are handed the world state and call `origin.resolve_origin`; **neither
   resolves a place itself any more**, which is what the divergence was actually made of. Seven
@@ -179,6 +183,19 @@ is the opposite: **one vocabulary, no alias kept alive for compatibility.**
 - **`factories/select.py`'s module docstring said slabs sort "largest first" — DONE**
   (`798efca`). It says "by its own printed index", which is what `_resolve`'s code comment
   always said.
+- **Boolean filters have no convention, and one of them is a duplicate — OPEN.**
+  `search_resource_nodes(only_free=)` and five planning tools' `only_free_nodes=` are the **same
+  question** — "only nodes nothing is already extracting" — spelled two ways across six tools.
+  Around them `only_alternates`, `include_locked`, `include_events`, `unnamed_only`, `empty`,
+  `where` and `show_cost` mix `only_`, `include_` and bare names with no rule, and two of them —
+  `stock(where=)` and `diff_vs_save(show_cost=)` — are **which-view questions wearing a
+  boolean**, which is arguably a sixth spelling of the row above. Found by the inventory that
+  closed the last three rows, on 2026-08-10, and deliberately not touched by it because it was
+  not what was approved.
+- **`rank_build_sites(top=)` is the last alias on the surface — OPEN.** It is marked DONE below
+  as "`top=` is a deprecated alias", which was the right call under the old posture and is the
+  wrong one under the new: an alias is exactly what the owner asked to stop keeping alive. It
+  should error naming `limit=`. Three lines.
 - **`rank_build_sites(top=)` unbounded — DONE.** It takes `Limit`; `top=` is a deprecated alias.
 - **`render.table`'s `limit=` a documented no-op — DONE** (`91c4d90`). It truncates.
 - **Three off-map spellings — DONE.** One `OFF_MAP` constant in `domain/spatial/regions.py`.
