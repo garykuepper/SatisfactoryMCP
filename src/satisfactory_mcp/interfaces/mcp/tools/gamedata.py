@@ -4,11 +4,15 @@ Read-only over the normalized dump. Nothing here touches a save."""
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from ....core.gamedata import search
 from ....core.gamedata.unlocks import granted_by_label
 from ....presenters.text import primitives as render
 from ....presenters.text.search import render_search
-from ..app import AsOf, Limit, _item_id, _state, game, mcp
+from ..app import AsOf, Limit, _item_id, _state, game, mcp, retired
 
 
 def _no_save_note(reason: str | None) -> str:
@@ -166,7 +170,9 @@ def search_recipes(
     query: str = "",
     consumes: str | None = None,
     produces: str | None = None,
-    kind: str = "part",
+    recipe_kind: Annotated[
+        str, Field(description="part | building | manual | all")
+    ] = "part",
     only_alternates: bool = False,
     include_events: bool = False,
     save: str | None = None,
@@ -174,14 +180,19 @@ def search_recipes(
     as_of: AsOf = None,
     limit: Limit = 10,
     offset: int = 0,
+    kind: Annotated[
+        str | None, Field(description="retired -- write recipe_kind= instead")
+    ] = None,
 ) -> str:
     """Search recipes by name, or by what they consume/produce. Marks HAVE/LOCKED.
 
     ``consumes="Rubber"`` is the reverse lookup: every recipe that eats an item.
-    ``kind`` is "part" (default), "building" (build-gun costs), "manual" or "all" --
-    and the header counts EVERY kind over the whole recipe table whatever ``kind``
+    ``recipe_kind`` is "part" (default), "building" (build-gun costs), "manual" or
+    "all" -- and the header counts EVERY kind over the whole recipe table whatever it
     is set to, so a part-only view still says how many buildings eat the item.
     """
+    if gone := retired(("kind", kind, "recipe_kind")):
+        return gone
     g = game()
     notes: list[str] = []
     consumes_id = produces_id = None
@@ -202,16 +213,19 @@ def search_recipes(
     except Exception as exc:
         notes.append(_no_save_note(str(exc)))
 
-    hits, census = search.search(
-        g,
-        query=query,
-        consumes=consumes_id,
-        produces=produces_id,
-        kind=kind,
-        only_alternates=only_alternates,
-        include_events=include_events,
-        unlocked=have,
-    )
+    try:
+        hits, census = search.search(
+            g,
+            query=query,
+            consumes=consumes_id,
+            produces=produces_id,
+            recipe_kind=recipe_kind,
+            only_alternates=only_alternates,
+            include_events=include_events,
+            unlocked=have,
+        )
+    except ValueError as exc:
+        return f"! {exc}"
     subject = "matching " + repr(query) if query else "in the game"
     column = ""
     if consumes_id:
@@ -225,7 +239,15 @@ def search_recipes(
     if only_alternates:
         subject += " (alternates only)"
     return render_search(
-        g, hits, census, subject, column, limit=limit, offset=offset, kind=kind, notes=notes
+        g,
+        hits,
+        census,
+        subject,
+        column,
+        limit=limit,
+        offset=offset,
+        recipe_kind=recipe_kind,
+        notes=notes,
     )
 
 
@@ -237,12 +259,15 @@ _ARCH_TOKENS = ("Foundation", "Ramp", "Wall", "Pillar", "Beam", "Stair", "Walkwa
 
 @mcp.tool(structured_output=False)
 def list_buildings(
-    kind: str = "production",
+    building_kind: str = "production",
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
     limit: Limit = 25,
     offset: int = 0,
+    kind: Annotated[
+        str | None, Field(description="retired -- write building_kind= instead")
+    ] = None,
 ) -> str:
     """Buildings by kind: production, extractor, generator, logistics, foundation,
     ramp, wall, pillar, beam, architecture (all five families together), or all.
@@ -256,6 +281,8 @@ def list_buildings(
     an answer, it is a context eviction. The envelope says how many more there are and
     which offset fetches them.
     """
+    if gone := retired(("kind", kind, "building_kind")):
+        return gone
     g = game()
     try:
         st = _state(save, world, as_of)
@@ -288,9 +315,12 @@ def list_buildings(
         "architecture": lambda b: any(t in b.native for t in _ARCH_TOKENS),
         "all": lambda b: True,
     }
-    want = kinds.get((kind or "").strip().casefold())
+    want = kinds.get((building_kind or "").strip().casefold())
     if want is None:
-        return f"! unknown kind {kind!r}. Choose from: {', '.join(sorted(kinds))}"
+        return (
+            f"! unknown building_kind {building_kind!r}. "
+            f"Choose from: {', '.join(sorted(kinds))}"
+        )
     picks = [b for b in g.buildings.values() if want(b)]
     picks.sort(key=lambda b: b.name)
     offset = max(0, offset)
@@ -335,7 +365,7 @@ def list_buildings(
             "so a row of N machines needs somewhat fewer than N x found"
         )
     ]
-    if unlocked is not None and kind == "logistics" and st is not None:
+    if unlocked is not None and building_kind == "logistics" and st is not None:
         belt, pipe = st.best_belt(), st.best_pipe()
         chosen = (
             ", ".join(f"{g.buildings[c].name} ({v:g})" for c, v in (belt, pipe) if c)
@@ -357,7 +387,7 @@ def list_buildings(
         )
 
     return render.envelope(
-        f"# {len(picks)} {kind} building(s)",
+        f"# {len(picks)} {building_kind} building(s)",
         render.table(
             (
                 "have",

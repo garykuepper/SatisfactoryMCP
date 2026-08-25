@@ -1,7 +1,7 @@
 """Recipe search, including the reverse direction: what CONSUMES an item.
 
 Completeness is the point, and it costs two rules. The census is counted over every recipe in
-Docs.json and never over the page -- ``kind``, ``include_events``, ``limit`` and ``offset``
+Docs.json and never over the page -- ``recipe_kind``, ``include_events``, ``limit`` and ``offset``
 decide what is SHOWN and never move the header's counts -- and building recipes are counted
 even where they are not shown, because the build gun consumes items exactly as a Refinery does
 (Rubber has 15 part consumers, 7 building and 4 manual).
@@ -76,7 +76,7 @@ class Census:
             f"# {self.total} recipe(s) {subject}: "
             + ", ".join(parts)
             + f". Counted over all {self.scanned} recipes;"
-            + " kind/limit change the rows, never these totals."
+            + " recipe_kind/limit change the rows, never these totals."
         )
 
 
@@ -90,7 +90,7 @@ def search(
     query: str = "",
     consumes: str | None = None,
     produces: str | None = None,
-    kind: str = "part",
+    recipe_kind: str = "part",
     only_alternates: bool = False,
     include_events: bool = False,
     unlocked: set[str] | None = None,
@@ -98,13 +98,21 @@ def search(
     """Every recipe matching the query, plus a census over the whole table.
 
     ``query``/``consumes``/``produces``/``only_alternates`` define the QUESTION and
-    are counted in the census. ``kind`` and ``include_events`` only filter the rows
-    that come back, so the header can promise a total the rows do not have to reach.
+    are counted in the census. ``recipe_kind`` and ``include_events`` only filter the
+    rows that come back, so the header can promise a total the rows do not reach.
+
+    An unknown ``recipe_kind`` is a ValueError. It used to match nothing and report an
+    empty table, which reads as "the game has no such recipe" rather than "that is not a
+    word".
     """
     q = query.strip().casefold()
     census = Census(scanned=len(game.recipes))
     hits: list[Hit] = []
-    wanted = None if kind in ("all", "", None) else kind
+    wanted = None if recipe_kind in ("all", "", None) else recipe_kind
+    if wanted is not None and wanted not in KINDS:
+        raise ValueError(
+            f"unknown recipe_kind {recipe_kind!r}. Choose from: {', '.join(KINDS)}, all"
+        )
 
     for r in game.recipes.values():
         if q and q not in r.name.casefold():

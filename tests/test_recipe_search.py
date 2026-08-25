@@ -31,7 +31,7 @@ def test_every_consumer_of_rubber_is_found_in_one_call(game):
     name-matching search could reach none of them; the list was assembled from
     memory instead. Recounted here straight off the recipe table so the test is
     not just search() agreeing with itself."""
-    hits, census = search.search(game, consumes=RUBBER, kind="all")
+    hits, census = search.search(game, consumes=RUBBER, recipe_kind="all")
     found = {h.recipe.cls for h in hits}
     expected = set().union(*(_consumers(game, RUBBER, k) for k in search.KINDS))
 
@@ -46,7 +46,7 @@ def test_a_building_recipe_that_eats_rubber_is_counted_even_when_hidden(game):
     recipes consume Rubber -- the Fuel-Powered Generator at 50 per build, the
     Resource Well Pressurizer at 100 -- so the default view must still count them
     and say so."""
-    hits, census = search.search(game, consumes=RUBBER, kind="part")
+    hits, census = search.search(game, consumes=RUBBER, recipe_kind="part")
 
     assert {h.recipe.kind for h in hits} == {"part"}, "rows are filtered"
     assert census.by_kind["building"] == 7, "counts are not"
@@ -54,14 +54,14 @@ def test_a_building_recipe_that_eats_rubber_is_counted_even_when_hidden(game):
 
     out = srv.search_recipes(consumes="Rubber")
     assert "7 building" in out
-    assert "kind='building'" in out, "the escape hatch has to be named, not implied"
+    assert "recipe_kind='building'" in out, "the escape hatch has to be named, not implied"
 
 
 def test_the_census_never_moves_with_the_page(game):
     """A truncated page that also truncated the total would make the header a lie,
     which is worse than no header: the reader stops looking."""
-    first = srv.search_recipes(consumes="Rubber", kind="all", limit=1)
-    full = srv.search_recipes(consumes="Rubber", kind="all", limit=25)
+    first = srv.search_recipes(consumes="Rubber", recipe_kind="all", limit=1)
+    full = srv.search_recipes(consumes="Rubber", recipe_kind="all", limit=25)
     assert first.splitlines()[0] == full.splitlines()[0]
     assert "26 recipe(s) consume Rubber" in first
 
@@ -71,7 +71,7 @@ def test_the_unlock_gate_is_reported_per_kind(game):
     matters more here: on the reference save 6 of the 7 building recipes that eat
     Rubber are unlocked but only 5 of the 15 part recipes are."""
     hits, census = search.search(
-        game, consumes=RUBBER, kind="all", unlocked={"Recipe_GeneratorFuel_C"}
+        game, consumes=RUBBER, recipe_kind="all", unlocked={"Recipe_GeneratorFuel_C"}
     )
     assert census.have == {"building": 1}
     assert census.locked["part"] == 15
@@ -86,18 +86,18 @@ def test_a_build_cost_is_never_rendered_as_a_rate(game):
     """mManufactoringDuration is 1.0 on all 547 building recipes, so per_min turns
     the Fuel-Powered Generator's 50 Rubber into 3000/min and The HUB's 20 Iron Ore
     into 1200/min. Both are nonsense: a build cost is paid once."""
-    hits, _ = search.search(game, consumes=RUBBER, kind="building")
+    hits, _ = search.search(game, consumes=RUBBER, recipe_kind="building")
     generator = next(h for h in hits if h.recipe.cls == "Recipe_GeneratorFuel_C")
     assert generator.qty == 50.0
 
-    out = srv.search_recipes(consumes="Rubber", kind="building")
+    out = srv.search_recipes(consumes="Rubber", recipe_kind="building")
     assert "50/build" in out
     assert "3000" not in out
     assert "NOT rates" in out
 
 
 def test_a_part_recipe_still_reports_a_rate(game):
-    hits, _ = search.search(game, consumes=RUBBER, kind="part")
+    hits, _ = search.search(game, consumes=RUBBER, recipe_kind="part")
     recycled = next(h for h in hits if h.recipe.cls == "Recipe_Alternate_Plastic_1_C")
     assert recycled.qty == pytest.approx(30.0), "30 Rubber/min at 100% clock"
     assert "30/min" in srv.search_recipes(consumes="Rubber")
@@ -106,7 +106,7 @@ def test_a_part_recipe_still_reports_a_rate(game):
 def test_consumers_are_ordered_by_how_much_they_eat(game):
     """The question is "what is eating my Rubber", so the answer is ordered by
     appetite within a kind rather than alphabetically."""
-    hits, _ = search.search(game, consumes=RUBBER, kind="part")
+    hits, _ = search.search(game, consumes=RUBBER, recipe_kind="part")
     quantities = [h.qty for h in hits]
     assert quantities == sorted(quantities, reverse=True)
 
@@ -117,23 +117,23 @@ def test_consumers_are_ordered_by_how_much_they_eat(game):
 def test_event_recipes_are_counted_but_not_shown(game):
     """FICSMAS recipes are real recipes that really consume things. Hiding them is
     right; letting them vanish from the count is how a total becomes untrustworthy."""
-    hits, census = search.search(game, consumes="Desc_Gift_C", kind="all")
+    hits, census = search.search(game, consumes="Desc_Gift_C", recipe_kind="all")
     assert census.events == 12
     assert hits == [], "every consumer of a FICSMAS Gift is an event recipe"
-    assert "12 FICSMAS" in srv.search_recipes(consumes="FICSMAS Gift", kind="all")
+    assert "12 FICSMAS" in srv.search_recipes(consumes="FICSMAS Gift", recipe_kind="all")
 
-    shown, _ = search.search(game, consumes="Desc_Gift_C", kind="all", include_events=True)
+    shown, _ = search.search(game, consumes="Desc_Gift_C", recipe_kind="all", include_events=True)
     assert len(shown) == 12
 
 
 def test_produces_covers_the_kinds_alternates_for_item_cannot(game):
     """alternates_for_item is part-only by construction. The same reverse index run
     the other way is what answers "which build-gun recipe makes a Blender"."""
-    hits, census = search.search(game, produces="Desc_Plastic_C", kind="part")
+    hits, census = search.search(game, produces="Desc_Plastic_C", recipe_kind="part")
     assert {h.recipe.cls for h in hits} == {r.cls for r in game.producers_of(PLASTIC, "part")}
     assert census.by_kind.get("building", 0) == 0, "Plastic is not a building descriptor"
 
-    blender, _ = search.search(game, produces="Desc_Blender_C", kind="building")
+    blender, _ = search.search(game, produces="Desc_Blender_C", recipe_kind="building")
     assert [h.recipe.cls for h in blender] == ["Recipe_Blender_C"]
 
 
@@ -147,7 +147,7 @@ def test_a_name_search_still_matches_names_only(game):
 
 
 def test_query_and_consumes_are_anded(game):
-    hits, _ = search.search(game, query="cable", consumes=RUBBER, kind="part")
+    hits, _ = search.search(game, query="cable", consumes=RUBBER, recipe_kind="part")
     assert {h.recipe.cls for h in hits} == {
         "Recipe_Alternate_Cable_1_C",
         "Recipe_Alternate_Cable_2_C",

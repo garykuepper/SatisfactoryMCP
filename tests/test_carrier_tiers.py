@@ -72,14 +72,14 @@ def test_the_tier_is_part_of_the_plan_id(game, live):
 
 
 def test_list_buildings_marks_locked_tiers(game):
-    out = srv.list_buildings(kind="logistics")
+    out = srv.list_buildings(building_kind="logistics")
     assert "have\tbuilding\tbuilt" in out
     assert "LOCKED\tConveyor Belt Mk.6" in out
     assert "HAVE\tPipeline Mk.2" in out
 
 
 def test_list_buildings_names_the_planning_default(game):
-    out = srv.list_buildings(kind="logistics")
+    out = srv.list_buildings(building_kind="logistics")
     assert "fastest UNLOCKED tier" in out
     assert "Pipeline Mk.2" in out
 

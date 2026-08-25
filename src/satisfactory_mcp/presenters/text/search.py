@@ -47,7 +47,7 @@ def render_search(
     item_column: str = "",
     limit: int = 10,
     offset: int = 0,
-    kind: str = "part",
+    recipe_kind: str = "part",
     notes: list[str] | None = None,
 ) -> str:
     page = hits[offset : offset + render.clamp(limit)]
@@ -88,12 +88,14 @@ def render_search(
     hidden = [
         f"{census.by_kind[k]} {k}"
         for k in KINDS
-        if k != kind and census.by_kind.get(k) and kind not in ("all", "", None)
+        if k != recipe_kind and census.by_kind.get(k) and recipe_kind not in ("all", "", None)
     ]
     if hidden:
         all_notes.append(
-            f"kind={kind!r} hides " + " and ".join(hidden) + f" recipe(s) that also {subject}"
-            " -- pass kind='building', 'manual' or 'all' to see them"
+            f"recipe_kind={recipe_kind!r} hides "
+            + " and ".join(hidden)
+            + f" recipe(s) that also {subject}"
+            " -- pass recipe_kind='building', 'manual' or 'all' to see them"
         )
     if census.events and not any("FICSMAS" in n for n in all_notes):
         all_notes.append(f"{census.events} FICSMAS event recipe(s) counted but not shown")

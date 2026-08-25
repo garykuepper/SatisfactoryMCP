@@ -15,7 +15,7 @@ from ....domain.spatial import regions as regions_mod
 from ....domain.spatial.origin import resolve_origin
 from ....domain.world.inventory import CRATE_KIND_TEXT, Holding
 from ....presenters.text import primitives as render
-from ..app import AsOf, Limit, _item_id, _state, mcp
+from ..app import AsOf, Limit, _item_id, _state, mcp, retired
 
 #: How many item kinds a place lists before the rest become "+N more". Three names and a
 #: count read as a box; twelve names read as a wall.
@@ -190,13 +190,16 @@ def storage(
         Field(description="centre: 'x,y' in metres, 'me', or a named factory"),
     ] = None,
     radius_m: float = 500.0,
-    kind: Annotated[str | None, Field(description="solid | fluid | all")] = None,
+    container_kind: Annotated[str | None, Field(description="solid | fluid | all")] = None,
     empty: Annotated[bool, Field(description="include containers with nothing in them")] = False,
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
     limit: Limit = 15,
     offset: int = 0,
+    kind: Annotated[
+        str | None, Field(description="retired -- write container_kind= instead")
+    ] = None,
 ) -> str:
     """Which container holds what, where it stands, and how full it is.
 
@@ -209,6 +212,8 @@ def storage(
     slots, stacking each item at its own stack size, and a buffer is its m3 over what the
     class holds. It is ``-`` where either number is unknown.
     """
+    if gone := retired(("kind", kind, "container_kind")):
+        return gone
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
@@ -220,11 +225,11 @@ def storage(
         wanted = _item_id(item)
         if wanted is None:
             return f"no item matches {item!r}"
-    want_kind = (kind or "").strip().casefold() or None
-    if want_kind in ("all", "any", "both"):
+    want_kind = (container_kind or "").strip().casefold() or None
+    if want_kind == "all":
         want_kind = None
     if want_kind not in (None, "solid", "fluid"):
-        return f"! unknown kind {kind!r}. Choose from: solid, fluid, all"
+        return f"! unknown container_kind {container_kind!r}. Choose from: solid, fluid, all"
 
     origin, at = None, ""
     if near is not None:

@@ -126,13 +126,13 @@ def test_how_full_a_container_is_gets_measured_rather_than_left_to_the_reader(to
 def test_a_fluid_buffer_reports_m3_against_what_its_class_holds(tools):
     """1,730.6 is not a reading until it is put against the 2,400 an Industrial Fluid
     Buffer holds -- and its contents are named by the pipe network, not by the tank."""
-    rows = _rows(tools.storage(kind="fluid", limit=5))
+    rows = _rows(tools.storage(container_kind="fluid", limit=5))
     assert rows[0][3] == "72%" and rows[0][4] == "1731/2400m3"
     assert "Crude Oil" in rows[0][5]
 
 
-def test_an_unknown_kind_is_refused_with_the_choices(tools):
-    assert "Choose from: solid, fluid" in tools.storage(kind="gas")
+def test_an_unknown_container_kind_is_refused_with_the_choices(tools):
+    assert "Choose from: solid, fluid" in tools.storage(container_kind="gas")
 
 
 def test_empty_containers_are_hidden_by_default_and_reachable_on_request(tools):
@@ -189,7 +189,7 @@ def test_a_crate_is_never_offered_as_spendable_stock(tools, state):
         lambda t: t.stock(where=True),
         lambda t: t.stock(item="Concrete", where=True),
         lambda t: t.storage(),
-        lambda t: t.storage(kind="fluid"),
+        lambda t: t.storage(container_kind="fluid"),
         lambda t: t.crates(),
     ],
 )

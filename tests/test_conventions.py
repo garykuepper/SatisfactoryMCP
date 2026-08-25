@@ -1,9 +1,10 @@
 """One spelling per question, across the whole tool surface.
 
 Every entry here cost a client a retry: it asked for a view with the word the last tool
-used, or wrote a radius the way the last tool's help wrote it, and got an error. Where an
-alias was added, what is pinned is that BOTH forms reach the same answer. Where a spelling
-was retired, what is pinned is that it ERRORS and names its replacement.
+used, or wrote a radius the way the last tool's help wrote it, and got an error. Two
+things are pinned per row -- that the surviving spelling works on every tool that asks the
+question, and that each retired one ERRORS with the caller's own value rewritten. An alias
+would satisfy the first and not the second, which is why there are none.
 """
 
 from __future__ import annotations
@@ -91,12 +92,57 @@ def test_a_retired_view_spelling_names_show_and_echoes_what_was_written(call, ol
     assert f"show={value!r}" in out, out
 
 
-def test_all_means_no_filter_wherever_kind_is_a_filter():
-    """`kind="all"` was accepted by list_buildings and search_recipes and rejected by the
-    other two, so the same word was a vocabulary on one tool and an error on the next."""
-    here = {"near": "-1069,-1273", "radius_m": 300.0, "limit": 3}
-    assert srv.search_conduits(kind="all", **here) == srv.search_conduits(**here)
-    assert srv.storage(kind="all", limit=3) == srv.storage(limit=3)
+HERE = {"near": "-1069,-1273", "radius_m": 300.0, "limit": 3}
+
+
+@pytest.mark.parametrize(
+    ("filtered", "unfiltered"),
+    [
+        (
+            lambda: srv.search_conduits(conduit_kind="all", **HERE),
+            lambda: srv.search_conduits(**HERE),
+        ),
+        (lambda: srv.storage(container_kind="all", limit=3), lambda: srv.storage(limit=3)),
+        (
+            lambda: srv.list_buildings(building_kind="all", limit=3),
+            lambda: srv.list_buildings(building_kind="all", limit=3),
+        ),
+        (
+            lambda: srv.search_recipes(recipe_kind="all", limit=3),
+            lambda: srv.search_recipes(recipe_kind="all", limit=3),
+        ),
+        (
+            lambda: srv.search_resource_nodes(resource="Coal", kind="all", limit=3),
+            lambda: srv.search_resource_nodes(resource="Coal", limit=3),
+        ),
+        (
+            lambda: srv.search_resource_nodes(sources=["purity:all"], resource="Coal", limit=3),
+            lambda: srv.search_resource_nodes(resource="Coal", limit=3),
+        ),
+    ],
+)
+def test_all_means_no_filter_in_every_kind_family(filtered, unfiltered):
+    """One member of a family rejecting the family's own wildcard is indefensible:
+    `search_resource_nodes` answered `kind must be node|well_sat|geyser, got 'all'` for the
+    word its four siblings read as "no filter"."""
+    assert filtered() == unfiltered()
+
+
+@pytest.mark.parametrize(
+    ("call", "new", "value"),
+    [
+        (lambda **kw: srv.search_recipes(limit=3, **kw), "recipe_kind", "all"),
+        (lambda **kw: srv.list_buildings(limit=3, **kw), "building_kind", "all"),
+        (lambda **kw: srv.storage(limit=3, **kw), "container_kind", "solid"),
+        (lambda **kw: srv.search_conduits(**HERE, **kw), "conduit_kind", "pipe"),
+    ],
+)
+def test_a_retired_kind_names_the_kind_of_what_it_filtered(call, new, value):
+    """`kind=` named five unrelated vocabularies: a recipe class, a building category, a
+    container's medium, a conduit's medium and a node kind. Four now say what they filter,
+    and the fifth keeps the word because it is the node selector's own `kind:` term."""
+    out = call(kind=value)
+    assert out == f"! kind={value!r} is retired -- write {new}={value!r} instead", out
 
 
 @pytest.mark.parametrize(

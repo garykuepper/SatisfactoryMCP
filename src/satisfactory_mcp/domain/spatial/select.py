@@ -16,7 +16,7 @@ Supported selectors (prefix optional where unambiguous)::
     bbox:<x1>,<y1>,<x2>,<y2>                        rectangle, metres
     resource:Crude Oil                              filter: resource type
     purity:pure|normal|impure                       filter: purity
-    kind:node|well_sat|geyser                       filter: node kind
+    kind:node|well_sat|geyser|all                   filter: node kind
     all                                             every node on the map
 
 Unmatched selectors are REPORTED, never silently dropped: a typo'd region name that
@@ -36,7 +36,8 @@ __all__ = ["SELECTOR_HELP", "Selection", "select_nodes", "split_spec"]
 SELECTOR_HELP = (
     "selectors: north|south|east|west|northeast|... , region:<name>, grid:X3Y4, "
     "node:<instance>, near:<place>@<radius_m>, bbox:<x1>,<y1>,<x2>,<y2>, "
-    "resource:<name>, purity:pure|normal|impure, kind:node|well_sat|geyser, all"
+    "resource:<name>, purity:pure|normal|impure, kind:node|well_sat|geyser. Any "
+    "filter takes all, which means no filter; all on its own is every node"
 )
 
 _LOCATION_PREFIXES = ("region", "grid", "node", "near", "bbox")
@@ -266,6 +267,10 @@ def select_nodes(
     # ---- filters ------------------------------------------------------
     for kind, value in filters:
         low = value.casefold()
+        # `all` is the surface's one word for "no filter", and a filter term that refused
+        # it made the same word a wildcard on the tools and an error inside the selector.
+        if low == "all":
+            continue
         if kind == "resource":
             rid = resolve_resource(value) if resolve_resource else value
             if rid is None:

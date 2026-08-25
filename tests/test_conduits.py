@@ -374,7 +374,7 @@ def test_the_network_view_summarises_the_plumbing_systems(game, monkeypatch):
 
     assert "! unknown show" in stools.search_conduits(near="0,0", show="bogus")
     assert "belt chain belongs to none" in stools.search_conduits(
-        near="0,0", show="networks", kind="belt"
+        near="0,0", show="networks", conduit_kind="belt"
     )
 
 

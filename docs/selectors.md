@@ -80,9 +80,13 @@ A **source spec** is a list of selectors, and it is what every `sources=` parame
 | `near:<place>@<radius_m>` | a circle around any place in the table above |
 | `bbox:<x1>,<y1>,<x2>,<y2>` | a rectangle, corners in metres |
 | `resource:Crude Oil` | filter: resource type |
-| `purity:pure\|normal\|impure` | filter: purity |
-| `kind:node\|well_sat\|geyser` | filter: node kind |
+| `purity:pure\|normal\|impure\|all` | filter: purity |
+| `kind:node\|well_sat\|geyser\|all` | filter: node kind |
 | `all` | every node on the map |
+
+The last three are also plain parameters on `search_resource_nodes` — `resource=`,
+`purity=`, `kind=` — spelled exactly as the terms they stand in for, so either form reads
+the same and neither is a second vocabulary.
 
 **Locations union, filters intersect.** `["north", "resource:Crude Oil"]` is crude oil in
 the northern half; `["region:Spire Coast", "near:120,-2020@1500"]` is the union of two
@@ -140,6 +144,14 @@ Named here so that the next reader knows it is a known state and not an oversigh
 - **`resource:` means two things, on purpose.** As a node *filter* it narrows a selection
   to one resource type; as `show_on_map(at=)`'s own place kind it centres on the centroid
   of every node of that resource. Same noun, one selecting and one pointing.
-- **`kind:` here is a node-kind filter**, and `kind=` as a tool parameter means five other
-  vocabularies elsewhere on the surface. That is tracked in
-  [backlog.md](backlog.md) under P3, not settled here.
+- **`kind` is this language's word, and now the surface's only one.** It meant five
+  unrelated vocabularies as a tool parameter -- a recipe class, a building category, a
+  container's medium, a conduit's medium and this. Four of the five were renamed after what
+  they actually filter (`recipe_kind=`, `building_kind=`, `container_kind=`,
+  `conduit_kind=`); `search_resource_nodes(kind=)` kept the word because it is shorthand for
+  the `kind:` term above, exactly as its `resource=` and `purity=` are shorthand for
+  `resource:` and `purity:`. Renaming the parameter alone would have given one tool two
+  spellings of one filter, which is the defect and not the fix.
+- **`all` in a filter means no filter.** `kind:all`, `purity:all` and `resource:all` narrow
+  nothing, which is what `all` means on every tool that takes a kind. `all` on its own is
+  still a location: every node on the map.

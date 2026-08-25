@@ -346,13 +346,16 @@ def search_conduits(
     to_radius_m: Annotated[
         float | None, Field(description="radius around `to`, defaults to radius_m")
     ] = None,
-    kind: Annotated[str | None, Field(description="belt | pipe | all")] = None,
+    conduit_kind: Annotated[str | None, Field(description="belt | pipe | all")] = None,
     show: Annotated[str, Field(description="runs | networks")] = "runs",
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
     limit: Limit = 12,
     offset: int = 0,
+    kind: Annotated[
+        str | None, Field(description="retired -- write conduit_kind= instead")
+    ] = None,
 ) -> str:
     """Belt and pipe runs near a point or between two areas: ends, length, elevation.
 
@@ -378,20 +381,19 @@ def search_conduits(
     a busy junction can carry hundreds of chains and the tail of that list is as real
     as its head.
     """
+    if gone := retired(("kind", kind, "conduit_kind")):
+        return gone
     g = game()
     try:
         st = _state(save, world, as_of)
     except Exception as exc:
         return f"could not read save: {exc} (conduits are read from the save)"
 
-    want = (kind or "").strip().casefold() or None
-    # "all" is what a caller writes when it means no filter, and it is spelled that way in
-    # list_buildings and search_recipes. Refusing it here made the same word mean "every
-    # kind" on one tool and "an error" on the next.
-    if want in ("all", "any", "both"):
+    want = (conduit_kind or "").strip().casefold() or None
+    if want == "all":
         want = None
     if want not in (None, "belt", "pipe"):
-        return f"! unknown kind {kind!r}. Choose from: belt, pipe, all"
+        return f"! unknown conduit_kind {conduit_kind!r}. Choose from: belt, pipe, all"
     view = (show or "runs").strip().casefold()
     if view not in ("runs", "networks"):
         return f"! unknown show {show!r}. Choose from: runs, networks"

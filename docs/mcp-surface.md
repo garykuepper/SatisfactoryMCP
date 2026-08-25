@@ -40,7 +40,8 @@ search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
   -> per-field clusters (region, grid, centre, purity mix, total/free, spread)
      or per-node rows whose ids feed straight back in as node: selectors
 
-search_recipes(query="", consumes=None, produces=None, kind="part"|"building"|"manual"|"all",
+search_recipes(query="", consumes=None, produces=None,
+               recipe_kind="part"|"building"|"manual"|"all",
                only_alternates=False, include_events=False, save=None, world=None,
                limit=10, offset=0)
   -> a census over ALL 872 recipes broken down by kind and HAVE/LOCKED, then rows
@@ -191,13 +192,13 @@ surfaces applies with more force here, since a `consumers_of_item` tool would si
 ask which **build-gun** recipe makes a Blender, which `alternates_for_item` is part-only by construction.
 
 Completeness is bought with one rule: **the census is counted over all 872 recipes, never over the page.**
-`kind`, `include_events`, `limit` and `offset` decide what is *shown*; they never move the header counts.
+`recipe_kind`, `include_events`, `limit` and `offset` decide what is *shown*; they never move the header counts.
 So the default part-only view of Rubber still opens with
 
 ```
 # 26 recipe(s) consume Rubber: 15 part [5 HAVE, 10 LOCKED], 7 building [6 HAVE, 1 LOCKED],
-  4 manual [3 HAVE, 1 LOCKED]. Counted over all 872 recipes; kind/limit change the rows, never these totals.
-! kind='part' hides 7 building and 4 manual recipe(s) that also consume Rubber -- pass kind='all'
+  4 manual [3 HAVE, 1 LOCKED]. Counted over all 872 recipes; recipe_kind/limit change the rows, never these totals.
+! recipe_kind='part' hides 7 building and 4 manual recipe(s) that also consume Rubber -- pass recipe_kind='all'
 ```
 
 Measured on the reference save, and this is exactly the case the worry named: the seven building
@@ -209,7 +210,7 @@ recipes eating Rubber are the **Fuel-Powered Generator (50/build)**, **Resource 
 **Build costs must never render as rates.** `mManufactoringDuration` is 1.0 on all 547 building recipes,
 so `amount × 60 / duration` turns the Fuel-Powered Generator's 50 Rubber into 3,000/min and The HUB's
 20 Iron Ore into 1,200/min. Part rows carry `/min`, building rows `/build`, manual rows `/craft`, and the
-suffix is on the cell rather than the header because `kind="all"` mixes them in one table.
+suffix is on the cell rather than the header because `recipe_kind="all"` mixes them in one table.
 
 FICSMAS recipes stay hidden by default and are **counted anyway** — 12 event recipes consume a FICSMAS
 Gift, and a total that quietly dropped them is a total nobody can rely on.
@@ -354,7 +355,7 @@ could not look.
 
 ```
 search_conduits(near="x,y"|"me"|<factory>, radius_m=250, to=None, to_radius_m=None,
-                kind="belt"|"pipe"|None, limit=12, offset=0)
+                conduit_kind="belt"|"pipe"|"all"|None, limit=12, offset=0)
   -> per-run rows: id (chain:<n> / pipe:<row>), kind+tier, drawn length, both ends
      (position + what stands there where known), elevation span, carries, connects
 ```
@@ -425,7 +426,7 @@ stock(item=None, where=False, save, world, limit=25, offset=0)
   -> per item: spendable | carried | storage | depot | buffers | crates
      where=True: one row per container or crate holding it, with a region and a coordinate
 
-storage(item=None, near=None, radius_m=500, kind=None, empty=False, limit=15, offset=0)
+storage(item=None, near=None, radius_m=500, container_kind=None, empty=False, limit=15, offset=0)
   -> per container: region, coordinate, fill, used/slots (or m3/capacity), contents
 
 crates(limit=25, offset=0)          -> what you lost, what kind of crate, and where it is
@@ -505,6 +506,51 @@ Tokens are recorded in `save-pins.json` under the cache directory (the newest 20
 what lets the second refusal differ from the third. The ledger is best-effort like every other
 cache here — losing it costs a refusal's sharpness, never an answer. `domain/world/pin.py` is
 the implementation; `tests/test_save_pin.py` reproduces the hazard end to end.
+
+### 10.1j One word per question — the parameter vocabulary
+
+A client reads this surface twice: once by writing a call, and once by reading the schema.
+An alias only helps the first. So a question asked by more than one tool has exactly **one**
+parameter name, and a retired spelling **errors with the caller's own value rewritten** —
+`! of='power' is retired -- write show='power' instead` — rather than silently working or
+failing schema validation with nothing to act on. `interfaces/mcp/app.py:retired` builds
+those messages; `tests/test_conventions.py` pins one per retirement.
+
+| the question | the parameter | retired |
+|---|---|---|
+| which view of this answer | `show=` | `of=`, `detail=`, `mode=`, `status=`, `group=` (on `search_resource_nodes`) |
+| match a row by the text in its name | `query=` | `search=` |
+| narrow to one resource type | `resource=` | `with_resource=` |
+| where — a single point | `at=`, or `near=` for a search centre | see [selectors.md](selectors.md) |
+| how many rows | `limit=`, `offset=` | `top=` is still an alias on `rank_build_sites` |
+
+**`show=`'s values are per tool, and that is not the same defect one level down.** It asks
+"which of *your* views", not "which kind of thing", so nobody expects `factory_map`'s
+`slabs` to mean anything to `mam_research`. Across all eight only two words recur — `all`
+and `nearest` — and both mean the same thing everywhere they appear.
+
+**`kind=` was the opposite case, and split rather than merged.** It named five unrelated
+vocabularies — a recipe class, a building category, a container's medium, a conduit's
+medium, a node kind — and no single enum holds those. Four now say what they filter and one
+kept the word:
+
+| tool | parameter | values |
+|---|---|---|
+| `search_recipes` | `recipe_kind=` | `part` (default), `building`, `manual`, `all` |
+| `list_buildings` | `building_kind=` | `production` (default), `extractor`, `generator`, `logistics`, `foundation`, `ramp`, `wall`, `pillar`, `beam`, `architecture`, `all` |
+| `storage` | `container_kind=` | `solid`, `fluid`, `all` |
+| `search_conduits` | `conduit_kind=` | `belt`, `pipe`, `all` |
+| `search_resource_nodes` | `kind=` | `node`, `well_sat`, `geyser`, `all` |
+
+The last keeps the bare word because it is shorthand for the node selector's own `kind:`
+term, beside `resource=`/`resource:` and `purity=`/`purity:`. Renaming the parameter alone
+would have given one tool two spellings of one filter.
+
+**`all` means no filter, in every one of them** — and in the `kind:`, `purity:` and
+`resource:` selector terms too. `search_resource_nodes` used to answer `kind must be
+node|well_sat|geyser, got 'all'` for the word its four siblings read as "no filter"; one
+member of a family rejecting the family's own wildcard is a bug whatever the family is
+called.
 
 ### 10.2 Context budget
 
