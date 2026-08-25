@@ -664,7 +664,9 @@ def plan_layout(
     sources: list[str] | None = None,
     exports: list[str] | None = None,
     export_minimums: dict[str, float] | None = None,
-    show: str = "floors",
+    show: Annotated[
+        str, Field(description="floors | blocks | buses | trunks | materials | sites")
+    ] = "floors",
     detail: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
     only_free_nodes: bool = False,
     allow_sinks: bool = True,

@@ -569,8 +569,8 @@ def _occupant(row: dict, g) -> str:
 def search_resource_nodes(
     sources: list[str] | None = None,
     resource: str | None = None,
-    purity: str | None = None,
-    kind: str | None = None,
+    purity: Annotated[str | None, Field(description="pure | normal | impure | all")] = None,
+    kind: Annotated[str | None, Field(description="node | well_sat | geyser | all")] = None,
     only_free: bool = False,
     show: Annotated[str, Field(description="fields | nodes | nearest")] = "fields",
     near: Annotated[

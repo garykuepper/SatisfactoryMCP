@@ -259,7 +259,13 @@ _ARCH_TOKENS = ("Foundation", "Ramp", "Wall", "Pillar", "Beam", "Stair", "Walkwa
 
 @mcp.tool(structured_output=False)
 def list_buildings(
-    building_kind: str = "production",
+    building_kind: Annotated[
+        str,
+        Field(
+            description="production | extractor | generator | logistics | foundation | "
+            "ramp | wall | pillar | beam | architecture | all"
+        ),
+    ] = "production",
     save: str | None = None,
     world: str | None = None,
     as_of: AsOf = None,
