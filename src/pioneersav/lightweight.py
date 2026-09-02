@@ -26,13 +26,31 @@ Layout::
             reference           empty everywhere
             uint8               0 everywhere
             reference    recipe: what the piece was built from
-            reference           empty everywhere
-            int32               0 everywhere
+            reference           the blueprint proxy this piece was placed as part of, empty
+                                when it was placed by hand
+            int32               COUNT of the type-specific data blocks that follow -- see
+                                below. 0 on most classes, which is why it read as a constant
+            per block:
+                reference       the data struct's type, e.g.
+                                `/Script/FactoryGame.BuildableBeamLightweightData`
+                int32           byte size of the property list that follows
+                property list   tagged and `None`-terminated, held here as raw bytes
             uint8               version 4 only, and the two are ONE field: an
             int32               FPlayerInfoHandle naming who placed the piece. `06 00 00 00 00`
                                 is a set handle and `00 ff ff ff ff` the unset one, so (6, 0)
                                 on a piece this player placed and (0, -1) on everything
                                 migrated from a version-2 save
+
+**The int32 before the blocks is a count, not a constant.** It is 0 for foundations, walls,
+catwalks and railings, which is every class on a save built without beams -- so it read as
+"0 everywhere" for as long as no beam had been placed. A beam carries one block holding its
+`BeamLength`, because a beam's length is chosen per piece and there is nowhere else to keep
+it. Reading it as a constant leaves the walk 116 bytes short on the first beam and the next
+class path fails its own length check thousands of records later.
+
+`RECORD_BYTES` is therefore a **minimum** per instance rather than the whole of one, which is
+what it always was -- the two reference paths were never in it either. It is used only to
+bound a claimed instance count, and a bound that is too generous is still a bound.
 """
 
 from __future__ import annotations
@@ -65,9 +83,53 @@ def _reference(r: Reader) -> ObjectReference:
     return ObjectReference(r.string(), r.string())
 
 
-def _instance(r: Reader, version: int) -> list:
+#: Most type-specific data blocks a single instance may carry. Every instance seen carries 0
+#: or 1; the cap exists so that a walk that has lost its place cannot read a quaternion's
+#: mantissa as a block count and then loop on it.
+MAX_DATA_BLOCKS = 8
+
+
+def _type_data(r: Reader, count: int, end: int) -> list:
+    """The optional type-specific data blocks: ``[[typeReference, rawBytes], ...]``.
+
+    Held as raw bytes rather than decoded. The block is a tagged property list and this module
+    reads no tags -- ``trailers.py`` next door takes the same line -- but it is *size-prefixed*,
+    so consuming it exactly needs no tag reader at all, which is the whole requirement here.
+    Decoding it would put ``BeamLength`` within reach and is worth doing separately.
+
+    Returned as a nested list on purpose. ``extract._placed`` decides whether a record is a
+    real piece or a stale slot by scanning an instance's top-level fields for a non-empty
+    string or a ``pathName``, so a bare type path added at that level would make every stale
+    slot look placed. A list is neither and is passed over.
+    """
+    if not 0 <= count <= MAX_DATA_BLOCKS:
+        raise ParseError(
+            f"at body offset {r.pos - 4}: an instance claims {count} type-specific data "
+            f"blocks, and no instance carries more than {MAX_DATA_BLOCKS} -- the walk is "
+            "out of step"
+        )
+    out = []
+    for _ in range(count):
+        type_ref = _reference(r)
+        at = r.pos
+        size = r.i32()
+        if not 0 <= size <= end - r.pos:
+            raise ParseError(
+                f"at body offset {at}: type-specific data for {type_ref.path_name!r} claims "
+                f"{size} bytes with {end - r.pos} left in the blob"
+            )
+        out.append([type_ref, r.bytes(size)])
+    return out
+
+
+def _instance(r: Reader, version: int, end: int) -> list:
     """One buildable. Field order is the file's, and load-bearing: the projection reads
     ``inst[1]`` for the position and walks the rest generically.
+
+    The type-specific data list is **appended** rather than slotted in beside the count that
+    introduces it, so that every index this record already had keeps its meaning -- the version-4
+    ``(uint8, int32)`` player handle stays at 13 and 14. It is empty for every class that
+    carries no such data, which is most of them.
     """
     out = [
         [r.f64(), r.f64(), r.f64(), r.f64()],
@@ -84,8 +146,10 @@ def _instance(r: Reader, version: int) -> list:
         _reference(r),
         r.i32(),
     ]
+    data = _type_data(r, out[12], end)
     if version >= 4:
         out += [r.i8(), r.i32()]
+    out.append(data)
     return out
 
 
@@ -142,7 +206,7 @@ def read_lightweight(body: bytes, offset: int, length: int) -> list:
                 f"at body offset {r.pos - 4}: {path} claims {instance_count} instances, "
                 f"which does not fit in the {end - r.pos} bytes left"
             )
-        out.append([path, [_instance(r, version) for _ in range(instance_count)]])
+        out.append([path, [_instance(r, version, end) for _ in range(instance_count)]])
 
     if r.pos != end:
         raise ParseError(
