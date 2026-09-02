@@ -49,7 +49,14 @@ from ..text import ago, stamp
 #: 20 added a fourth column to a belt segment, the index of its own actor in
 #: ``graph["actors"]`` -- the join schema 14 gave a pipe, now given to the conveyor beside it,
 #: which is what lets a contracted run be NAMED rather than only described by its far end.
-SCHEMA_VERSION = 20
+#: 21 CORRECTS what the parser could see at all. Three savparse fixes land here: large built
+#: saves parse to the end rather than dying on an `Item` struct; every foundation, wall and
+#: beam arrives, because the lightweight record's trailing int32 is a COUNT of type-specific
+#: data blocks and not the constant 0 it was read as, which had left the walk 116 bytes short
+#: on the first beam; and a conveyor chain stamped `_RepSizeNoCull`, a class the anniversary
+#: build added, is decoded instead of dropped. Every pickle written before this describes less
+#: world than the save holds -- fewer structures, and a missing belt run -- so they must miss.
+SCHEMA_VERSION = 21
 
 #: The in-process projection memo, and the single-flight around its misses. An autosave is a
 #: new cache key for a file every reader resolves to at once, so without the flight the map
