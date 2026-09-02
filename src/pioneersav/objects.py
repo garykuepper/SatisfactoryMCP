@@ -10,7 +10,7 @@ does not add up instead of yielding a shorter factory. Which fields are present 
 The body, at saveVersion 52 and above::
 
     i64  body size                 len(body) - 8, self-describing
-    59B  archive version header    saveVersion 60 only -- see ARCHIVE_HEADER_LEN
+    ...  archive version header    saveVersion 60 only; 26B + the engine branch string
     i32  custom version count      60 only; then that many (16-byte GUID, i32 version)
     i32  grid count                then that many world-partition grids
     i32  sub-level count
@@ -48,6 +48,7 @@ from .reader import Reader
 from .versions import FIRST_LEVEL_LIST, FIRST_MODERN_BODY
 
 __all__ = [
+    "ARCHIVE_HEADER_FIXED_LEN",
     "ARCHIVE_HEADER_LEN",
     "CHANGELIST_MASK",
     "ActorHeader",
@@ -61,9 +62,14 @@ __all__ = [
     "read_body",
 ]
 
-#: Bytes of the archive version header: four int32s, three uint16s of engine version, the
-#: changelist, and the engine branch string. Fixed only because that string has a fixed
-#: length, so it is read field by field rather than skipped blindly.
+#: Bytes of the archive version header BEFORE the engine branch string: four int32s, three
+#: uint16s of engine version, and the changelist.
+ARCHIVE_HEADER_FIXED_LEN = 26
+
+#: Total archive-header length observed on the 1.2.0 branch. The branch string that closes the
+#: header is length-prefixed and its length varies by engine branch --
+#: '++FactoryGame+rel-main-1.2.0' is 28 characters, '++FactoryGame+rel-main-anniversary-2026'
+#: is 39 -- so the total is NOT a constant. Kept for reference; do not gate on it.
 ARCHIVE_HEADER_LEN = 59
 
 #: Mask that takes the changelist out of the uint32 beside the engine version. The top bit is
@@ -326,12 +332,13 @@ def _read_archive_header(
         # level records still produces one line per pair, which is the case worth seeing.
         if what not in [w for _at, w in warnings]:
             warnings.append((changelist_at, what))
+    branch_at = r.pos
     branch = r.string()
     _expect(
-        r.pos - start == ARCHIVE_HEADER_LEN,
+        branch_at - start == ARCHIVE_HEADER_FIXED_LEN,
         start,
-        f"archive header read {r.pos - start} bytes, expected {ARCHIVE_HEADER_LEN} "
-        f"(branch string {branch!r} changed length?)",
+        f"archive header read {branch_at - start} bytes before the engine branch string, "
+        f"expected {ARCHIVE_HEADER_FIXED_LEN}",
     )
     return fields, engine_version, changelist, branch
 
