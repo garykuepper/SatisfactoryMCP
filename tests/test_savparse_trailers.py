@@ -84,10 +84,16 @@ def test_the_repsize_variants_share_the_chain_reader():
 
 
 def test_the_registry_covers_exactly_the_classes_that_carry_trailing_bytes():
-    """Eight classes in a save carry them; the lightweight subsystem has its own module, so
-    seven belong here. A class appearing that this does not know is the interesting failure,
-    and it shows up as `actorSpecificInfo` being None rather than as an error."""
-    assert len(TRAILER_READERS) == 7
+    """Nine classes in a save carry them; the lightweight subsystem has its own module, so
+    eight belong here. A class appearing that this does not know is the interesting failure,
+    and it shows up as `actorSpecificInfo` being None rather than as an error.
+
+    Eight rather than seven since the anniversary build (502094), which added a fourth
+    conveyor-chain size variant, ``_RepSizeNoCull``. It reads with the same ``_chain`` and was
+    found the way this docstring predicts -- a chain silently dropped, 318,579 trailing bytes
+    of belt geometry, reported as `no reader knows this class` rather than as a failure.
+    """
+    assert len(TRAILER_READERS) == 8
     assert set(TRAILER_READERS) >= {POWER_LINE, CIRCUIT_SUBSYSTEM, PLAYER_STATE}
 
 
