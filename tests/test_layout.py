@@ -599,6 +599,25 @@ def test_slab_mode_attaches_each_crossing_bus_to_exactly_one_floor(oil_layout, g
     assert not dupes, dupes
 
 
+def test_slab_floor_foundations_is_the_whole_slab_not_just_used_space(oil_layout, game):
+    """You pour the whole slab, not just the part your blocks cover -- Floor.foundations
+    (which total_foundations and the materials bill read) has to reflect that, while
+    Floor.used_foundations keeps the real number for a percent-full figure."""
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    for f in lay.floors:
+        if f.slab_side_m is not None:  # not an oversized-block floor
+            assert f.foundations == 100  # 10x10
+        assert f.used_foundations == sum(b.foundations for b in f.blocks)
+        assert f.used_foundations <= f.foundations
+
+
+def test_slab_mode_site_side_is_the_slab_not_the_used_area(oil_layout, game):
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    assert lay.site_side_m() == 10 * FOUNDATION_M
+
+
 # ------------------------------------------------------------- shelf packer (_pack_slab)
 
 

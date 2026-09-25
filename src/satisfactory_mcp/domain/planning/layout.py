@@ -148,8 +148,17 @@ class Floor:
     stages: list[int] = field(default_factory=list)
 
     @property
-    def foundations(self) -> int:
+    def used_foundations(self) -> int:
+        """What the blocks on this floor actually cover, ignoring the rest of the slab."""
         return sum(b.foundations for b in self.blocks)
+
+    @property
+    def foundations(self) -> int:
+        """What you pour: the whole slab in slab mode (you build the full floor, not
+        just the covered part), otherwise the block sum -- unchanged from upstream."""
+        if self.slab_side_m is not None:
+            return round((self.slab_side_m / FOUNDATION_M) ** 2)
+        return self.used_foundations
 
     @property
     def machines(self) -> int:
