@@ -614,8 +614,8 @@ def test_slab_floor_foundations_is_the_whole_slab_not_just_used_space(oil_layout
 
 def test_slab_mode_site_side_is_the_slab_not_the_used_area(oil_layout, game):
     sol, _default = oil_layout
-    lay = build_layout(game, sol, slab_foundations=10)
-    assert lay.site_side_m() == 10 * FOUNDATION_M
+    lay = build_layout(game, sol, slab_foundations=20)
+    assert lay.site_side_m() == 20 * FOUNDATION_M
 
 
 # ------------------------------------------------------------- shelf packer (_pack_slab)
