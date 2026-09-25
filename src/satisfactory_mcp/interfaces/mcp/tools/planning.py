@@ -702,6 +702,20 @@ def plan_layout(
     order_floors_by: Annotated[
         str, Field(description='"chain" (build order) or "head" (minimise fluid lift)')
     ] = "chain",
+    slab_foundations: Annotated[
+        int,
+        Field(
+            description=(
+                "pack blocks onto square slabs of this many foundations per side "
+                "(shelf-packed, extractors excluded -- they stand on their node); "
+                "0 = off, one stage per floor with a logistics deck between each pair, "
+                "matching plan_layout's behaviour before this parameter existed"
+            )
+        ),
+    ] = 0,
+    aisle_foundations: Annotated[
+        int, Field(description="walkway width in foundations between packed blocks/rows")
+    ] = 1,
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -798,6 +812,8 @@ def plan_layout(
             sites=sites,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
+            slab_foundations=slab_foundations,
+            aisle_foundations=aisle_foundations,
             factory=factory,
             plan=plan,
         )

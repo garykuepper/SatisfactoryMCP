@@ -85,6 +85,12 @@ class Block:
     #: N of these need" -- see Footprint.pack. None only when the building has no
     #: clearance data at all, which `build_layout` reports rather than treating as free.
     packed: Packed | None = None
+    #: Foundation-grid position within this block's floor, and whether it was rotated
+    #: 90deg to fit. Only meaningful in slab mode (Layout built with slab_foundations>0)
+    #: -- 0, 0, False otherwise, including for anything in Layout.off_slab.
+    x_fnd: int = 0
+    y_fnd: int = 0
+    rotated: bool = False
 
     @property
     def foundations(self) -> int:
@@ -132,6 +138,14 @@ class Floor:
     #: ``layout_service`` when floors are stacked per site, so a reader can tell three
     #: separate buildings from one tower.
     site: str = ""
+    #: Slab side in metres, set only for a slab-mode production floor. None in upstream
+    #: (slab_foundations=0) mode, where a floor's footprint is still the sum of its
+    #: blocks -- see Floor.foundations, unchanged below.
+    slab_side_m: float | None = None
+    #: Every chain stage physically standing on this floor. One entry (equal to
+    #: ``stage``) outside slab mode; several on a slab-mode floor holding more than one
+    #: stage's blocks. Read by _slab_floors (Task 4) for bus routing.
+    stages: list[int] = field(default_factory=list)
 
     @property
     def foundations(self) -> int:
@@ -148,6 +162,9 @@ class Layout:
     buses: list[Bus]
     floors: list[Floor]
     warnings: list[str] = field(default_factory=list)
+    #: Extractors -- they stand on their resource node, not on a factory floor. Always
+    #: empty when slab_foundations=0 (upstream keeps extractors on their stage's floor).
+    off_slab: list[Block] = field(default_factory=list)
 
     @property
     def foundations(self) -> int:
@@ -658,17 +675,45 @@ def build_layout(
     pipe_m3min: float = 600.0,
     max_floor_foundations: int = 0,
     order_floors_by: str = "chain",
+    slab_foundations: int = 0,
+    aisle_foundations: int = 1,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
     ``order_floors_by`` is "chain" (depth order, so the schematic reads in build order) or
-    "head" (minimise fluid lift). See `order_stages_by_head`.
+    "head" (minimise fluid lift).
+
+    ``slab_foundations`` (0 = off, matching upstream exactly: one stage per floor, a
+    logistics deck between each pair) packs blocks shelf-style onto square slabs of
+    that many foundations per side, ``aisle_foundations`` apart, extractors excluded
+    (they go to ``Layout.off_slab`` -- see ``_pack_slab``).
     """
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
     _assign_stages(blocks)
     buses = _buses(game, blocks, sol, belt_ipm, pipe_m3min)
 
     warnings: list[str] = []
+    off_slab: list[Block] = []
+    if slab_foundations > 0:
+        is_extractor = lambda b: bool(  # noqa: E731
+            (bd := game.buildings.get(b.building_id)) and bd.is_extractor
+        )
+        off_slab = [b for b in blocks if is_extractor(b)]
+        on_slab = [b for b in blocks if not is_extractor(b)]
+        on_slab.sort(key=lambda b: (b.stage, -b.foundations))
+        floors = [
+            Floor(
+                index=0,
+                kind="production",
+                stage=on_slab[0].stage if on_slab else None,
+                stages=sorted({b.stage for b in on_slab}),
+                height_m=16.0,
+                blocks=on_slab,
+                slab_side_m=slab_foundations * FOUNDATION_M,
+            )
+        ] if on_slab else []
+        return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)
+
     order = None
     if (order_floors_by or "chain").strip().casefold() == "head":
         order, head_notes = order_stages_by_head(blocks, buses)
@@ -701,4 +746,4 @@ def build_layout(
             f"{len({b.label for b in split})} process(es) split across parallel "
             f"manifolds by throughput, up to {worst.parts}x ({worst.label})"
         )
-    return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings)
+    return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)

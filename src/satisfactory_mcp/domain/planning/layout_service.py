@@ -69,6 +69,8 @@ def build_layout_report(
     sites: dict[str, list[str]] | None = None,
     max_floor_foundations: int = 0,
     order_floors_by: str = "chain",
+    slab_foundations: int = 0,
+    aisle_foundations: int = 1,
     factory: str | None = None,
     plan: str | None = None,
 ) -> LayoutReport:
@@ -99,6 +101,8 @@ def build_layout_report(
             pipe_m3min=tiers.pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
+            slab_foundations=slab_foundations,
+            aisle_foundations=aisle_foundations,
         )
         report.lay = lay
     else:
@@ -109,6 +113,8 @@ def build_layout_report(
             pipe_m3min=tiers.pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
+            slab_foundations=slab_foundations,
+            aisle_foundations=aisle_foundations,
         )
 
     # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
@@ -195,6 +201,8 @@ def _layout_by_site(
     pipe_m3min: float,
     max_floor_foundations: int,
     order_floors_by: str,
+    slab_foundations: int = 0,
+    aisle_foundations: int = 1,
 ) -> tuple[Layout, list[tuple[str, Layout]]]:
     """One stack per declared site, plus the concatenation the report totals read from.
 
@@ -221,7 +229,7 @@ def _layout_by_site(
         groups.append(("(unassigned)", leftover))
 
     site_layouts: list[tuple[str, Layout]] = []
-    blocks, buses, floors, warnings = [], [], [], []
+    blocks, buses, floors, off_slab, warnings = [], [], [], [], []
     stage_base = 0
     index_base = 0
     for name, procs in groups:
@@ -232,6 +240,8 @@ def _layout_by_site(
             pipe_m3min=pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
+            slab_foundations=slab_foundations,
+            aisle_foundations=aisle_foundations,
         )
         # Shift IN PLACE, uniformly, so the sub-layout stays self-consistent and the
         # merged view shares its objects rather than describing different ones.
@@ -249,6 +259,7 @@ def _layout_by_site(
         blocks += sub.blocks
         buses += sub.buses
         floors += sub.floors
+        off_slab += sub.off_slab
         for w in sub.warnings:
             tagged = f"{name}: {w}"
             if tagged not in warnings:
@@ -256,5 +267,5 @@ def _layout_by_site(
         stage_base = max((b.stage for b in sub.blocks), default=stage_base) + 1
         index_base = floors[-1].index + 1 if floors else 0
 
-    merged = Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings)
+    merged = Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)
     return merged, site_layouts

@@ -520,3 +520,39 @@ def test_a_building_with_no_clearance_data_is_not_free(game, state):
     assert bare.packed is None
     assert bare.foundations == 0
     assert bare.block_width_m == 0.0
+
+
+def test_slab_zero_matches_upstream_exactly(oil_layout, game):
+    """slab_foundations=0 is the documented off switch: it has to read the same as
+    not passing the parameter at all, since every existing caller depends on that."""
+    sol, default = oil_layout
+    explicit_zero = build_layout(game, sol, slab_foundations=0)
+    assert [f.height_m for f in explicit_zero.floors] == [f.height_m for f in default.floors]
+    assert [f.kind for f in explicit_zero.floors] == [f.kind for f in default.floors]
+    assert [f.foundations for f in explicit_zero.floors] == [f.foundations for f in default.floors]
+    assert explicit_zero.off_slab == []
+
+
+def test_slab_mode_moves_extractors_off_the_floor(oil_layout, game):
+    """Extractors stand on their nodes, not on a factory floor -- once slabs are on,
+    no production floor should hold one, and all blocks are accounted for."""
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+
+    # Check that no extractors land on any floor in slab mode
+    on_floor_ids = {b.building_id for f in lay.floors for b in f.blocks}
+    for block_id in on_floor_ids:
+        building = game.buildings.get(block_id)
+        assert not (building and building.is_extractor), f"{block_id} is an extractor and should not be on floor"
+
+    # Check that all extractors (if any) are in off_slab
+    off_slab_ids = {b.building_id for b in lay.off_slab}
+    for block in lay.blocks:
+        building = game.buildings.get(block.building_id)
+        if building and building.is_extractor:
+            assert block.building_id in off_slab_ids, f"{block.building_id} should be in off_slab"
+
+    # nothing lost: every block is either on a floor or in off_slab, once each
+    on_floor_keys = [b.key for f in lay.floors for b in f.blocks]
+    all_keys = sorted(on_floor_keys + [b.key for b in lay.off_slab])
+    assert all_keys == sorted(b.key for b in lay.blocks)
