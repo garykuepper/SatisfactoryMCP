@@ -7,6 +7,7 @@ not the aesthetic choices.
 
 from __future__ import annotations
 
+import math
 from itertools import pairwise
 
 import pytest
@@ -552,6 +553,36 @@ def test_slab_mode_moves_extractors_off_the_floor(oil_solution, game):
     on_floor_keys = [b.key for f in lay.floors for b in f.blocks]
     all_keys = sorted(on_floor_keys + [b.key for b in lay.off_slab])
     assert all_keys == sorted(b.key for b in lay.blocks)
+
+
+def test_slab_mode_gives_blocks_real_positions_and_conserves_them(oil_layout, game):
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10, aisle_foundations=1)
+    placed_keys = [b.key for f in lay.floors for b in f.blocks]
+    assert sorted(placed_keys) == sorted(
+        b.key for b in lay.blocks
+        if not (game.buildings.get(b.building_id) and game.buildings[b.building_id].is_extractor)
+    )
+    for f in lay.floors:
+        if f.slab_side_m is None:
+            continue  # oversized block given its own floor at full size -- no slab to check
+        for b in f.blocks:
+            assert b.x_fnd + math.ceil(b.block_width_m / FOUNDATION_M) <= 10 or b.rotated
+        # no two blocks on the same floor overlap
+        for a, c in ((a, c) for i, a in enumerate(f.blocks) for c in f.blocks[i + 1 :]):
+            aw = math.ceil((a.block_depth_m if a.rotated else a.block_width_m) / FOUNDATION_M)
+            ad = math.ceil((a.block_width_m if a.rotated else a.block_depth_m) / FOUNDATION_M)
+            cw = math.ceil((c.block_depth_m if c.rotated else c.block_width_m) / FOUNDATION_M)
+            cd = math.ceil((c.block_width_m if c.rotated else c.block_depth_m) / FOUNDATION_M)
+            overlap_x = a.x_fnd < c.x_fnd + cw and c.x_fnd < a.x_fnd + aw
+            overlap_y = a.y_fnd < c.y_fnd + cd and c.y_fnd < a.y_fnd + ad
+            assert not (overlap_x and overlap_y), (a.key, c.key)
+
+
+def test_slab_mode_never_emits_a_logistics_floor(oil_layout, game):
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    assert not any(f.kind == "logistics" for f in lay.floors)
 
 
 # ------------------------------------------------------------- shelf packer (_pack_slab)

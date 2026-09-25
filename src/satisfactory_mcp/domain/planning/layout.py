@@ -580,6 +580,68 @@ def _pack_slab(
     return floors, oversized, warnings
 
 
+def _slab_floors(
+    blocks: list[Block], buses: list[Bus], slab_fnd: int, aisle_fnd: int
+) -> tuple[list[Floor], list[str]]:
+    """Real floors from a shelf-packed slab: positions written back onto the blocks,
+    one Floor per pack result, crossing buses attached to the floor that receives
+    them (slab mode never has a logistics floor)."""
+    ordered = sorted(blocks, key=lambda b: (b.stage, -b.foundations))
+    packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd)
+
+    floors: list[Floor] = []
+    stage_of_floor: dict[int, int] = {}  # stage -> floor index, for bus routing
+    for placed in packed_floors:
+        if not placed:
+            continue
+        for p in placed:
+            p.block.x_fnd, p.block.y_fnd, p.block.rotated = p.x_fnd, p.y_fnd, p.rotated
+        floor_blocks = [p.block for p in placed]
+        stages = sorted({b.stage for b in floor_blocks})
+        floors.append(
+            Floor(
+                index=len(floors),
+                kind="production",
+                stage=stages[0],
+                stages=stages,
+                height_m=16.0,
+                blocks=floor_blocks,
+                slab_side_m=slab_fnd * FOUNDATION_M,
+            )
+        )
+        for s in stages:
+            stage_of_floor[s] = floors[-1].index
+
+    for b in oversized:
+        floors.append(
+            Floor(
+                index=len(floors),
+                kind="production",
+                stage=b.stage,
+                stages=[b.stage],
+                height_m=16.0,
+                blocks=[b],
+                slab_side_m=None,  # not a standard slab -- sized to the block itself
+            )
+        )
+        stage_of_floor[b.stage] = floors[-1].index
+
+    # Crossing buses attach to the RECEIVING floor (the higher stage's floor), read as
+    # "arrives here from below" -- slab mode has no floor dedicated to a logistics deck.
+    for floor in floors:
+        crossing = [
+            bus
+            for bus in buses
+            if not bus.external
+            and bus.to_stage in floor.stages
+            and stage_of_floor.get(bus.from_stage) != floor.index
+            and bus.from_stage in stage_of_floor
+        ]
+        floor.buses = crossing
+
+    return floors, warnings
+
+
 def _decks_for(blocks: list[Block], cap: int) -> list[list[Block]]:
     """Split one chain stage across as many decks as a foundation cap allows.
 
@@ -795,18 +857,8 @@ def build_layout(
         )
         off_slab = [b for b in blocks if is_extractor(b)]
         on_slab = [b for b in blocks if not is_extractor(b)]
-        on_slab.sort(key=lambda b: (b.stage, -b.foundations))
-        floors = [
-            Floor(
-                index=0,
-                kind="production",
-                stage=on_slab[0].stage if on_slab else None,
-                stages=sorted({b.stage for b in on_slab}),
-                height_m=16.0,
-                blocks=on_slab,
-                slab_side_m=slab_foundations * FOUNDATION_M,
-            )
-        ] if on_slab else []
+        floors, slab_warnings = _slab_floors(on_slab, buses, slab_foundations, aisle_foundations)
+        warnings.extend(slab_warnings)
         return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)
 
     order = None
