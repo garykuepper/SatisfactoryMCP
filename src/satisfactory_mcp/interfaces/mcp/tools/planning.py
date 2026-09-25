@@ -702,27 +702,6 @@ def plan_layout(
     order_floors_by: Annotated[
         str, Field(description='"chain" (build order) or "head" (minimise fluid lift)')
     ] = "chain",
-    max_floor_height_m: Annotated[
-        float,
-        Field(
-            description=(
-                "cap a physical floor at this many metres, packing consecutive chain "
-                "stages onto it as they fit (stacked, not the tallest one); 0 = one "
-                "stage per floor. 16 matches a standard 4-wall build"
-            )
-        ),
-    ] = 0.0,
-    logistics_floor: Annotated[
-        bool,
-        Field(
-            description=(
-                "true (default) gives every floor-to-floor crossing its own logistics "
-                "deck; false drops that deck and reports the crossing belts/pipes on "
-                "the floor above instead, for a build style that routes them along the "
-                "receiving floor's own wall rather than a dedicated storey"
-            )
-        ),
-    ] = True,
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -819,8 +798,6 @@ def plan_layout(
             sites=sites,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
-            max_floor_height_m=max_floor_height_m,
-            logistics_floor=logistics_floor,
             factory=factory,
             plan=plan,
         )

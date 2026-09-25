@@ -340,30 +340,13 @@ def render_layout(
         rows = []
         for f in lay.floors:
             if f.kind == "production":
-                # A floor packed from several stages (max_floor_height_m) names all of
-                # them, since "stage 3" would silently drop stages 1-2 packed in beside
-                # it -- and gets more of its contents shown, since it holds more.
-                if len(f.stages) > 1:
-                    stage_label = (
-                        f"stages {f.stages[0]}-{f.stages[-1]}"
-                        if f.stages == list(range(f.stages[0], f.stages[-1] + 1))
-                        else "stages " + ",".join(str(s) for s in f.stages)
-                    )
-                else:
-                    stage_label = f"stage {f.stage}"
-                top_n = 4 if len(f.stages) > 1 else 2
                 contents = ", ".join(
                     f"{b.machines}x {b.label[:22]}"
-                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:top_n]
+                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:2]
                 )
-                if f.buses:
-                    # Folded in from a dropped logistics deck (logistics_floor=False):
-                    # these arrive here from below rather than occupying their own floor.
-                    receives = ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:3])
-                    contents = f"receives: {receives}; {contents}"
                 row = (
                     f"F{f.index}",
-                    stage_label,
+                    f"stage {f.stage}",
                     len(f.blocks),
                     f.machines,
                     f"{f.height_m:g}m",

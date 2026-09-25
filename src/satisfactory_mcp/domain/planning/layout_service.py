@@ -69,8 +69,6 @@ def build_layout_report(
     sites: dict[str, list[str]] | None = None,
     max_floor_foundations: int = 0,
     order_floors_by: str = "chain",
-    max_floor_height_m: float = 0.0,
-    logistics_floor: bool = True,
     factory: str | None = None,
     plan: str | None = None,
 ) -> LayoutReport:
@@ -101,8 +99,6 @@ def build_layout_report(
             pipe_m3min=tiers.pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
-            max_floor_height_m=max_floor_height_m,
-            logistics_floor=logistics_floor,
         )
         report.lay = lay
     else:
@@ -113,8 +109,6 @@ def build_layout_report(
             pipe_m3min=tiers.pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
-            max_floor_height_m=max_floor_height_m,
-            logistics_floor=logistics_floor,
         )
 
     # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
@@ -201,8 +195,6 @@ def _layout_by_site(
     pipe_m3min: float,
     max_floor_foundations: int,
     order_floors_by: str,
-    max_floor_height_m: float = 0.0,
-    logistics_floor: bool = True,
 ) -> tuple[Layout, list[tuple[str, Layout]]]:
     """One stack per declared site, plus the concatenation the report totals read from.
 
@@ -240,8 +232,6 @@ def _layout_by_site(
             pipe_m3min=pipe_m3min,
             max_floor_foundations=max_floor_foundations,
             order_floors_by=order_floors_by,
-            max_floor_height_m=max_floor_height_m,
-            logistics_floor=logistics_floor,
         )
         # Shift IN PLACE, uniformly, so the sub-layout stays self-consistent and the
         # merged view shares its objects rather than describing different ones.
@@ -253,7 +243,6 @@ def _layout_by_site(
         for f in sub.floors:
             if f.stage is not None:
                 f.stage += stage_base
-            f.stages = [s + stage_base for s in f.stages]
             f.index += index_base
             f.site = name
         site_layouts.append((name, sub))

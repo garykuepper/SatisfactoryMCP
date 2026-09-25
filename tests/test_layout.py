@@ -13,7 +13,7 @@ import pytest
 from conftest import REFERENCE_FIELD
 
 from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M, extract_footprint
-from satisfactory_mcp.domain.planning.layout import LOGISTICS_FLOOR_M, build_layout, fluid_head
+from satisfactory_mcp.domain.planning.layout import LOGISTICS_FLOOR_M, build_layout
 from satisfactory_mcp.domain.planning.optimize import MW, Scenario, solve
 
 pytestmark = pytest.mark.integration
@@ -498,71 +498,6 @@ def test_packing_shrank_the_site_rather_than_the_machine_count(game, state):
     )
     assert lay.total_foundations < naive
     assert lay.machines == sum(p["machines"] for p in prepared.solution.processes)
-
-
-def test_a_height_cap_packs_consecutive_stages_onto_one_floor(oil_layout, game):
-    """A height cap should get MORE than one chain stage per floor where they fit, not
-    one floor per stage regardless of how short each stage's machines are. The oil
-    fixture's own stages are 12-16m each (refineries, blenders), so the cap has to clear
-    two of them stacked (24m) to actually exercise packing rather than the single-stage
-    escape hatch -- that hatch has its own coverage in the assertion below."""
-    cap = 24.0
-    sol, _default = oil_layout
-    lay = build_layout(game, sol, max_floor_height_m=cap)
-    production = [f for f in lay.floors if f.kind == "production"]
-    assert any(len(f.stages) > 1 for f in production), [f.stages for f in production]
-    for f in production:
-        # Packing only breaks the cap for a single stage that was already too tall
-        # alone -- same escape hatch max_floor_foundations already has for one block
-        # wider than the footprint cap.
-        assert f.height_m <= cap or len(f.stages) == 1
-
-
-def test_a_height_cap_conserves_every_block(oil_layout, game):
-    """Packing floors together must not drop or duplicate a machine."""
-    sol, default = oil_layout
-    packed = build_layout(game, sol, max_floor_height_m=16.0)
-    assert packed.machines == default.machines
-    assert sorted(b.key for b in packed.blocks) == sorted(b.key for b in default.blocks)
-
-
-def test_a_zero_height_cap_matches_the_old_one_stage_per_floor_behaviour(oil_layout, game):
-    """0 is the documented off switch: passing it explicitly must read the same as not
-    passing max_floor_height_m at all."""
-    sol, default = oil_layout
-    explicit_zero = build_layout(game, sol, max_floor_height_m=0.0)
-    assert [f.height_m for f in explicit_zero.floors] == [f.height_m for f in default.floors]
-    assert [f.kind for f in explicit_zero.floors] == [f.kind for f in default.floors]
-
-
-def test_dropping_the_logistics_floor_removes_it_and_keeps_the_buses(oil_layout, game):
-    """logistics_floor=False must not just hide the deck -- the crossing buses it would
-    have carried have to still be reachable, on the floor that receives them."""
-    sol, default = oil_layout
-    no_deck = build_layout(game, sol, logistics_floor=False)
-    assert not any(f.kind == "logistics" for f in no_deck.floors)
-    # Same number of production floors as before (nothing packed, cap is off), just
-    # without the logistics decks between them.
-    assert len(no_deck.floors) == len([f for f in default.floors if f.kind == "production"])
-    dropped_bus_names = {b.name for f in default.floors if f.kind == "logistics" for b in f.buses}
-    kept_bus_names = {b.name for f in no_deck.floors for b in f.buses}
-    assert dropped_bus_names <= kept_bus_names
-
-
-def test_fluid_head_resolves_stages_packed_onto_one_floor(oil_layout, game):
-    """A pipe between two stages that packing put on the SAME floor should cost no
-    climb -- that is the whole physical point of packing them together."""
-    sol, _default = oil_layout
-    packed = build_layout(game, sol, max_floor_height_m=24.0)
-    same_floor_stages = next(
-        (f.stages for f in packed.floors if f.kind == "production" and len(f.stages) > 1), None
-    )
-    assert same_floor_stages, "fixture needs to produce at least one packed floor"
-    fluid_head(packed)  # must not raise: every stage in a packed floor has to resolve
-    for stage in same_floor_stages:
-        assert any(
-            stage in (f.stages or [f.stage]) for f in packed.floors if f.kind == "production"
-        )
 
 
 def test_a_building_with_no_clearance_data_is_not_free(game, state):
