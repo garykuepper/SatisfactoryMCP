@@ -485,6 +485,101 @@ def fluid_head(layout: Layout, pump_head_m: float = 0.0) -> list[dict]:
     return out
 
 
+def _to_fnd(m: float) -> int:
+    return max(1, math.ceil(m / FOUNDATION_M))
+
+
+@dataclass
+class _Placed:
+    """One block's shelf-packed position, in foundations, within its floor."""
+
+    block: Block
+    x_fnd: int
+    y_fnd: int
+    w_fnd: int
+    d_fnd: int
+    rotated: bool
+
+
+def _pack_slab(
+    blocks: list[Block], slab_fnd: int, aisle_fnd: int
+) -> tuple[list[list[_Placed]], list[Block], list[str]]:
+    """Shelf-pack blocks onto slab_fnd x slab_fnd floors, aisle_fnd apart.
+
+    Deterministic, in the given order: try the open row, then a fresh row on the
+    current floor, then a new floor. A block that fits neither orientation on an
+    empty slab is skipped and reported separately -- the caller gives it a floor
+    of its own at its real size, not a warped fit.
+
+    Not an optimal packer. This is for a quick visual gut-check, not maximum
+    density -- see the spec's Known Limitations.
+    """
+    floors: list[list[_Placed]] = [[]]
+    oversized: list[Block] = []
+    warnings: list[str] = []
+    floor_top = 0
+    row_x = 0
+    row_depth = 0
+    row_has_blocks = False
+
+    def close_row() -> None:
+        nonlocal floor_top, row_x, row_depth, row_has_blocks
+        if row_has_blocks:
+            floor_top += row_depth + aisle_fnd
+        row_x, row_depth, row_has_blocks = 0, 0, False
+
+    def new_floor() -> None:
+        nonlocal floor_top, row_x, row_depth, row_has_blocks
+        floors.append([])
+        floor_top, row_x, row_depth, row_has_blocks = 0, 0, 0, False
+
+    for b in blocks:
+        w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
+        orientations = [(w0, d0, False)]
+        if (w0, d0) != (d0, w0):
+            orientations.append((d0, w0, True))
+        fitting = [(w, d, r) for w, d, r in orientations if w <= slab_fnd and d <= slab_fnd]
+        if not fitting:
+            oversized.append(b)
+            warnings.append(
+                f"{b.name}: {w0}x{d0} foundations does not fit a {slab_fnd}x{slab_fnd} "
+                "slab in either orientation -- given its own floor at full size"
+            )
+            continue
+
+        placed_here = False
+        for w, d, rotated in fitting:
+            extra = aisle_fnd if row_has_blocks else 0
+            if row_x + extra + w <= slab_fnd and floor_top + max(row_depth, d) <= slab_fnd:
+                x = row_x + extra
+                floors[-1].append(_Placed(b, x, floor_top, w, d, rotated))
+                row_x, row_depth, row_has_blocks = x + w, max(row_depth, d), True
+                placed_here = True
+                break
+        if placed_here:
+            continue
+
+        close_row()
+        for w, d, rotated in fitting:
+            if floor_top + d <= slab_fnd:
+                floors[-1].append(_Placed(b, 0, floor_top, w, d, rotated))
+                row_x, row_depth, row_has_blocks = w, d, True
+                placed_here = True
+                break
+        if placed_here:
+            continue
+
+        new_floor()
+        w, d, rotated = fitting[0]
+        floors[-1].append(_Placed(b, 0, 0, w, d, rotated))
+        row_x, row_depth, row_has_blocks = w, d, True
+
+    close_row()
+    if not floors[-1] and len(floors) > 1:
+        floors.pop()
+    return floors, oversized, warnings
+
+
 def _decks_for(blocks: list[Block], cap: int) -> list[list[Block]]:
     """Split one chain stage across as many decks as a foundation cap allows.
 
