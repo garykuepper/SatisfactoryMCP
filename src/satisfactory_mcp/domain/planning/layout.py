@@ -590,7 +590,7 @@ def _slab_floors(
     packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd)
 
     floors: list[Floor] = []
-    stage_of_floor: dict[int, int] = {}  # stage -> floor index, for bus routing
+    floor_of_stage_min: dict[int, int] = {}  # stage -> LOWEST floor index holding it
     for placed in packed_floors:
         if not placed:
             continue
@@ -610,7 +610,7 @@ def _slab_floors(
             )
         )
         for s in stages:
-            stage_of_floor[s] = floors[-1].index
+            floor_of_stage_min.setdefault(s, floors[-1].index)
 
     for b in oversized:
         floors.append(
@@ -624,19 +624,25 @@ def _slab_floors(
                 slab_side_m=None,  # not a standard slab -- sized to the block itself
             )
         )
-        stage_of_floor[b.stage] = floors[-1].index
+        floor_of_stage_min.setdefault(b.stage, floors[-1].index)
 
-    # Crossing buses attach to the RECEIVING floor (the higher stage's floor), read as
-    # "arrives here from below" -- slab mode has no floor dedicated to a logistics deck.
+    # Crossing buses attach to the first floor (lowest index) where the consuming
+    # stage's blocks begin, but only when that floor sits ABOVE the producing stage's
+    # first floor. A stage split across several floors (oversized blocks, or packing
+    # overflow) must attach the bus once, not to every floor that shares the stage --
+    # see the task review for how the previous per-stage-not-per-floor version
+    # duplicated a bus across up to 7 floors on the oil fixture.
     for floor in floors:
-        crossing = [
-            bus
-            for bus in buses
-            if not bus.external
-            and bus.to_stage in floor.stages
-            and stage_of_floor.get(bus.from_stage) != floor.index
-            and bus.from_stage in stage_of_floor
-        ]
+        crossing = []
+        for bus in buses:
+            if bus.external:
+                continue
+            from_floor = floor_of_stage_min.get(bus.from_stage)
+            to_floor = floor_of_stage_min.get(bus.to_stage)
+            if from_floor is None or to_floor is None or to_floor <= from_floor:
+                continue
+            if to_floor == floor.index:
+                crossing.append(bus)
         floor.buses = crossing
 
     return floors, warnings

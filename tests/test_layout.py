@@ -585,6 +585,20 @@ def test_slab_mode_never_emits_a_logistics_floor(oil_layout, game):
     assert not any(f.kind == "logistics" for f in lay.floors)
 
 
+def test_slab_mode_attaches_each_crossing_bus_to_exactly_one_floor(oil_layout, game):
+    """A stage whose blocks split across several floors (the oversized-block escape
+    hatch does this routinely) must not attach the same crossing bus to every floor
+    that shares the stage -- fluid_head costs risers off this same floor.stages
+    lookup, so a duplicate here would multiply-count a pipe riser."""
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    from collections import Counter
+
+    seen = Counter(bus.item for f in lay.floors for bus in f.buses)
+    dupes = {item: n for item, n in seen.items() if n > 1}
+    assert not dupes, dupes
+
+
 # ------------------------------------------------------------- shelf packer (_pack_slab)
 
 
