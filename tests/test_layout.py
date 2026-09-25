@@ -585,18 +585,54 @@ def test_slab_mode_never_emits_a_logistics_floor(oil_layout, game):
     assert not any(f.kind == "logistics" for f in lay.floors)
 
 
-def test_slab_mode_attaches_each_crossing_bus_to_exactly_one_floor(oil_layout, game):
-    """A stage whose blocks split across several floors (the oversized-block escape
-    hatch does this routinely) must not attach the same crossing bus to every floor
-    that shares the stage -- fluid_head costs risers off this same floor.stages
-    lookup, so a duplicate here would multiply-count a pipe riser."""
+def test_slab_mode_attaches_crossing_buses_only_where_they_are_actually_consumed(oil_layout, game):
+    """A crossing bus must attach only to a floor that (a) holds a consumer of it and
+    (b) sits above the lowest floor holding a producer of it -- not by stage number,
+    which breaks once a stage's blocks split across floors (the oversized-block escape
+    hatch does this routinely) or once oversized floors get reordered into chain order."""
     sol, _default = oil_layout
     lay = build_layout(game, sol, slab_foundations=10)
-    from collections import Counter
+    floor_of_block = {b.key: f.index for f in lay.floors for b in f.blocks}
+    for f in lay.floors:
+        for bus in f.buses:
+            producer_floors = {floor_of_block[p] for p in bus.producers if p in floor_of_block}
+            assert producer_floors, (f.index, bus.item)
+            assert f.index > min(producer_floors), (f.index, bus.item, producer_floors)
+            assert any(floor_of_block.get(c) == f.index for c in bus.consumers), (f.index, bus.item)
 
-    seen = Counter(bus.item for f in lay.floors for bus in f.buses)
-    dupes = {item: n for item, n in seen.items() if n > 1}
-    assert not dupes, dupes
+
+def test_slab_mode_floors_stay_in_chain_order_even_with_oversized_blocks(oil_layout, game):
+    """Oversized blocks must slot into chain order by their own stage, not get stacked
+    above every packed floor regardless of how early their stage is."""
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    min_stages = [min(f.stages) for f in lay.floors if f.stages]
+    assert min_stages == sorted(min_stages)
+
+
+def test_fluid_head_maps_a_stage_to_its_lowest_floor_in_slab_mode(oil_layout, game):
+    """Regression for the bug the final review found: fluid_head mapped a stage to
+    whichever floor last wrote floor.stage (a single value, not floor.stages), so a
+    stage split across several floors (routine via the oversized-block escape hatch)
+    either got credited to an arbitrary one of them or dropped out of the riser count
+    entirely. Values below are measured directly against this fixture at
+    slab_foundations=10, not estimated -- confirm they still hold after any future
+    change to the packer or to fluid_head."""
+    from satisfactory_mcp.domain.planning.layout import fluid_head
+
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    climbs = {row["item"]: row for row in fluid_head(lay, pump_head_m=20.0)}
+    residue = climbs.get("Heavy Oil Residue")
+    assert residue is not None
+    assert residue["floors"] == 3
+    assert residue["metres"] == 48
+    assert residue["pumps"] == 9
+    fuel = climbs.get("Fuel")
+    assert fuel is not None
+    assert fuel["floors"] == 5
+    assert fuel["metres"] == 80
+    assert fuel["pumps"] == 24
 
 
 def test_slab_floor_foundations_is_the_whole_slab_not_just_used_space(oil_layout, game):

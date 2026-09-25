@@ -457,9 +457,15 @@ def fluid_head(layout: Layout, pump_head_m: float = 0.0) -> list[dict]:
     floor_of: dict[int, int] = {}
     site_of: dict[int, str] = {}
     for floor in layout.floors:
-        if floor.stage is not None:
-            floor_of[floor.stage] = floor.index
-            site_of[floor.stage] = floor.site
+        # A slab-mode floor can hold several stages (floor.stages); the SPEC's own
+        # rule (design doc, "for fluid_head, a stage maps to the lowest floor it
+        # appears on") means the first floor (by index, i.e. lowest) that holds a
+        # stage owns it -- setdefault, not plain assignment. Falls back to
+        # floor.stage for a non-slab floor, where .stages is always empty and this is
+        # unchanged from upstream (one stage per floor either way).
+        for stage in floor.stages or ([floor.stage] if floor.stage is not None else []):
+            floor_of.setdefault(stage, floor.index)
+            site_of.setdefault(stage, floor.site)
     height_of = {floor.index: floor.height_m for floor in layout.floors}
 
     out: list[dict] = []
@@ -593,19 +599,35 @@ def _slab_floors(
     blocks: list[Block], buses: list[Bus], slab_fnd: int, aisle_fnd: int
 ) -> tuple[list[Floor], list[str]]:
     """Real floors from a shelf-packed slab: positions written back onto the blocks,
-    one Floor per pack result, crossing buses attached to the floor that receives
-    them (slab mode never has a logistics floor)."""
+    one Floor per pack result (plus one per oversized block, slotted into chain order
+    rather than appended after every packed floor), crossing buses attached to every
+    floor that actually consumes them above their producer (slab mode never has a
+    logistics floor)."""
     ordered = sorted(blocks, key=lambda b: (b.stage, -b.foundations))
     packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd)
 
-    floors: list[Floor] = []
-    floor_of_stage_min: dict[int, int] = {}  # stage -> LOWEST floor index holding it
+    # Build (min_stage, floor_blocks, slab_side_m_or_None) specs for both packed and
+    # oversized floors, then order ALL of them by min_stage so an oversized block from
+    # an early stage doesn't get stacked above a later stage's packed floor -- that
+    # inverted build order (the final review found stage-0 Refinery floors landing
+    # above stage-2 Generator floors on a slab-15 oil-fixture run) and, downstream,
+    # broke fluid_head's floor-crossing math, which depends on floors being in chain
+    # order to mean anything.
+    specs: list[tuple[int, list[Block], float | None]] = []
     for placed in packed_floors:
         if not placed:
             continue
         for p in placed:
             p.block.x_fnd, p.block.y_fnd, p.block.rotated = p.x_fnd, p.y_fnd, p.rotated
         floor_blocks = [p.block for p in placed]
+        specs.append((min(b.stage for b in floor_blocks), floor_blocks, slab_fnd * FOUNDATION_M))
+    for b in oversized:
+        specs.append((b.stage, [b], None))
+    specs.sort(key=lambda s: s[0])  # stable: preserves each list's own internal order
+
+    floors: list[Floor] = []
+    floor_of_block: dict[str, int] = {}
+    for _min_stage, floor_blocks, slab_side in specs:
         stages = sorted({b.stage for b in floor_blocks})
         floors.append(
             Floor(
@@ -615,42 +637,32 @@ def _slab_floors(
                 stages=stages,
                 height_m=16.0,
                 blocks=floor_blocks,
-                slab_side_m=slab_fnd * FOUNDATION_M,
+                slab_side_m=slab_side,
             )
         )
-        for s in stages:
-            floor_of_stage_min.setdefault(s, floors[-1].index)
+        for b in floor_blocks:
+            floor_of_block[b.key] = floors[-1].index
 
-    for b in oversized:
-        floors.append(
-            Floor(
-                index=len(floors),
-                kind="production",
-                stage=b.stage,
-                stages=[b.stage],
-                height_m=16.0,
-                blocks=[b],
-                slab_side_m=None,  # not a standard slab -- sized to the block itself
-            )
-        )
-        floor_of_stage_min.setdefault(b.stage, floors[-1].index)
-
-    # Crossing buses attach to the first floor (lowest index) where the consuming
-    # stage's blocks begin, but only when that floor sits ABOVE the producing stage's
-    # first floor. A stage split across several floors (oversized blocks, or packing
-    # overflow) must attach the bus once, not to every floor that shares the stage --
-    # see the task review for how the previous per-stage-not-per-floor version
-    # duplicated a bus across up to 7 floors on the oil fixture.
+    # Crossing buses attach to EVERY floor that holds a consumer and sits above the
+    # lowest floor holding a producer -- not to a single floor picked by stage number.
+    # The final review found the old stage-level version wrong on the actual flagship
+    # scenario: Steel Rotor (stage 3) sits on F1, and F1 was shown "receiving" Rotor
+    # (which it makes itself) while NOT receiving Wire/Steel Pipe (which Steel Rotor
+    # genuinely draws from F0) -- both of those stages' lowest floor happened to be F0,
+    # so `to_floor <= from_floor` incorrectly skipped them. Routing by which floor
+    # actually holds which block fixes this regardless of how a stage's blocks are
+    # spread across floors.
     for floor in floors:
         crossing = []
         for bus in buses:
             if bus.external:
                 continue
-            from_floor = floor_of_stage_min.get(bus.from_stage)
-            to_floor = floor_of_stage_min.get(bus.to_stage)
-            if from_floor is None or to_floor is None or to_floor <= from_floor:
+            producer_floors = {floor_of_block[p] for p in bus.producers if p in floor_of_block}
+            if not producer_floors:
                 continue
-            if to_floor == floor.index:
+            lowest_producer_floor = min(producer_floors)
+            consumer_here = any(floor_of_block.get(c) == floor.index for c in bus.consumers)
+            if consumer_here and floor.index > lowest_producer_floor:
                 crossing.append(bus)
         floor.buses = crossing
 
@@ -867,6 +879,7 @@ def build_layout(
     warnings: list[str] = []
     off_slab: list[Block] = []
     if slab_foundations > 0:
+        aisle_foundations = max(0, aisle_foundations)
         is_extractor = lambda b: bool(
             (bd := game.buildings.get(b.building_id)) and bd.is_extractor
         )
