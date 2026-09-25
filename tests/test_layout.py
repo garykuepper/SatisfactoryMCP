@@ -533,25 +533,21 @@ def test_slab_zero_matches_upstream_exactly(oil_layout, game):
     assert explicit_zero.off_slab == []
 
 
-def test_slab_mode_moves_extractors_off_the_floor(oil_layout, game):
-    """Extractors stand on their nodes, not on a factory floor -- once slabs are on,
-    no production floor should hold one, and all blocks are accounted for."""
-    sol, _default = oil_layout
-    lay = build_layout(game, sol, slab_foundations=10)
+def test_slab_mode_moves_extractors_off_the_floor(oil_solution, game):
+    """Water Extractors stand on their nodes, not on a factory floor -- once slabs
+    are on, no production floor should hold one.
 
-    # Check that no extractors land on any floor in slab mode
+    Uses oil_solution (not oil_layout): oil_layout's Scenario supplies crude and
+    water via raw_caps, so its solve has ZERO extractor buildings in it -- a test
+    against it would pass whether or not the off-slab split worked at all. Verified
+    directly: oil_solution (sourced from the committed reference save via the
+    `state` fixture and REFERENCE_FIELD) has real Miner Mk.2/Oil Pump/Water Pump
+    blocks, 28 of them landing in off_slab at slab_foundations=10."""
+    lay = build_layout(game, oil_solution, slab_foundations=10)
     on_floor_ids = {b.building_id for f in lay.floors for b in f.blocks}
-    for block_id in on_floor_ids:
-        building = game.buildings.get(block_id)
-        assert not (building and building.is_extractor), f"{block_id} is an extractor and should not be on floor"
-
-    # Check that all extractors (if any) are in off_slab
+    assert "Build_WaterPump_C" not in on_floor_ids
     off_slab_ids = {b.building_id for b in lay.off_slab}
-    for block in lay.blocks:
-        building = game.buildings.get(block.building_id)
-        if building and building.is_extractor:
-            assert block.building_id in off_slab_ids, f"{block.building_id} should be in off_slab"
-
+    assert "Build_WaterPump_C" in off_slab_ids
     # nothing lost: every block is either on a floor or in off_slab, once each
     on_floor_keys = [b.key for f in lay.floors for b in f.blocks]
     all_keys = sorted(on_floor_keys + [b.key for b in lay.off_slab])

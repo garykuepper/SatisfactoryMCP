@@ -695,7 +695,7 @@ def build_layout(
     warnings: list[str] = []
     off_slab: list[Block] = []
     if slab_foundations > 0:
-        is_extractor = lambda b: bool(  # noqa: E731
+        is_extractor = lambda b: bool(
             (bd := game.buildings.get(b.building_id)) and bd.is_extractor
         )
         off_slab = [b for b in blocks if is_extractor(b)]
