@@ -288,7 +288,10 @@ def _read_archive_header(
     warnings: list[tuple[int, str]],
     build_version: int | None = None,
 ) -> tuple[tuple[int, int, int, int], tuple[int, int, int], int, str]:
-    """The 59-byte version header: four int32s, the engine version, the changelist, the branch.
+    """The version header: four int32s, the engine version, the changelist, the branch.
+
+    26 fixed bytes, then the branch as a length-prefixed string, so the total varies by build:
+    59 bytes on ``rel-main-1.2.0``, 70 on ``rel-main-anniversary-2026``.
 
     Read field by field so a change is caught here. The same header appears at the front of the
     body and again between level records -- around 1,900 times on the reference save -- so it is

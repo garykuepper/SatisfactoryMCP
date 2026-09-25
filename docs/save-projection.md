@@ -1277,7 +1277,8 @@ property inside that declares its own size again. Four levels of nesting, four i
 lengths, and the walk cross-checks them against each other.
 
 Two facts cost the most to establish. **There are two body layouts:** saveVersion 60 opens
-with a 59-byte archive version header and a count-terminated array of `(GUID, int32)` custom
+with an archive version header (26 fixed bytes plus the branch string: 59 bytes on 1.2.0, 70 on
+the anniversary build) and a count-terminated array of `(GUID, int32)` custom
 versions (13 of them), and saveVersion 52 — **25 of the 31 readable saves** — goes straight to
 the grid table and has no per-level archive headers either. And **object save versions are per
 object**: 36, 52 and 60 all occur in one file, because an untouched world-partition cell keeps
