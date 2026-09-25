@@ -128,6 +128,12 @@ class Floor:
     height_m: float
     blocks: list[Block] = field(default_factory=list)
     buses: list[Bus] = field(default_factory=list)
+    #: Every chain stage physically standing on this floor. A plain one-stage-per-floor
+    #: layout has one entry here, equal to ``stage``. A floor produced by packing several
+    #: stages under a height cap (``max_floor_height_m``) lists all of them, in chain
+    #: order, so a reader downstream of a single ``stage`` field (``fluid_head``, the
+    #: site-shift in ``_layout_by_site``) can still resolve every stage to its floor.
+    stages: list[int] = field(default_factory=list)
     #: Which declared site this floor belongs to. Empty outside a site partition; set by
     #: ``layout_service`` when floors are stacked per site, so a reader can tell three
     #: separate buildings from one tower.
@@ -431,9 +437,12 @@ def fluid_head(layout: Layout, pump_head_m: float = 0.0) -> list[dict]:
     floor_of: dict[int, int] = {}
     site_of: dict[int, str] = {}
     for floor in layout.floors:
-        if floor.stage is not None:
-            floor_of[floor.stage] = floor.index
-            site_of[floor.stage] = floor.site
+        # A floor packed from several stages (max_floor_height_m) lists them all in
+        # .stages; every one of them physically stands on this floor, not just the
+        # first, so a bus naming a later stage still has to resolve to it.
+        for stage in floor.stages or ([floor.stage] if floor.stage is not None else []):
+            floor_of[stage] = floor.index
+            site_of[stage] = floor.site
     height_of = {floor.index: floor.height_m for floor in layout.floors}
 
     out: list[dict] = []
@@ -597,21 +606,87 @@ def _pump_total(floors: list[Floor], buses: list[Bus], pump_head_m: float = 50.0
     return sum(row["pumps"] for row in fluid_head(stub, pump_head_m))
 
 
+def _deck_height(deck: list[Block]) -> float:
+    """A production deck's own height: its tallest machine plus headroom, rounded up."""
+    tallest = max((b.height_m for b in deck), default=0.0)
+    return math.ceil((tallest + FLOOR_HEADROOM_M) / FLOOR_STEP_M) * FLOOR_STEP_M
+
+
 def _floors(
     blocks: list[Block],
     buses: list[Bus],
     max_floor_foundations: int = 0,
     stage_order: list[int] | None = None,
+    max_floor_height_m: float = 0.0,
+    logistics_floor: bool = True,
 ) -> list[Floor]:
+    """One floor per chain stage, by default -- or, when ``max_floor_height_m`` is set,
+    several consecutive stages packed onto one physical floor as long as their heights
+    (summed, as stacked mezzanines, not the tallest single machine among them) fit under
+    the cap. A stage taller than the cap on its own still gets a floor to itself, same as
+    a block wider than ``max_floor_foundations`` still gets a deck to itself.
+
+    ``logistics_floor=False`` drops the separate deck between floors entirely -- the
+    belts/pipes that would have run along it are attached to the floor ABOVE instead
+    (``Floor.buses``), read as "arrives here from below" rather than "occupies its own
+    level". This is a reporting change only: the riser still has to be built, it just is
+    not counted as a floor of its own, matching a build style that routes that crossing
+    along the receiving floor's own wall instead of giving it a dedicated storey.
+    """
     stages = list(stage_order) if stage_order else sorted({b.stage for b in blocks})
-    at = {stage: position for position, stage in enumerate(stages)}
-    floors: list[Floor] = []
-    index = 0
-    for position, stage in enumerate(stages):
+
+    # One (stage, deck_blocks, deck_height) triple per footprint-deck, in stage order.
+    # Footprint splitting (max_floor_foundations) still applies per stage first -- a
+    # stage that needs several decks for its own manifold width gets that regardless of
+    # whether floors are later packed together by height.
+    stage_decks: list[tuple[int, list[Block], float]] = []
+    for stage in stages:
         on_stage = [b for b in blocks if b.stage == stage]
         for deck in _decks_for(on_stage, max_floor_foundations):
-            index = _emit_deck(floors, index, stage, deck)
-        if position < len(stages) - 1:
+            stage_decks.append((stage, deck, _deck_height(deck)))
+
+    # Group consecutive decks into physical floors under the height cap. A cap of 0
+    # keeps one-deck-per-floor, the prior behaviour.
+    groups: list[list[tuple[int, list[Block], float]]] = []
+    for entry in stage_decks:
+        height = entry[2]
+        if (
+            groups
+            and max_floor_height_m > 0
+            and sum(h for _, _, h in groups[-1]) + height <= max_floor_height_m
+        ):
+            groups[-1].append(entry)
+        else:
+            groups.append([entry])
+
+    # Every original stage's position is now its GROUP's position, so a bus between two
+    # stages sharing a group crosses no floor boundary: no riser, because that is exactly
+    # what packing them onto one floor means physically.
+    at: dict[int, int] = {}
+    for position, group in enumerate(groups):
+        for stage, _, _ in group:
+            at[stage] = position
+
+    floors: list[Floor] = []
+    index = 0
+    pending_buses: list[Bus] = []
+    for position, group in enumerate(groups):
+        group_stages = [stage for stage, _, _ in group]
+        group_blocks = [b for _, deck, _ in group for b in deck]
+        floors.append(
+            Floor(
+                index=index,
+                kind="production",
+                stage=group_stages[0],
+                stages=group_stages,
+                height_m=sum(h for _, _, h in group),
+                blocks=group_blocks,
+                buses=pending_buses,
+            )
+        )
+        pending_buses = []
+        index += 1
+        if position < len(groups) - 1:
             # By POSITION in the stack, not by stage number. The two are the same under
             # chain order and diverge the moment floors are reordered for head -- a bus
             # between stages 1 and 3 crosses this deck only if the deck sits between
@@ -626,29 +701,22 @@ def _floors(
                     <= position
                     < max(at[bus.from_stage], at[bus.to_stage])
                 )
-                or (bus.external and bus.from_stage == stage)
+                or (bus.external and bus.from_stage in group_stages)
             ]
-            floors.append(
-                Floor(
-                    index=index,
-                    kind="logistics",
-                    stage=None,
-                    height_m=LOGISTICS_FLOOR_M,
-                    buses=crossing,
+            if logistics_floor:
+                floors.append(
+                    Floor(
+                        index=index,
+                        kind="logistics",
+                        stage=None,
+                        height_m=LOGISTICS_FLOOR_M,
+                        buses=crossing,
+                    )
                 )
-            )
-            index += 1
+                index += 1
+            else:
+                pending_buses = crossing
     return floors
-
-
-def _emit_deck(floors: list[Floor], index: int, stage: int, on_stage: list[Block]) -> int:
-    """Append one production deck, sized by its tallest machine. Returns the next index."""
-    tallest = max((b.height_m for b in on_stage), default=0.0)
-    height = math.ceil((tallest + FLOOR_HEADROOM_M) / FLOOR_STEP_M) * FLOOR_STEP_M
-    floors.append(
-        Floor(index=index, kind="production", stage=stage, height_m=height, blocks=on_stage)
-    )
-    return index + 1
 
 
 def build_layout(
@@ -658,11 +726,18 @@ def build_layout(
     pipe_m3min: float = 600.0,
     max_floor_foundations: int = 0,
     order_floors_by: str = "chain",
+    max_floor_height_m: float = 0.0,
+    logistics_floor: bool = True,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
     ``order_floors_by`` is "chain" (depth order, so the schematic reads in build order) or
     "head" (minimise fluid lift). See `order_stages_by_head`.
+
+    ``max_floor_height_m`` (0 = off) packs consecutive stages onto one floor as long as
+    their stacked heights fit under it; ``logistics_floor=False`` drops the separate
+    logistics deck between floors and folds that routing into the floor above. See
+    ``_floors`` for what each does to the schematic.
     """
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
     _assign_stages(blocks)
@@ -678,8 +753,12 @@ def build_layout(
         # measured plan. A proxy that can be wrong in the small can be wrong in the large,
         # so both candidate stacks are built and counted, and the loser is discarded. Two
         # floor builds, against 40,320 if the search itself counted pumps.
-        chain_floors = _floors(blocks, buses, max_floor_foundations, None)
-        head_floors = _floors(blocks, buses, max_floor_foundations, order)
+        chain_floors = _floors(
+            blocks, buses, max_floor_foundations, None, max_floor_height_m, logistics_floor
+        )
+        head_floors = _floors(
+            blocks, buses, max_floor_foundations, order, max_floor_height_m, logistics_floor
+        )
         best_head = min(
             (chain_floors, None), (head_floors, order), key=lambda pair: _pump_total(pair[0], buses)
         )
@@ -689,7 +768,7 @@ def build_layout(
                 "floors are left in build order -- reordering has to earn it"
             )
         order = best_head[1]
-    floors = _floors(blocks, buses, max_floor_foundations, order)
+    floors = _floors(blocks, buses, max_floor_foundations, order, max_floor_height_m, logistics_floor)
 
     missing = sorted({b.building for b in blocks if b.foundations == 0})
     if missing:
