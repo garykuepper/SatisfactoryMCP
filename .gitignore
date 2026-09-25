@@ -18,3 +18,4 @@ data/local/
 # tree: run `npm ci && npm run build` there to produce it. tests/test_architecture.py
 # enforces that nothing under static/ is ever tracked again.
 src/satisfactory_mcp/interfaces/web/static/
+.worktrees/
