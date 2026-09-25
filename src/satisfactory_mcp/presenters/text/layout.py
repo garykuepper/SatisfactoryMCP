@@ -340,17 +340,34 @@ def render_layout(
         rows = []
         for f in lay.floors:
             if f.kind == "production":
+                if len(f.stages) > 1:
+                    stage_label = (
+                        f"stages {f.stages[0]}-{f.stages[-1]}"
+                        if f.stages == list(range(f.stages[0], f.stages[-1] + 1))
+                        else "stages " + ",".join(str(s) for s in f.stages)
+                    )
+                else:
+                    stage_label = f"stage {f.stage}"
+                top_n = 4 if len(f.stages) > 1 else 2
                 contents = ", ".join(
                     f"{b.machines}x {b.label[:22]}"
-                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:2]
+                    for b in sorted(f.blocks, key=lambda b: -b.machines)[:top_n]
+                )
+                if f.buses:
+                    receives = ", ".join(f"{b.name} {b.lines}x{b.carrier}" for b in f.buses[:3])
+                    contents = f"receives: {receives}; {contents}"
+                found = (
+                    f"{f.used_foundations}/{f.foundations} ({f.used_foundations / f.foundations:.0%})"
+                    if f.slab_side_m is not None
+                    else f.foundations
                 )
                 row = (
                     f"F{f.index}",
-                    f"stage {f.stage}",
+                    stage_label,
                     len(f.blocks),
                     f.machines,
                     f"{f.height_m:g}m",
-                    f.foundations,
+                    found,
                     contents,
                 )
             else:
@@ -376,6 +393,14 @@ def render_layout(
             'show="trunks" for which nodes share a pipe, show="materials" for '
             "what it costs to build"
         )
+        if lay.off_slab:
+            from collections import Counter
+
+            counts = Counter(b.building for b in lay.off_slab)
+            notes.append(
+                "on nodes, not a factory floor: "
+                + ", ".join(f"{n}x {name}" for name, n in counts.most_common())
+            )
 
     if plan_name:
         plan_notes = [f"recalled saved plan {plan_name!r}", *plan_notes]
