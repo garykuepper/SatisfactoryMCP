@@ -171,12 +171,31 @@ def test_version_two_reads_the_same_buildables(blob_v2):
 
 def test_version_two_drops_the_last_two_fields(blob, blob_v2):
     """The whole difference between the two versions, stated as the field count. Anything
-    else that changed would show up as a walk that does not consume the blob."""
+    else that changed would show up as a walk that does not consume the blob.
+
+    16 and 14 rather than 15 and 13 because every record now ends with its type-specific data
+    list. The *difference* is what this test is about and it is still two.
+    """
     v4 = _classes(blob)[FOUNDATION][0]
     v2 = _classes(blob_v2)[FOUNDATION][0]
-    assert len(v4) == 15
-    assert len(v2) == 13
+    assert len(v4) == 16
+    assert len(v2) == 14
+    assert len(v4) - len(v2) == 2
     assert RECORD_BYTES[4] - RECORD_BYTES[2] == 5, "one uint8 and one int32"
+
+
+def test_a_record_with_no_type_specific_data_ends_with_an_empty_list(blob, blob_v2):
+    """The count at index 12 and the list at the end have to agree, and on both fixtures the
+    count is 0 -- foundations and walls carry no per-piece data. A beam does: on the build save
+    7,687 of 43,516 instances carry one `BuildableBeamLightweightData` block holding the length
+    that piece was drawn to. That is the case this field exists for, and reading the count as
+    the constant 0 is what left the walk 116 bytes short on the first beam.
+    """
+    for b in (blob, blob_v2):
+        for items in _classes(b).values():
+            for inst in items:
+                assert inst[12] == 0
+                assert inst[-1] == []
 
 
 def test_version_two_transforms_are_still_transforms(blob_v2):

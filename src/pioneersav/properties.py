@@ -198,6 +198,18 @@ def _expect(condition: bool, offset: int, message: str) -> None:
         raise ParseError(f"at body offset {offset}: {message}")
 
 
+class _TooDeep(ParseError):
+    """The nesting guard tripping, as a type ``attempt`` can tell apart from a bad guess.
+
+    A ``ParseError`` still, so nothing outside this module has to know it exists: the sidecar's
+    contract is that a bad file raises ``ParseError`` and only ``ParseError``, and this keeps
+    it. It is separate only so that the speculative readings in ``attempt`` -- which exist to
+    swallow a wrong guess and try the next one -- do not also swallow the one error that says
+    the parser is about to run out of Python stack. Absorbed there it stops being a guess that
+    failed and becomes a guess that gets retried all the way down.
+    """
+
+
 # --------------------------------------------------------------- primitives
 
 
@@ -311,23 +323,13 @@ def _client_identity_info(d: _Decoder) -> list:
     return [offline_id, out]
 
 
-def _inventory_item(d: _Decoder) -> list:
-    """FInventoryItem: ``[itemClassPath, state]``.
+def _inventory_item_modern(d: _Decoder) -> list:
+    """``FInventoryItem`` as an object reference, a has-state int32, and the state if there is one.
 
-    On a UE5 save the bytes are an object reference to the item descriptor, then an int32 that
-    is 1 when the stack carries per-item state. State, when present, is another object
-    reference naming the state class plus a **sized, nested property list** -- a rifle in the
-    player's arm slot carries ``/Script/FactoryGame.FGWeaponItemState`` with its own
-    ``CurrentAmmoCount``, which is the game's ammo counter and is why this is read rather than
-    skipped.
-
-    **On an object below version 52 it is two object references and nothing else** -- the
-    descriptor, then the ``Equip_*_C`` actor this item instance is, or two empty strings. There
-    is no has-state int32 and no nested property list.
-
-    **This is the one struct keyed on the OBJECT's version rather than the save's**, and it has
-    to be: version-36 and version-52 objects sit in the same saveVersion-52 file and disagree
-    here, which is not true of anything else in this module.
+    State, when present, is another object reference naming the state class plus a **sized,
+    nested property list** -- a rifle in the player's arm slot carries
+    ``/Script/FactoryGame.FGWeaponItemState`` with its own ``CurrentAmmoCount``, which is the
+    game's ammo counter and is why this is read rather than skipped.
 
     What comes out at element 0 is the **path string**, not an ``ObjectReference``, because
     ``_accumulate_inventory`` runs ``ref_class`` on it and that resolves a bare path string but
@@ -335,8 +337,6 @@ def _inventory_item(d: _Decoder) -> list:
     """
     r = d.r
     item_class = _reference(r)
-    if d.version < FIRST_MODERN_BODY:
-        return [item_class.path_name, _reference(r).path_name or None]
     has_state = r.i32()
     if not has_state:
         return [item_class.path_name, None]
@@ -349,6 +349,42 @@ def _inventory_item(d: _Decoder) -> list:
     )
     values, types = d.property_list(r.pos + size)
     return [item_class.path_name, [state_class.path_name, values, types]]
+
+
+def _inventory_item_legacy(d: _Decoder) -> list:
+    """``FInventoryItem`` as two bare object references and nothing else.
+
+    The descriptor, then the ``Equip_*_C`` actor this item instance is, or two empty strings.
+    No has-state int32 and no nested property list.
+    """
+    r = d.r
+    item_class = _reference(r)
+    return [item_class.path_name, _reference(r).path_name or None]
+
+
+def _inventory_item(d: _Decoder) -> list:
+    """``FInventoryItem``, guessed from the object's version because nothing better is on hand.
+
+    **Only reached when the record's declared size is not available** -- see ``_Decoder.struct``,
+    which refereees the two readings by that size wherever it has one, which in every save in
+    hand is everywhere. This is the fallback for a bare element of a container, and the gate
+    below is a guess.
+
+    It has to be a guess, because **which layout a record uses does not follow from any version
+    number in the file.** That was worth establishing the hard way:
+
+    * an object stamped version 46 in an autosave the game wrote at build 416835 uses the two
+      references -- 16 declared bytes, four empty strings;
+    * an object stamped version 46 in Episode 107, build 463028, uses the modern layout -- 99
+      declared bytes, a reference and a has-state int32, where two references cannot fit.
+
+    Same object version, same ``saveVersion`` 52, different layouts. Somewhere between those two
+    builds the game began writing these legacy records the modern way without restamping them,
+    so the object version says nothing and the save version says nothing. Only the bytes do.
+    """
+    if d.version < FIRST_MODERN_BODY:
+        return _inventory_item_legacy(d)
+    return _inventory_item_modern(d)
 
 
 #: Self-serialising structs kept as raw bytes on purpose, so that they do not show up as
@@ -578,12 +614,12 @@ class _Decoder:
         ``InventoryItem``'s weapon state. Without it a payload of nothing but nested
         ``StructProperty`` tags dies of ``RecursionError``, which carries no byte offset.
         """
-        _expect(
-            self.depth < _MAX_NESTING,
-            self.r.pos,
-            f"property lists nested more than {_MAX_NESTING} deep; the deepest in any of "
-            "the 31 readable saves is 4, so the cursor is not on a property tag",
-        )
+        if self.depth >= _MAX_NESTING:
+            raise _TooDeep(
+                f"at body offset {self.r.pos}: property lists nested more than "
+                f"{_MAX_NESTING} deep; the deepest in any of the 31 readable saves is 4, "
+                "so the cursor is not on a property tag"
+            )
         self.depth += 1
         try:
             return self._property_list(limit)
@@ -646,7 +682,8 @@ class _Decoder:
             return [self.enum_name(tag), r.string()]
         if name == "StructProperty":
             native = bool(tag.flags & TAG_NATIVE_SERIALIZE)
-            return self.struct(tag.type.inner, native_hint=native, end=end)
+            # `end` here is the property's own declared size, so it can referee the reading.
+            return self.struct(tag.type.inner, native_hint=native, end=end, exact=True)
         if name == "ArrayProperty":
             return self.array(tag, end)
         if name == "SetProperty":
@@ -698,6 +735,10 @@ class _Decoder:
         for decode in decoders:
             try:
                 value = decode()
+            except _TooDeep:
+                # Not a wrong guess -- the stack guard. Retrying the next reading from the
+                # same bytes would trip it again one frame lower down.
+                raise
             except ValueError:
                 pass
             else:
@@ -731,7 +772,7 @@ class _Decoder:
 
     # -- structs ----------------------------------------------------------
 
-    def struct(self, struct_type: TypeName, *, native_hint: bool, end: int):
+    def struct(self, struct_type: TypeName, *, native_hint: bool, end: int, exact: bool = False):
         """A struct: raw numbers if its name is in the table, else a property list.
 
         The NAME decides, not the flags bit. The bit says a struct serialises itself but not
@@ -739,9 +780,38 @@ class _Decoder:
         MapProperty with the bit set whose keys are native ``IntVector`` and whose values are
         nested property lists. It is used only as the second opinion that turns an unrecognised
         struct into a skip instead of a misparse.
+
+        ``exact`` says ``end`` is *this* struct's own declared end rather than the end of a
+        container it sits in, which is true only of a standalone ``StructProperty``. When it is,
+        it settles ``InventoryItem``, whose layout no version in the file implies, and it
+        refereees the property-list reading below instead of trusting it: a struct
+        this module does not know, whose bytes are not a property list and whose
+        self-serialising flag is **0**, then costs one property and a warning rather than the
+        save. That combination is not hypothetical and not a base-game shape -- it is what mods
+        write. ``FicsItCam``'s ``FICFrameRange`` is two int64s under a cleared flag, and reading
+        it as a tagged property list takes a frame number for a string length and walks off the
+        end of a 164 MB body.
+
+        The fallback to a skip deliberately does **not** cover the ``_NATIVE_STRUCTS`` branch,
+        ``InventoryItem`` included: there the declared size *chooses* between two readings this
+        module knows, and only a record that is neither degrades to a skip. A struct this module
+        claims to know and then quietly drops would hide exactly the kind of bug the
+        ``InventoryItem`` gate was.
         """
         native = _NATIVE_STRUCTS.get(struct_type.name)
         if native is not None:
+            if native is _inventory_item and exact:
+                # The one native struct whose layout is not implied by any version in the file.
+                # The two readings can never both land on the same byte -- the modern one is a
+                # reference plus 4, the legacy one a reference plus another reference, which is
+                # 8 bytes at its shortest -- so the declared size decides between them outright
+                # rather than merely preferring one. Narrowest first, per `attempt`.
+                return self.attempt(
+                    "an InventoryItem that reads as neither layout",
+                    end,
+                    lambda: _inventory_item_modern(self),
+                    lambda: _inventory_item_legacy(self),
+                )
             return native(self)
         if native_hint:
             # Hand back the bytes rather than None, so the caller can see what it got and the
@@ -751,6 +821,12 @@ class _Decoder:
                     (self.r.pos, f"struct {struct_type.name!r} serialises itself, kept as bytes")
                 )
             return self.r.bytes(end - self.r.pos)
+        if exact:
+            return self.attempt(
+                f"struct {struct_type.name!r} that is neither native nor a property list",
+                end,
+                lambda: list(self.property_list(end)),
+            )
         return list(self.property_list(end))
 
     # -- containers -------------------------------------------------------

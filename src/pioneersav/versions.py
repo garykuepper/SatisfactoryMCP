@@ -43,8 +43,13 @@ FIRST_LEVEL_LIST = 30
 #: * a level **trailer** gains its leading version int32;
 #: * the persistent level's destroyed-actor list becomes **grouped by partition cell**;
 #: * ``FVector``, ``FQuat`` and ``FBox`` are written as **float32** below this and float64 at
-#:   and above it, and ``FInventoryItem`` is two object references below it.
+#:   and above it.
+#:
+#: ``FInventoryItem`` is gated on this constant only where it has to be guessed. Which layout
+#: a record uses does NOT follow from any version in the file -- see ``properties._inventory_item``
+#: -- so where the record's declared size is known it is refereed by that size instead.
 FIRST_MODERN_BODY = 52
+
 
 #: saveHeaderType at which the header started with the save's own name.
 HEADER_TYPE_SAVE_NAME = 14

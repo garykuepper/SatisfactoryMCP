@@ -147,6 +147,9 @@ TRAILER_READERS = {
     f"{CONVEYOR_CHAIN}_RepSizeMedium": _chain,
     f"{CONVEYOR_CHAIN}_RepSizeLarge": _chain,
     f"{CONVEYOR_CHAIN}_RepSizeHuge": _chain,
+    # Added by the anniversary build (502094). Same reader: verified by exact
+    # consumption on a chain of 318,579 trailing bytes, which is what it was dropping.
+    f"{CONVEYOR_CHAIN}_RepSizeNoCull": _chain,
     POWER_LINE: _power_line,
     CIRCUIT_SUBSYSTEM: _circuit_subsystem,
     PLAYER_STATE: _player_state,
