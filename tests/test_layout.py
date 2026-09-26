@@ -789,3 +789,40 @@ def test_rectangular_slab_floor_pours_width_times_depth(oil_layout, game):
     slabbed = [f for f in lay.floors if f.slab_side_m is not None]
     assert slabbed
     assert all(f.foundations == 160 for f in slabbed)
+
+
+def test_pack_rows_gives_each_manifold_its_own_row_along_the_long_side():
+    from satisfactory_mcp.domain.planning.layout import EDGE_FND, _pack_rows
+
+    # 10 wide x 16 deep: long side is y. A 3x1-fnd manifold (24x8 m, long along x)
+    # must be turned to lie along y; a 1x3 one already does. Rows stack along x,
+    # 1-foundation aisle apart: x = 1, 3, 5, 7 (1 + 1 + 1 ...), then the fifth
+    # doesn't fit the 8-wide inner span (7 + 1 + 1 = 9 > 8) and starts floor 2.
+    wide = [_fake_block(f"w{i}", 24, 8, 3) for i in range(2)]
+    deep = [_fake_block(f"d{i}", 8, 24, 3) for i in range(3)]
+    floors, oversized, _ = _pack_rows(wide + deep, slab_fnd=10, aisle_fnd=1, slab_depth_fnd=16)
+    assert not oversized
+    assert [len(f) for f in floors] == [4, 1]
+    first = floors[0]
+    assert [p.x_fnd for p in first] == [1, 3, 5, 7]
+    assert all(p.y_fnd == EDGE_FND for p in first)
+    assert all((p.w_fnd, p.d_fnd) == (1, 3) for p in first)  # long side along y
+    assert [p.rotated for p in first] == [True, True, False, False]
+
+
+def test_pack_rows_flags_a_manifold_longer_than_the_slab():
+    from satisfactory_mcp.domain.planning.layout import _pack_rows
+
+    long_one = _fake_block("long", 8, 8 * 15, 15)  # 15 fnd long, inner long side is 14
+    floors, oversized, warnings = _pack_rows([long_one], slab_fnd=10, aisle_fnd=1, slab_depth_fnd=16)
+    assert oversized == [long_one] and warnings
+
+
+def test_rows_layout_puts_one_manifold_per_row(oil_layout, game):
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10, slab_depth_foundations=16, slab_layout="rows")
+    for f in lay.floors:
+        if f.slab_side_m is None:
+            continue
+        xs = [b.x_fnd for b in f.blocks]
+        assert len(xs) == len(set(xs))  # every manifold on its own row

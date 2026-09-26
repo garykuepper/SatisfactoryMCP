@@ -606,8 +606,60 @@ def _pack_slab(
     return placed_floors, oversized, warnings
 
 
+def _pack_rows(
+    blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
+) -> tuple[list[list[_Placed]], list[Block], list[str]]:
+    """One manifold per row: every block is turned so its long side runs along the
+    slab's long side, starts flush at the EDGE_FND walkway, and gets a row to itself;
+    rows stack across the slab's short side, aisle_fnd apart (the lane between two
+    rows carries one row's output and the next row's input), in the given order. A
+    block that can't fit a row -- longer than the long side, or wider than the short
+    side -- is reported as oversized, like _pack_slab.
+    """
+    depth_fnd = slab_depth_fnd or slab_fnd
+    long_is_y = depth_fnd > slab_fnd
+    inner_long = max(slab_fnd, depth_fnd) - 2 * EDGE_FND
+    inner_short = min(slab_fnd, depth_fnd) - 2 * EDGE_FND
+    floors: list[list[_Placed]] = [[]]
+    oversized: list[Block] = []
+    warnings: list[str] = []
+    offset = 0  # along the short side, within the inner span
+    for b in blocks:
+        w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
+        long_dim, short_dim = max(w0, d0), min(w0, d0)
+        if long_dim > inner_long or short_dim > inner_short:
+            oversized.append(b)
+            warnings.append(
+                f"{b.name}: {w0}x{d0} foundations does not fit a row of a "
+                f"{slab_fnd}x{depth_fnd} slab (with its {EDGE_FND}-foundation edge "
+                "walkway) -- given its own floor at its real size"
+            )
+            continue
+        start = offset + (aisle_fnd if floors[-1] else 0)
+        if floors[-1] and start + short_dim > inner_short:
+            floors.append([])
+            start = 0
+        # Rendered width is along x: make the long side lie along the slab's long axis.
+        if long_is_y:
+            rotated = w0 > d0
+            w, d = (d0, w0) if rotated else (w0, d0)
+            x, y = EDGE_FND + start, EDGE_FND
+        else:
+            rotated = d0 > w0
+            w, d = (d0, w0) if rotated else (w0, d0)
+            x, y = EDGE_FND, EDGE_FND + start
+        floors[-1].append(_Placed(b, x, y, w, d, rotated))
+        offset = start + short_dim
+    return floors, oversized, warnings
+
+
 def _slab_floors(
-    blocks: list[Block], buses: list[Bus], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
+    blocks: list[Block],
+    buses: list[Bus],
+    slab_fnd: int,
+    aisle_fnd: int,
+    slab_depth_fnd: int = 0,
+    slab_layout: str = "grid",
 ) -> tuple[list[Floor], list[str]]:
     """Real floors from a shelf-packed slab: positions written back onto the blocks,
     one Floor per pack result (plus one per oversized block, slotted into chain order
@@ -615,7 +667,8 @@ def _slab_floors(
     floor that actually consumes them above their producer (slab mode never has a
     logistics floor)."""
     ordered = sorted(blocks, key=lambda b: (b.stage, -b.foundations))
-    packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd, slab_depth_fnd)
+    pack = _pack_rows if slab_layout == "rows" else _pack_slab
+    packed_floors, oversized, warnings = pack(ordered, slab_fnd, aisle_fnd, slab_depth_fnd)
 
     # Build (min_stage, floor_blocks, slab_side_m_or_None) specs for both packed and
     # oversized floors, then order ALL of them by min_stage so an oversized block from
@@ -874,6 +927,7 @@ def build_layout(
     slab_foundations: int = 0,
     aisle_foundations: int = 1,
     slab_depth_foundations: int = 0,
+    slab_layout: str = "grid",
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
@@ -885,6 +939,8 @@ def build_layout(
     that many foundations per side, ``aisle_foundations`` apart, extractors excluded
     (they go to ``Layout.off_slab`` -- see ``_pack_slab``). ``slab_depth_foundations``
     makes the slab rectangular (``slab_foundations`` wide by this deep); 0 = square.
+    ``slab_layout`` is "grid" (manifolds in shared rows and columns) or "rows" (one
+    manifold per row, each along the slab's long side).
     """
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
     _assign_stages(blocks)
@@ -901,7 +957,8 @@ def build_layout(
         off_slab = [b for b in blocks if is_extractor(b)]
         on_slab = [b for b in blocks if not is_extractor(b)]
         floors, slab_warnings = _slab_floors(
-            on_slab, buses, slab_foundations, aisle_foundations, slab_depth_foundations
+            on_slab, buses, slab_foundations, aisle_foundations, slab_depth_foundations,
+            (slab_layout or "grid").strip().casefold(),
         )
         warnings.extend(slab_warnings)
         return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)

@@ -72,6 +72,7 @@ def build_layout_report(
     slab_foundations: int = 0,
     aisle_foundations: int = 1,
     slab_depth_foundations: int = 0,
+    slab_layout: str = "grid",
     factory: str | None = None,
     plan: str | None = None,
 ) -> LayoutReport:
@@ -105,6 +106,7 @@ def build_layout_report(
             slab_foundations=slab_foundations,
             aisle_foundations=aisle_foundations,
             slab_depth_foundations=slab_depth_foundations,
+            slab_layout=slab_layout,
         )
         report.lay = lay
     else:
@@ -118,6 +120,7 @@ def build_layout_report(
             slab_foundations=slab_foundations,
             aisle_foundations=aisle_foundations,
             slab_depth_foundations=slab_depth_foundations,
+            slab_layout=slab_layout,
         )
 
     # Floors follow CHAIN DEPTH, which keeps the schematic in build order but says
@@ -207,6 +210,7 @@ def _layout_by_site(
     slab_foundations: int = 0,
     aisle_foundations: int = 1,
     slab_depth_foundations: int = 0,
+    slab_layout: str = "grid",
 ) -> tuple[Layout, list[tuple[str, Layout]]]:
     """One stack per declared site, plus the concatenation the report totals read from.
 
@@ -247,6 +251,7 @@ def _layout_by_site(
             slab_foundations=slab_foundations,
             aisle_foundations=aisle_foundations,
             slab_depth_foundations=slab_depth_foundations,
+            slab_layout=slab_layout,
         )
         # Shift IN PLACE, uniformly, so the sub-layout stays self-consistent and the
         # merged view shares its objects rather than describing different ones.

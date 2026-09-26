@@ -722,6 +722,11 @@ def plan_layout(
         Field(description="slab depth in foundations for a rectangular slab (e.g. 16 with "
                           "slab_foundations=10 for 10x16); 0 = square"),
     ] = 0,
+    slab_layout: Annotated[
+        str,
+        Field(description='"grid" (manifolds in shared rows and columns) or "rows" (one '
+                          "manifold per row, turned to run along the slab's long side)"),
+    ] = "grid",
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -821,6 +826,7 @@ def plan_layout(
             slab_foundations=slab_foundations,
             aisle_foundations=aisle_foundations,
             slab_depth_foundations=slab_depth_foundations,
+            slab_layout=slab_layout,
             factory=factory,
             plan=plan,
         )
