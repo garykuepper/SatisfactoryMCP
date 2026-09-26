@@ -630,9 +630,11 @@ def test_fluid_head_maps_a_stage_to_its_lowest_floor_in_slab_mode(oil_layout, ga
     assert residue["pumps"] == 9
     fuel = climbs.get("Fuel")
     assert fuel is not None
-    assert fuel["floors"] == 5
-    assert fuel["metres"] == 80
-    assert fuel["pumps"] == 24
+    # 6, not 5, since the 1-foundation edge walkway: blocks that fill a bare 10x10
+    # slab no longer fit its 8x8 interior, so one more floor stacks up.
+    assert fuel["floors"] == 6
+    assert fuel["metres"] == 96
+    assert fuel["pumps"] == 30
 
 
 def test_slab_floor_foundations_is_the_whole_slab_not_just_used_space(oil_layout, game):
@@ -689,15 +691,16 @@ def test_pack_slab_no_overlaps_and_respects_the_aisle():
 def test_pack_slab_starts_a_new_floor_when_full():
     from satisfactory_mcp.domain.planning.layout import _pack_slab
 
-    # ten 10x2 blocks: each alone fills a 10-wide row, five rows (2+1 aisle each = 15)
-    # is over a 10-deep slab, so this must span at least two floors.
-    blocks = [_fake_block(f"b{i}", 80, 16, 10) for i in range(10)]
+    # ten 8x2 blocks: each alone fills the 8-wide interior of a 10 slab (1-foundation
+    # edge walkway each side), and ten rows of 2+1 aisle can't fit an 8-deep interior,
+    # so this must span at least two floors.
+    blocks = [_fake_block(f"b{i}", 64, 16, 10) for i in range(10)]
     floors, oversized, warnings = _pack_slab(blocks, slab_fnd=10, aisle_fnd=1)
     assert not oversized
     assert len(floors) >= 2
     for floor in floors:
         for p in floor:
-            assert p.x_fnd + p.w_fnd <= 10
+            assert p.x_fnd + p.w_fnd <= 9
             assert p.y_fnd + p.d_fnd <= 10
 
 
@@ -731,3 +734,23 @@ def test_pack_slab_rotates_a_block_that_only_fits_that_way():
     placed_b = next(p for floor in floors for p in floor if p.block.key == "b")
     assert placed_b.rotated is True
     assert placed_b.w_fnd == 2 and placed_b.d_fnd == 5
+
+
+def test_slab_mode_keeps_a_one_foundation_walkway_at_every_slab_edge(oil_layout, game):
+    from satisfactory_mcp.domain.planning.layout import EDGE_FND, FOUNDATION_M, _to_fnd
+
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10)
+    checked = 0
+    for f in lay.floors:
+        if f.slab_side_m is None:
+            continue
+        side = round(f.slab_side_m / FOUNDATION_M)
+        for b in f.blocks:
+            w, d = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
+            if b.rotated:
+                w, d = d, w
+            assert b.x_fnd >= EDGE_FND and b.y_fnd >= EDGE_FND, (b.key, b.x_fnd, b.y_fnd)
+            assert b.x_fnd + w <= side - EDGE_FND and b.y_fnd + d <= side - EDGE_FND, (b.key, side)
+            checked += 1
+    assert checked

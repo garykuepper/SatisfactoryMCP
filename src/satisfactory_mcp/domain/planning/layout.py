@@ -516,10 +516,15 @@ class _Placed:
     rotated: bool
 
 
+#: Clear walkway kept between every block and the slab's edge, in foundations.
+EDGE_FND = 1
+
+
 def _pack_slab(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
-    """Shelf-pack blocks onto slab_fnd x slab_fnd floors, aisle_fnd apart.
+    """Shelf-pack blocks onto slab_fnd x slab_fnd floors, aisle_fnd apart, with an
+    EDGE_FND walkway between every block and the slab's edge.
 
     Deterministic, in the given order: try the open row, then a fresh row on the
     current floor, then a new floor. A block that fits neither orientation on an
@@ -532,6 +537,8 @@ def _pack_slab(
     floors: list[list[_Placed]] = [[]]
     oversized: list[Block] = []
     warnings: list[str] = []
+    # Pack into the inner square, then shift every position out by the margin.
+    inner = slab_fnd - 2 * EDGE_FND
     floor_top = 0
     row_x = 0
     row_depth = 0
@@ -553,21 +560,22 @@ def _pack_slab(
         orientations = [(w0, d0, False)]
         if (w0, d0) != (d0, w0):
             orientations.append((d0, w0, True))
-        fitting = [(w, d, r) for w, d, r in orientations if w <= slab_fnd and d <= slab_fnd]
+        fitting = [(w, d, r) for w, d, r in orientations if w <= inner and d <= inner]
         if not fitting:
             oversized.append(b)
             warnings.append(
                 f"{b.name}: {w0}x{d0} foundations does not fit a {slab_fnd}x{slab_fnd} "
-                "slab in either orientation -- given its own floor at full size"
+                f"slab (with its {EDGE_FND}-foundation edge walkway) in either "
+                "orientation -- given its own floor at full size"
             )
             continue
 
         placed_here = False
         for w, d, rotated in fitting:
             extra = aisle_fnd if row_has_blocks else 0
-            if row_x + extra + w <= slab_fnd and floor_top + max(row_depth, d) <= slab_fnd:
+            if row_x + extra + w <= inner and floor_top + max(row_depth, d) <= inner:
                 x = row_x + extra
-                floors[-1].append(_Placed(b, x, floor_top, w, d, rotated))
+                floors[-1].append(_Placed(b, x + EDGE_FND, floor_top + EDGE_FND, w, d, rotated))
                 row_x, row_depth, row_has_blocks = x + w, max(row_depth, d), True
                 placed_here = True
                 break
@@ -576,8 +584,8 @@ def _pack_slab(
 
         close_row()
         for w, d, rotated in fitting:
-            if floor_top + d <= slab_fnd:
-                floors[-1].append(_Placed(b, 0, floor_top, w, d, rotated))
+            if floor_top + d <= inner:
+                floors[-1].append(_Placed(b, EDGE_FND, floor_top + EDGE_FND, w, d, rotated))
                 row_x, row_depth, row_has_blocks = w, d, True
                 placed_here = True
                 break
@@ -586,7 +594,7 @@ def _pack_slab(
 
         new_floor()
         w, d, rotated = fitting[0]
-        floors[-1].append(_Placed(b, 0, 0, w, d, rotated))
+        floors[-1].append(_Placed(b, EDGE_FND, EDGE_FND, w, d, rotated))
         row_x, row_depth, row_has_blocks = w, d, True
 
     close_row()
