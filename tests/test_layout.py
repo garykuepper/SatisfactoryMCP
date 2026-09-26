@@ -714,26 +714,37 @@ def test_pack_slab_oversized_block_gets_flagged_not_placed():
     assert warnings and "huge" in warnings[0]
 
 
-def test_pack_slab_rotates_a_block_that_only_fits_that_way():
+def test_pack_slab_never_rotates_now_that_cells_are_square():
     from satisfactory_mcp.domain.planning.layout import _pack_slab
 
-    # A single block against a BARE slab can never need rotation: the fit check
-    # (w <= slab_fnd and d <= slab_fnd) is symmetric under the w/d swap, so a shape
-    # that fits one way always fits the other, and a shape that fails both ways is
-    # oversized, not "only fits rotated" -- there is no single-block case for this.
-    # Rotation can only ever matter against REMAINING ROW SPACE: two 40x16m blocks
-    # (5x2 fnd each) on a 10-wide slab. The first sits unrotated at x=0 (width 5).
-    # The second doesn't fit the row unrotated (5 used + 1 aisle + 5 wide = 11 > 10)
-    # but does fit rotated (5 + 1 + 2 = 8 <= 10). Verified directly against the real
-    # _pack_slab output before writing this assertion: a=(x=0,y=0,w=5,d=2,rotated=
-    # False), b=(x=6,y=0,w=2,d=5,rotated=True).
+    # A uniform grid cell is a square sized to the biggest block on the floor, so
+    # every block fits either way up -- rotation no longer earns its keep the way it
+    # did for the old shelf-packer's leftover-row-space case, and the packer always
+    # leaves rotated False.
     a = _fake_block("a", 40, 16, 10)
     b = _fake_block("b", 40, 16, 10)
-    floors, oversized, warnings = _pack_slab([a, b], slab_fnd=10, aisle_fnd=1)
+    floors, oversized, _warnings = _pack_slab([a, b], slab_fnd=10, aisle_fnd=1)
     assert not oversized
-    placed_b = next(p for floor in floors for p in floor if p.block.key == "b")
-    assert placed_b.rotated is True
-    assert placed_b.w_fnd == 2 and placed_b.d_fnd == 5
+    placed = [p for floor in floors for p in floor]
+    assert all(p.rotated is False for p in placed)
+
+
+def test_pack_slab_aligns_blocks_into_shared_columns_and_rows():
+    from satisfactory_mcp.domain.planning.layout import _pack_slab
+
+    # Five 1x1-fnd blocks (8x8m each) on a 10-wide slab (8-wide interior after the
+    # edge walkway): with aisle_fnd=1 the grid holds a 4x4 arrangement of 1-fnd
+    # cells (4*1 + 3*1 = 7 <= 8), so this must wrap after 4 -- block 5 starts a new
+    # row, but its x_fnd must match block 1's column (both column 0), and blocks
+    # 1-4 must share one y_fnd (row 0) while block 5 sits at a different, larger one.
+    blocks = [_fake_block(f"b{i}", 8, 8, 1) for i in range(5)]
+    floors, oversized, _warnings = _pack_slab(blocks, slab_fnd=10, aisle_fnd=1)
+    assert not oversized
+    placed = {p.block.key: p for floor in floors for p in floor}
+    row0_y = placed["b0"].y_fnd
+    assert placed["b1"].y_fnd == placed["b2"].y_fnd == placed["b3"].y_fnd == row0_y
+    assert placed["b4"].y_fnd != row0_y  # wrapped to a new row
+    assert placed["b4"].x_fnd == placed["b0"].x_fnd  # but shares b0's column
 
 
 def test_slab_mode_keeps_a_one_foundation_walkway_at_every_slab_edge(oil_layout, game):

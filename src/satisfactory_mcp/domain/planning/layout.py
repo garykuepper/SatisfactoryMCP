@@ -506,7 +506,7 @@ def _to_fnd(m: float) -> int:
 
 @dataclass
 class _Placed:
-    """One block's shelf-packed position, in foundations, within its floor."""
+    """One block's grid-packed position, in foundations, within its floor."""
 
     block: Block
     x_fnd: int
@@ -520,87 +520,82 @@ class _Placed:
 EDGE_FND = 1
 
 
+def _grid(dims: list[int], inner: int, aisle_fnd: int) -> tuple[int, int]:
+    """(cell size, blocks per side) for a square grid holding blocks whose largest
+    side is one of `dims`: cell = the biggest of them, so it fits any block in the
+    set in either orientation; per_side = how many such cells (plus the aisle
+    between them) fit the inner span."""
+    cell = max(dims)
+    per_side = max(1, (inner + aisle_fnd) // (cell + aisle_fnd))
+    return cell, per_side
+
+
 def _pack_slab(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
-    """Shelf-pack blocks onto slab_fnd x slab_fnd floors, aisle_fnd apart, with an
-    EDGE_FND walkway between every block and the slab's edge.
+    """Grid-pack blocks onto slab_fnd x slab_fnd floors: every block on a floor takes
+    a cell sized to that floor's biggest block, placed in shared rows AND columns --
+    manifolds line up across the whole floor, not just within their own row -- with
+    an EDGE_FND walkway kept at the slab's edge and an aisle_fnd gap between cells in
+    both directions, doubling as belt runs.
 
-    Deterministic, in the given order: try the open row, then a fresh row on the
-    current floor, then a new floor. A block that fits neither orientation on an
-    empty slab is skipped and reported separately -- the caller gives it a floor
-    of its own at its real size, not a warped fit.
+    Deterministic, in the given order: a block joins the current floor if the grid it
+    would force still holds every block already there; otherwise it starts a new
+    floor. A block that doesn't fit the slab's interior in either dimension is
+    skipped and reported separately -- the caller gives it a floor of its own at its
+    real size, not a warped fit.
 
-    Not an optimal packer. This is for a quick visual gut-check, not maximum
-    density -- see the spec's Known Limitations.
+    Not an optimal packer -- a floor's cell size is set by its biggest block, so one
+    oversized-but-fitting block wastes real space around smaller neighbours on the
+    same floor. This is for a quick visual gut-check, not maximum density -- see the
+    spec's Known Limitations.
     """
-    floors: list[list[_Placed]] = [[]]
+    inner = slab_fnd - 2 * EDGE_FND
     oversized: list[Block] = []
     warnings: list[str] = []
-    # Pack into the inner square, then shift every position out by the margin.
-    inner = slab_fnd - 2 * EDGE_FND
-    floor_top = 0
-    row_x = 0
-    row_depth = 0
-    row_has_blocks = False
-
-    def close_row() -> None:
-        nonlocal floor_top, row_x, row_depth, row_has_blocks
-        if row_has_blocks:
-            floor_top += row_depth + aisle_fnd
-        row_x, row_depth, row_has_blocks = 0, 0, False
-
-    def new_floor() -> None:
-        nonlocal floor_top, row_x, row_depth, row_has_blocks
-        floors.append([])
-        floor_top, row_x, row_depth, row_has_blocks = 0, 0, 0, False
-
+    fitting: list[Block] = []
     for b in blocks:
         w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
-        orientations = [(w0, d0, False)]
-        if (w0, d0) != (d0, w0):
-            orientations.append((d0, w0, True))
-        fitting = [(w, d, r) for w, d, r in orientations if w <= inner and d <= inner]
-        if not fitting:
+        if max(w0, d0) > inner:
             oversized.append(b)
             warnings.append(
                 f"{b.name}: {w0}x{d0} foundations does not fit a {slab_fnd}x{slab_fnd} "
                 f"slab (with its {EDGE_FND}-foundation edge walkway) in either "
-                "orientation -- given its own floor at full size"
+                "orientation -- given its own floor at its real size"
             )
             continue
+        fitting.append(b)
 
-        placed_here = False
-        for w, d, rotated in fitting:
-            extra = aisle_fnd if row_has_blocks else 0
-            if row_x + extra + w <= inner and floor_top + max(row_depth, d) <= inner:
-                x = row_x + extra
-                floors[-1].append(_Placed(b, x + EDGE_FND, floor_top + EDGE_FND, w, d, rotated))
-                row_x, row_depth, row_has_blocks = x + w, max(row_depth, d), True
-                placed_here = True
-                break
-        if placed_here:
+    floors: list[list[Block]] = [[]]
+    dims: list[list[int]] = [[]]
+    for b in fitting:
+        d = max(_to_fnd(b.block_width_m), _to_fnd(b.block_depth_m))
+        _cell, per_side = _grid(dims[-1] + [d], inner, aisle_fnd)
+        if dims[-1] and len(dims[-1]) + 1 > per_side * per_side:
+            floors.append([b])
+            dims.append([d])
+        else:
+            floors[-1].append(b)
+            dims[-1].append(d)
+
+    placed_floors: list[list[_Placed]] = []
+    for floor_blocks in floors:
+        if not floor_blocks:
+            placed_floors.append([])
             continue
+        cell, per_side = _grid(
+            [max(_to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)) for b in floor_blocks],
+            inner, aisle_fnd,
+        )
+        placed = []
+        for i, b in enumerate(floor_blocks):
+            col, row = i % per_side, i // per_side
+            x = EDGE_FND + col * (cell + aisle_fnd)
+            y = EDGE_FND + row * (cell + aisle_fnd)
+            placed.append(_Placed(b, x, y, _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m), False))
+        placed_floors.append(placed)
 
-        close_row()
-        for w, d, rotated in fitting:
-            if floor_top + d <= inner:
-                floors[-1].append(_Placed(b, EDGE_FND, floor_top + EDGE_FND, w, d, rotated))
-                row_x, row_depth, row_has_blocks = w, d, True
-                placed_here = True
-                break
-        if placed_here:
-            continue
-
-        new_floor()
-        w, d, rotated = fitting[0]
-        floors[-1].append(_Placed(b, EDGE_FND, EDGE_FND, w, d, rotated))
-        row_x, row_depth, row_has_blocks = w, d, True
-
-    close_row()
-    if not floors[-1] and len(floors) > 1:
-        floors.pop()
-    return floors, oversized, warnings
+    return placed_floors, oversized, warnings
 
 
 def _slab_floors(
