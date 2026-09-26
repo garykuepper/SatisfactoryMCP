@@ -142,6 +142,9 @@ class Floor:
     #: (slab_foundations=0) mode, where a floor's footprint is still the sum of its
     #: blocks -- see Floor.foundations, unchanged below.
     slab_side_m: float | None = None
+    #: Slab depth in metres when the slab is rectangular; None means square (depth =
+    #: slab_side_m).
+    slab_depth_m: float | None = None
     #: Every chain stage physically standing on this floor. One entry (equal to
     #: ``stage``) outside slab mode; several on a slab-mode floor holding more than one
     #: stage's blocks. Read by _slab_floors (Task 4) for bus routing.
@@ -157,7 +160,8 @@ class Floor:
         """What you pour: the whole slab in slab mode (you build the full floor, not
         just the covered part), otherwise the block sum -- unchanged from upstream."""
         if self.slab_side_m is not None:
-            return round((self.slab_side_m / FOUNDATION_M) ** 2)
+            depth_m = self.slab_depth_m or self.slab_side_m
+            return round((self.slab_side_m / FOUNDATION_M) * (depth_m / FOUNDATION_M))
         return self.used_foundations
 
     @property
@@ -520,20 +524,22 @@ class _Placed:
 EDGE_FND = 1
 
 
-def _grid(dims: list[int], inner: int, aisle_fnd: int) -> tuple[int, int]:
-    """(cell size, blocks per side) for a square grid holding blocks whose largest
-    side is one of `dims`: cell = the biggest of them, so it fits any block in the
-    set in either orientation; per_side = how many such cells (plus the aisle
-    between them) fit the inner span."""
+def _grid(dims: list[int], inner_w: int, inner_d: int, aisle_fnd: int) -> tuple[int, int, int]:
+    """(cell size, columns, rows) for a grid of square cells holding blocks whose
+    largest side is one of `dims`: cell = the biggest of them, so it fits any block
+    in the set in either orientation; columns/rows = how many such cells (plus the
+    aisle between them) fit the inner width/depth."""
     cell = max(dims)
-    per_side = max(1, (inner + aisle_fnd) // (cell + aisle_fnd))
-    return cell, per_side
+    cols = max(1, (inner_w + aisle_fnd) // (cell + aisle_fnd))
+    rows = max(1, (inner_d + aisle_fnd) // (cell + aisle_fnd))
+    return cell, cols, rows
 
 
 def _pack_slab(
-    blocks: list[Block], slab_fnd: int, aisle_fnd: int
+    blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
-    """Grid-pack blocks onto slab_fnd x slab_fnd floors: every block on a floor takes
+    """Grid-pack blocks onto slab_fnd x slab_depth_fnd floors (square when
+    slab_depth_fnd is 0): every block on a floor takes
     a cell sized to that floor's biggest block, placed in shared rows AND columns --
     manifolds line up across the whole floor, not just within their own row -- with
     an EDGE_FND walkway kept at the slab's edge and an aisle_fnd gap between cells in
@@ -550,16 +556,18 @@ def _pack_slab(
     same floor. This is for a quick visual gut-check, not maximum density -- see the
     spec's Known Limitations.
     """
-    inner = slab_fnd - 2 * EDGE_FND
+    depth_fnd = slab_depth_fnd or slab_fnd
+    inner_w = slab_fnd - 2 * EDGE_FND
+    inner_d = depth_fnd - 2 * EDGE_FND
     oversized: list[Block] = []
     warnings: list[str] = []
     fitting: list[Block] = []
     for b in blocks:
         w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
-        if max(w0, d0) > inner:
+        if max(w0, d0) > min(inner_w, inner_d):
             oversized.append(b)
             warnings.append(
-                f"{b.name}: {w0}x{d0} foundations does not fit a {slab_fnd}x{slab_fnd} "
+                f"{b.name}: {w0}x{d0} foundations does not fit a {slab_fnd}x{depth_fnd} "
                 f"slab (with its {EDGE_FND}-foundation edge walkway) in either "
                 "orientation -- given its own floor at its real size"
             )
@@ -570,8 +578,8 @@ def _pack_slab(
     dims: list[list[int]] = [[]]
     for b in fitting:
         d = max(_to_fnd(b.block_width_m), _to_fnd(b.block_depth_m))
-        _cell, per_side = _grid(dims[-1] + [d], inner, aisle_fnd)
-        if dims[-1] and len(dims[-1]) + 1 > per_side * per_side:
+        _cell, cols, rows = _grid(dims[-1] + [d], inner_w, inner_d, aisle_fnd)
+        if dims[-1] and len(dims[-1]) + 1 > cols * rows:
             floors.append([b])
             dims.append([d])
         else:
@@ -583,13 +591,13 @@ def _pack_slab(
         if not floor_blocks:
             placed_floors.append([])
             continue
-        cell, per_side = _grid(
+        cell, cols, _rows = _grid(
             [max(_to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)) for b in floor_blocks],
-            inner, aisle_fnd,
+            inner_w, inner_d, aisle_fnd,
         )
         placed = []
         for i, b in enumerate(floor_blocks):
-            col, row = i % per_side, i // per_side
+            col, row = i % cols, i // cols
             x = EDGE_FND + col * (cell + aisle_fnd)
             y = EDGE_FND + row * (cell + aisle_fnd)
             placed.append(_Placed(b, x, y, _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m), False))
@@ -599,7 +607,7 @@ def _pack_slab(
 
 
 def _slab_floors(
-    blocks: list[Block], buses: list[Bus], slab_fnd: int, aisle_fnd: int
+    blocks: list[Block], buses: list[Bus], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
 ) -> tuple[list[Floor], list[str]]:
     """Real floors from a shelf-packed slab: positions written back onto the blocks,
     one Floor per pack result (plus one per oversized block, slotted into chain order
@@ -607,7 +615,7 @@ def _slab_floors(
     floor that actually consumes them above their producer (slab mode never has a
     logistics floor)."""
     ordered = sorted(blocks, key=lambda b: (b.stage, -b.foundations))
-    packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd)
+    packed_floors, oversized, warnings = _pack_slab(ordered, slab_fnd, aisle_fnd, slab_depth_fnd)
 
     # Build (min_stage, floor_blocks, slab_side_m_or_None) specs for both packed and
     # oversized floors, then order ALL of them by min_stage so an oversized block from
@@ -641,6 +649,7 @@ def _slab_floors(
                 height_m=16.0,
                 blocks=floor_blocks,
                 slab_side_m=slab_side,
+                slab_depth_m=(slab_depth_fnd * FOUNDATION_M) if (slab_side and slab_depth_fnd) else None,
             )
         )
         for b in floor_blocks:
@@ -864,6 +873,7 @@ def build_layout(
     order_floors_by: str = "chain",
     slab_foundations: int = 0,
     aisle_foundations: int = 1,
+    slab_depth_foundations: int = 0,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
@@ -873,7 +883,8 @@ def build_layout(
     ``slab_foundations`` (0 = off, matching upstream exactly: one stage per floor, a
     logistics deck between each pair) packs blocks shelf-style onto square slabs of
     that many foundations per side, ``aisle_foundations`` apart, extractors excluded
-    (they go to ``Layout.off_slab`` -- see ``_pack_slab``).
+    (they go to ``Layout.off_slab`` -- see ``_pack_slab``). ``slab_depth_foundations``
+    makes the slab rectangular (``slab_foundations`` wide by this deep); 0 = square.
     """
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
     _assign_stages(blocks)
@@ -883,12 +894,15 @@ def build_layout(
     off_slab: list[Block] = []
     if slab_foundations > 0:
         aisle_foundations = max(0, aisle_foundations)
+        slab_depth_foundations = max(0, slab_depth_foundations)
         is_extractor = lambda b: bool(
             (bd := game.buildings.get(b.building_id)) and bd.is_extractor
         )
         off_slab = [b for b in blocks if is_extractor(b)]
         on_slab = [b for b in blocks if not is_extractor(b)]
-        floors, slab_warnings = _slab_floors(on_slab, buses, slab_foundations, aisle_foundations)
+        floors, slab_warnings = _slab_floors(
+            on_slab, buses, slab_foundations, aisle_foundations, slab_depth_foundations
+        )
         warnings.extend(slab_warnings)
         return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)
 

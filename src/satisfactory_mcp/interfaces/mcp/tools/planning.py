@@ -706,8 +706,9 @@ def plan_layout(
         int,
         Field(
             description=(
-                "pack blocks onto square slabs of this many foundations per side "
-                "(shelf-packed, extractors excluded -- they stand on their node); "
+                "pack blocks onto slabs this many foundations wide (square unless "
+                "slab_depth_foundations is set; grid-packed so manifolds line up, "
+                "extractors excluded -- they stand on their node); "
                 "0 = off, one stage per floor with a logistics deck between each pair, "
                 "matching plan_layout's behaviour before this parameter existed"
             )
@@ -716,6 +717,11 @@ def plan_layout(
     aisle_foundations: Annotated[
         int, Field(description="walkway width in foundations between packed blocks/rows")
     ] = 1,
+    slab_depth_foundations: Annotated[
+        int,
+        Field(description="slab depth in foundations for a rectangular slab (e.g. 16 with "
+                          "slab_foundations=10 for 10x16); 0 = square"),
+    ] = 0,
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -814,6 +820,7 @@ def plan_layout(
             order_floors_by=order_floors_by,
             slab_foundations=slab_foundations,
             aisle_foundations=aisle_foundations,
+            slab_depth_foundations=slab_depth_foundations,
             factory=factory,
             plan=plan,
         )

@@ -765,3 +765,27 @@ def test_slab_mode_keeps_a_one_foundation_walkway_at_every_slab_edge(oil_layout,
             assert b.x_fnd + w <= side - EDGE_FND and b.y_fnd + d <= side - EDGE_FND, (b.key, side)
             checked += 1
     assert checked
+
+
+def test_pack_slab_rectangular_slab_uses_its_depth_for_rows():
+    from satisfactory_mcp.domain.planning.layout import EDGE_FND, _pack_slab
+
+    # Eight 3x3-fnd blocks. A 10x10 slab (8x8 inner) holds a 2x2 grid of 3-cells; a
+    # 10x16 slab (8x14 inner) holds 2 columns x 3 rows (3*3 + 2*1 = 11 <= 14).
+    blocks = [_fake_block(f"b{i}", 24, 24, 9) for i in range(8)]
+    square, _, _ = _pack_slab(blocks, slab_fnd=10, aisle_fnd=1)
+    rect, oversized, _ = _pack_slab(blocks, slab_fnd=10, aisle_fnd=1, slab_depth_fnd=16)
+    assert [len(f) for f in square] == [4, 4]
+    assert [len(f) for f in rect] == [6, 2]
+    assert not oversized
+    for p in (p for f in rect for p in f):
+        assert p.x_fnd + p.w_fnd <= 10 - EDGE_FND
+        assert p.y_fnd + p.d_fnd <= 16 - EDGE_FND
+
+
+def test_rectangular_slab_floor_pours_width_times_depth(oil_layout, game):
+    sol, _default = oil_layout
+    lay = build_layout(game, sol, slab_foundations=10, slab_depth_foundations=16)
+    slabbed = [f for f in lay.floors if f.slab_side_m is not None]
+    assert slabbed
+    assert all(f.foundations == 160 for f in slabbed)
