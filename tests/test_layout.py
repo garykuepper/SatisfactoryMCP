@@ -1128,10 +1128,14 @@ def _tall_block(key, building, height):
 def test_a_floor_with_a_tall_building_is_double_height():
     from satisfactory_mcp.domain.planning.layout import _building_floors
 
+    # A floor keeps FLOOR_HEADROOM_M (1 m) over its tallest machine: 15 m fits 16 m,
+    # 15.5 m does not.
     floors, warnings = _building_floors(
-        [_tall_block("r", "Refinery", 30.0), _tall_block("a", "Assembler", 10.0)], [], 16, 1)
+        [_tall_block("r", "Refinery", 30.0), _tall_block("a", "Assembler", 15.0),
+         _tall_block("x", "Tall Thing", 15.5)], [], 16, 1)
     assert not warnings
-    assert {f.group: f.height_m for f in floors} == {"Refinery": 32.0, "Assembler": 16.0}
+    assert {f.group: f.height_m for f in floors} == {
+        "Refinery": 32.0, "Assembler": 16.0, "Tall Thing": 32.0}
 
 
 def test_a_building_taller_than_a_double_floor_is_warned():
@@ -1140,3 +1144,14 @@ def test_a_building_taller_than_a_double_floor_is_warned():
     floors, warnings = _building_floors([_tall_block("t", "Tower", 40.0)], [], 16, 1)
     assert floors[0].height_m == 32.0
     assert any("Tower" in w and "40" in w for w in warnings)
+
+
+def test_a_building_with_no_headroom_under_a_double_floor_is_warned_once():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # 32 m + 1 m headroom > 32: flagged, and once for the building, not per manifold.
+    blocks = [_tall_block(f"c{i}", "Coal-Powered Generator", 32.0) for i in range(2)]
+    _floors, warnings = _building_floors(blocks, [], 16, 1)
+    tall = [w for w in warnings if "Coal-Powered Generator" in w]
+    assert tall == ["Coal-Powered Generator is 32 m tall: no headroom under a 32 m double "
+                    "floor (needs 33 m)"]

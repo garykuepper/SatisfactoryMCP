@@ -15,6 +15,8 @@ hard box falls back to the union of its soft ones rather than reporting no size 
 Those rules decide the floor footprint (width x depth) only. Height runs from the bottom of
 that footprint to the top of EVERY box, excluded and soft included: the tops and chimneys
 live in those boxes, and leaving them out read the Coal Generator as 9 m against a real 32.
+A building with a tall clearance column (the Space Elevator's runs ~1000 m) therefore
+reports that height; layout never places such buildings.
 """
 
 from __future__ import annotations

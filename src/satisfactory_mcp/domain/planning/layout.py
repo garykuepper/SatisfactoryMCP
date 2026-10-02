@@ -841,15 +841,18 @@ def _slab_floors(
 
 
 def _slab_floor_height(blocks: list[Block], warnings: list[str]) -> float:
-    """FLOOR_M, or DOUBLE_FLOOR_M when a building outgrows it; a building taller than even
-    the double floor is warned about, since it punches into the floor above."""
+    """FLOOR_M, or DOUBLE_FLOOR_M when a building plus FLOOR_HEADROOM_M outgrows it. A
+    building with no headroom even under the double floor is warned about, once per
+    building however many manifolds or floors it fills."""
     for b in blocks:
-        if b.height_m > DOUBLE_FLOOR_M:
-            warnings.append(
-                f"{b.building} is {b.height_m:g} m tall, taller than a {DOUBLE_FLOOR_M:g} m "
-                "double floor: it reaches into the floor above"
-            )
-    return FLOOR_M if all(b.height_m <= FLOOR_M for b in blocks) else DOUBLE_FLOOR_M
+        need = b.height_m + FLOOR_HEADROOM_M
+        if need > DOUBLE_FLOOR_M:
+            msg = (f"{b.building} is {b.height_m:g} m tall: no headroom under a "
+                   f"{DOUBLE_FLOOR_M:g} m double floor (needs {need:g} m)")
+            if msg not in warnings:
+                warnings.append(msg)
+    fits = all(b.height_m + FLOOR_HEADROOM_M <= FLOOR_M for b in blocks)
+    return FLOOR_M if fits else DOUBLE_FLOOR_M
 
 
 def _building_floors(
