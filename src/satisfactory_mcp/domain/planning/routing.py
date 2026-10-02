@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import re
 from dataclasses import dataclass, field
 
 from ...core.gamedata.footprint import FOUNDATION_M
@@ -39,7 +40,8 @@ class Ports:
     inputs: dict[str, list[Cell]]
     #: output manifold belts, exit end first; a folded block lists [north, south]
     outputs: list[list[Cell]]
-    #: splitter/merger bands (4 m each, both cell rows) when the block reserves rows
+    #: splitter/merger bands (4 m each, both cell rows) in building mode
+    #: (Block.manifold_rows), whether or not the block reserves rows for them
     bands: list[list[Cell]] = field(default_factory=list)
 
 
@@ -613,19 +615,29 @@ def route_belts(layout: Layout, belt_ipm: float, lift_bias: dict[int, int] | Non
 NUDGES = tuple(k for m in range(1, 9) for k in (m, -m))
 
 
+def _failure_key(msg: str) -> str:
+    """A failure with its lift row dropped: a nudge moves lift lines, so a lift-line
+    failure already there before it reads as new only by its row."""
+    return re.sub(r"lift line y\d+", "lift line", msg)
+
+
 def _route_nudged(lay: Layout, belt_ipm: float) -> Routing:
     """route_belts; if a floor fails, the same layout again with the lift rows on the
     failing floors shifted by each of NUDGES in turn -- the first attempt with no
-    failed floor and no new failure wins. Otherwise the unbiased attempt."""
+    failed floor and no new failure (_failure_key) wins. Otherwise the unbiased
+    attempt. Skipped when a failed floor has clashing manifold belts: that is the
+    packing's doing, no lift row changes it, so the floor can never fully route."""
     r = route_belts(lay, belt_ipm)
-    if not r.failed_floors:
+    if not r.failed_floors or any(f"F{fi}: manifold belts collide" in m
+                                  for fi in r.failed_floors for m in r.failures):
         return r
+    before = {_failure_key(m) for m in r.failures}
     for k in NUDGES:
         try:
             nr = route_belts(lay, belt_ipm, {fi: k for fi in sorted(r.failed_floors)})
         except LiftStripFull:
             continue
-        if not nr.failed_floors and set(nr.failures) <= set(r.failures):
+        if not nr.failed_floors and {_failure_key(m) for m in nr.failures} <= before:
             return nr
     return r
 

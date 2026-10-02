@@ -733,3 +733,69 @@ def test_build_routed_layout_widens_when_no_nudge_helps(monkeypatch):
     per_layout = [{}] + [{0: k} for k in ks]
     assert [b for _g, b in calls] == per_layout * 2          # nudged again after widening
     assert r.widened == ["Constructor"] and r.failed_floors == [0]
+
+
+def _scripted_routes(monkeypatch, script):
+    """route_belts returning script(lift_bias) -> (failures, failed_floors); calls logged."""
+    calls = []
+
+    def fake_route(layout, belt_ipm, lift_bias=None):
+        calls.append(dict(lift_bias or {}))
+        r = R.Routing(layout=layout, lift_bias=dict(lift_bias or {}))
+        r.failures, r.failed_floors = script(lift_bias)
+        return r
+
+    monkeypatch.setattr(R, "route_belts", fake_route)
+    monkeypatch.setattr(R, "build_layout", lambda game, sol, **kw: _clash_layout(
+        "Constructor" in kw["wide_groups"]))
+    return calls
+
+
+def test_a_pre_existing_lift_line_failure_does_not_block_a_nudge(monkeypatch):
+    def script(bias):
+        if not bias:
+            return ["Iron lift line y5: 300/min in, 300/min out (belt 270/min)",
+                    "F0: X a -> b unroutable"], [0]
+        return ["Iron lift line y6: 300/min in, 300/min out (belt 270/min)"], []  # same line, moved
+
+    calls = _scripted_routes(monkeypatch, script)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {0: 1}] and r.widened == [] and r.lift_bias == {0: 1}
+
+
+def test_a_new_failure_still_rejects_a_nudge(monkeypatch):
+    def script(bias):
+        if not bias:
+            return ["F0: X a -> b unroutable"], [0]
+        if bias == {0: 1}:
+            return ["Iron lift line y6: 300/min in, 300/min out (belt 270/min)"], []
+        return [], []
+
+    calls = _scripted_routes(monkeypatch, script)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {0: 1}, {0: -1}] and r.lift_bias == {0: -1}
+
+
+def test_clashing_manifolds_skip_the_nudges(monkeypatch):
+    calls = _scripted_routes(monkeypatch, lambda bias: (["F0: manifold belts collide (a at (1, 2))"], [0]))
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {}]                     # one route per layout: original, widened
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
+
+
+def test_a_rotated_output_only_block_keeps_a_merger_row_on_both_sides():
+    from satisfactory_mcp.domain.planning.layout import WEST_BAY_FND, _building_floors, _pack_rows
+
+    # One machine 8 x 10 m (pad 6 m: no merger row straight), no inputs: rotated it still
+    # reserves 1 + 2 + 1 = 4 fnd (x 3..7, cells 12..27), body at x 4 (cells 16..20).
+    # On an E floor its merger band mirrors to v = -2, -1 -> cells 14, 15.
+    b = blk("o", 0, 0, n=1, w=8.0, d=10.0, outputs={"P": 1})
+    b.packed = Packed(count=1, columns=1, rows=1, width_m=8.0, depth_m=10.0, foundations=2)
+    _building_floors([b], [], 16)
+    assert b.rotated and b.x_fnd == 4 and (b.manifold_in_fnd, b.manifold_out_fnd) == (0, 0)
+    [[box]], _, _ = _pack_rows([b], 16, 0, west_fnd=WEST_BAY_FND, east_fnd=2)
+    assert (box.x_fnd, box.w_fnd) == (3, 4)
+    lo, hi = box.x_fnd * R.PER_FND, (box.x_fnd + box.w_fnd) * R.PER_FND - 1
+    for side in ("W", "E"):
+        xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
+        assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)

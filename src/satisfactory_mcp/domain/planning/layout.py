@@ -96,10 +96,11 @@ class Block:
     x_fnd: int = 0
     y_fnd: int = 0
     rotated: bool = False
-    #: Building mode only (0 otherwise): foundation rows reserved beside the body for
-    #: the splitters (input side, one 4 m band per input, two per row) and the mergers
-    #: (each output side -- both outer edges of a folded block, whose inputs share its
-    #: lane). x_fnd/y_fnd stay the body's position; the rows sit outside it.
+    #: Building mode only (0 otherwise): foundation rows reserved outside the body for
+    #: the splitters (input side, one 4 m band per input, two per row) and the merger
+    #: (output/north side; 0 when the body's own rounding pad holds the merger band and
+    #: walk lane -- see _manifold_rows; a folded block's south merger row is always
+    #: reserved, see _rows_before). x_fnd/y_fnd stay the body's position.
     manifold_in_fnd: int = 0
     manifold_out_fnd: int = 0
     #: Building mode: the block has splitter/merger bands (even when its rows are 0 --
@@ -593,12 +594,12 @@ def _rows_before(b: Block, rotated: bool = False) -> int:
     """Reserved rows on the body's input (v < 0) side: a folded block's south merger
     row (always: its band is outside the body), else its splitter rows. A rotated block
     reserves the larger side on both sides: routing mirrors it across its depth on
-    E-input floors, and floor parity isn't known while packing."""
-    if b.packed and b.packed.folded:
-        pre = MERGER_ROW_FND if b.manifold_rows and b.outputs else 0
-    else:
-        pre = b.manifold_in_fnd
-    return max(pre, b.manifold_out_fnd) if rotated else pre
+    E-input floors, and floor parity isn't known while packing -- and at least
+    MERGER_ROW_FND when it has outputs, since a mirrored merger band leaves the body's
+    pad for the far side."""
+    merger = MERGER_ROW_FND if b.manifold_rows and b.outputs else 0
+    pre = merger if b.packed and b.packed.folded else b.manifold_in_fnd
+    return max(pre, b.manifold_out_fnd, merger) if rotated else pre
 
 
 def _rows_after(b: Block, rotated: bool = False) -> int:
