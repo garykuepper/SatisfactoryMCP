@@ -132,6 +132,57 @@ def test_astar_returns_none_when_walled_off():
     assert R.astar(g, (0, 2), (4, 2)) is None
 
 
+def _belt_wall(gap):
+    # 7x7 grid, a routed vertical belt down column 3 ('v'), open only at (3, gap) if given.
+    g = R.Grid(7, 7, set(), set(), set())
+    g.belt_dirs = {(3, y): "v" for y in range(7) if y != gap}
+    return g
+
+
+def test_a_belt_crosses_another_straight_through():
+    # No way round: the path crosses the belt with straight horizontal moves.
+    # Without crossings the wall is impassable (None).
+    path = R.astar(_belt_wall(None), (0, 0), (6, 2))
+    i = next(i for i, c in enumerate(path) if c[0] == 3)
+    assert path[i - 1][1] == path[i][1] == path[i + 1][1]
+    # Crossing route costs 8 steps + 1 turn + CROSS_BELT_COST = 16; a detour through the
+    # gap at (3, g) costs 2g + 8. g=3 -> 14 (detour wins), g=5 -> 18 (crossing wins):
+    # brackets the crossing cost to (4, 8), so a free or huge crossing fails one of them.
+    assert R.CROSS_BELT_COST == 6
+    assert (3, 3) in R.astar(_belt_wall(3), (0, 0), (6, 2))
+    assert (3, 5) not in R.astar(_belt_wall(5), (0, 0), (6, 2))
+
+
+def test_a_belt_never_crosses_at_a_turn_or_runs_along_a_belt():
+    # Column 3 is all 'x' (turn cells): impassable. Without the 'x' rule the path
+    # would cross straight through like an 'h'/'v' cell.
+    g = R.Grid(7, 7, set(), set(), set())
+    g.belt_dirs = {(3, y): "x" for y in range(7)}
+    assert R.astar(g, (0, 3), (6, 3)) is None
+    # One-row corridor whose middle cell is an 'h' belt: running along it is refused.
+    # Without the rule start -> goal runs straight along the corridor.
+    g = R.Grid(7, 3, {(x, y) for x in range(7) for y in (0, 2)}, set(), set())
+    g.belt_dirs = {(3, 1): "h"}
+    assert R.astar(g, (0, 1), (6, 1)) is None
+
+
+def test_a_double_crossing_cell_is_impassable():
+    g = R.Grid(7, 7, set(), set(), set())
+    first = [(3, y) for y in range(7)]
+    R.mark_belt(g, first)
+    second = R.astar(g, (0, 3), (6, 3))
+    assert second == [(x, 3) for x in range(7)]
+    R.mark_belt(g, second)
+    assert g.belt_dirs[(3, 3)] == "x" and g.belt_dirs[(2, 3)] == "h"
+    # A third belt along column 3's crossing row can't cross (3, 3) again: wall the
+    # rest of column 3 and row 3 is the only way, through an 'x' cell.
+    g.belt_dirs.update({(3, y): "x" for y in range(7) if y != 3})
+    g.belt_dirs = {c: d for c, d in g.belt_dirs.items() if c[1] != 3 or c == (3, 3)}
+    assert R.astar(g, (0, 3), (6, 3)) is None
+    g.belt_dirs[(3, 3)] = "v"   # a single crossing would be fine
+    assert R.astar(g, (0, 3), (6, 3)) is not None
+
+
 def lay(*floors_, buses=()):
     blocks = [b for f in floors_ for b in f.blocks]
     return Layout(blocks=blocks, buses=list(buses), floors=list(floors_))

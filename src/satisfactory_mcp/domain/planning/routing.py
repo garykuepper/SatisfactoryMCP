@@ -87,16 +87,21 @@ def strip_rows(f: Floor) -> list[int]:
 
 TURN_COST = 2
 CROSS_COST = 4
+CROSS_BELT_COST = 6
 _DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
 
 @dataclass
 class Grid:
+    """Routing grid. belt_dirs marks routed-belt cells: 'h'/'v' may be crossed straight
+    through perpendicular to that belt, 'x' (a turn or double crossing) never."""
+
     w: int
     h: int
     blocked: set[Cell] = field(default_factory=set)
     lane_rows: set[int] = field(default_factory=set)
     lane_cols: set[int] = field(default_factory=set)
+    belt_dirs: dict[Cell, str] = field(default_factory=dict)
 
     def lanes(self, c: Cell) -> tuple[bool, bool]:
         """(on a horizontal lane, on a vertical lane). Lanes stop short of the strip
@@ -110,7 +115,9 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
     """Cheapest 4-connected path start -> goal, both included; both may be blocked
     cells (they are manifold or strip ends). Step 1, turn +TURN_COST, entering a
     walk-lane cell +CROSS_COST. A lane cell is crossed straight through, perpendicular
-    to its lane; a cell on two lanes is impassable. None when there is no path."""
+    to its lane; a cell on two lanes is impassable. A routed-belt cell ('h'/'v' in
+    belt_dirs) is likewise crossed straight through, perpendicular, for +CROSS_BELT_COST;
+    'x' is impassable. None when there is no path."""
 
     def est(c: Cell) -> int:
         return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
@@ -129,10 +136,10 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
             return path[::-1]
         if cost > best.get((cell, d), math.inf):
             continue
-        on_lane = cell != start and any(g.lanes(cell))
+        straight = cell != start and (any(g.lanes(cell)) or cell in g.belt_dirs)
         for nd in _DIRS:
-            if on_lane and nd != d:
-                continue  # no turning on a lane cell
+            if straight and nd != d:
+                continue  # no turning on a lane or belt-crossing cell
             n = (cell[0] + nd[0], cell[1] + nd[1])
             if not (0 <= n[0] < g.w and 0 <= n[1] < g.h):
                 continue
@@ -145,6 +152,11 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
                     continue
                 if on_row or on_col:
                     step += CROSS_COST
+                bd = g.belt_dirs.get(n)
+                if bd == "x" or (bd == "h" and nd[1] == 0) or (bd == "v" and nd[0] == 0):
+                    continue
+                if bd:
+                    step += CROSS_BELT_COST
             nc = cost + step
             if nc < best.get((n, nd), math.inf):
                 best[(n, nd)] = nc
@@ -152,6 +164,15 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
                 tie += 1
                 heapq.heappush(heap, (nc + est(n), nc, tie, n, nd))
     return None
+
+
+def mark_belt(g: Grid, path: list[Cell]) -> None:
+    """Record a routed belt's interior cells in g.belt_dirs: 'h'/'v' where it runs
+    straight, 'x' where it turns or crosses a belt already there."""
+    for i in range(1, len(path) - 1):
+        p, c, n = path[i - 1], path[i], path[i + 1]
+        g.belt_dirs[c] = ("x" if c in g.belt_dirs else "h" if p[1] == n[1]
+                          else "v" if p[0] == n[0] else "x")
 
 
 EPS = 1e-6
@@ -341,6 +362,7 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
     connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
     connection (over-capacity is flagged, never split); a lift's lines are used round-robin.
+    Routed belts may be crossed straight through by later belts (never at a turn, never twice).
     Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
     out = Routing(layout=layout)
     names = {bus.item: bus.name for bus in layout.buses}
@@ -409,8 +431,9 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
             continue
         lift_cells = {l.cell for l in out.lifts}
         stubs = {c.a if c.a in lift_cells else c.b for c in conns if c.a in lift_cells or c.b in lift_cells}
-        for cx, cy in stubs:
-            grid.blocked |= {(1, cy), (2, cy), (3, cy)}
+        for cx, cy in stubs:  # (1, cy) stays a lane cell; (2, cy) is a crossable belt
+            grid.belt_dirs[(2, cy)] = "h"
+            grid.blocked.add((3, cy))
 
         def ends(c: _Conn):
             return (3, c.a[1]) if c.a in lift_cells else c.a, (3, c.b[1]) if c.b in lift_cells else c.b
@@ -429,7 +452,7 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
                 if fi not in out.failed_floors:
                     out.failed_floors.append(fi)
                 continue
-            grid.blocked.update(path[1:-1])
+            mark_belt(grid, path)
             if c.a in lift_cells:
                 path = [c.a, (1, c.a[1]), (2, c.a[1])] + path
             if c.b in lift_cells:
