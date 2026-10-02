@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass, field
 
 from ...core.gamedata.footprint import FOUNDATION_M
-from .layout import Block, Floor, Layout
+from .layout import Block, Floor, Layout, build_layout
 
 CELL_M = 2.0
 PER_FND = int(FOUNDATION_M / CELL_M)  # 4 cells per foundation
@@ -436,3 +436,19 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
                 path = path + [(2, c.b[1]), (1, c.b[1]), c.b]
             out.belts.append(Belt(c.item, c.rate, fi, path, c.src, c.dst))
     return out
+
+
+def build_routed_layout(game, sol, belt_ipm: float, **layout_kwargs) -> Routing:
+    """build_layout(group_by="building") then route_belts; every floor that fails is
+    re-packed with 2-foundation aisles and the whole stack re-routed (the shared slab
+    may grow), until no new floor fails. Floors that still fail stay in failures."""
+    wide: set[str] = set()
+    while True:
+        lay = build_layout(game, sol, belt_ipm=belt_ipm, group_by="building",
+                           wide_groups=frozenset(wide), **layout_kwargs)
+        r = route_belts(lay, belt_ipm)
+        new = {lay.floors[i].group for i in r.failed_floors} - wide
+        if not new:
+            r.widened = sorted(wide)
+            return r
+        wide |= new

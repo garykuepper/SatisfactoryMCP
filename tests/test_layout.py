@@ -1065,3 +1065,17 @@ def test_smelters_and_foundries_always_share_a_floor_group():
                                  _typed_block("c", "Constructor", 6)], []))
     assert sorted(b.key for b in groups["Foundry + Smelter"]) == ["f", "s"]
     assert [b.key for b in groups["Constructor"]] == ["c"]
+
+
+def test_a_wide_group_packs_with_two_foundation_aisles():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    def rows(wide):
+        bs = [_typed_block(f"c{i}", "Constructor", 16) for i in range(2)]
+        for b in bs:
+            b.packed = type(b.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
+        floors, _ = _building_floors(bs, [], 16, 1, wide_groups=wide)
+        return sorted(b.y_fnd for b in floors[0].blocks)
+
+    assert rows(frozenset()) == [1, 4]                  # 2 deep + 1 aisle
+    assert rows(frozenset({"Constructor"})) == [1, 5]   # 2 deep + 2 aisle

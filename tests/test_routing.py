@@ -295,3 +295,30 @@ def test_partial_surplus_goes_up_and_the_rest_out():
     r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
     assert not r.failures
     assert sorted((l.kind, l.rate) for l in r.lifts) == [("out", pytest.approx(90.0)), ("up", pytest.approx(10.0))]
+
+
+def _clash_layout(wide):
+    lower = blk("a", 1, 1, outputs={"P": 1.0})
+    upper = blk("b", 1, 5 if wide else 4, inputs={"X": 1.0, "Y": 1.0, "Z": 1.0})
+    return lay(floor(0, [lower, upper], d=12, group="Constructor"))
+
+
+def test_build_routed_layout_widens_a_failing_floor_and_retries(monkeypatch):
+    calls = []
+
+    def fake_build_layout(game, sol, **kw):
+        calls.append(kw["wide_groups"])
+        assert kw["group_by"] == "building"
+        return _clash_layout("Constructor" in kw["wide_groups"])
+
+    monkeypatch.setattr(R, "build_layout", fake_build_layout)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [frozenset(), frozenset({"Constructor"})]
+    assert r.widened == ["Constructor"] and not r.failed_floors
+
+
+def test_build_routed_layout_reports_a_floor_that_fails_even_when_wide(monkeypatch):
+    monkeypatch.setattr(R, "build_layout", lambda game, sol, **kw: _clash_layout(False))
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
+    assert any("collide" in f for f in r.failures)

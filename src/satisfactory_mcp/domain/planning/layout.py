@@ -827,7 +827,8 @@ def _slab_floors(
 
 
 def _building_floors(
-    blocks: list[Block], buses: list[Bus], cap_fnd: int, aisle_fnd: int
+    blocks: list[Block], buses: list[Bus], cap_fnd: int, aisle_fnd: int,
+    wide_groups: frozenset[str] = frozenset(),
 ) -> tuple[list[Floor], list[str]]:
     """Floors grouped by building type (spec 2026-10-01): each group row-packed onto
     a cap_fnd x cap_fnd slab, one manifold per row (_pack_rows) -- spilling onto more floors of the same group, whole
@@ -838,7 +839,9 @@ def _building_floors(
     warnings: list[str] = []
     for label, group in _group_blocks(blocks, buses):
         ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
-        packed_floors, oversized, warns = _pack_rows(ordered, cap_fnd, aisle_fnd)
+        packed_floors, oversized, warns = _pack_rows(
+            ordered, cap_fnd, 2 if label in wide_groups else aisle_fnd
+        )
         warnings.extend(warns)
         for placed in packed_floors:
             if not placed:
@@ -1074,6 +1077,7 @@ def build_layout(
     slab_layout: str = "grid",
     group_by: str = "stage",
     max_slab_foundations: int = 16,
+    wide_groups: frozenset[str] = frozenset(),
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
@@ -1094,6 +1098,9 @@ def build_layout(
     and gives every floor one shared slab -- the smallest even x even size that holds
     the largest floor, capped at ``max_slab_foundations``; the slab_* arguments are then ignored. "stage" (default)
     is the default stage-per-floor partitioning.
+
+    ``wide_groups`` (building mode, internal: belt routing's retry) names floor groups
+    re-packed with 2-foundation aisles.
     """
     group_by = (group_by or "stage").strip().casefold()
     if group_by not in ("stage", "building"):
@@ -1124,7 +1131,7 @@ def build_layout(
         on_slab = [b for b in blocks if not is_extractor(b)]
         if group_by == "building":
             floors, slab_warnings = _building_floors(
-                on_slab, buses, max_slab_foundations, aisle_foundations
+                on_slab, buses, max_slab_foundations, aisle_foundations, wide_groups=wide_groups
             )
         else:
             floors, slab_warnings = _slab_floors(
