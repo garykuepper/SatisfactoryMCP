@@ -365,7 +365,9 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     """Route one attempt (no widening): connections per floor, lifts on the strip,
     then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
     connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
-    connection (over-capacity is flagged, never split); a lift's lines are used round-robin.
+    connection (over-capacity is flagged, never split); biggest connections first, each on
+    the lift line (of its group) with the most capacity left on that floor, and a line whose
+    load overflows a belt or doesn't balance in/out is flagged. Lift.rate is the line's load.
     Routed belts may be crossed straight through by later belts (never at a turn, never twice);
     same-item belts from a common end may share a trunk (a splitter/merger in game).
     Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
@@ -383,6 +385,8 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
                             {fi: p[2] for fi, p in plans.items()}, belt_ipm)
     _assign_cells(out.lifts, floors)
+    src_load: dict[int, float] = {}                 # id(lift) -> belts into it on from_floor
+    dst_load: dict[tuple[int, int], float] = {}     # (id(lift), floor) -> belts out of it there
 
     for fi, f in floors.items():
         same, need, surplus = plans[fi]
@@ -396,9 +400,11 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
         for item, users in need.items():
             feeders = [l for l in out.lifts if l.item == item and fi in _span(l)
                        and (l.kind == "in" or (l.kind in ("up", "down") and l.from_floor != fi))]
-            for k, (key, feed, rate) in enumerate(users):
+            for key, feed, rate in sorted(users, key=lambda u: (-u[2], u[0])):
                 if feeders:
-                    conns.append(_Conn(item, rate, feeders[k % len(feeders)].cell, feed, f"lift:{item}", key))
+                    line = min(feeders, key=lambda l: (dst_load.get((id(l), fi), 0.0), l.cell[1]))
+                    dst_load[(id(line), fi)] = dst_load.get((id(line), fi), 0.0) + rate
+                    conns.append(_Conn(item, rate, line.cell, feed, f"lift:{item}", key))
                 else:
                     fail(f"{names.get(item, item)} has no lift to feed {key}")
         for item, senders in surplus.items():
@@ -409,14 +415,13 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
                 fail(f"{names.get(item, item)} has no lift to take {senders[0][0]}")
                 continue
             caps = [sum(l.rate for l in g) for g in groups]
-            used = [0] * len(groups)
             gi = 0
-            for key, exit_, rate in senders:
+            for key, exit_, rate in sorted(senders, key=lambda s_: (-s_[2], s_[0])):
                 while rate > EPS and gi < len(groups):
                     take = min(rate, caps[gi])
                     if take > EPS:
-                        line = groups[gi][used[gi] % len(groups[gi])]
-                        used[gi] += 1
+                        line = min(groups[gi], key=lambda l: (src_load.get(id(l), 0.0), l.cell[1]))
+                        src_load[id(line)] = src_load.get(id(line), 0.0) + take
                         conns.append(_Conn(item, take, exit_, line.cell, key, f"lift:{item}"))
                         caps[gi] -= take
                         rate -= take
@@ -467,6 +472,16 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
             if c.b in lift_cells:
                 path = path + [(2, c.b[1]), (1, c.b[1]), c.b]
             out.belts.append(Belt(c.item, c.rate, fi, path, c.src, c.dst))
+
+    for l in out.lifts:  # Lift.rate becomes the line's real load; flag overflow / imbalance
+        outs = [v for (i, _f), v in dst_load.items() if i == id(l)]
+        delivered = sum(outs)
+        l.rate = delivered if l.kind == "in" else src_load.get(id(l), 0.0)
+        over = max([l.rate, *outs]) > belt_ipm + EPS
+        unbalanced = l.kind in ("up", "down") and abs(l.rate - delivered) > EPS
+        if over or unbalanced:
+            out.failures.append(f"{names.get(l.item, l.item)} lift line y{l.cell[1]}: {l.rate:.4g}/min in, "
+                                f"{delivered:.4g}/min out (belt {belt_ipm:.4g}/min)")
     return out
 
 

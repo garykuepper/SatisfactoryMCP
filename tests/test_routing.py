@@ -261,6 +261,39 @@ def test_a_lift_gets_one_line_per_belt_and_each_manifold_takes_one():
     assert all(b.rate == 250.0 for b in r.belts)
 
 
+def _line_loads(r):
+    """{(floor, lift cell): rate} summed over the belts touching each lift cell."""
+    loads = {}
+    for b in r.belts:
+        for end in (b.path[0], b.path[-1]):
+            if end[0] == 0:
+                loads[(b.floor, end)] = loads.get((b.floor, end), 0.0) + b.rate
+    return loads
+
+
+def test_consumers_take_the_lift_line_with_most_capacity_left():
+    # 'in' lift of 510 -> 2 lines; round-robin put 250+250 on one line (500 > 270)
+    cs = [blk(f"c{i}", 1, 1 + 3 * i, inputs={"Ore": r}) for i, r in enumerate((250.0, 10.0, 250.0))]
+    r = R.route_belts(lay(floor(0, cs, d=12)), belt_ipm=270)
+    assert not r.failures
+    assert sorted(_line_loads(r).values()) == [250.0, 260.0]
+    assert sorted(l.rate for l in r.lifts) == [250.0, 260.0]          # real loads, not 255/255
+    assert {(0, l.cell): l.rate for l in r.lifts} == _line_loads(r)
+
+
+def test_producers_fill_the_emptiest_line_and_an_overloaded_line_is_flagged():
+    ps = [blk(f"p{i}", 1, 1 + 3 * i, outputs={"I": r}) for i, r in enumerate((260.0, 10.0, 130.0))]
+    q = blk("q", 1, 1, inputs={"I": 400.0}, n=4)
+    r = R.route_belts(lay(floor(0, ps, d=12), floor(1, [q], d=12)), belt_ipm=270)
+    src = {cell: v for (fi, cell), v in _line_loads(r).items() if fi == 0}
+    assert sorted(src.values()) == [140.0, 260.0]                     # 260 | 130+10
+    assert {l.cell: l.rate for l in r.lifts} == src
+    # one 400/min consumer can only draw from one line: that line overflows
+    lines = [f for f in r.failures if "lift line" in f]
+    assert any("400/min out (belt 270/min)" in f for f in lines)
+    assert r.failed_floors == []
+
+
 def test_an_over_capacity_connection_is_flagged_not_split():
     p = blk("p", 1, 1, outputs={"I": 600.0})
     c = blk("c", 1, 1, inputs={"I": 600.0})
