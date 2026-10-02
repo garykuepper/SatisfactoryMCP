@@ -70,3 +70,45 @@ def test_strip_rows_skip_walk_lane_rows():
     rows = R.strip_rows(floor(0, [blk("a", 1, 1), blk("b", 1, 4)]))
     assert 1 not in rows and 13 not in rows and 38 not in rows
     assert rows[:3] == [0, 2, 3]
+
+
+def _turns(path):
+    dirs = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(path, path[1:])]
+    return sum(1 for a, b in zip(dirs, dirs[1:]) if a != b)
+
+
+def test_astar_straight_line():
+    g = R.Grid(10, 3, set(), set(), set())
+    assert R.astar(g, (0, 1), (9, 1)) == [(x, 1) for x in range(10)]
+
+
+def test_astar_prefers_one_turn_over_a_staircase():
+    path = R.astar(R.Grid(4, 4, set(), set(), set()), (0, 0), (3, 3))
+    assert len(path) == 7 and _turns(path) == 1
+
+
+def test_astar_goes_around_blocked_cells_and_may_end_on_blocked_ends():
+    wall = {(2, y) for y in range(5) if y != 4}
+    g = R.Grid(5, 5, wall | {(0, 0), (4, 0)}, set(), set())
+    path = R.astar(g, (0, 0), (4, 0))
+    assert path[0] == (0, 0) and path[-1] == (4, 0) and (2, 4) in path
+    assert not (set(path[1:-1]) & g.blocked)
+
+
+def test_astar_crosses_a_walk_lane_only_straight_through():
+    g = R.Grid(7, 7, set(), {3}, set())          # horizontal lane on row 3 (x 1..5)
+    path = R.astar(g, (1, 0), (5, 6))
+    i = next(k for k, c in enumerate(path) if c[1] == 3)
+    assert path[i - 1][0] == path[i][0] == path[i + 1][0]   # in and out vertically
+    assert sum(1 for c in path if c[1] == 3) == 1            # never runs along it
+
+
+def test_astar_never_enters_a_lane_crossing():
+    g = R.Grid(7, 7, set(), {3}, {3})
+    path = R.astar(g, (0, 0), (6, 6))
+    assert (3, 3) not in path
+
+
+def test_astar_returns_none_when_walled_off():
+    g = R.Grid(5, 5, {(3, y) for y in range(5)}, set(), set())
+    assert R.astar(g, (0, 2), (4, 2)) is None

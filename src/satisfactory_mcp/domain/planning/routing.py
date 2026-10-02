@@ -7,8 +7,9 @@ south-west corner, x runs east, y north.
 
 from __future__ import annotations
 
+import heapq
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...core.gamedata.footprint import FOUNDATION_M
 from .layout import Block, Floor
@@ -82,3 +83,72 @@ def strip_rows(f: Floor) -> list[int]:
     _w, h = floor_cells(f)
     rows, _cols = walk_lanes(f)
     return [cy for cy in range(h) if cy not in rows]
+
+
+TURN_COST = 2
+CROSS_COST = 4
+_DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+
+@dataclass
+class Grid:
+    w: int
+    h: int
+    blocked: set[Cell] = field(default_factory=set)
+    lane_rows: set[int] = field(default_factory=set)
+    lane_cols: set[int] = field(default_factory=set)
+
+    def lanes(self, c: Cell) -> tuple[bool, bool]:
+        """(on a horizontal lane, on a vertical lane). Lanes stop short of the strip
+        column and the slab's outermost ring."""
+        x, y = c
+        return (y in self.lane_rows and 1 <= x <= self.w - 2,
+                x in self.lane_cols and 1 <= y <= self.h - 2)
+
+
+def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
+    """Cheapest 4-connected path start -> goal, both included; both may be blocked
+    cells (they are manifold or strip ends). Step 1, turn +TURN_COST, entering a
+    walk-lane cell +CROSS_COST. A lane cell is crossed straight through, perpendicular
+    to its lane; a cell on two lanes is impassable. None when there is no path."""
+
+    def est(c: Cell) -> int:
+        return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
+
+    tie = 0
+    heap: list = [(est(start), 0, tie, start, None)]
+    best: dict = {(start, None): 0}
+    prev: dict = {}
+    while heap:
+        _f, cost, _t, cell, d = heapq.heappop(heap)
+        if cell == goal:
+            path, key = [cell], (cell, d)
+            while key in prev:
+                key = prev[key]
+                path.append(key[0])
+            return path[::-1]
+        if cost > best.get((cell, d), math.inf):
+            continue
+        on_lane = cell != start and any(g.lanes(cell))
+        for nd in _DIRS:
+            if on_lane and nd != d:
+                continue  # no turning on a lane cell
+            n = (cell[0] + nd[0], cell[1] + nd[1])
+            if not (0 <= n[0] < g.w and 0 <= n[1] < g.h):
+                continue
+            step = 1 + (TURN_COST if d is not None and nd != d else 0)
+            if n != goal:
+                if n in g.blocked:
+                    continue
+                on_row, on_col = g.lanes(n)
+                if (on_row and on_col) or (on_row and nd[1] == 0) or (on_col and nd[0] == 0):
+                    continue
+                if on_row or on_col:
+                    step += CROSS_COST
+            nc = cost + step
+            if nc < best.get((n, nd), math.inf):
+                best[(n, nd)] = nc
+                prev[(n, nd)] = (cell, d)
+                tie += 1
+                heapq.heappush(heap, (nc + est(n), nc, tie, n, nd))
+    return None
