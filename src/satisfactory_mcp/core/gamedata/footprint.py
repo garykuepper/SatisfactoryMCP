@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from .uestruct import as_list, parse_struct
 
-__all__ = ["FOUNDATION_M", "Footprint", "Packed", "extract_footprint"]
+__all__ = ["FOLD_ABOVE", "FOUNDATION_M", "LANE_M", "Footprint", "Packed", "extract_footprint"]
 
 #: Standard foundation edge length. Everything in Satisfactory grids to this.
 FOUNDATION_M = 8.0
@@ -30,6 +30,12 @@ FOUNDATION_M = 8.0
 #: saving 4% over a squarish block), which is correct arithmetic and not a build. Pass
 #: `columns=` to override it in either direction.
 MAX_BLOCK_ASPECT = 4.0
+
+#: A manifold with more machines than this folds into two rows (see pack_manifold).
+FOLD_ABOVE = 8
+
+#: Width of the shared input lane between a folded manifold's two rows.
+LANE_M = FOUNDATION_M
 
 
 @dataclass(frozen=True)
@@ -99,6 +105,26 @@ class Footprint:
             [*buildable, measure(n)], key=lambda p: (p.foundations, abs(p.width_m - p.depth_m))
         )
 
+    def pack_manifold(self, count: int, max_row_fnd: int = 0) -> Packed:
+        """One manifold of ``count`` machines: a single row, or -- past FOLD_ABOVE
+        machines, or when that row is longer than ``max_row_fnd`` foundations (0 = no
+        limit) -- two back-to-back rows with a LANE_M input lane between them, the odd
+        machine on row A. Never a square: no manifold can feed a 2x2 block."""
+        import math
+
+        n = max(1, int(count))
+        row = self.pack(n, columns=n)
+        too_long = max_row_fnd > 0 and math.ceil(row.width_m / FOUNDATION_M) > max_row_fnd
+        if n < 2 or not (n > FOLD_ABOVE or too_long):
+            return row
+        cols = math.ceil(n / 2)
+        width, depth = cols * self.width_m, 2 * self.depth_m + LANE_M
+        tiles = math.ceil(width / FOUNDATION_M) * math.ceil(depth / FOUNDATION_M)
+        return Packed(
+            count=n, columns=cols, rows=2, width_m=width, depth_m=depth,
+            foundations=tiles, folded=True, lane_m=LANE_M,
+        )
+
 
 @dataclass(frozen=True)
 class Packed:
@@ -110,6 +136,9 @@ class Packed:
     width_m: float
     depth_m: float
     foundations: int
+    #: Two back-to-back rows around a LANE_M input lane (Footprint.pack_manifold).
+    folded: bool = False
+    lane_m: float = 0.0
 
     def __str__(self) -> str:
         return f"{self.columns}x{self.rows} = {self.width_m:,.0f}x{self.depth_m:,.0f}m"

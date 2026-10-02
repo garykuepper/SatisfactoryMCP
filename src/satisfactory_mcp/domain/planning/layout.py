@@ -105,6 +105,18 @@ class Block:
         return self.packed.depth_m if self.packed else 0.0
 
     @property
+    def input_sides(self) -> tuple[str, ...]:
+        """Edges inputs arrive on, in the block's own frame (row along X, before any
+        rotation): the south edge of a straight row, the middle lane when folded."""
+        return ("lane",) if self.packed and self.packed.folded else ("S",)
+
+    @property
+    def output_sides(self) -> tuple[str, ...]:
+        """Edges outputs leave from: north for a straight row, both outer edges when
+        folded (the two output belts merge at the row end)."""
+        return ("N", "S") if self.packed and self.packed.folded else ("N",)
+
+    @property
     def name(self) -> str:
         return f"{self.label} ({self.part}/{self.parts})" if self.parts > 1 else self.label
 
@@ -218,7 +230,9 @@ def _split_process(game: GameData, proc: dict, belt_ipm: float, pipe_m3min: floa
     return max(1, min(needed, proc["machines"]))
 
 
-def _blocks_from(game: GameData, sol: Solution, belt_ipm: float, pipe_m3min: float) -> list[Block]:
+def _blocks_from(
+    game: GameData, sol: Solution, belt_ipm: float, pipe_m3min: float, max_row_fnd: int = 0
+) -> list[Block]:
     blocks: list[Block] = []
     for proc in sol.processes:
         parts = _split_process(game, proc, belt_ipm, pipe_m3min)
@@ -264,7 +278,13 @@ def _blocks_from(game: GameData, sol: Solution, belt_ipm: float, pipe_m3min: flo
                     # charged 6 tiles where they span 40 m and need 5. Across a plan that
                     # was about a third too much concrete, and the water-siting note had
                     # independently grown its own copy of the same wrong arithmetic.
-                    packed=fp.pack(n) if fp else None,
+                    # A block is one manifold: one row, folded in two when long
+                    # (spec 2026-10-01). Extractors stand on nodes, not manifolds, so
+                    # they keep pack()'s free shape.
+                    packed=(
+                        (fp.pack(n) if building.is_extractor else fp.pack_manifold(n, max_row_fnd))
+                        if fp else None
+                    ),
                 )
             )
     return blocks
@@ -942,7 +962,11 @@ def build_layout(
     ``slab_layout`` is "grid" (manifolds in shared rows and columns) or "rows" (one
     manifold per row, each along the slab's long side).
     """
-    blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min)
+    # The row length a manifold may have before it folds: the slab's inner short side.
+    max_row_fnd = 0
+    if slab_foundations > 0:
+        max_row_fnd = min(slab_foundations, slab_depth_foundations or slab_foundations) - 2 * EDGE_FND
+    blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min, max_row_fnd)
     _assign_stages(blocks)
     buses = _buses(game, blocks, sol, belt_ipm, pipe_m3min)
 

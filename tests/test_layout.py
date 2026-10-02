@@ -13,7 +13,12 @@ from itertools import pairwise
 import pytest
 from conftest import REFERENCE_FIELD
 
-from satisfactory_mcp.core.gamedata.footprint import FOUNDATION_M, extract_footprint
+from satisfactory_mcp.core.gamedata.footprint import (
+    FOUNDATION_M,
+    LANE_M,
+    Footprint,
+    extract_footprint,
+)
 from satisfactory_mcp.domain.planning.layout import LOGISTICS_FLOOR_M, build_layout
 from satisfactory_mcp.domain.planning.optimize import MW, Scenario, solve
 
@@ -826,3 +831,54 @@ def test_rows_layout_puts_one_manifold_per_row(oil_layout, game):
             continue
         xs = [b.x_fnd for b in f.blocks]
         assert len(xs) == len(set(xs))  # every manifold on its own row
+
+
+# ------------------------------------------------- manifold folding (spec 2026-10-01)
+
+CON = Footprint(width_m=8.0, depth_m=10.0, height_m=8.0)
+
+
+def test_eight_machines_stay_one_row():
+    p = CON.pack_manifold(8)
+    assert (p.folded, p.columns, p.rows) == (False, 8, 1)
+
+
+def test_nine_machines_fold_with_the_odd_one_on_row_a():
+    p = CON.pack_manifold(9)
+    assert (p.folded, p.columns, p.rows) == (True, 5, 2)
+    assert p.width_m == 5 * 8.0
+    assert p.depth_m == 2 * 10.0 + LANE_M
+    assert p.lane_m == LANE_M
+    assert p.foundations == 5 * 4  # 40 m -> 5 fnd, 28 m -> 4 fnd
+
+
+def test_a_short_row_folds_when_too_long_for_the_slab():
+    wide = Footprint(width_m=20.0, depth_m=10.0, height_m=9.0)  # 4 x 20 m = 10 fnd
+    assert wide.pack_manifold(4, max_row_fnd=14).folded is False
+    assert wide.pack_manifold(4, max_row_fnd=8).folded is True
+
+
+def test_a_single_machine_never_folds():
+    huge = Footprint(width_m=200.0, depth_m=10.0, height_m=9.0)
+    assert huge.pack_manifold(1, max_row_fnd=8).folded is False
+
+
+def test_block_ports_follow_the_fold():
+    from satisfactory_mcp.domain.planning.layout import Block
+
+    def blk(n):
+        return Block(key="k", label="l", building_id="x", building="X", recipe=None,
+                     machines=n, clock=1.0, part=1, parts=1, packed=CON.pack_manifold(n))
+
+    assert (blk(4).input_sides, blk(4).output_sides) == (("S",), ("N",))
+    assert (blk(12).input_sides, blk(12).output_sides) == (("lane",), ("N", "S"))
+
+
+def test_extractors_keep_free_packing_and_never_fold(oil_layout, game):
+    _sol, lay = oil_layout
+    pumps = [b for b in lay.blocks if b.building_id == "Build_WaterPump_C"]
+    assert pumps, "fixture should contain Water Extractors"
+    fp = game.buildings["Build_WaterPump_C"].footprint
+    for b in pumps:
+        assert not b.packed.folded
+        assert b.packed == fp.pack(b.machines)
