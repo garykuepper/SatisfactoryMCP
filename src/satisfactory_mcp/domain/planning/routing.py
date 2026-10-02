@@ -221,18 +221,22 @@ def _floor_plan(f: Floor, ports: dict[str, Ports], pipes: set[str]):
     for item in items:
         prod = [[b.key, ports[b.key].outputs[0][0], b.outputs[item]]
                 for b in blocks if b.outputs.get(item, 0.0) > EPS]
-        for b in blocks:
-            rate = b.inputs.get(item, 0.0)
-            if rate <= EPS:
+        for b in blocks:  # greedy partial matching: nearest producer with spare first
+            left = b.inputs.get(item, 0.0)
+            if left <= EPS:
                 continue
             feed = ports[b.key].inputs[item][0]
-            fits = [p for p in prod if p[2] >= rate - EPS]
-            if fits:
-                p = min(fits, key=lambda p: (_dist(p[1], feed), p[0]))
-                conns.append(_Conn(item, rate, p[1], feed, p[0], b.key))
-                p[2] -= rate
-            else:
-                need.setdefault(item, []).append((b.key, feed, rate))
+            while left > EPS:
+                live = [p for p in prod if p[2] > EPS]
+                if not live:
+                    break
+                p = min(live, key=lambda p: (_dist(p[1], feed), p[0]))
+                take = min(left, p[2])
+                conns.append(_Conn(item, take, p[1], feed, p[0], b.key))
+                p[2] -= take
+                left -= take
+            if left > EPS:
+                need.setdefault(item, []).append((b.key, feed, left))
         for key, exit_, spare in prod:
             if spare > EPS:
                 surplus.setdefault(item, []).append((key, exit_, spare))
@@ -245,26 +249,37 @@ def _floor_plan(f: Floor, ports: dict[str, Ports], pipes: set[str]):
 
 
 def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
-    """spec "Lifts": raw items come 'in' on the ground floor; surplus goes 'up'/'down'
-    to the floors that need it, or 'out' to storage; one Lift per belt line."""
+    """spec "Lifts", mass-balanced per item: each sink floor (in floor order) draws from
+    the nearest source floors; one group per (source floor, direction); unmet need comes
+    'in' on the ground floor, unsent surplus goes 'out'. A group is ceil(rate/belt_ipm)
+    Lift lines."""
     ground = min(floor_ids)
     items = sorted({i for fi in floor_ids for i in (*needs[fi], *surpluses[fi])})
     plan: list[tuple[str, float, int, int, str]] = []
     for item in items:
-        need_floors = [fi for fi in floor_ids if item in needs[fi]]
-        src_floors = [fi for fi in floor_ids if item in surpluses[fi]]
-        if not src_floors:
-            rate = sum(r for fi in need_floors for _k, _c, r in needs[fi][item])
-            plan.append((item, rate, ground, max(need_floors), "in"))
-            continue
-        for s in src_floors:
-            rate = sum(r for _k, _c, r in surpluses[s][item])
-            if not need_floors:
-                plan.append((item, rate, s, s, "out"))
-            elif max(need_floors) > s:
-                plan.append((item, rate, s, max(need_floors), "up"))
-            else:
-                plan.append((item, rate, s, min(need_floors), "down"))
+        avail = {fi: sum(r for _k, _c, r in surpluses[fi][item]) for fi in floor_ids if item in surpluses[fi]}
+        sinks = {fi: sum(r for _k, _c, r in needs[fi][item]) for fi in floor_ids if item in needs[fi]}
+        flows: dict[tuple[int, str], list] = {}
+        unmet: dict[int, float] = {}
+        for t in sorted(sinks):
+            left = sinks[t]
+            for s_ in sorted(avail, key=lambda s_: (abs(s_ - t), s_)):
+                take = min(left, avail[s_])
+                if take <= EPS:
+                    continue
+                kind = "up" if t > s_ else "down"
+                g = flows.setdefault((s_, kind), [0.0, t])
+                g[0] += take
+                g[1] = max(g[1], t) if kind == "up" else min(g[1], t)
+                avail[s_] -= take
+                left -= take
+            if left > EPS:
+                unmet[t] = left
+        for (s_, kind), (rate, far) in sorted(flows.items()):
+            plan.append((item, rate, s_, far, kind))
+        if unmet:
+            plan.append((item, sum(unmet.values()), ground, max(unmet), "in"))
+        plan += [(item, left, s_, s_, "out") for s_, left in sorted(avail.items()) if left > EPS]
     lifts = []
     for item, rate, a, b, kind in plan:
         n = max(1, math.ceil(rate / belt_ipm - EPS))
@@ -324,7 +339,7 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
 def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     """Route one attempt (no widening): connections per floor, lifts on the strip,
     then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
-    connections route first (southernmost lift row first, then shortest), then the rest longest-first. One belt per
+    connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
     connection (over-capacity is flagged, never split); a lift's lines are used round-robin.
     Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
     out = Routing(layout=layout)
@@ -345,15 +360,43 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     for fi, f in floors.items():
         same, need, surplus = plans[fi]
         conns: list[_Conn] = list(same)
+
+        def fail(msg: str) -> None:
+            out.failures.append(f"F{fi}: {msg}")
+            if fi not in out.failed_floors:
+                out.failed_floors.append(fi)
+
         for item, users in need.items():
-            feeders = [l for l in out.lifts if l.item == item and l.kind != "out" and fi in _span(l)]
-            conns += [_Conn(item, rate, feeders[k % len(feeders)].cell, feed, f"lift:{item}", key)
-                      for k, (key, feed, rate) in enumerate(users)]
+            feeders = [l for l in out.lifts if l.item == item and fi in _span(l)
+                       and (l.kind == "in" or (l.kind in ("up", "down") and l.from_floor != fi))]
+            for k, (key, feed, rate) in enumerate(users):
+                if feeders:
+                    conns.append(_Conn(item, rate, feeders[k % len(feeders)].cell, feed, f"lift:{item}", key))
+                else:
+                    fail(f"{names.get(item, item)} has no lift to feed {key}")
         for item, senders in surplus.items():
-            targets = [l for l in out.lifts if l.item == item and l.from_floor == fi
-                       and l.kind in ("up", "down", "out")]
-            conns += [_Conn(item, rate, exit_, targets[k % len(targets)].cell, key, f"lift:{item}")
-                      for k, (key, exit_, rate) in enumerate(senders)]
+            groups = [[l for l in out.lifts if l.item == item and l.from_floor == fi and l.kind == kind]
+                      for kind in ("up", "down", "out")]
+            groups = [g for g in groups if g]
+            if not groups:
+                fail(f"{names.get(item, item)} has no lift to take {senders[0][0]}")
+                continue
+            caps = [sum(l.rate for l in g) for g in groups]
+            used = [0] * len(groups)
+            gi = 0
+            for key, exit_, rate in senders:
+                while rate > EPS and gi < len(groups):
+                    take = min(rate, caps[gi])
+                    if take > EPS:
+                        line = groups[gi][used[gi] % len(groups[gi])]
+                        used[gi] += 1
+                        conns.append(_Conn(item, take, exit_, line.cell, key, f"lift:{item}"))
+                        caps[gi] -= take
+                        rate -= take
+                    if caps[gi] <= EPS:
+                        gi += 1
+                if rate > EPS:
+                    fail(f"{names.get(item, item)} has no lift to take {key}")
         for c in conns:
             if c.rate > belt_ipm + EPS:
                 out.failures.append(f"F{fi}: {names.get(c.item, c.item)} {c.src} -> {c.dst}: "

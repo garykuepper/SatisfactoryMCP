@@ -165,6 +165,7 @@ def test_an_item_made_above_its_user_goes_down():
     p = blk("p", 1, 1, outputs={"I": 10.0})
     r = R.route_belts(lay(floor(0, [c]), floor(1, [p])), belt_ipm=270)
     assert [(l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("down", 1, 0)]
+    assert {(b.floor, b.src, b.dst) for b in r.belts} == {(1, "p", "lift:I"), (0, "lift:I", "c")}
 
 
 def test_raw_items_come_in_on_the_ground_floor_and_exports_go_out():
@@ -213,8 +214,9 @@ def test_an_over_capacity_connection_is_flagged_not_split():
     p = blk("p", 1, 1, outputs={"I": 600.0})
     c = blk("c", 1, 1, inputs={"I": 600.0})
     r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
-    assert [b.floor for b in r.belts] == [0, 1] or sorted(b.floor for b in r.belts) == [0, 1]
+    assert sorted(b.floor for b in r.belts) == [0, 1]
     assert any("exceeds one belt" in f for f in r.failures)
+    assert r.failed_floors == []
 
 
 def test_a_folded_producer_merges_its_two_output_belts():
@@ -263,3 +265,33 @@ def test_lift_exit_stubs_are_not_crossed_by_other_lifts_belts():
 
 def _span_floors(l):
     return range(min(l.from_floor, l.to_floor), max(l.from_floor, l.to_floor) + 1)
+
+
+def test_a_source_between_two_users_lifts_both_ways():
+    c0 = blk("c0", 1, 1, inputs={"I": 10.0})
+    p = blk("p", 1, 1, outputs={"I": 20.0})
+    c2 = blk("c2", 1, 1, inputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [c0]), floor(1, [p]), floor(2, [c2])), belt_ipm=270)
+    assert not r.failures
+    assert sorted((l.kind, l.from_floor, l.to_floor) for l in r.lifts) == [("down", 1, 0), ("up", 1, 2)]
+    assert {b.dst for b in r.belts if b.floor in (0, 2)} == {"c0", "c2"}
+
+
+def test_a_partial_producer_tops_up_from_below_not_a_self_loop():
+    p = blk("p", 1, 4, outputs={"I": 60.0})
+    c1 = blk("c1", 1, 7, inputs={"I": 30.0})
+    c2 = blk("c2", 1, 1, inputs={"I": 40.0})
+    r = R.route_belts(lay(floor(0, [p, c1, c2], d=12)), belt_ipm=270)
+    assert not r.failures
+    assert not [l for l in r.lifts if l.from_floor == l.to_floor and l.kind in ("up", "down")]
+    assert [(l.kind, l.rate) for l in r.lifts] == [("in", pytest.approx(10.0))]
+    got = sorted((b.src, b.dst, round(b.rate, 6)) for b in r.belts)
+    assert ("p", "c2", 30.0) in got and ("lift:I", "c2", 10.0) in got and ("p", "c1", 30.0) in got
+
+
+def test_partial_surplus_goes_up_and_the_rest_out():
+    p = blk("p", 1, 1, outputs={"I": 100.0})
+    c = blk("c", 1, 1, inputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert not r.failures
+    assert sorted((l.kind, l.rate) for l in r.lifts) == [("out", pytest.approx(90.0)), ("up", pytest.approx(10.0))]
