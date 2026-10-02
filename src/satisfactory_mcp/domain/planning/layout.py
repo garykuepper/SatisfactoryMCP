@@ -824,8 +824,8 @@ def _slab_floors(
 def _building_floors(
     blocks: list[Block], buses: list[Bus], cap_fnd: int, aisle_fnd: int
 ) -> tuple[list[Floor], list[str]]:
-    """Floors grouped by building type (spec 2026-10-01): each group grid-packed onto
-    a cap_fnd x cap_fnd slab -- spilling onto more floors of the same group, whole
+    """Floors grouped by building type (spec 2026-10-01): each group row-packed onto
+    a cap_fnd x cap_fnd slab, one manifold per row (_pack_rows) -- spilling onto more floors of the same group, whole
     manifolds only, when it doesn't fit -- then each floor shrunk to the smallest even
     x even slab holding it. Floors stack by machine-weighted mean stage, so smelting
     sits at the bottom and final assembly on top."""
@@ -833,7 +833,7 @@ def _building_floors(
     warnings: list[str] = []
     for label, group in _group_blocks(blocks, buses):
         ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
-        packed_floors, oversized, warns = _pack_slab(ordered, cap_fnd, aisle_fnd)
+        packed_floors, oversized, warns = _pack_rows(ordered, cap_fnd, aisle_fnd)
         warnings.extend(warns)
         for placed in packed_floors:
             if not placed:

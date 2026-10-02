@@ -1010,3 +1010,19 @@ def test_bad_group_by_or_slab_cap_is_an_error(game, oil_solution):
         build_layout(game, oil_solution, group_by="building", max_slab_foundations=15)
     with pytest.raises(ValueError, match="even"):
         build_layout(game, oil_solution, group_by="building", max_slab_foundations=2)
+
+
+def test_building_floors_stack_same_type_manifolds_on_one_floor():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # four 8-machine Constructor rows, 8x2 foundations each: 4 rows + 3 aisles = 11 deep,
+    # fits one 16x16 slab's 14-foundation interior
+    blocks = [_typed_block(f"c{i}", "Constructor", 16) for i in range(4)]
+    for b in blocks:
+        b.packed = type(b.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
+    floors, warnings = _building_floors(blocks, [], 16, 1)
+    assert not warnings
+    assert len(floors) == 1 and len(floors[0].blocks) == 4
+    w, d = floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8
+    # x: 1 edge + 8 long + 1 far edge = 10; y: rows at 0,3,6,9 -> last ends 11, 1 + 11 + 1 = 13 -> even 14
+    assert (w, d) == (10, 14)
