@@ -551,6 +551,9 @@ EDGE_FND = 1
 #: and a belt corridor on the west edge), in foundations.
 WEST_BAY_FND = 2
 
+#: belt routing: the east edge carries the other lift strip and corridor.
+EAST_BAY_FND = 2
+
 
 def _grid(dims: list[int], inner_w: int, inner_d: int, aisle_fnd: int) -> tuple[int, int, int]:
     """(cell size, columns, rows) for a grid of square cells holding blocks whose
@@ -563,12 +566,12 @@ def _grid(dims: list[int], inner_w: int, inner_d: int, aisle_fnd: int) -> tuple[
     return cell, cols, rows
 
 
-def _fit_slab(placed: list[_Placed], cap_fnd: int) -> tuple[int, int]:
+def _fit_slab(placed: list[_Placed], cap_fnd: int, east_fnd: int = 0) -> tuple[int, int]:
     """Smallest even x even slab (width, depth) in foundations holding these placed
     blocks plus the EDGE_FND walkway on the far sides -- the near sides already have
     it, since placement starts at EDGE_FND -- never above cap_fnd. Even sides are the
     owner's rule (spec 2026-10-01)."""
-    w = max(p.x_fnd + p.w_fnd for p in placed) + EDGE_FND
+    w = max(p.x_fnd + p.w_fnd for p in placed) + EDGE_FND + east_fnd
     d = max(p.y_fnd + p.d_fnd for p in placed) + EDGE_FND
     return min(cap_fnd, w + w % 2), min(cap_fnd, d + d % 2)
 
@@ -700,7 +703,7 @@ def _pack_slab(
 
 def _pack_rows(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0,
-    west_fnd: int = 0,
+    west_fnd: int = 0, east_fnd: int = 0,
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
     """One manifold per row: every block is turned so its long side runs along the
     slab's long side, starts flush at the EDGE_FND walkway, and gets a row to itself;
@@ -708,12 +711,12 @@ def _pack_rows(
     rows carries one row's output and the next row's input), in the given order. A
     block that can't fit a row -- longer than the long side, or wider than the short
     side -- is reported as oversized, like _pack_slab. west_fnd shifts every block
-    that many foundations further east (a west bay), shrinking the span along x.
+    that many foundations further east (a west bay); west_fnd + east_fnd shrink the span along x.
     """
     depth_fnd = slab_depth_fnd or slab_fnd
     long_is_y = depth_fnd > slab_fnd
-    inner_long = max(slab_fnd, depth_fnd) - 2 * EDGE_FND - (0 if long_is_y else west_fnd)
-    inner_short = min(slab_fnd, depth_fnd) - 2 * EDGE_FND - (west_fnd if long_is_y else 0)
+    inner_long = max(slab_fnd, depth_fnd) - 2 * EDGE_FND - (0 if long_is_y else west_fnd + east_fnd)
+    inner_short = min(slab_fnd, depth_fnd) - 2 * EDGE_FND - (west_fnd + east_fnd if long_is_y else 0)
     floors: list[list[_Placed]] = [[]]
     oversized: list[Block] = []
     warnings: list[str] = []
@@ -846,7 +849,8 @@ def _building_floors(
     for label, group in _group_blocks(blocks, buses):
         ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
         packed_floors, oversized, warns = _pack_rows(
-            ordered, cap_fnd, 2 if label in wide_groups else aisle_fnd, west_fnd=WEST_BAY_FND
+            ordered, cap_fnd, 2 if label in wide_groups else aisle_fnd, west_fnd=WEST_BAY_FND,
+            east_fnd=EAST_BAY_FND,
         )
         warnings.extend(warns)
         for placed in packed_floors:
@@ -855,7 +859,7 @@ def _building_floors(
             for p in placed:
                 p.block.x_fnd, p.block.y_fnd, p.block.rotated = p.x_fnd, p.y_fnd, p.rotated
             floor_blocks = [p.block for p in placed]
-            specs.append((_mean_stage(floor_blocks), label, floor_blocks, _fit_slab(placed, cap_fnd)))
+            specs.append((_mean_stage(floor_blocks), label, floor_blocks, _fit_slab(placed, cap_fnd, EAST_BAY_FND)))
         for b in oversized:
             specs.append((float(b.stage), label, [b], None))
     specs.sort(key=lambda s: s[0])  # stable: equal means keep group order
@@ -1118,7 +1122,7 @@ def build_layout(
     # The row length a manifold may have before it folds: the slab's inner short side.
     max_row_fnd = 0
     if group_by == "building":
-        max_row_fnd = max_slab_foundations - 2 * EDGE_FND - WEST_BAY_FND
+        max_row_fnd = max_slab_foundations - 2 * EDGE_FND - WEST_BAY_FND - EAST_BAY_FND
     elif slab_foundations > 0:
         max_row_fnd = min(slab_foundations, slab_depth_foundations or slab_foundations) - 2 * EDGE_FND
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min, max_row_fnd)

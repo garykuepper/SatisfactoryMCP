@@ -1024,9 +1024,9 @@ def test_building_floors_stack_same_type_manifolds_on_one_floor():
     assert not warnings
     assert len(floors) == 1 and len(floors[0].blocks) == 4
     w, d = floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8
-    # x: 1 edge + 2 west bay + 8 long + 1 far edge = 12; y: rows at 0,3,6,9 -> last ends 11,
+    # x: 1 edge + 2 west bay + 8 long + 1 far edge + 2 east bay = 14; y: rows at 0,3,6,9 -> last ends 11,
     # 1 + 11 + 1 = 13 -> even 14
-    assert (w, d) == (12, 14)
+    assert (w, d) == (14, 14)
 
 
 def test_plan_layout_groups_by_building_and_reports_bad_args(game, state):
@@ -1055,7 +1055,7 @@ def test_building_floors_share_one_slab_size():
     sizes = {(f.slab_side_m / 8, f.slab_depth_m / 8) for f in floors}
     # alone (1 edge + 2 west bay + row + 1 edge): Constructor 1+2+8+1 = 12 x 4,
     # Assembler 1+2+3+1 = 7 -> 8 x 4; shared: 12 x 4
-    assert len(floors) == 2 and sizes == {(12, 4)}
+    assert len(floors) == 2 and sizes == {(14, 4)}
 
 
 def test_smelters_and_foundries_always_share_a_floor_group():
@@ -1095,3 +1095,13 @@ def test_building_rows_start_past_the_west_bay_stage_rows_do_not():
     assert [b.x_fnd for b in floors[0].blocks] == [EDGE_FND + WEST_BAY_FND] == [3]
     placed, _, _ = _pack_rows([con()], slab_fnd=16, aisle_fnd=1)
     assert [p.x_fnd for p in placed[0]] == [1]
+
+
+def test_building_floors_leave_a_two_foundation_bay_on_both_sides():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    c = _typed_block("c", "Constructor", 16)
+    c.packed = type(c.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
+    floors, _ = _building_floors([c], [], 16, 1)
+    assert c.x_fnd == 3                                   # 1 edge + 2 west bay
+    assert floors[0].slab_side_m / 8 == 3 + 8 + 1 + 2     # block ends at 11, + edge + east bay = 14
