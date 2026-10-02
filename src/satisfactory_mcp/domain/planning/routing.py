@@ -340,10 +340,14 @@ def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
     return lifts
 
 
-def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, Ports]) -> None:
+def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, Ports],
+                  plans: dict) -> None:
     """Put each lift on its side's edge strip: up/down/out on the source floor's output
     side, in on the ground floor's input side. A row is usable on a (floor, side) when
-    its 3-cell exit stub there avoids every manifold belt."""
+    its 3-cell exit stub there avoids every manifold belt. Rows (spec "Lift placement"):
+    in lifts fill from the south, out lifts from the north, up/down lifts take the free
+    row nearest the mean y of the manifold ends they connect (ties low). Order: in, out,
+    then up/down by (source floor, item); stable, so lines keep their order."""
     w = floor_cells(next(iter(floors.values())))[0]  # one shared slab
     ground = floors[min(floors)]
 
@@ -355,7 +359,8 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
 
     usable = {(fi, s): stub_free(f, s) for fi, f in floors.items() for s in ("W", "E")}
     taken: dict[tuple[int, str], set[int]] = {k: set() for k in usable}
-    for lift in sorted(lifts, key=lambda l: (l.from_floor, l.item, l.kind)):  # stable: line order
+    order = {"in": 0, "out": 1}
+    for lift in sorted(lifts, key=lambda l: (order.get(l.kind, 2), l.from_floor, l.item)):
         side = input_side(ground) if lift.kind == "in" else output_side(floors[lift.from_floor])
         span = [fi for fi in _span(lift) if fi in floors]
         free = set.intersection(*(usable[(fi, side)] - taken[(fi, side)] for fi in span))
@@ -364,7 +369,17 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
                 f"lift strip full: no free strip row for {lift.item} on floors "
                 f"F{span[0]}-F{span[-1]}"
             )
-        cy = min(free)
+        if lift.kind == "in":
+            cy = min(free)
+        elif lift.kind == "out":
+            cy = max(free)
+        else:
+            ys = [c[1] for _k, c, _r in plans[lift.from_floor][2].get(lift.item, [])]
+            ys += [c[1] for fi in span if fi != lift.from_floor and fi in plans
+                   for _k, c, _r in plans[fi][1].get(lift.item, [])]
+            rows = strip_rows(floors[lift.from_floor])  # no ends: the strip's middle
+            target = sum(ys) / len(ys) if ys else (min(rows) + max(rows)) / 2
+            cy = min(free, key=lambda cy: (abs(cy - target), cy))
         lift.cell = (_strip_x(side, w), cy)
         for fi in span:
             taken[(fi, side)].add(cy)
@@ -420,7 +435,7 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     plans = {fi: _floor_plan(f, ports, pipes) for fi, f in floors.items()}
     out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
                             {fi: p[2] for fi, p in plans.items()}, belt_ipm)
-    _assign_cells(out.lifts, floors, ports)
+    _assign_cells(out.lifts, floors, ports, plans)
     src_load: dict[int, float] = {}                 # id(lift) -> belts into it on from_floor
     dst_load: dict[tuple[int, int], float] = {}     # (id(lift), floor) -> belts out of it there
 

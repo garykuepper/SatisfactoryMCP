@@ -291,13 +291,14 @@ def render_layout(
                         )
                     )
             lift_rows = [
-                (names.get(x.item, x.item), f"{render.num(x.rate)}/min", f"x0 y{x.cell[1]}",
+                (names.get(x.item, x.item), f"{render.num(x.rate)}/min",
+                 f"{'W' if x.cell[0] == 0 else 'E'} y{x.cell[1]}",
                  f"F{x.from_floor}->F{x.to_floor}", x.kind)
                 for x in payload.lifts
             ]
             parts.append(
                 "lifts\n"
-                + render.table(("item", "rate", "cell", "floors", "kind"), lift_rows, total=len(lift_rows))
+                + render.table(("item", "rate", "strip", "floors", "kind"), lift_rows, total=len(lift_rows))
             )
             if payload.widened:
                 parts.append("widened to 2-foundation aisles: " + ", ".join(payload.widened))

@@ -231,7 +231,9 @@ def test_lift_cells_are_deterministic_and_shared_across_spanned_floors():
     c = blk("c", 1, 1, inputs={"A": 1.0, "B": 1.0})
     r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
     by_item = {l.item: l.cell for l in r.lifts}
-    assert by_item["A"][1] < by_item["B"][1]          # handed out south-up, by item
+    # target rows: A = mean(exit 9, feed 3) = 6, B = mean(9, 2) = 5.5; A goes first
+    # (by item) and takes 6, so B gets the nearest free row, 5
+    assert (by_item["A"][1], by_item["B"][1]) == (6, 5)
     rows0, rows1 = set(R.strip_rows(floor(0, [p]))), set(R.strip_rows(floor(1, [c])))
     assert all(cell[1] in rows0 & rows1 for cell in by_item.values())
 
@@ -510,3 +512,33 @@ def test_an_east_lift_stub_mirrors_the_west_one():
     assert up.path[:4] == [(39, cy), (38, cy), (37, cy), (36, cy)]
     assert R._stub((39, cy), 40) == ((38, cy), (37, cy), (36, cy))
     assert R._stub((0, cy), 40) == ((1, cy), (2, cy), (3, cy))
+
+
+def test_in_lifts_fill_the_south_corner_and_out_lifts_the_north():
+    c = blk("c", 1, 1, inputs={"Ore": 30.0}, outputs={"Ingot": 30.0})
+    f0 = floor(0, [c])
+    r = R.route_belts(lay(f0), belt_ipm=270)
+    by = {l.kind: l.cell for l in r.lifts}
+    rows = R.strip_rows(f0)
+    assert by["in"] == (0, min(rows))          # F0 input side W, south end
+    assert by["out"] == (39, max(rows))        # F0 output side E, north end
+    assert not r.failures
+
+
+def test_a_lift_sits_level_with_the_rows_it_serves():
+    p = blk("p", 1, 6, outputs={"I": 30.0})    # F0 exit: east end of row y = 24 + 5 = 29
+    c = blk("c", 1, 7, inputs={"I": 30.0})     # F1 feed: east end of row y = 28 - 1 = 27
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert lift.cell == (39, 28)               # mean of 29 and 27
+    assert not r.failures
+
+
+def test_two_lifts_with_the_same_target_get_neighbouring_rows():
+    p = blk("p", 1, 6, outputs={"A": 30.0, "B": 30.0})
+    c = blk("c", 1, 6, inputs={"A": 30.0, "B": 30.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    rows = sorted(l.cell[1] for l in r.lifts)
+    assert len(set(rows)) == 2 and rows[1] - rows[0] <= 2   # distinct, near each other
+    usable = set(R.strip_rows(floor(0, [p]))) & set(R.strip_rows(floor(1, [c])))
+    assert all(y in usable for y in rows)
