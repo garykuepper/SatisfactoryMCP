@@ -474,7 +474,11 @@ def test_a_block_is_packed_not_multiplied(game, state):
         fp = game.buildings[block.building_id].footprint
         if fp is None:
             continue
-        assert block.foundations == fp.pack(block.machines).foundations
+        building = game.buildings[block.building_id]
+        expected = (
+            fp.pack(block.machines) if building.is_extractor else fp.pack_manifold(block.machines)
+        )
+        assert block.foundations == expected.foundations
         if block.machines > 1:
             assert block.foundations <= fp.foundations * block.machines
             checked += 1
@@ -874,8 +878,8 @@ def test_block_ports_follow_the_fold():
     assert (blk(12).input_sides, blk(12).output_sides) == (("lane",), ("N", "S"))
 
 
-def test_extractors_keep_free_packing_and_never_fold(oil_layout, game):
-    _sol, lay = oil_layout
+def test_extractors_keep_free_packing_and_never_fold(oil_solution, game):
+    lay = build_layout(game, oil_solution)
     pumps = [b for b in lay.blocks if b.building_id == "Build_WaterPump_C"]
     assert pumps, "fixture should contain Water Extractors"
     fp = game.buildings["Build_WaterPump_C"].footprint
