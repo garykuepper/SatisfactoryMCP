@@ -130,3 +130,136 @@ def test_astar_refuses_to_turn_on_a_lane_cell():
 def test_astar_returns_none_when_walled_off():
     g = R.Grid(5, 5, {(3, y) for y in range(5)}, set(), set())
     assert R.astar(g, (0, 2), (4, 2)) is None
+
+
+def lay(*floors_, buses=()):
+    blocks = [b for f in floors_ for b in f.blocks]
+    return Layout(blocks=blocks, buses=list(buses), floors=list(floors_))
+
+
+def test_one_producer_feeds_two_consumers_on_its_floor():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c1 = blk("c1", 1, 4, inputs={"I": 30.0})
+    c2 = blk("c2", 1, 7, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p, c1, c2], d=12)), belt_ipm=270)
+    assert not r.failures and not r.lifts
+    assert sorted((b.src, b.dst, b.rate) for b in r.belts) == [("p", "c1", 30.0), ("p", "c2", 30.0)]
+    for b in r.belts:
+        assert b.path[0] == R.manifold_ports(p).outputs[0][0]
+
+
+def test_an_item_made_below_goes_up_one_lift_at_one_cell():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert [(l.item, l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("I", "up", 0, 1)]
+    cell = r.lifts[0].cell
+    assert cell[0] == 0
+    assert {(b.floor, b.src, b.dst) for b in r.belts} == {(0, "p", "lift:I"), (1, "lift:I", "c")}
+    assert [b.path[-1] for b in r.belts if b.floor == 0] == [cell]
+    assert [b.path[0] for b in r.belts if b.floor == 1] == [cell]
+
+
+def test_an_item_made_above_its_user_goes_down():
+    c = blk("c", 1, 1, inputs={"I": 10.0})
+    p = blk("p", 1, 1, outputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [c]), floor(1, [p])), belt_ipm=270)
+    assert [(l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("down", 1, 0)]
+
+
+def test_raw_items_come_in_on_the_ground_floor_and_exports_go_out():
+    c = blk("c", 1, 1, inputs={"Ore": 30.0}, outputs={"Ingot": 30.0})
+    r = R.route_belts(lay(floor(0, [c])), belt_ipm=270)
+    assert sorted((l.item, l.kind) for l in r.lifts) == [("Ingot", "out"), ("Ore", "in")]
+    assert not r.failures
+
+
+def test_lift_cells_are_deterministic_and_shared_across_spanned_floors():
+    p = blk("p", 1, 1, outputs={"A": 1.0, "B": 1.0})
+    c = blk("c", 1, 1, inputs={"A": 1.0, "B": 1.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    by_item = {l.item: l.cell for l in r.lifts}
+    assert by_item["A"][1] < by_item["B"][1]          # handed out south-up, by item
+    rows0, rows1 = set(R.strip_rows(floor(0, [p]))), set(R.strip_rows(floor(1, [c])))
+    assert all(cell[1] in rows0 & rows1 for cell in by_item.values())
+
+
+def test_a_full_lift_strip_is_a_hard_error():
+    # 2-foundation-deep floor: 8 strip rows minus lane rows {1, 6} = 6 usable
+    c = blk("c", 1, 1, inputs={f"Raw{k}": 1.0 for k in range(7)})
+    with pytest.raises(R.LiftStripFull, match="lift strip full"):
+        R.route_belts(lay(floor(0, [c], d=2)), belt_ipm=270)
+
+
+def _two_by_two():
+    p1, p2 = blk("p1", 1, 1, outputs={"I": 250.0}), blk("p2", 1, 4, outputs={"I": 250.0})
+    c1, c2 = blk("c1", 1, 1, inputs={"I": 250.0}), blk("c2", 1, 4, inputs={"I": 250.0})
+    return R.route_belts(lay(floor(0, [p1, p2]), floor(1, [c1, c2])), belt_ipm=270)
+
+
+def test_a_lift_gets_one_line_per_belt_and_each_manifold_takes_one():
+    r = _two_by_two()
+    assert not r.failures
+    assert len(r.lifts) == 2 and len({l.cell for l in r.lifts}) == 2
+    assert {l.kind for l in r.lifts} == {"up"}
+    f0 = {b.src: b for b in r.belts if b.floor == 0}
+    f1 = {b.dst: b for b in r.belts if b.floor == 1}
+    assert sorted(f0) == ["p1", "p2"] and sorted(f1) == ["c1", "c2"]
+    assert f0["p1"].path[-1] != f0["p2"].path[-1] and f1["c1"].path[0] != f1["c2"].path[0]
+    assert all(b.rate == 250.0 for b in r.belts)
+
+
+def test_an_over_capacity_connection_is_flagged_not_split():
+    p = blk("p", 1, 1, outputs={"I": 600.0})
+    c = blk("c", 1, 1, inputs={"I": 600.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert [b.floor for b in r.belts] == [0, 1] or sorted(b.floor for b in r.belts) == [0, 1]
+    assert any("exceeds one belt" in f for f in r.failures)
+
+
+def test_a_folded_producer_merges_its_two_output_belts():
+    f = blk("f", 1, 1, n=12, outputs={"P": 60.0}, folded=True)
+    r = R.route_belts(lay(floor(0, [f], w=16, d=16)), belt_ipm=270)
+    ports = R.manifold_ports(f)
+    merges = [b for b in r.belts if b.src == b.dst == "f"]
+    assert len(merges) == 1
+    assert (merges[0].path[0], merges[0].path[-1]) == (ports.outputs[1][0], ports.outputs[0][0])
+
+
+def test_pipes_are_listed_not_routed():
+    c = blk("c", 1, 1, inputs={"Water": 30.0, "Ore": 10.0})
+    r = R.route_belts(lay(floor(0, [c]), buses=[bus("Water", "pipe"), bus("Ore")]), belt_ipm=270)
+    assert "Water: pipe, not routed" in r.failures
+    assert all(b.item != "Water" for b in r.belts) and all(l.item != "Water" for l in r.lifts)
+
+
+def test_an_oversized_floor_is_reported_not_routed():
+    big = Floor(index=1, kind="production", stage=1, height_m=16.0, blocks=[blk("x", 0, 0)],
+                slab_side_m=None, slab_depth_m=None, group="Big")
+    r = R.route_belts(lay(floor(0, [blk("c", 1, 1, inputs={"Ore": 1.0})]), big), belt_ipm=270)
+    assert "F1: oversized floor, not routed" in r.failures
+    assert any(b.floor == 0 for b in r.belts)
+
+
+def test_colliding_manifold_belts_fail_the_floor_without_dropping_others():
+    lower = blk("a", 1, 1, outputs={"P": 1.0})
+    upper = blk("b", 1, 4, inputs={"X": 1.0, "Y": 1.0, "Z": 1.0})   # 3rd input row lands on lane 13
+    r = R.route_belts(lay(floor(0, [lower, upper])), belt_ipm=270)
+    assert r.failed_floors == [0]
+    assert any("collide" in f for f in r.failures)
+
+
+def test_lift_exit_stubs_are_not_crossed_by_other_lifts_belts():
+    # Without the reserved (1..3, cy) stub, a long belt to one lift hugs column 2 and
+    # seals the other lift off, so it comes out unroutable.
+    r = _two_by_two()
+    assert not r.failures
+    for b in r.belts:
+        for l in r.lifts:
+            cy = l.cell[1]
+            if {(1, cy), (2, cy), (3, cy)} & set(b.path) and b.floor in _span_floors(l):
+                assert l.cell in (b.path[0], b.path[-1])
+
+
+def _span_floors(l):
+    return range(min(l.from_floor, l.to_floor), max(l.from_floor, l.to_floor) + 1)

@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass, field
 
 from ...core.gamedata.footprint import FOUNDATION_M
-from .layout import Block, Floor
+from .layout import Block, Floor, Layout
 
 CELL_M = 2.0
 PER_FND = int(FOUNDATION_M / CELL_M)  # 4 cells per foundation
@@ -152,3 +152,244 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
                 tie += 1
                 heapq.heappush(heap, (nc + est(n), nc, tie, n, nd))
     return None
+
+
+EPS = 1e-6
+
+
+@dataclass
+class Belt:
+    item: str
+    rate: float
+    floor: int
+    path: list[Cell]
+    src: str  # block key or "lift:<item>"
+    dst: str
+
+
+@dataclass
+class Lift:
+    item: str
+    rate: float
+    cell: Cell
+    from_floor: int
+    to_floor: int
+    kind: str  # up | down | in | out
+
+
+@dataclass
+class Routing:
+    layout: Layout
+    belts: list[Belt] = field(default_factory=list)
+    lifts: list[Lift] = field(default_factory=list)
+    widened: list[str] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+    #: floor indexes with a failure -- what build_routed_layout widens
+    failed_floors: list[int] = field(default_factory=list)
+
+
+class LiftStripFull(ValueError):
+    """More lifts than free strip rows: a hard error, never a lift placed elsewhere."""
+
+
+@dataclass
+class _Conn:
+    item: str
+    rate: float
+    a: Cell
+    b: Cell
+    src: str
+    dst: str
+
+
+def _dist(a: Cell, b: Cell) -> int:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def _span(lift: Lift) -> range:
+    return range(min(lift.from_floor, lift.to_floor), max(lift.from_floor, lift.to_floor) + 1)
+
+
+def _floor_plan(f: Floor, ports: dict[str, Ports], pipes: set[str]):
+    """(same-floor connections, need {item: [(key, feed, rate)]} from lifts,
+    surplus {item: [(key, exit, rate)]} to lifts) -- spec "Connections"."""
+    conns: list[_Conn] = []
+    need: dict[str, list] = {}
+    surplus: dict[str, list] = {}
+    blocks = sorted(f.blocks, key=lambda b: b.key)
+    items = sorted({i for b in blocks for i in (*b.inputs, *b.outputs)} - pipes)
+    for item in items:
+        prod = [[b.key, ports[b.key].outputs[0][0], b.outputs[item]]
+                for b in blocks if b.outputs.get(item, 0.0) > EPS]
+        for b in blocks:
+            rate = b.inputs.get(item, 0.0)
+            if rate <= EPS:
+                continue
+            feed = ports[b.key].inputs[item][0]
+            fits = [p for p in prod if p[2] >= rate - EPS]
+            if fits:
+                p = min(fits, key=lambda p: (_dist(p[1], feed), p[0]))
+                conns.append(_Conn(item, rate, p[1], feed, p[0], b.key))
+                p[2] -= rate
+            else:
+                need.setdefault(item, []).append((b.key, feed, rate))
+        for key, exit_, spare in prod:
+            if spare > EPS:
+                surplus.setdefault(item, []).append((key, exit_, spare))
+    for b in blocks:  # a folded block's south output belt merges into its north one
+        outs = ports[b.key].outputs
+        main = max(b.outputs, key=b.outputs.get) if b.outputs else ""
+        if len(outs) == 2 and main and main not in pipes:
+            conns.append(_Conn(main, b.outputs[main] / 2, outs[1][0], outs[0][0], b.key, b.key))
+    return conns, need, surplus
+
+
+def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
+    """spec "Lifts": raw items come 'in' on the ground floor; surplus goes 'up'/'down'
+    to the floors that need it, or 'out' to storage; one Lift per belt line."""
+    ground = min(floor_ids)
+    items = sorted({i for fi in floor_ids for i in (*needs[fi], *surpluses[fi])})
+    plan: list[tuple[str, float, int, int, str]] = []
+    for item in items:
+        need_floors = [fi for fi in floor_ids if item in needs[fi]]
+        src_floors = [fi for fi in floor_ids if item in surpluses[fi]]
+        if not src_floors:
+            rate = sum(r for fi in need_floors for _k, _c, r in needs[fi][item])
+            plan.append((item, rate, ground, max(need_floors), "in"))
+            continue
+        for s in src_floors:
+            rate = sum(r for _k, _c, r in surpluses[s][item])
+            if not need_floors:
+                plan.append((item, rate, s, s, "out"))
+            elif max(need_floors) > s:
+                plan.append((item, rate, s, max(need_floors), "up"))
+            else:
+                plan.append((item, rate, s, min(need_floors), "down"))
+    lifts = []
+    for item, rate, a, b, kind in plan:
+        n = max(1, math.ceil(rate / belt_ipm - EPS))
+        lifts += [Lift(item, rate / n, (0, -1), a, b, kind) for _ in range(n)]
+    return lifts
+
+
+def _assign_cells(lifts: list[Lift], floors: dict[int, Floor]) -> None:
+    def stub_free(f: Floor) -> set[int]:  # exit stub (1..3, cy) must avoid manifold belts
+        belts = {c for b in f.blocks for ln in (*manifold_ports(b).inputs.values(), *manifold_ports(b).outputs)
+                 for c in ln}
+        return {cy for cy in strip_rows(f) if not any((x, cy) in belts for x in (1, 2, 3))}
+
+    usable = {fi: stub_free(f) for fi, f in floors.items()}
+    taken: dict[int, set[int]] = {fi: set() for fi in floors}
+    for lift in sorted(lifts, key=lambda l: (l.from_floor, l.item, l.kind)):  # stable: line order
+        span = [fi for fi in _span(lift) if fi in floors]
+        free = set.intersection(*(usable[fi] - taken[fi] for fi in span))
+        if not free:
+            raise LiftStripFull(
+                f"lift strip full: no free strip row for {lift.item} on floors "
+                f"F{span[0]}-F{span[-1]}"
+            )
+        cy = min(free)
+        lift.cell = (0, cy)
+        for fi in span:
+            taken[fi].add(cy)
+
+
+def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
+    """The floor's routing grid, and a description of the first manifold-belt clash
+    (a manifold belt on a walk lane, on another block, off the slab, or on another
+    manifold belt) -- '' when clean."""
+    w, h = floor_cells(f)
+    rows, cols = walk_lanes(f)
+    g = Grid(w, h, {(0, y) for y in range(h)}, rows, cols)
+    footprint: dict[Cell, str] = {}
+    for b in f.blocks:
+        x0, y0, bw, bh = block_rect(b)
+        for x in range(x0, x0 + bw):
+            for y in range(y0, y0 + bh):
+                footprint[(x, y)] = b.key
+    g.blocked |= set(footprint)
+    reserved: set[Cell] = set()
+    for b in f.blocks:
+        ps = ports[b.key]
+        for belt in (*ps.inputs.values(), *ps.outputs):
+            for c in belt:
+                if (not (0 < c[0] < w and 0 <= c[1] < h) or c in reserved or any(g.lanes(c))
+                        or footprint.get(c, b.key) != b.key):
+                    return g, f"{b.key} manifold belt at {c}"
+                reserved.add(c)
+    g.blocked |= reserved
+    return g, ""
+
+
+def route_belts(layout: Layout, belt_ipm: float) -> Routing:
+    """Route one attempt (no widening): connections per floor, lifts on the strip,
+    then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
+    connections route first (southernmost lift row first, then shortest), then the rest longest-first. One belt per
+    connection (over-capacity is flagged, never split); a lift's lines are used round-robin.
+    Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
+    out = Routing(layout=layout)
+    names = {bus.item: bus.name for bus in layout.buses}
+    pipes = {bus.item for bus in layout.buses if bus.carrier == "pipe"}
+    out.failures += [f"{names.get(i, i)}: pipe, not routed" for i in sorted(pipes)]
+    floors = {f.index: f for f in layout.floors if f.slab_side_m is not None}
+    out.failures += [f"F{f.index}: oversized floor, not routed"
+                     for f in layout.floors if f.slab_side_m is None]
+    if not floors:
+        return out
+    ports = {b.key: manifold_ports(b) for f in floors.values() for b in f.blocks}
+    plans = {fi: _floor_plan(f, ports, pipes) for fi, f in floors.items()}
+    out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
+                            {fi: p[2] for fi, p in plans.items()}, belt_ipm)
+    _assign_cells(out.lifts, floors)
+
+    for fi, f in floors.items():
+        same, need, surplus = plans[fi]
+        conns: list[_Conn] = list(same)
+        for item, users in need.items():
+            feeders = [l for l in out.lifts if l.item == item and l.kind != "out" and fi in _span(l)]
+            conns += [_Conn(item, rate, feeders[k % len(feeders)].cell, feed, f"lift:{item}", key)
+                      for k, (key, feed, rate) in enumerate(users)]
+        for item, senders in surplus.items():
+            targets = [l for l in out.lifts if l.item == item and l.from_floor == fi
+                       and l.kind in ("up", "down", "out")]
+            conns += [_Conn(item, rate, exit_, targets[k % len(targets)].cell, key, f"lift:{item}")
+                      for k, (key, exit_, rate) in enumerate(senders)]
+        for c in conns:
+            if c.rate > belt_ipm + EPS:
+                out.failures.append(f"F{fi}: {names.get(c.item, c.item)} {c.src} -> {c.dst}: "
+                                    f"{c.rate:.4g}/min exceeds one belt ({belt_ipm:.4g}/min)")
+
+        grid, clash = _grid(f, ports)
+        if clash:
+            out.failures.append(f"F{fi}: manifold belts collide ({clash})")
+            out.failed_floors.append(fi)
+            continue
+        lift_cells = {l.cell for l in out.lifts}
+        stubs = {c.a if c.a in lift_cells else c.b for c in conns if c.a in lift_cells or c.b in lift_cells}
+        for cx, cy in stubs:
+            grid.blocked |= {(1, cy), (2, cy), (3, cy)}
+
+        def ends(c: _Conn):
+            return (3, c.a[1]) if c.a in lift_cells else c.a, (3, c.b[1]) if c.b in lift_cells else c.b
+
+        def order(c: _Conn):
+            a, b = ends(c)
+            lifty = c.a[1] if c.a in lift_cells else c.b[1] if c.b in lift_cells else -1
+            return (0, -lifty, _dist(a, b), c.item, c.src, c.dst) if lifty >= 0 else (
+                1, 0, -_dist(a, b), c.item, c.src, c.dst)
+
+        for c in sorted(conns, key=order):
+            a, b = ends(c)
+            path = astar(grid, a, b)
+            if path is None:
+                out.failures.append(f"F{fi}: {names.get(c.item, c.item)} {c.src} -> {c.dst} unroutable")
+                if fi not in out.failed_floors:
+                    out.failed_floors.append(fi)
+                continue
+            grid.blocked.update(path[1:-1])
+            if c.a in lift_cells:
+                path = [c.a, (1, c.a[1]), (2, c.a[1])] + path
+            if c.b in lift_cells:
+                path = path + [(2, c.b[1]), (1, c.b[1]), c.b]
+            out.belts.append(Belt(c.item, c.rate, fi, path, c.src, c.dst))
+    return out
