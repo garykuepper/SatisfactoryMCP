@@ -373,3 +373,50 @@ def test_build_routed_layout_reports_a_floor_that_fails_even_when_wide(monkeypat
     r = R.build_routed_layout(None, None, belt_ipm=270)
     assert r.widened == ["Constructor"] and r.failed_floors == [0]
     assert any("collide" in f for f in r.failures)
+
+
+def test_belts_sharing_an_end_may_run_along_each_other():
+    # Lifts A, B, I, J take strip rows 0, 2, 3, 4, so I's stub end (3, 3) is boxed in by
+    # B's and J's ends (N/S) and its own stub (W): its one free neighbour is (4, 3). Both
+    # I belts must leave through it; without the shared trunk the first belt marks (4, 3)
+    # 'h' and the second is unroutable.
+    c1 = blk("c1", 3, 2, inputs={"A": 1.0, "B": 1.0, "I": 10.0})
+    c2 = blk("c2", 3, 6, inputs={"I": 10.0, "J": 1.0})
+    r = R.route_belts(lay(floor(0, [c1, c2], w=12, d=12)), belt_ipm=270)
+    assert not r.failures
+    i1, i2 = [b.path for b in r.belts if b.item == "I"]
+    assert i1[:6] == i2[:6] and i1[4] == (4, 3)
+
+
+def test_a_belt_of_another_item_cannot_run_along_a_trunk():
+    # Same boxed-in end at (1, 1): its only way out is east along row 1, where a belt of
+    # a different item already runs ('h'). route_belts passes `shared` only for the same
+    # item; with it the trunk is reusable, without it the end is sealed.
+    g = R.Grid(8, 3, {(0, 1), (1, 0), (1, 2)}, set(), set())
+    first = R.astar(g, (1, 1), (7, 1))
+    R.mark_belt(g, first)
+    assert R.astar(g, (1, 1), (6, 0)) is None
+    second = R.astar(g, (1, 1), (6, 0), shared=set(first[1:-1]))
+    assert second[:3] == first[:3]
+    # Marking the second belt leaves the trunk's dirs alone: (2, 1) stays a crossable 'h'
+    # rather than turning into a double-crossing 'x'.
+    R.mark_belt(g, second, shared=set(first[1:-1]))
+    assert g.belt_dirs[(2, 1)] == "h"
+
+
+def test_different_items_from_one_exit_do_not_share_a_trunk():
+    # A two-output block's I and K belts start at the same exit end and, with block o
+    # in the way, both want column 11 north. Without the same-item filter I rides K's
+    # cells for free; with it I may only cross K perpendicularly.
+    p = blk("p", 3, 1, outputs={"I": 10.0, "K": 10.0})
+    o = blk("o", 3, 3)
+    ci, ck = blk("ci", 3, 6, inputs={"I": 10.0}), blk("ck", 3, 9, inputs={"K": 10.0})
+    r = R.route_belts(lay(floor(0, [p, o, ci, ck], w=12, d=12)), belt_ipm=270)
+    assert not r.failures
+    (pi,), (pk,) = ([b.path for b in r.belts if b.dst == d] for d in ("ci", "ck"))
+    assert pi[0] == pk[0]
+    common = set(pi[1:-1]) & set(pk[1:-1])
+    for c in common:  # each common cell is a perpendicular crossing, never a run along
+        a = pi.index(c)
+        k = pk.index(c)
+        assert (pi[a - 1][1] == pi[a + 1][1]) != (pk[k - 1][1] == pk[k + 1][1])

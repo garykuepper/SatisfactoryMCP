@@ -111,13 +111,14 @@ class Grid:
                 x in self.lane_cols and 1 <= y <= self.h - 2)
 
 
-def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
+def astar(g: Grid, start: Cell, goal: Cell, shared: set[Cell] | frozenset = frozenset()) -> list[Cell] | None:
     """Cheapest 4-connected path start -> goal, both included; both may be blocked
     cells (they are manifold or strip ends). Step 1, turn +TURN_COST, entering a
     walk-lane cell +CROSS_COST. A lane cell is crossed straight through, perpendicular
     to its lane; a cell on two lanes is impassable. A routed-belt cell ('h'/'v' in
     belt_dirs) is likewise crossed straight through, perpendicular, for +CROSS_BELT_COST;
-    'x' is impassable. None when there is no path."""
+    'x' is impassable. `shared` cells (a same-item trunk from a common end) ignore
+    belt_dirs: any direction, no crossing cost. None when there is no path."""
 
     def est(c: Cell) -> int:
         return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
@@ -136,7 +137,7 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
             return path[::-1]
         if cost > best.get((cell, d), math.inf):
             continue
-        straight = cell != start and (any(g.lanes(cell)) or cell in g.belt_dirs)
+        straight = cell != start and (any(g.lanes(cell)) or (cell in g.belt_dirs and cell not in shared))
         for nd in _DIRS:
             if straight and nd != d:
                 continue  # no turning on a lane or belt-crossing cell
@@ -152,7 +153,7 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
                     continue
                 if on_row or on_col:
                     step += CROSS_COST
-                bd = g.belt_dirs.get(n)
+                bd = None if n in shared else g.belt_dirs.get(n)
                 if bd == "x" or (bd == "h" and nd[1] == 0) or (bd == "v" and nd[0] == 0):
                     continue
                 if bd:
@@ -166,11 +167,14 @@ def astar(g: Grid, start: Cell, goal: Cell) -> list[Cell] | None:
     return None
 
 
-def mark_belt(g: Grid, path: list[Cell]) -> None:
+def mark_belt(g: Grid, path: list[Cell], shared: set[Cell] | frozenset = frozenset()) -> None:
     """Record a routed belt's interior cells in g.belt_dirs: 'h'/'v' where it runs
-    straight, 'x' where it turns or crosses a belt already there."""
+    straight, 'x' where it turns or crosses a belt already there. Cells in `shared`
+    (its trunk with a same-item belt) keep their existing dir."""
     for i in range(1, len(path) - 1):
         p, c, n = path[i - 1], path[i], path[i + 1]
+        if c in shared:
+            continue
         g.belt_dirs[c] = ("x" if c in g.belt_dirs else "h" if p[1] == n[1]
                           else "v" if p[0] == n[0] else "x")
 
@@ -362,7 +366,8 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
     connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
     connection (over-capacity is flagged, never split); a lift's lines are used round-robin.
-    Routed belts may be crossed straight through by later belts (never at a turn, never twice).
+    Routed belts may be crossed straight through by later belts (never at a turn, never twice);
+    same-item belts from a common end may share a trunk (a splitter/merger in game).
     Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
     out = Routing(layout=layout)
     names = {bus.item: bus.name for bus in layout.buses}
@@ -444,15 +449,19 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
             return (0, -lifty, _dist(a, b), c.item, c.src, c.dst) if lifty >= 0 else (
                 1, 0, -_dist(a, b), c.item, c.src, c.dst)
 
+        routed: list[tuple[str, Cell, Cell, list[Cell]]] = []  # (item, a, b, interior)
         for c in sorted(conns, key=order):
             a, b = ends(c)
-            path = astar(grid, a, b)
+            shared = {x for item, ra, rb, cells in routed
+                      if item == c.item and {ra, rb} & {a, b} for x in cells}
+            path = astar(grid, a, b, shared)
             if path is None:
                 out.failures.append(f"F{fi}: {names.get(c.item, c.item)} {c.src} -> {c.dst} unroutable")
                 if fi not in out.failed_floors:
                     out.failed_floors.append(fi)
                 continue
-            mark_belt(grid, path)
+            mark_belt(grid, path, shared)
+            routed.append((c.item, a, b, path[1:-1]))
             if c.a in lift_cells:
                 path = [c.a, (1, c.a[1]), (2, c.a[1])] + path
             if c.b in lift_cells:
