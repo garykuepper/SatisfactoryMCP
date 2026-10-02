@@ -730,8 +730,8 @@ def plan_layout(
     group_by: Annotated[
         str,
         Field(description='"stage" (floors by chain stage) or "building" (each building '
-                          "type on its own floor(s), tiny groups merged, every floor sized "
-                          "to the smallest even x even slab that fits)"),
+                          "type on its own floor(s), tiny groups merged, all floors one "
+                          "shared even x even slab sized to the largest floor)"),
     ] = "stage",
     max_slab_foundations: Annotated[
         int, Field(description='with group_by="building": largest slab side, even, >= 4')

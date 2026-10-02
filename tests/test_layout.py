@@ -946,10 +946,10 @@ def test_group_blocks_breaks_a_trade_tie_toward_the_lower_stage():
     from satisfactory_mcp.domain.planning.layout import _group_blocks
 
     s = _typed_block("s", "Smelter", 2, stage=1)
-    lo = _typed_block("lo", "Foundry", 6, stage=0)
+    lo = _typed_block("lo", "Constructor", 6, stage=0)
     hi = _typed_block("hi", "Assembler", 6, stage=3)
     groups = dict(_group_blocks([s, lo, hi], []))  # no trade at all: a tie
-    assert "Foundry + Smelter" in groups
+    assert "Constructor + Smelter" in groups
 
 
 def test_group_blocks_single_type_is_one_group():
@@ -1041,3 +1041,27 @@ def test_plan_layout_groups_by_building_and_reports_bad_args(game, state):
                           export_minimums={"Versatile Framework": 10}, group_by="building",
                           max_slab_foundations=15)
     assert bad.startswith("! ") and "even" in bad
+
+
+def test_building_floors_share_one_slab_size():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    con = _typed_block("c", "Constructor", 16, stage=1)
+    con.packed = type(con.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
+    asm = _typed_block("a", "Assembler", 6, stage=2)
+    asm.packed = type(asm.packed)(count=3, columns=3, rows=1, width_m=24.0, depth_m=16.0, foundations=6)
+    floors, _warnings = _building_floors([con, asm], [], 16, 1)
+    sizes = {(f.slab_side_m / 8, f.slab_depth_m / 8) for f in floors}
+    # alone: Constructor 1+8+1 = 10 x 4, Assembler 1+3+1 = 5 -> 6 x 4; shared: 10 x 4
+    assert len(floors) == 2 and sizes == {(10, 4)}
+
+
+def test_smelters_and_foundries_always_share_a_floor_group():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    # both well above MERGE_BELOW_FND and no trade between them: still one group
+    groups = dict(_group_blocks([_typed_block("f", "Foundry", 16, machines=6),
+                                 _typed_block("s", "Smelter", 6, machines=3),
+                                 _typed_block("c", "Constructor", 6)], []))
+    assert sorted(b.key for b in groups["Foundry + Smelter"]) == ["f", "s"]
+    assert [b.key for b in groups["Constructor"]] == ["c"]

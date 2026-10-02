@@ -573,6 +573,10 @@ def _fit_slab(placed: list[_Placed], cap_fnd: int) -> tuple[int, int]:
 #: its own (spec 2026-10-01, Section 1).
 MERGE_BELOW_FND = 4
 
+#: Building types that always share one floor group (owner, 2026-10-01): Smelters and
+#: Foundries both turn ore into ingots off the same ore belts -- a smelting floor.
+FLOOR_FAMILY = {"Smelter": "smelting", "Foundry": "smelting"}
+
 
 def _mean_stage(blocks: list[Block]) -> float:
     """Machine-weighted mean chain stage: where a floor of these blocks stacks."""
@@ -587,7 +591,7 @@ def _group_blocks(blocks: list[Block], buses: list[Bus]) -> list[tuple[str, list
     is small or one is left. Label = member building names, most machines first."""
     by_type: dict[str, list[Block]] = {}
     for b in blocks:
-        by_type.setdefault(b.building, []).append(b)
+        by_type.setdefault(FLOOR_FAMILY.get(b.building, b.building), []).append(b)
     members = list(by_type.values())
 
     def size(g: list[Block]) -> int:
@@ -827,8 +831,8 @@ def _building_floors(
 ) -> tuple[list[Floor], list[str]]:
     """Floors grouped by building type (spec 2026-10-01): each group row-packed onto
     a cap_fnd x cap_fnd slab, one manifold per row (_pack_rows) -- spilling onto more floors of the same group, whole
-    manifolds only, when it doesn't fit -- then each floor shrunk to the smallest even
-    x even slab holding it. Floors stack by machine-weighted mean stage, so smelting
+    manifolds only, when it doesn't fit -- then every floor takes one shared slab: the
+    smallest even x even size holding the largest floor's contents. Floors stack by machine-weighted mean stage, so smelting
     sits at the bottom and final assembly on top."""
     specs: list[tuple[float, str, list[Block], tuple[int, int] | None]] = []
     warnings: list[str] = []
@@ -846,6 +850,13 @@ def _building_floors(
         for b in oversized:
             specs.append((float(b.stage), label, [b], None))
     specs.sort(key=lambda s: s[0])  # stable: equal means keep group order
+    # One slab for the whole stack (owner, 2026-10-01): every packed floor takes the
+    # largest width and largest depth among them -- still even, still <= cap_fnd.
+    # Oversized blocks' own floors (size None) keep their real size.
+    sized = [s[3] for s in specs if s[3]]
+    if sized:
+        common = (max(w for w, _d in sized), max(d for _w, d in sized))
+        specs = [(m, lbl, fb, common if size else None) for m, lbl, fb, size in specs]
 
     floors: list[Floor] = []
     for _mean, label, floor_blocks, size in specs:
@@ -1080,8 +1091,8 @@ def build_layout(
 
     ``group_by="building"`` (spec 2026-10-01) puts each building type on its own
     floor(s), merging groups under 4 foundations into their biggest trading partner,
-    and sizes every floor to the smallest even x even slab that fits, capped at
-    ``max_slab_foundations``; the slab_* arguments are then ignored. "stage" (default)
+    and gives every floor one shared slab -- the smallest even x even size that holds
+    the largest floor, capped at ``max_slab_foundations``; the slab_* arguments are then ignored. "stage" (default)
     is the default stage-per-floor partitioning.
     """
     group_by = (group_by or "stage").strip().casefold()
