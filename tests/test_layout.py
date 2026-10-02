@@ -974,3 +974,39 @@ def test_group_blocks_tolerates_a_block_without_clearance_data():
     bare = _typed_block("x", "Mystery", 0, packed=False)
     groups = _group_blocks([bare, _typed_block("c", "Constructor", 6)], [])
     assert len(groups) == 1 and len(groups[0][1]) == 2
+
+
+def test_building_mode_floors_hold_one_group_on_even_capped_slabs(game, oil_solution):
+    lay = build_layout(game, oil_solution, group_by="building")
+    off = {b.key for b in lay.off_slab}
+    on_floor = sorted(b.key for f in lay.floors for b in f.blocks)
+    assert on_floor == sorted(b.key for b in lay.blocks if b.key not in off)
+    for f in lay.floors:
+        assert f.kind == "production" and f.group
+        assert {b.building for b in f.blocks} <= set(f.group.split(" + "))
+        if f.slab_side_m is not None:
+            w, d = f.slab_side_m / FOUNDATION_M, f.slab_depth_m / FOUNDATION_M
+            assert w % 2 == 0 and d % 2 == 0 and 2 <= w <= 16 and 2 <= d <= 16
+
+
+def test_building_mode_stacks_floors_by_mean_stage(game, oil_solution):
+    from satisfactory_mcp.domain.planning.layout import _mean_stage
+
+    lay = build_layout(game, oil_solution, group_by="building")
+    means = [_mean_stage(f.blocks) for f in lay.floors]
+    assert means == sorted(means)
+
+
+def test_building_mode_folds_long_manifolds(game, oil_solution):
+    lay = build_layout(game, oil_solution, group_by="building")
+    long_ones = [b for b in lay.blocks if b.packed and b.machines > 8 and b.key not in {o.key for o in lay.off_slab}]
+    assert all(b.packed.folded for b in long_ones)
+
+
+def test_bad_group_by_or_slab_cap_is_an_error(game, oil_solution):
+    with pytest.raises(ValueError, match="group_by"):
+        build_layout(game, oil_solution, group_by="type")
+    with pytest.raises(ValueError, match="even"):
+        build_layout(game, oil_solution, group_by="building", max_slab_foundations=15)
+    with pytest.raises(ValueError, match="even"):
+        build_layout(game, oil_solution, group_by="building", max_slab_foundations=2)

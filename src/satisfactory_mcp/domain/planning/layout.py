@@ -821,6 +821,51 @@ def _slab_floors(
     return floors, warnings
 
 
+def _building_floors(
+    blocks: list[Block], buses: list[Bus], cap_fnd: int, aisle_fnd: int
+) -> tuple[list[Floor], list[str]]:
+    """Floors grouped by building type (spec 2026-10-01): each group grid-packed onto
+    a cap_fnd x cap_fnd slab -- spilling onto more floors of the same group, whole
+    manifolds only, when it doesn't fit -- then each floor shrunk to the smallest even
+    x even slab holding it. Floors stack by machine-weighted mean stage, so smelting
+    sits at the bottom and final assembly on top."""
+    specs: list[tuple[float, str, list[Block], tuple[int, int] | None]] = []
+    warnings: list[str] = []
+    for label, group in _group_blocks(blocks, buses):
+        ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
+        packed_floors, oversized, warns = _pack_slab(ordered, cap_fnd, aisle_fnd)
+        warnings.extend(warns)
+        for placed in packed_floors:
+            if not placed:
+                continue
+            for p in placed:
+                p.block.x_fnd, p.block.y_fnd, p.block.rotated = p.x_fnd, p.y_fnd, p.rotated
+            floor_blocks = [p.block for p in placed]
+            specs.append((_mean_stage(floor_blocks), label, floor_blocks, _fit_slab(placed, cap_fnd)))
+        for b in oversized:
+            specs.append((float(b.stage), label, [b], None))
+    specs.sort(key=lambda s: s[0])  # stable: equal means keep group order
+
+    floors: list[Floor] = []
+    for _mean, label, floor_blocks, size in specs:
+        stages = sorted({b.stage for b in floor_blocks})
+        floors.append(
+            Floor(
+                index=len(floors),
+                kind="production",
+                stage=stages[0],
+                stages=stages,
+                height_m=16.0,
+                blocks=floor_blocks,
+                group=label,
+                slab_side_m=size[0] * FOUNDATION_M if size else None,
+                slab_depth_m=size[1] * FOUNDATION_M if size else None,
+            )
+        )
+    _attach_crossing_buses(floors, buses)
+    return floors, warnings
+
+
 def _decks_for(blocks: list[Block], cap: int) -> list[list[Block]]:
     """Split one chain stage across as many decks as a foundation cap allows.
 
@@ -1015,6 +1060,8 @@ def build_layout(
     aisle_foundations: int = 1,
     slab_depth_foundations: int = 0,
     slab_layout: str = "grid",
+    group_by: str = "stage",
+    max_slab_foundations: int = 16,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
@@ -1028,10 +1075,25 @@ def build_layout(
     makes the slab rectangular (``slab_foundations`` wide by this deep); 0 = square.
     ``slab_layout`` is "grid" (manifolds in shared rows and columns) or "rows" (one
     manifold per row, each along the slab's long side).
+
+    ``group_by="building"`` (spec 2026-10-01) puts each building type on its own
+    floor(s), merging groups under 4 foundations into their biggest trading partner,
+    and sizes every floor to the smallest even x even slab that fits, capped at
+    ``max_slab_foundations``; the slab_* arguments are then ignored. "stage" (default)
+    is the behaviour before this parameter existed.
     """
+    group_by = (group_by or "stage").strip().casefold()
+    if group_by not in ("stage", "building"):
+        raise ValueError(f"group_by must be 'stage' or 'building', not {group_by!r}")
+    if group_by == "building" and (max_slab_foundations < 4 or max_slab_foundations % 2):
+        raise ValueError(
+            f"max_slab_foundations must be an even number >= 4, not {max_slab_foundations}"
+        )
     # The row length a manifold may have before it folds: the slab's inner short side.
     max_row_fnd = 0
-    if slab_foundations > 0:
+    if group_by == "building":
+        max_row_fnd = max_slab_foundations - 2 * EDGE_FND
+    elif slab_foundations > 0:
         max_row_fnd = min(slab_foundations, slab_depth_foundations or slab_foundations) - 2 * EDGE_FND
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min, max_row_fnd)
     _assign_stages(blocks)
@@ -1039,7 +1101,7 @@ def build_layout(
 
     warnings: list[str] = []
     off_slab: list[Block] = []
-    if slab_foundations > 0:
+    if group_by == "building" or slab_foundations > 0:
         aisle_foundations = max(0, aisle_foundations)
         slab_depth_foundations = max(0, slab_depth_foundations)
         is_extractor = lambda b: bool(
@@ -1047,10 +1109,15 @@ def build_layout(
         )
         off_slab = [b for b in blocks if is_extractor(b)]
         on_slab = [b for b in blocks if not is_extractor(b)]
-        floors, slab_warnings = _slab_floors(
-            on_slab, buses, slab_foundations, aisle_foundations, slab_depth_foundations,
-            (slab_layout or "grid").strip().casefold(),
-        )
+        if group_by == "building":
+            floors, slab_warnings = _building_floors(
+                on_slab, buses, max_slab_foundations, aisle_foundations
+            )
+        else:
+            floors, slab_warnings = _slab_floors(
+                on_slab, buses, slab_foundations, aisle_foundations, slab_depth_foundations,
+                (slab_layout or "grid").strip().casefold(),
+            )
         warnings.extend(slab_warnings)
         return Layout(blocks=blocks, buses=buses, floors=floors, warnings=warnings, off_slab=off_slab)
 
