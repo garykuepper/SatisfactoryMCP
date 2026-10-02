@@ -799,3 +799,15 @@ def test_a_rotated_output_only_block_keeps_a_merger_row_on_both_sides():
     for side in ("W", "E"):
         xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
         assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)
+
+
+def test_one_walk_lane_per_shared_row_past_the_deepest_merger_band():
+    # One row, bodies at y0 = 8: a 5 cells deep (merger band 13, 14), b 7 deep (band
+    # 15, 16). One lane at 8 + 7 + 2 = 17 -- not a's 15, which lands on b's band.
+    a = rows_blk("a", 3, 2, inputs={"A": 1}, outputs={"P": 1})
+    b = rows_blk("b", 6, 2, d=14.0, inputs={"A": 1}, outputs={"P": 1})
+    f = floor(0, [a, b])
+    rows, _cols = R.walk_lanes(f)
+    assert rows == {1, 38, 17}
+    ports = {k.key: R.manifold_ports(k) for k in (a, b)}
+    assert R._grid(f, ports)[1] == ""
