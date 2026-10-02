@@ -410,16 +410,20 @@ def test_build_routed_layout_reports_a_floor_that_fails_even_when_wide(monkeypat
 
 
 def test_belts_sharing_an_end_may_run_along_each_other():
-    # Lifts A, B, I, J take strip rows 0, 2, 3, 4, so I's stub end (3, 3) is boxed in by
-    # B's and J's ends (N/S) and its own stub (W): its one free neighbour is (4, 3). Both
-    # I belts must leave through it; without the shared trunk the first belt marks (4, 3)
-    # 'h' and the second is unroutable.
-    c1 = blk("c1", 3, 2, inputs={"A": 1.0, "B": 1.0, "I": 10.0})
-    c2 = blk("c2", 3, 6, inputs={"I": 10.0, "J": 1.0})
-    r = R.route_belts(lay(floor(0, [c1, c2], w=12, d=12)), belt_ipm=270)
+    # In lifts sit level with their feeds. I feeds rows 3 (c1) and 19 (c2): target 11.
+    # A (feed row 11) goes first and takes 11; I's nearest free rows tie at 10/12 -> 10;
+    # J (feed row 10) moves to 9. So I's stub end (3, 10) is boxed in by A's and J's ends
+    # (N/S) and its own stub (W): its one free neighbour is (4, 10). Both I belts must
+    # leave through it; without the shared trunk the first belt marks (4, 10) 'h' and
+    # the second is unroutable.
+    c1 = blk("c1", 3, 1, n=1, inputs={"I": 10.0})
+    c2 = blk("c2", 3, 5, n=1, inputs={"I": 10.0})
+    c3 = blk("c3", 6, 3, n=1, inputs={"A": 1.0, "J": 1.0})
+    r = R.route_belts(lay(floor(0, [c1, c2, c3], w=12, d=12)), belt_ipm=270)
+    assert {l.item: l.cell[1] for l in r.lifts} == {"A": 11, "I": 10, "J": 9}
     assert not r.failures
     i1, i2 = [b.path for b in r.belts if b.item == "I"]
-    assert i1[:6] == i2[:6] and i1[4] == (4, 3)
+    assert i1[:6] == i2[:6] and i1[4] == (4, 10)
 
 
 def test_a_belt_of_another_item_cannot_run_along_a_trunk():
@@ -514,13 +518,16 @@ def test_an_east_lift_stub_mirrors_the_west_one():
     assert R._stub((0, cy), 40) == ((1, cy), (2, cy), (3, cy))
 
 
-def test_in_lifts_fill_the_south_corner_and_out_lifts_the_north():
+def test_in_lifts_sit_level_with_their_feeds_and_out_lifts_take_the_north_corner():
     c = blk("c", 1, 1, inputs={"Ore": 30.0}, outputs={"Ingot": 30.0})
     f0 = floor(0, [c])
     r = R.route_belts(lay(f0), belt_ipm=270)
     by = {l.kind: l.cell for l in r.lifts}
     rows = R.strip_rows(f0)
-    assert by["in"] == (0, min(rows))          # F0 input side W, south end
+    # c at foundation (1, 1) -> rect (4, 4, 8, 5); its Ore input row runs (4, 3)..(11, 3),
+    # so the feed is the west end (4, 3) and the target row is 3. Lanes are rows/cols
+    # {1, 38}; row 3 is a strip row and its stub (1..3, 3) misses every manifold cell.
+    assert by["in"] == (0, 3)                  # F0 input side W, level with the Ore feed
     assert by["out"] == (39, max(rows))        # F0 output side E, north end
     assert not r.failures
 

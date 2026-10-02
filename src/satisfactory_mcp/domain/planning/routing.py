@@ -345,7 +345,7 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
     """Put each lift on its side's edge strip: up/down/out on the source floor's output
     side, in on the ground floor's input side. A row is usable on a (floor, side) when
     its 3-cell exit stub there avoids every manifold belt. Rows (spec "Lift placement"):
-    in lifts fill from the south, out lifts from the north, up/down lifts take the free
+    out lifts fill from the north; in, up and down lifts take the free
     row nearest the mean y of the manifold ends they connect (ties low). Order: in, out,
     then up/down by (source floor, item); stable, so lines keep their order."""
     w = floor_cells(next(iter(floors.values())))[0]  # one shared slab
@@ -369,13 +369,13 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
                 f"lift strip full: no free strip row for {lift.item} on floors "
                 f"F{span[0]}-F{span[-1]}"
             )
-        if lift.kind == "in":
-            cy = min(free)
-        elif lift.kind == "out":
+        if lift.kind == "out":
             cy = max(free)
-        else:
-            ys = [c[1] for _k, c, _r in plans[lift.from_floor][2].get(lift.item, [])]
-            ys += [c[1] for fi in span if fi != lift.from_floor and fi in plans
+        else:  # in: the feeds it serves; up/down: source exits + feeds on the other floors
+            ys = [] if lift.kind == "in" else [
+                c[1] for _k, c, _r in plans[lift.from_floor][2].get(lift.item, [])]
+            ys += [c[1] for fi in span if fi in plans
+                   and (lift.kind == "in" or fi != lift.from_floor)
                    for _k, c, _r in plans[fi][1].get(lift.item, [])]
             rows = strip_rows(floors[lift.from_floor])  # no ends: the strip's middle
             target = sum(ys) / len(ys) if ys else (min(rows) + max(rows)) / 2
