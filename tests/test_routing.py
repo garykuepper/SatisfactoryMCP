@@ -95,18 +95,36 @@ def test_astar_goes_around_blocked_cells_and_may_end_on_blocked_ends():
     assert not (set(path[1:-1]) & g.blocked)
 
 
-def test_astar_crosses_a_walk_lane_only_straight_through():
-    g = R.Grid(7, 7, set(), {3}, set())          # horizontal lane on row 3 (x 1..5)
-    path = R.astar(g, (1, 0), (5, 6))
-    i = next(k for k, c in enumerate(path) if c[1] == 3)
-    assert path[i - 1][0] == path[i][0] == path[i + 1][0]   # in and out vertically
-    assert sum(1 for c in path if c[1] == 3) == 1            # never runs along it
+def test_astar_forced_lane_crossing_is_straight_and_costs_cross_cost():
+    # Wall on row 3 with one gap at (2, 3), a lane cell; the only route crosses it vertically.
+    # Fails if lane cells were impassable (None) or the crossing were free (cost check).
+    g = R.Grid(7, 7, {(x, 3) for x in range(7) if x != 2}, {3}, set())
+    path = R.astar(g, (2, 0), (2, 6))
+    assert path == [(2, y) for y in range(7)]
+    assert len(path) - 1 + R.CROSS_COST == 6 + 4  # 6 steps + one lane entry
 
 
-def test_astar_never_enters_a_lane_crossing():
-    g = R.Grid(7, 7, set(), {3}, {3})
-    path = R.astar(g, (0, 0), (6, 6))
-    assert (3, 3) not in path
+def test_astar_lane_crossing_cell_is_impassable():
+    # Wall on column 3, only gap (3, 3) = row-lane and col-lane cell. Without a lane rule the
+    # path squeezes through the gap; with it the gap is impassable (note the per-axis
+    # perpendicular rules already imply this, so it is not separately mutable).
+    g = R.Grid(7, 7, {(3, y) for y in range(7) if y != 3}, {3}, {3})
+    assert R.astar(g, (0, 0), (6, 0)) is None
+
+
+def test_astar_refuses_to_run_along_a_lane():
+    # One-row corridor that is exactly the lane row; without the "perpendicular only"
+    # rule start (0,1) -> goal (6,1) runs straight along it.
+    g = R.Grid(7, 3, {(x, y) for x in range(7) for y in (0, 2)}, {1}, set())
+    assert R.astar(g, (0, 1), (6, 1)) is None
+
+
+def test_astar_refuses_to_turn_on_a_lane_cell():
+    # (1, 3) is a lane cell and the goal (0, 3) is only reachable from it (its other
+    # neighbours are walled). Entering vertically then leaving west is a turn on the lane;
+    # without the no-turn rule the path (1,0)..(1,3),(0,3) exists.
+    g = R.Grid(7, 7, {(0, 2), (0, 4)}, {3}, set())
+    assert R.astar(g, (1, 0), (0, 3)) is None
 
 
 def test_astar_returns_none_when_walled_off():
