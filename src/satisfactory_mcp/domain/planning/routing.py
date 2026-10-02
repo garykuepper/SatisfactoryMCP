@@ -265,6 +265,8 @@ class Routing:
     failures: list[str] = field(default_factory=list)
     #: floor indexes with a failure -- what build_routed_layout widens
     failed_floors: list[int] = field(default_factory=list)
+    #: the lift-row nudge (floor -> rows) that made it route; {} when none was needed
+    lift_bias: dict[int, int] = field(default_factory=dict)
 
 
 class LiftStripFull(ValueError):
@@ -397,13 +399,15 @@ def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
 
 
 def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, Ports],
-                  plans: dict) -> None:
+                  plans: dict, lift_bias: dict[int, int] | None = None) -> None:
     """Put each lift on its side's edge strip: up/down/out on the source floor's output
     side, in on the ground floor's input side. A row is usable on a (floor, side) when
     its 3-cell exit stub there avoids every manifold belt. Rows (spec "Lift placement"):
     out lifts fill from the north; in, up and down lifts take the free
     row nearest the mean y of the manifold ends they connect (ties low). Order: in, out,
-    then up/down by (source floor, item); stable, so lines keep their order."""
+    then up/down by (source floor, item); stable, so lines keep their order.
+    `lift_bias` shifts an in/up/down lift's target row by the bias of the lowest floor
+    it spans that has one (build_routed_layout's nudge retry)."""
     w = floor_cells(next(iter(floors.values())))[0]  # one shared slab
     ground = floors[min(floors)]
 
@@ -435,6 +439,9 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
                    for _k, c, _r in plans[fi][1].get(lift.item, [])]
             rows = strip_rows(floors[lift.from_floor])  # no ends: the strip's middle
             target = sum(ys) / len(ys) if ys else (min(rows) + max(rows)) / 2
+            biased = [fi for fi in span if fi in (lift_bias or {})]
+            if biased:
+                target += lift_bias[min(biased)]
             cy = min(free, key=lambda cy: (abs(cy - target), cy))
         lift.cell = (_strip_x(side, w), cy)
         for fi in span:
@@ -470,7 +477,7 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
     return g, ""
 
 
-def route_belts(layout: Layout, belt_ipm: float) -> Routing:
+def route_belts(layout: Layout, belt_ipm: float, lift_bias: dict[int, int] | None = None) -> Routing:
     """Route one attempt (no widening): connections per floor, lifts on the strip,
     then A*. Each used lift cell gets a reserved 3-cell exit stub (_stub) and its
     connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
@@ -479,8 +486,9 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     load overflows a belt or doesn't balance in/out is flagged. Lift.rate is the line's load.
     Routed belts may be crossed straight through by later belts (never at a turn, never twice);
     same-item belts from a common end may share a trunk (a splitter/merger in game).
-    Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped."""
-    out = Routing(layout=layout)
+    Unroutable belts and clashing floors land in failures/failed_floors; nothing is dropped.
+    `lift_bias` (floor -> rows) nudges lift rows; see _assign_cells."""
+    out = Routing(layout=layout, lift_bias=dict(lift_bias or {}))
     names = {bus.item: bus.name for bus in layout.buses}
     pipes = {bus.item for bus in layout.buses if bus.carrier == "pipe"}
     out.failures += [f"{names.get(i, i)}: pipe, not routed" for i in sorted(pipes)]
@@ -495,7 +503,7 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
         _nearer_ends(f, ports, plans[fi])
     out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
                             {fi: p[2] for fi, p in plans.items()}, belt_ipm)
-    _assign_cells(out.lifts, floors, ports, plans)
+    _assign_cells(out.lifts, floors, ports, plans, lift_bias)
     src_load: dict[int, float] = {}                 # id(lift) -> belts into it on from_floor
     dst_load: dict[tuple[int, int], float] = {}     # (id(lift), floor) -> belts out of it there
 
@@ -601,15 +609,37 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     return out
 
 
+#: Lift-row nudges tried, in order, on the failing floors before widening them.
+NUDGES = tuple(k for m in range(1, 9) for k in (m, -m))
+
+
+def _route_nudged(lay: Layout, belt_ipm: float) -> Routing:
+    """route_belts; if a floor fails, the same layout again with the lift rows on the
+    failing floors shifted by each of NUDGES in turn -- the first attempt with no
+    failed floor and no new failure wins. Otherwise the unbiased attempt."""
+    r = route_belts(lay, belt_ipm)
+    if not r.failed_floors:
+        return r
+    for k in NUDGES:
+        try:
+            nr = route_belts(lay, belt_ipm, {fi: k for fi in sorted(r.failed_floors)})
+        except LiftStripFull:
+            continue
+        if not nr.failed_floors and set(nr.failures) <= set(r.failures):
+            return nr
+    return r
+
+
 def build_routed_layout(game, sol, belt_ipm: float, **layout_kwargs) -> Routing:
-    """build_layout(group_by="building") then route_belts; every floor that fails is
-    re-packed with 2-foundation aisles and the whole stack re-routed (the shared slab
-    may grow), until no new floor fails. Floors that still fail stay in failures."""
+    """build_layout(group_by="building") then route_belts. A floor that fails is first
+    retried with its lift rows nudged (_route_nudged); if no nudge routes it, its group
+    is re-packed with 2-foundation aisles and the whole stack re-routed (the shared
+    slab may grow), until no new floor fails. Floors that still fail stay in failures."""
     wide: set[str] = set()
     while True:
         lay = build_layout(game, sol, belt_ipm=belt_ipm, group_by="building",
                            wide_groups=frozenset(wide), **layout_kwargs)
-        r = route_belts(lay, belt_ipm)
+        r = _route_nudged(lay, belt_ipm)
         new = {lay.floors[i].group for i in r.failed_floors} - wide
         if not new:
             r.widened = sorted(wide)

@@ -689,3 +689,47 @@ def test_without_a_merger_row_the_band_and_walk_lane_sit_in_the_body_pad():
     assert ports.outputs[0][0][1] == y0 + 6
     assert y0 + 5 + 2 in R.walk_lanes(floors[0])[0]
     assert R._grid(floors[0], {"c": ports})[1] == ""
+
+
+def test_lift_bias_shifts_an_in_lifts_row_on_its_floor():
+    # One in lift feeding c's input belt (y0 4, input row 3): unbiased it sits level
+    # with the feed; a +3 bias on F0 moves it 3 rows north.
+    c = blk("c", 3, 1, inputs={"I": 10.0})
+    base = R.route_belts(lay(floor(0, [c], d=12)), belt_ipm=270)
+    nudged = R.route_belts(lay(floor(0, [c], d=12)), belt_ipm=270, lift_bias={0: 3})
+    assert [l.cell[1] for l in base.lifts] == [3]
+    assert [l.cell[1] for l in nudged.lifts] == [6]
+    assert not nudged.failures
+
+
+def _fake_routes(monkeypatch, ok_bias):
+    """route_belts that fails floor 0 unless given ok_bias (None = never routes)."""
+    calls = []
+
+    def fake_route(layout, belt_ipm, lift_bias=None):
+        calls.append((layout.floors[0].group, dict(lift_bias or {})))
+        r = R.Routing(layout=layout, lift_bias=dict(lift_bias or {}))
+        if lift_bias != ok_bias or ok_bias is None:
+            r.failures, r.failed_floors = ["F0: X a -> b unroutable"], [0]
+        return r
+
+    monkeypatch.setattr(R, "route_belts", fake_route)
+    monkeypatch.setattr(R, "build_layout", lambda game, sol, **kw: _clash_layout(
+        "Constructor" in kw["wide_groups"]))
+    return calls
+
+
+def test_build_routed_layout_nudges_lift_rows_before_widening(monkeypatch):
+    calls = _fake_routes(monkeypatch, {0: -1})
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert [b for _g, b in calls] == [{}, {0: 1}, {0: -1}]
+    assert not r.failures and r.widened == [] and r.lift_bias == {0: -1}
+
+
+def test_build_routed_layout_widens_when_no_nudge_helps(monkeypatch):
+    calls = _fake_routes(monkeypatch, None)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    ks = [k for m in range(1, 9) for k in (m, -m)]
+    per_layout = [{}] + [{0: k} for k in ks]
+    assert [b for _g, b in calls] == per_layout * 2          # nudged again after widening
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
