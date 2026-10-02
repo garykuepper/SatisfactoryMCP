@@ -651,3 +651,24 @@ def test_walk_lane_runs_just_past_the_merger_band():
         "b", 1, 6, inputs={"A": 1}, outputs={"P": 1})
     rows, _cols = R.walk_lanes(floor(0, [lower, upper]))
     assert rows == {1, 38, 8 + 5 + 2, 24 + 5 + 2}                   # no old aisle lane
+
+
+def test_a_rotated_four_input_block_keeps_its_bands_in_its_reserved_box_on_both_sides():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # One machine 8 wide x 16 deep (8 cells, exactly 2 fnd), 4 inputs: in 2, out 1 ->
+    # rotated reserves max(2, 1) = 2 both sides: x 3..9 fnd = cells 12..35, body at x 5.
+    # On an E floor input 3's band mirrors to depth-1-(-8) = 15 -> cell 20 + 15 = 35; the
+    # old west 2 / east 1 box (cells 12..31) left it outside.
+    b = blk("q", 0, 0, n=1, w=8.0, d=16.0, inputs={f"I{k}": 1 for k in range(4)}, outputs={"P": 1})
+    b.packed = Packed(count=1, columns=1, rows=1, width_m=8.0, depth_m=16.0, foundations=2)
+    from satisfactory_mcp.domain.planning.layout import WEST_BAY_FND, _pack_rows
+
+    _building_floors([b], [], 16)
+    assert b.rotated and b.x_fnd == 5 and (b.manifold_in_fnd, b.manifold_out_fnd) == (2, 1)
+    [[box]], _, _ = _pack_rows([b], 16, 0, west_fnd=WEST_BAY_FND, east_fnd=2)  # the reserved box
+    assert (box.x_fnd, box.w_fnd) == (3, 6)
+    lo, hi = box.x_fnd * R.PER_FND, (box.x_fnd + box.w_fnd) * R.PER_FND - 1
+    for side in ("W", "E"):
+        xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
+        assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)

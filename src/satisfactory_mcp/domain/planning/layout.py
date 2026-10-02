@@ -579,10 +579,18 @@ def _manifold_rows(b: Block) -> tuple[int, int]:
     return ins, MERGER_ROW_FND if b.outputs else 0
 
 
-def _rows_before(b: Block) -> int:
+def _rows_before(b: Block, rotated: bool = False) -> int:
     """Reserved rows on the body's input (v < 0) side: a folded block's south merger
-    row, else its splitter rows."""
-    return b.manifold_out_fnd if b.packed and b.packed.folded else b.manifold_in_fnd
+    row, else its splitter rows. A rotated block reserves the larger side on both
+    sides: routing mirrors it across its depth on E-input floors, and floor parity
+    isn't known while packing."""
+    pre = b.manifold_out_fnd if b.packed and b.packed.folded else b.manifold_in_fnd
+    return max(pre, b.manifold_out_fnd) if rotated else pre
+
+
+def _rows_after(b: Block, rotated: bool = False) -> int:
+    """Reserved rows on the output (v >= depth) side; see _rows_before."""
+    return _rows_before(b, True) if rotated else b.manifold_out_fnd
 
 
 def _grid(dims: list[int], inner_w: int, inner_d: int, aisle_fnd: int) -> tuple[int, int, int]:
@@ -758,7 +766,7 @@ def _pack_rows(
         # Rendered width is along x: make the long side lie along the slab's long axis.
         rotated = w0 > d0 if long_is_y else d0 > w0
         w, d = (d0, w0) if rotated else (w0, d0)
-        extra = _rows_before(b) + b.manifold_out_fnd  # across the row: y, or x when turned
+        extra = _rows_before(b, rotated) + _rows_after(b, rotated)  # across: y, or x when turned
         w, d = (w + extra, d) if rotated else (w, d + extra)
         along, span = (d, w) if long_is_y else (w, d)
         if along > inner_long or span > inner_short:
@@ -909,7 +917,7 @@ def _building_floors(
             if not placed:
                 continue
             for p in placed:  # the body sits past its input-side reserved rows
-                pre = _rows_before(p.block)
+                pre = _rows_before(p.block, p.rotated)
                 p.block.x_fnd = p.x_fnd + (pre if p.rotated else 0)
                 p.block.y_fnd = p.y_fnd + (0 if p.rotated else pre)
                 p.block.rotated = p.rotated
