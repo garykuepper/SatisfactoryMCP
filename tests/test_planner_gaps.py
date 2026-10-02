@@ -278,7 +278,9 @@ def test_list_buildings_exposes_size_and_foundations(game):
     header = next(line for line in out.splitlines() if "\tbuilding\t" in line)
     assert header.startswith("have\t")
     assert "size" in header and "found" in header
-    assert "18x20x11m" in out, "Manufacturer size should be listed"
+    # 14.59 m tall: height runs to the top of every clearance box (a soft one on the roof
+    # tops out at 14.59 m), not just the 11 m hard body.
+    assert "18x20x14.59m" in out, "Manufacturer size should be listed"
 
 
 def test_the_water_warning_quotes_real_geometry(game, state):

@@ -47,6 +47,16 @@ def test_footprints_match_known_dimensions(game, cls, w, d):
     assert (fp.width_m, fp.depth_m) == pytest.approx((w, d), abs=0.5)
 
 
+def test_footprint_height_includes_tops(game):
+    """Height reaches the top of EVERY clearance box -- the ExcludeForSnapping and soft
+    boxes carry the chimneys and tops -- while width/depth stay on the hard boxes."""
+    asm = game.buildings["Build_AssemblerMk1_C"].footprint
+    assert asm.height_m == pytest.approx(10.8, abs=0.1)
+    assert (asm.width_m, asm.depth_m) == (9, 16)
+    assert game.buildings["Build_GeneratorCoal_C"].footprint.height_m == pytest.approx(32.0, abs=0.1)
+    assert game.buildings["Build_ConstructorMk1_C"].footprint.height_m == pytest.approx(8.5, abs=0.1)
+
+
 def test_rotated_clearance_boxes_are_transformed(game):
     """The Fuel Generator's clearance is thin boxes at 45-degree increments around a
     round machine. Taking the largest box naively gives 22x4; the real footprint is
@@ -635,8 +645,10 @@ def test_fluid_head_maps_a_stage_to_its_lowest_floor_in_slab_mode(oil_layout, ga
     residue = climbs.get("Heavy Oil Residue")
     assert residue is not None
     assert residue["floors"] == 3
-    assert residue["metres"] == 48
-    assert residue["pumps"] == 9
+    # The three Refinery floors are double height since the Refinery's real 30 m top:
+    # 3 x 32 = 96 m, ceil(96 / 20) = 5 pumps a line, x 3 lines = 15.
+    assert residue["metres"] == 96
+    assert residue["pumps"] == 15
     fuel = climbs.get("Fuel")
     assert fuel is not None
     # 6, not 5, since the 1-foundation edge walkway: blocks that fill a bare 10x10
@@ -1105,3 +1117,26 @@ def test_building_floors_leave_a_two_foundation_bay_on_both_sides():
     floors, _ = _building_floors([c], [], 16, 1)
     assert c.x_fnd == 3                                   # 1 edge + 2 west bay
     assert floors[0].slab_side_m / 8 == 3 + 8 + 1 + 2     # block ends at 11, + edge + east bay = 14
+
+
+def _tall_block(key, building, height):
+    b = _typed_block(key, building, 4)
+    b.height_m = height
+    return b
+
+
+def test_a_floor_with_a_tall_building_is_double_height():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    floors, warnings = _building_floors(
+        [_tall_block("r", "Refinery", 30.0), _tall_block("a", "Assembler", 10.0)], [], 16, 1)
+    assert not warnings
+    assert {f.group: f.height_m for f in floors} == {"Refinery": 32.0, "Assembler": 16.0}
+
+
+def test_a_building_taller_than_a_double_floor_is_warned():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    floors, warnings = _building_floors([_tall_block("t", "Tower", 40.0)], [], 16, 1)
+    assert floors[0].height_m == 32.0
+    assert any("Tower" in w and "40" in w for w in warnings)

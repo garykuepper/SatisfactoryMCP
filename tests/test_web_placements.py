@@ -68,7 +68,8 @@ def test_a_machine_carries_the_height_a_top_down_map_cannot_draw(client):
     tall = {row["name"]: row["h_m"] for row in rows if row["h_m"] and row["h_m"] >= 12}
     # The case the floor view exists for: taller than this world's 12 m storey module, so
     # it is physically through the deck above and only the deck below can say so.
-    assert tall.get("Refinery") == 15.0, tall
+    # 30 m, not the 15 m hard body: the excluded boxes on its roof reach z=30 m.
+    assert tall.get("Refinery") == 30.0, tall
 
 
 def test_every_machine_carries_the_state_the_health_report_would_give_it(client, state):

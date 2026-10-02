@@ -11,6 +11,10 @@ never the building's own volume. `CT_Soft` boxes are skipped only while a hard b
 on a machine they are the overlap allowances around the hard volume -- but every architecture
 piece (foundation, wall, pillar, ramp, beam) carries ONLY soft boxes, so a buildable with no
 hard box falls back to the union of its soft ones rather than reporting no size at all.
+
+Those rules decide the floor footprint (width x depth) only. Height runs from the bottom of
+that footprint to the top of EVERY box, excluded and soft included: the tops and chimneys
+live in those boxes, and leaving them out read the Coal Generator as 9 m against a real 32.
 """
 
 from __future__ import annotations
@@ -180,22 +184,31 @@ def _corners(mn: dict, mx: dict) -> list[tuple[float, float, float]]:
 
 def extract_footprint(raw: object) -> Footprint | None:
     """Union AABB of a building's own clearance boxes, in metres. Hard boxes when the
-    buildable has any, otherwise its soft ones -- see the module docstring."""
+    buildable has any, otherwise its soft ones; height up to the top of every box -- see
+    the module docstring."""
+    every = [e for e in as_list(parse_struct(raw)) if isinstance(e, dict)]
     entries = [
         e
-        for e in as_list(parse_struct(raw))
-        if isinstance(e, dict)
-        # Approach clearance is never the building's volume, hard or soft.
-        and str(e.get("ExcludeForSnapping", "")).strip().lower() != "true"
+        for e in every
+        # Approach clearance is never the building's floor footprint, hard or soft.
+        if str(e.get("ExcludeForSnapping", "")).strip().lower() != "true"
     ]
-    hard = _union(e for e in entries if e.get("Type") != "CT_Soft")
     # Fallback, never a union of both: mixing soft into hard grows the Fuel Generator past
     # the 20x20 its own hard boxes measure.
-    return hard if hard is not None else _union(entries)
+    base = _bounds([e for e in entries if e.get("Type") != "CT_Soft"]) or _bounds(entries)
+    if base is None:
+        return None
+    (lo, hi), top = base, _bounds(every)[1][2]
+    return Footprint(
+        width_m=round((hi[0] - lo[0]) / 100.0, 2),
+        depth_m=round((hi[1] - lo[1]) / 100.0, 2),
+        height_m=round((max(hi[2], top) - lo[2]) / 100.0, 2),
+    )
 
 
-def _union(entries) -> Footprint | None:
-    """Axis-aligned union of transformed clearance boxes, or None for no boxes."""
+def _bounds(entries) -> tuple[list[float], list[float]] | None:
+    """(lo, hi) corners, in cm, of the axis-aligned union of transformed clearance boxes,
+    or None for no boxes."""
     lo = [float("inf")] * 3
     hi = [float("-inf")] * 3
     seen = False
@@ -225,10 +238,4 @@ def _union(entries) -> Footprint | None:
                 hi[axis] = max(hi[axis], world)
             seen = True
 
-    if not seen:
-        return None
-    return Footprint(
-        width_m=round((hi[0] - lo[0]) / 100.0, 2),
-        depth_m=round((hi[1] - lo[1]) / 100.0, 2),
-        height_m=round((hi[2] - lo[2]) / 100.0, 2),
-    )
+    return (lo, hi) if seen else None

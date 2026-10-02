@@ -57,6 +57,11 @@ FLOOR_HEADROOM_M = 1.0
 #: Foundations are 1, 2 or 4 m thick; floor heights round up to this.
 FLOOR_STEP_M = 2.0
 
+#: Slab-mode floor height (4 walls), and the double floor (8 walls) a floor gets when any
+#: building on it stands taller than one -- a Refinery (30 m) or Coal Generator (32 m).
+FLOOR_M = 16.0
+DOUBLE_FLOOR_M = 32.0
+
 #: A manifold longer than this stops being sensible to build or feed evenly.
 MAX_MACHINES_PER_BLOCK = 24
 
@@ -823,7 +828,7 @@ def _slab_floors(
                 kind="production",
                 stage=stages[0],
                 stages=stages,
-                height_m=16.0,
+                height_m=_slab_floor_height(floor_blocks, warnings),
                 blocks=floor_blocks,
                 slab_side_m=slab_side,
                 slab_depth_m=(slab_depth_fnd * FOUNDATION_M) if (slab_side and slab_depth_fnd) else None,
@@ -833,6 +838,18 @@ def _slab_floors(
     _attach_crossing_buses(floors, buses)
 
     return floors, warnings
+
+
+def _slab_floor_height(blocks: list[Block], warnings: list[str]) -> float:
+    """FLOOR_M, or DOUBLE_FLOOR_M when a building outgrows it; a building taller than even
+    the double floor is warned about, since it punches into the floor above."""
+    for b in blocks:
+        if b.height_m > DOUBLE_FLOOR_M:
+            warnings.append(
+                f"{b.building} is {b.height_m:g} m tall, taller than a {DOUBLE_FLOOR_M:g} m "
+                "double floor: it reaches into the floor above"
+            )
+    return FLOOR_M if all(b.height_m <= FLOOR_M for b in blocks) else DOUBLE_FLOOR_M
 
 
 def _building_floors(
@@ -880,7 +897,7 @@ def _building_floors(
                 kind="production",
                 stage=stages[0],
                 stages=stages,
-                height_m=16.0,
+                height_m=_slab_floor_height(floor_blocks, warnings),
                 blocks=floor_blocks,
                 group=label,
                 slab_side_m=size[0] * FOUNDATION_M if size else None,
