@@ -1026,3 +1026,14 @@ def test_building_floors_stack_same_type_manifolds_on_one_floor():
     w, d = floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8
     # x: 1 edge + 8 long + 1 far edge = 10; y: rows at 0,3,6,9 -> last ends 11, 1 + 11 + 1 = 13 -> even 14
     assert (w, d) == (10, 14)
+
+
+def test_plan_layout_groups_by_building_and_reports_bad_args(game, state):
+    from satisfactory_mcp import server as srv
+
+    out = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
+                          export_minimums={"Versatile Framework": 10}, group_by="building")
+    assert "Assembler" in out and "Constructor" in out
+    bad = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
+                          export_minimums={"Versatile Framework": 10}, group_by="type")
+    assert bad.startswith("! ") and "group_by" in bad

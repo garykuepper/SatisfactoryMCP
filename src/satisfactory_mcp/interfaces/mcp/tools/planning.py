@@ -727,6 +727,15 @@ def plan_layout(
         Field(description='"grid" (manifolds in shared rows and columns) or "rows" (one '
                           "manifold per row, turned to run along the slab's long side)"),
     ] = "grid",
+    group_by: Annotated[
+        str,
+        Field(description='"stage" (floors by chain stage) or "building" (each building '
+                          "type on its own floor(s), tiny groups merged, every floor sized "
+                          "to the smallest even x even slab that fits)"),
+    ] = "stage",
+    max_slab_foundations: Annotated[
+        int, Field(description='with group_by="building": largest slab side, even, >= 4')
+    ] = 16,
     belt_tier: Annotated[
         str, Field(description="belt tier name; blank = the fastest you have unlocked")
     ] = "",
@@ -827,10 +836,14 @@ def plan_layout(
             aisle_foundations=aisle_foundations,
             slab_depth_foundations=slab_depth_foundations,
             slab_layout=slab_layout,
+            group_by=group_by,
+            max_slab_foundations=max_slab_foundations,
             factory=factory,
             plan=plan,
         )
     except SelectorError as exc:
+        return f"! {exc}"
+    except ValueError as exc:
         return f"! {exc}"
 
     return render_layout(

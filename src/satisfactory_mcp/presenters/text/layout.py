@@ -348,6 +348,8 @@ def render_layout(
                     )
                 else:
                     stage_label = f"stage {f.stage}"
+                if f.group:
+                    stage_label = f"{f.group} ({stage_label})"
                 top_n = 4 if len(f.stages) > 1 else 2
                 contents = ", ".join(
                     f"{b.machines}x {b.label[:22]}"
