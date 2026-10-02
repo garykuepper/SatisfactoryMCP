@@ -816,6 +816,13 @@ def plan_layout(
         belt_ipm=tiers.belt_ipm if tiers.asked_belt else None,
         pipe_m3min=tiers.pipe_m3min if tiers.asked_pipe else None,
     )
+    # Same checks as build_layout, up front so only these two arguments become "!" errors.
+    group_by = (group_by or "stage").strip().casefold()
+    if group_by not in ("stage", "building"):
+        return f"! group_by must be 'stage' or 'building', not {group_by!r}"
+    if group_by == "building" and (max_slab_foundations < 4 or max_slab_foundations % 2):
+        return f"! max_slab_foundations must be an even number >= 4, not {max_slab_foundations}"
+
     try:
         plan_kwargs, plan_name, plan_notes = _plan_kwargs(st, plan, supplied)
     except KeyError as exc:
@@ -842,8 +849,6 @@ def plan_layout(
             plan=plan,
         )
     except SelectorError as exc:
-        return f"! {exc}"
-    except ValueError as exc:
         return f"! {exc}"
 
     return render_layout(

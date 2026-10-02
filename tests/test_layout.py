@@ -1033,7 +1033,11 @@ def test_plan_layout_groups_by_building_and_reports_bad_args(game, state):
 
     out = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
                           export_minimums={"Versatile Framework": 10}, group_by="building")
-    assert "Assembler" in out and "Constructor" in out
+    assert "Assembler" in out and "Constructor (stage" in out
     bad = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
                           export_minimums={"Versatile Framework": 10}, group_by="type")
     assert bad.startswith("! ") and "group_by" in bad
+    bad = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
+                          export_minimums={"Versatile Framework": 10}, group_by="building",
+                          max_slab_foundations=15)
+    assert bad.startswith("! ") and "even" in bad
