@@ -39,18 +39,18 @@ def test_block_rect_is_the_true_footprint_in_2m_cells():
     assert R.block_rect(blk("a", 1, 1, rotated=True)) == (4, 4, 5, 8)
 
 
-def test_straight_row_input_below_output_above_west_end_first():
+def test_straight_row_input_below_output_above_feed_west_exit_east():
     p = R.manifold_ports(blk("a", 1, 1, inputs={"B": 1, "A": 1}, outputs={"P": 1}))
     assert p.inputs["A"] == [(x, 3) for x in range(4, 12)]          # first input, sorted
     assert p.inputs["B"] == [(x, 2) for x in range(4, 12)]          # second, one row out
-    assert p.outputs == [[(x, 9) for x in range(4, 12)]]            # y0 + 5
+    assert p.outputs == [[(x, 9) for x in range(11, 3, -1)]]        # y0 + 5; exit end east (F0 output side)
 
 
 def test_folded_row_input_in_the_lane_outputs_on_both_edges():
     p = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True))
     # 2 columns x 8 m = 16 m -> 8 cells long; depth 2*10+8 = 28 m -> 14 cells; lane middle int(28/2/2) = 7
     assert p.inputs["A"] == [(x, 11) for x in range(4, 12)]
-    assert p.outputs == [[(x, 18) for x in range(4, 12)], [(x, 3) for x in range(4, 12)]]
+    assert p.outputs == [[(x, 18) for x in range(11, 3, -1)], [(x, 3) for x in range(11, 3, -1)]]  # exits east
 
 
 def test_rotated_block_turns_its_belts_into_columns_south_end_first():
@@ -205,7 +205,7 @@ def test_an_item_made_below_goes_up_one_lift_at_one_cell():
     r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
     assert [(l.item, l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("I", "up", 0, 1)]
     cell = r.lifts[0].cell
-    assert cell[0] == 0
+    assert cell[0] == 39                              # F0's output side is E: the east strip
     assert {(b.floor, b.src, b.dst) for b in r.belts} == {(0, "p", "lift:I"), (1, "lift:I", "c")}
     assert [b.path[-1] for b in r.belts if b.floor == 0] == [cell]
     assert [b.path[0] for b in r.belts if b.floor == 1] == [cell]
@@ -266,7 +266,7 @@ def _line_loads(r):
     loads = {}
     for b in r.belts:
         for end in (b.path[0], b.path[-1]):
-            if end[0] == 0:
+            if end[0] in (0, 39):                    # either edge strip of a 40-cell floor
                 loads[(b.floor, end)] = loads.get((b.floor, end), 0.0) + b.rate
     return loads
 
@@ -336,14 +336,13 @@ def test_colliding_manifold_belts_fail_the_floor_without_dropping_others():
 
 
 def test_lift_exit_stubs_are_not_crossed_by_other_lifts_belts():
-    # Without the reserved (1..3, cy) stub, a long belt to one lift hugs column 2 and
+    # Without the reserved 3-cell stub, a long belt to one lift hugs column 2 and
     # seals the other lift off, so it comes out unroutable.
     r = _two_by_two()
     assert not r.failures
     for b in r.belts:
         for l in r.lifts:
-            cy = l.cell[1]
-            if {(1, cy), (2, cy), (3, cy)} & set(b.path) and b.floor in _span_floors(l):
+            if set(R._stub(l.cell, 40)) & set(b.path) and b.floor in _span_floors(l):
                 assert l.cell in (b.path[0], b.path[-1])
 
 
@@ -466,3 +465,48 @@ def test_plan_layout_shows_belts_for_the_versatile_framework_plan(game, state):
     stage = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
                             export_minimums={"Versatile Framework": 10}, show="belts")
     assert 'group_by="building"' in stage
+
+
+def test_sides_alternate_by_floor():
+    assert [R.input_side(floor(i, [])) for i in range(4)] == ["W", "E", "W", "E"]
+    assert [R.output_side(floor(i, [])) for i in range(2)] == ["E", "W"]
+
+
+def test_manifold_ends_face_the_floor_sides():
+    b = blk("a", 1, 1, inputs={"A": 1}, outputs={"P": 1})
+    west_in, east_in = R.manifold_ports(b, "W"), R.manifold_ports(b, "E")
+    assert (west_in.inputs["A"][0], west_in.outputs[0][0]) == ((4, 3), (11, 9))
+    assert (east_in.inputs["A"][0], east_in.outputs[0][0]) == ((11, 3), (4, 9))
+    f = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True), "E")
+    assert f.inputs["A"][0] == (11, 11) and [o[0] for o in f.outputs] == [(4, 18), (4, 3)]
+    r = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True), "E")
+    assert r.inputs["A"][0] == (3, 4)          # rotated belts keep their south end
+
+
+def test_a_one_floor_lift_rises_on_the_output_side():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert lift.cell[0] == 39                  # 10-fnd floor = 40 cells; F0 out = E = F1 in
+    assert not r.failures
+
+
+def test_an_express_lift_keeps_its_source_side_and_still_routes():
+    p = blk("p", 1, 1, outputs={"I": 30.0})
+    c = blk("c", 1, 1, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, []), floor(2, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert (lift.from_floor, lift.to_floor, lift.cell[0]) == (0, 2, 39)   # F2's output side
+    assert not r.failures and any(b.floor == 2 and b.dst == "c" for b in r.belts)
+
+
+def test_an_east_lift_stub_mirrors_the_west_one():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    cy = r.lifts[0].cell[1]
+    up = next(b for b in r.belts if b.floor == 1)
+    assert up.path[:4] == [(39, cy), (38, cy), (37, cy), (36, cy)]
+    assert R._stub((39, cy), 40) == ((38, cy), (37, cy), (36, cy))
+    assert R._stub((0, cy), 40) == ((1, cy), (2, cy), (3, cy))

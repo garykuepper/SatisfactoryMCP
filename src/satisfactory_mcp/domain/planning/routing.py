@@ -41,11 +41,12 @@ class Ports:
     outputs: list[list[Cell]]
 
 
-def manifold_ports(b: Block) -> Ports:
+def manifold_ports(b: Block, input_side: str = "W") -> Ports:
     """Manifold belt cells around a block (spec "Manifold belts"). Built in the block's
     own frame -- u along the row, v across it, v < 0 the input (S) side -- then placed
-    on the slab, transposed when rotated, so each belt's first cell is its west end
-    (its south end once rotated)."""
+    on the slab, transposed when rotated. Each belt's first cell is the end facing its
+    floor side: inputs feed from `input_side`, outputs exit on the opposite side
+    (serpentine spec). A rotated block's belts keep their south end first."""
     p = b.packed
     length, depth = _cells(p.width_m), _cells(p.depth_m)
     x0, y0 = b.x_fnd * PER_FND, b.y_fnd * PER_FND
@@ -56,8 +57,35 @@ def manifold_ports(b: Block) -> Ports:
     items = sorted(b.inputs)
     if p.folded:
         mid = int(p.depth_m / 2 / CELL_M)
-        return Ports({it: row(mid - k) for k, it in enumerate(items)}, [row(depth), row(-1)])
-    return Ports({it: row(-1 - k) for k, it in enumerate(items)}, [row(depth)])
+        ports = Ports({it: row(mid - k) for k, it in enumerate(items)}, [row(depth), row(-1)])
+    else:
+        ports = Ports({it: row(-1 - k) for k, it in enumerate(items)}, [row(depth)])
+    if not b.rotated:
+        for ln in ports.inputs.values() if input_side == "E" else ports.outputs:
+            ln.reverse()
+    return ports
+
+
+def input_side(f: Floor) -> str:
+    """'W' on even floors, 'E' on odd -- inputs enter one edge, outputs leave the other,
+    alternating up the stack (spec 2026-10-02 serpentine)."""
+    return "W" if f.index % 2 == 0 else "E"
+
+
+def output_side(f: Floor) -> str:
+    return "E" if input_side(f) == "W" else "W"
+
+
+def _strip_x(side: str, w: int) -> int:
+    return 0 if side == "W" else w - 1
+
+
+def _stub(cell: Cell, w: int) -> tuple[Cell, Cell, Cell]:
+    """A lift's exit stub: (lane cell, crossable middle, connection end), stepping in
+    from whichever edge strip the lift is on."""
+    x, cy = cell
+    step = 1 if x == 0 else -1
+    return (x + step, cy), (x + 2 * step, cy), (x + 3 * step, cy)
 
 
 def floor_cells(f: Floor) -> tuple[int, int]:
@@ -312,26 +340,34 @@ def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
     return lifts
 
 
-def _assign_cells(lifts: list[Lift], floors: dict[int, Floor]) -> None:
-    def stub_free(f: Floor) -> set[int]:  # exit stub (1..3, cy) must avoid manifold belts
-        belts = {c for b in f.blocks for ln in (*manifold_ports(b).inputs.values(), *manifold_ports(b).outputs)
-                 for c in ln}
-        return {cy for cy in strip_rows(f) if not any((x, cy) in belts for x in (1, 2, 3))}
+def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, Ports]) -> None:
+    """Put each lift on its side's edge strip: up/down/out on the source floor's output
+    side, in on the ground floor's input side. A row is usable on a (floor, side) when
+    its 3-cell exit stub there avoids every manifold belt."""
+    w = floor_cells(next(iter(floors.values())))[0]  # one shared slab
+    ground = floors[min(floors)]
 
-    usable = {fi: stub_free(f) for fi, f in floors.items()}
-    taken: dict[int, set[int]] = {fi: set() for fi in floors}
+    def stub_free(f: Floor, side: str) -> set[int]:
+        belts = {c for b in f.blocks for ln in (*ports[b.key].inputs.values(), *ports[b.key].outputs)
+                 for c in ln}
+        x = _strip_x(side, w)
+        return {cy for cy in strip_rows(f) if not set(_stub((x, cy), w)) & belts}
+
+    usable = {(fi, s): stub_free(f, s) for fi, f in floors.items() for s in ("W", "E")}
+    taken: dict[tuple[int, str], set[int]] = {k: set() for k in usable}
     for lift in sorted(lifts, key=lambda l: (l.from_floor, l.item, l.kind)):  # stable: line order
+        side = input_side(ground) if lift.kind == "in" else output_side(floors[lift.from_floor])
         span = [fi for fi in _span(lift) if fi in floors]
-        free = set.intersection(*(usable[fi] - taken[fi] for fi in span))
+        free = set.intersection(*(usable[(fi, side)] - taken[(fi, side)] for fi in span))
         if not free:
             raise LiftStripFull(
                 f"lift strip full: no free strip row for {lift.item} on floors "
                 f"F{span[0]}-F{span[-1]}"
             )
         cy = min(free)
-        lift.cell = (0, cy)
+        lift.cell = (_strip_x(side, w), cy)
         for fi in span:
-            taken[fi].add(cy)
+            taken[(fi, side)].add(cy)
 
 
 def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
@@ -340,7 +376,7 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
     manifold belt) -- '' when clean."""
     w, h = floor_cells(f)
     rows, cols = walk_lanes(f)
-    g = Grid(w, h, {(0, y) for y in range(h)}, rows, cols)
+    g = Grid(w, h, {(x, y) for x in (0, w - 1) for y in range(h)}, rows, cols)
     footprint: dict[Cell, str] = {}
     for b in f.blocks:
         x0, y0, bw, bh = block_rect(b)
@@ -353,7 +389,7 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
         ps = ports[b.key]
         for belt in (*ps.inputs.values(), *ps.outputs):
             for c in belt:
-                if (not (0 < c[0] < w and 0 <= c[1] < h) or c in reserved or any(g.lanes(c))
+                if (not (0 < c[0] < w - 1 and 0 <= c[1] < h) or c in reserved or any(g.lanes(c))
                         or footprint.get(c, b.key) != b.key):
                     return g, f"{b.key} manifold belt at {c}"
                 reserved.add(c)
@@ -363,7 +399,7 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
 
 def route_belts(layout: Layout, belt_ipm: float) -> Routing:
     """Route one attempt (no widening): connections per floor, lifts on the strip,
-    then A*. Each used lift cell gets a reserved 3-cell exit stub (1..3, cy) and its
+    then A*. Each used lift cell gets a reserved 3-cell exit stub (_stub) and its
     connections route first (highest lift row first, then shortest), then the rest longest-first. One belt per
     connection (over-capacity is flagged, never split); biggest connections first, each on
     the lift line (of its group) with the most capacity left on that floor, and a line whose
@@ -380,11 +416,11 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
                      for f in layout.floors if f.slab_side_m is None]
     if not floors:
         return out
-    ports = {b.key: manifold_ports(b) for f in floors.values() for b in f.blocks}
+    ports = {b.key: manifold_ports(b, input_side(f)) for f in floors.values() for b in f.blocks}
     plans = {fi: _floor_plan(f, ports, pipes) for fi, f in floors.items()}
     out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
                             {fi: p[2] for fi, p in plans.items()}, belt_ipm)
-    _assign_cells(out.lifts, floors)
+    _assign_cells(out.lifts, floors, ports)
     src_load: dict[int, float] = {}                 # id(lift) -> belts into it on from_floor
     dst_load: dict[tuple[int, int], float] = {}     # (id(lift), floor) -> belts out of it there
 
@@ -439,14 +475,17 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
             out.failures.append(f"F{fi}: manifold belts collide ({clash})")
             out.failed_floors.append(fi)
             continue
+        w = grid.w
         lift_cells = {l.cell for l in out.lifts}
         stubs = {c.a if c.a in lift_cells else c.b for c in conns if c.a in lift_cells or c.b in lift_cells}
-        for cx, cy in stubs:  # (1, cy) stays a lane cell; (2, cy) is a crossable belt
-            grid.belt_dirs[(2, cy)] = "h"
-            grid.blocked.add((3, cy))
+        for cell in stubs:  # the lane cell stays a lane; the middle is a crossable belt
+            _lane, mid, end = _stub(cell, w)
+            grid.belt_dirs[mid] = "h"
+            grid.blocked.add(end)
 
         def ends(c: _Conn):
-            return (3, c.a[1]) if c.a in lift_cells else c.a, (3, c.b[1]) if c.b in lift_cells else c.b
+            return (_stub(c.a, w)[2] if c.a in lift_cells else c.a,
+                    _stub(c.b, w)[2] if c.b in lift_cells else c.b)
 
         def order(c: _Conn):
             a, b = ends(c)
@@ -468,9 +507,11 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
             mark_belt(grid, path, shared)
             routed.append((c.item, a, b, path[1:-1]))
             if c.a in lift_cells:
-                path = [c.a, (1, c.a[1]), (2, c.a[1])] + path
+                lane, mid, _end = _stub(c.a, w)
+                path = [c.a, lane, mid] + path
             if c.b in lift_cells:
-                path = path + [(2, c.b[1]), (1, c.b[1]), c.b]
+                lane, mid, _end = _stub(c.b, w)
+                path = path + [mid, lane, c.b]
             out.belts.append(Belt(c.item, c.rate, fi, path, c.src, c.dst))
 
     for l in out.lifts:  # Lift.rate becomes the line's real load; flag overflow / imbalance
