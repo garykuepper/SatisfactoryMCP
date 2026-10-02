@@ -115,16 +115,20 @@ def floor_cells(f: Floor) -> tuple[int, int]:
 
 def walk_lanes(f: Floor) -> tuple[set[int], set[int]]:
     """(rows, cols) of walk-lane cells: offset 1 inside every slab edge, plus one
-    horizontal lane per row: just past each unrotated block's merger band (v = depth+2)
-    (whether or not it has a merger row) when its floor has manifold rows, else offset
-    1 above each row's reserved box
+    horizontal lane per row: when its floor has manifold rows, just past the deepest
+    merger band (v = depth+2, whether or not it has a merger row) among the unrotated
+    blocks in that row -- blocks sharing a row share their body line (y_fnd), see
+    layout._pack_rows -- else offset 1 above each row's reserved box
     when another row starts above it (its aisle band)."""
     w, h = floor_cells(f)
     rows, cols = {1, h - 2}, {1, w - 2}
     if any(b.manifold_rows for b in f.blocks):
-        rows |= {b.y_fnd * PER_FND + _cells(b.packed.depth_m) + 2
-                 for b in f.blocks if b.outputs and not b.rotated}
-        return rows, cols
+        lane: dict[int, int] = {}
+        for b in f.blocks:
+            if b.outputs and not b.rotated:
+                v = b.y_fnd * PER_FND + _cells(b.packed.depth_m) + 2
+                lane[b.y_fnd] = max(lane.get(b.y_fnd, v), v)
+        return rows | set(lane.values()), cols
     starts = {b.y_fnd for b in f.blocks}
     for b in f.blocks:
         top = b.y_fnd + math.ceil(block_rect(b)[3] / PER_FND)
