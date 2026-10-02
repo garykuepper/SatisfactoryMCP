@@ -1,0 +1,72 @@
+"""Belt routing (spec ~/satisfactory/docs/superpowers/specs/2026-10-01-belt-routing-and-lifts-design.md).
+Pure: hand-built blocks and floors, no game data."""
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from satisfactory_mcp.core.gamedata.footprint import Packed
+from satisfactory_mcp.domain.planning import routing as R
+from satisfactory_mcp.domain.planning.layout import Block, Bus, Floor, Layout
+
+
+def blk(key, x, y, n=2, w=8.0, d=10.0, inputs=None, outputs=None, folded=False, rotated=False):
+    if folded:
+        cols = math.ceil(n / 2)
+        packed = Packed(count=n, columns=cols, rows=2, width_m=cols * w, depth_m=2 * d + 8.0,
+                        foundations=0, folded=True, lane_m=8.0)
+    else:
+        packed = Packed(count=n, columns=n, rows=1, width_m=n * w, depth_m=d, foundations=0)
+    b = Block(key=key, label=key, building_id="x", building="Constructor", recipe=None,
+              machines=n, clock=1.0, part=1, parts=1,
+              inputs=dict(inputs or {}), outputs=dict(outputs or {}), packed=packed)
+    b.x_fnd, b.y_fnd, b.rotated = x, y, rotated
+    return b
+
+
+def floor(i, blocks, w=10, d=10, group=None):
+    return Floor(index=i, kind="production", stage=i, height_m=16.0, blocks=blocks,
+                 slab_side_m=w * 8.0, slab_depth_m=d * 8.0, group=group or f"G{i}")
+
+
+def bus(item, carrier="belt"):
+    return Bus(item=item, name=item, rate=1.0, carrier=carrier, unit="/min", lines=1)
+
+
+def test_block_rect_is_the_true_footprint_in_2m_cells():
+    assert R.block_rect(blk("a", 1, 1)) == (4, 4, 8, 5)            # 16 m x 10 m
+    assert R.block_rect(blk("a", 1, 1, rotated=True)) == (4, 4, 5, 8)
+
+
+def test_straight_row_input_below_output_above_west_end_first():
+    p = R.manifold_ports(blk("a", 1, 1, inputs={"B": 1, "A": 1}, outputs={"P": 1}))
+    assert p.inputs["A"] == [(x, 3) for x in range(4, 12)]          # first input, sorted
+    assert p.inputs["B"] == [(x, 2) for x in range(4, 12)]          # second, one row out
+    assert p.outputs == [[(x, 9) for x in range(4, 12)]]            # y0 + 5
+
+
+def test_folded_row_input_in_the_lane_outputs_on_both_edges():
+    p = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True))
+    # 2 columns x 8 m = 16 m -> 8 cells long; depth 2*10+8 = 28 m -> 14 cells; lane middle int(28/2/2) = 7
+    assert p.inputs["A"] == [(x, 11) for x in range(4, 12)]
+    assert p.outputs == [[(x, 18) for x in range(4, 12)], [(x, 3) for x in range(4, 12)]]
+
+
+def test_rotated_block_turns_its_belts_into_columns_south_end_first():
+    p = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True))
+    assert p.inputs["A"] == [(3, y) for y in range(4, 12)]
+    assert p.outputs == [[(9, y) for y in range(4, 12)]]
+
+
+def test_walk_lanes_ring_plus_one_per_aisle_band():
+    lower, upper = blk("a", 1, 1), blk("b", 1, 4)   # lower reserves 2 fnd -> top at fnd 3
+    rows, cols = R.walk_lanes(floor(0, [lower, upper]))
+    assert rows == {1, 38, 13} and cols == {1, 38}
+    assert R.walk_lanes(floor(0, [lower]))[0] == {1, 38}   # no row above: no aisle lane
+
+
+def test_strip_rows_skip_walk_lane_rows():
+    rows = R.strip_rows(floor(0, [blk("a", 1, 1), blk("b", 1, 4)]))
+    assert 1 not in rows and 13 not in rows and 38 not in rows
+    assert rows[:3] == [0, 2, 3]
