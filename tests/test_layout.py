@@ -886,3 +886,14 @@ def test_extractors_keep_free_packing_and_never_fold(oil_solution, game):
     for b in pumps:
         assert not b.packed.folded
         assert b.packed == fp.pack(b.machines)
+
+
+def test_fit_slab_is_the_smallest_even_slab_and_respects_the_cap():
+    from satisfactory_mcp.domain.planning.layout import _fit_slab, _Placed
+
+    b = _fake_block("a", 8, 8, 1)
+    # x 1..4 plus far walkway = 5 -> 6; y 1..3 plus walkway = 4 -> 4
+    assert _fit_slab([_Placed(b, 1, 1, 3, 2, False)], 16) == (6, 4)
+    assert _fit_slab([_Placed(b, 1, 1, 20, 2, False)], 16) == (16, 4)
+    two = [_Placed(b, 1, 1, 2, 2, False), _Placed(b, 4, 1, 3, 5, False)]
+    assert _fit_slab(two, 16) == (8, 8)  # 4+3+1=8, 1+5+1=7 -> 8

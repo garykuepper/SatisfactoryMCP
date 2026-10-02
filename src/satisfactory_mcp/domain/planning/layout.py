@@ -161,6 +161,9 @@ class Floor:
     #: ``stage``) outside slab mode; several on a slab-mode floor holding more than one
     #: stage's blocks. Read by _slab_floors (Task 4) for bus routing.
     stages: list[int] = field(default_factory=list)
+    #: Building group this floor holds in group_by="building" mode, e.g. "Constructor"
+    #: or "Smelter + Foundry"; empty in stage mode.
+    group: str = ""
 
     @property
     def used_foundations(self) -> int:
@@ -555,6 +558,16 @@ def _grid(dims: list[int], inner_w: int, inner_d: int, aisle_fnd: int) -> tuple[
     return cell, cols, rows
 
 
+def _fit_slab(placed: list[_Placed], cap_fnd: int) -> tuple[int, int]:
+    """Smallest even x even slab (width, depth) in foundations holding these placed
+    blocks plus the EDGE_FND walkway on the far sides -- the near sides already have
+    it, since placement starts at EDGE_FND -- never above cap_fnd. Even sides are the
+    owner's rule (spec 2026-10-01)."""
+    w = max(p.x_fnd + p.w_fnd for p in placed) + EDGE_FND
+    d = max(p.y_fnd + p.d_fnd for p in placed) + EDGE_FND
+    return min(cap_fnd, w + w % 2), min(cap_fnd, d + d % 2)
+
+
 def _pack_slab(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
@@ -673,6 +686,34 @@ def _pack_rows(
     return floors, oversized, warnings
 
 
+def _attach_crossing_buses(floors: list[Floor], buses: list[Bus]) -> None:
+    """Attach each internal bus to every floor holding one of its consumers and
+    sitting above the lowest floor holding one of its producers."""
+    floor_of_block = {b.key: f.index for f in floors for b in f.blocks}
+    # Crossing buses attach to EVERY floor that holds a consumer and sits above the
+    # lowest floor holding a producer -- not to a single floor picked by stage number.
+    # The final review found the old stage-level version wrong on the actual flagship
+    # scenario: Steel Rotor (stage 3) sits on F1, and F1 was shown "receiving" Rotor
+    # (which it makes itself) while NOT receiving Wire/Steel Pipe (which Steel Rotor
+    # genuinely draws from F0) -- both of those stages' lowest floor happened to be F0,
+    # so `to_floor <= from_floor` incorrectly skipped them. Routing by which floor
+    # actually holds which block fixes this regardless of how a stage's blocks are
+    # spread across floors.
+    for floor in floors:
+        crossing = []
+        for bus in buses:
+            if bus.external:
+                continue
+            producer_floors = {floor_of_block[p] for p in bus.producers if p in floor_of_block}
+            if not producer_floors:
+                continue
+            lowest_producer_floor = min(producer_floors)
+            consumer_here = any(floor_of_block.get(c) == floor.index for c in bus.consumers)
+            if consumer_here and floor.index > lowest_producer_floor:
+                crossing.append(bus)
+        floor.buses = crossing
+
+
 def _slab_floors(
     blocks: list[Block],
     buses: list[Bus],
@@ -710,7 +751,6 @@ def _slab_floors(
     specs.sort(key=lambda s: s[0])  # stable: preserves each list's own internal order
 
     floors: list[Floor] = []
-    floor_of_block: dict[str, int] = {}
     for _min_stage, floor_blocks, slab_side in specs:
         stages = sorted({b.stage for b in floor_blocks})
         floors.append(
@@ -725,31 +765,8 @@ def _slab_floors(
                 slab_depth_m=(slab_depth_fnd * FOUNDATION_M) if (slab_side and slab_depth_fnd) else None,
             )
         )
-        for b in floor_blocks:
-            floor_of_block[b.key] = floors[-1].index
 
-    # Crossing buses attach to EVERY floor that holds a consumer and sits above the
-    # lowest floor holding a producer -- not to a single floor picked by stage number.
-    # The final review found the old stage-level version wrong on the actual flagship
-    # scenario: Steel Rotor (stage 3) sits on F1, and F1 was shown "receiving" Rotor
-    # (which it makes itself) while NOT receiving Wire/Steel Pipe (which Steel Rotor
-    # genuinely draws from F0) -- both of those stages' lowest floor happened to be F0,
-    # so `to_floor <= from_floor` incorrectly skipped them. Routing by which floor
-    # actually holds which block fixes this regardless of how a stage's blocks are
-    # spread across floors.
-    for floor in floors:
-        crossing = []
-        for bus in buses:
-            if bus.external:
-                continue
-            producer_floors = {floor_of_block[p] for p in bus.producers if p in floor_of_block}
-            if not producer_floors:
-                continue
-            lowest_producer_floor = min(producer_floors)
-            consumer_here = any(floor_of_block.get(c) == floor.index for c in bus.consumers)
-            if consumer_here and floor.index > lowest_producer_floor:
-                crossing.append(bus)
-        floor.buses = crossing
+    _attach_crossing_buses(floors, buses)
 
     return floors, warnings
 
