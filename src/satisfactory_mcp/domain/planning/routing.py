@@ -307,6 +307,36 @@ def _floor_plan(f: Floor, ports: dict[str, Ports], pipes: set[str]):
     return conns, need, surplus
 
 
+def _nearer_ends(f: Floor, ports: dict[str, Ports], plan) -> None:
+    """A manifold belt whose connections are all same-floor feeds/exits at whichever end
+    is nearer (summed Manhattan) to their other ends; ties and lift-linked belts keep the
+    side rule. Outputs first, then inputs against the updated exits. Flips ports in place
+    and remaps the conns' ends (folded blocks flip both output belts together)."""
+    conns, need, surplus = plan
+
+    def flip(belts: list[list[Cell]], others: list[Cell]) -> None:
+        main = belts[0]
+        if not others or sum(_dist(main[-1], o) for o in others) >= sum(_dist(main[0], o) for o in others):
+            return
+        remap = {ln[0]: ln[-1] for ln in belts}
+        for ln in belts:
+            ln.reverse()
+        for c in conns:
+            c.a, c.b = remap.get(c.a, c.a), remap.get(c.b, c.b)
+
+    lifted_out = {k for senders in surplus.values() for k, _c, _r in senders}
+    lifted_in = {(k, item) for item, users in need.items() for k, _c, _r in users}
+    blocks = sorted(f.blocks, key=lambda b: b.key)
+    for b in blocks:
+        outs = ports[b.key].outputs
+        if outs and b.key not in lifted_out:
+            flip(outs, [c.b for c in conns if c.src == b.key != c.dst])
+    for b in blocks:
+        for item, belt in ports[b.key].inputs.items():
+            if (b.key, item) not in lifted_in:
+                flip([belt], [c.a for c in conns if c.dst == b.key and c.item == item and c.src != c.dst])
+
+
 def _plan_lifts(floor_ids, needs, surpluses, belt_ipm: float) -> list[Lift]:
     """spec "Lifts", mass-balanced per item: each sink floor (in floor order) draws from
     the nearest source floors; one group per (source floor, direction); unmet need comes
@@ -439,6 +469,8 @@ def route_belts(layout: Layout, belt_ipm: float) -> Routing:
         return out
     ports = {b.key: manifold_ports(b, input_side(f)) for f in floors.values() for b in f.blocks}
     plans = {fi: _floor_plan(f, ports, pipes) for fi, f in floors.items()}
+    for fi, f in floors.items():
+        _nearer_ends(f, ports, plans[fi])
     out.lifts = _plan_lifts(sorted(floors), {fi: p[1] for fi, p in plans.items()},
                             {fi: p[2] for fi, p in plans.items()}, belt_ipm)
     _assign_cells(out.lifts, floors, ports, plans)

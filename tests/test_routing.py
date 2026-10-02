@@ -195,8 +195,10 @@ def test_one_producer_feeds_two_consumers_on_its_floor():
     r = R.route_belts(lay(floor(0, [p, c1, c2], d=12)), belt_ipm=270)
     assert not r.failures and not r.lifts
     assert sorted((b.src, b.dst, b.rate) for b in r.belts) == [("p", "c1", 30.0), ("p", "c2", 30.0)]
+    # Same-floor only, so p exits at its nearer end: to the feeds (4, 15) and (4, 27),
+    # east (11, 9) = 13 + 25 = 38, west (4, 9) = 6 + 18 = 24 -> west.
     for b in r.belts:
-        assert b.path[0] == R.manifold_ports(p).outputs[0][0]
+        assert b.path[0] == R.manifold_ports(p).outputs[0][-1] == (4, 9)
 
 
 def test_an_item_made_below_goes_up_one_lift_at_one_cell():
@@ -557,3 +559,55 @@ def test_two_lifts_with_the_same_target_get_neighbouring_rows():
     assert len(set(rows)) == 2 and rows[1] - rows[0] <= 2   # distinct, near each other
     usable = set(R.strip_rows(floor(0, [p]))) & set(R.strip_rows(floor(1, [c])))
     assert all(y in usable for y in rows)
+
+
+def test_a_same_floor_only_feed_uses_the_nearer_end():
+    # F0 (input W). p at fnd (5, 1): output row y 9, x 20..27, side end (27, 9).
+    # c at fnd (1, 4): input row y 15, x 4..11, side end (4, 15).
+    # p's output: to c's feed (4, 15) from (27, 9) = 23+6 = 29, from (20, 9) = 16+6 = 22 -> west.
+    # c's input: to p's new exit (20, 9) from (4, 15) = 16+6 = 22, from (11, 15) = 9+6 = 15 -> east.
+    p = blk("p", 5, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 4, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures and not r.lifts
+    (b,) = r.belts
+    assert (b.path[0], b.path[-1]) == ((20, 9), (11, 15))
+
+
+def test_a_lift_fed_belt_keeps_the_input_side_end():
+    # Same geometry; c needs 60 but p makes 30, so 30 comes up an 'in' lift: c's input
+    # belt keeps its W end (4, 15). p is same-floor only: flips west to (20, 9) (22 < 29).
+    p = blk("p", 5, 1, outputs={"I": 30.0})
+    c = blk("c", 1, 4, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures
+    assert {b.src: (b.path[0], b.path[-1]) for b in r.belts}["p"] == ((20, 9), (4, 15))
+    assert all(b.path[-1] == (4, 15) for b in r.belts)
+
+
+def test_an_output_feeding_a_lift_keeps_the_output_side_end():
+    # p makes 60, c takes 30, 30 goes out a lift: p keeps its E end (27, 9).
+    # c is same-floor only: to (27, 9) from (4, 15) = 23+6 = 29, from (11, 15) = 16+6 = 22 -> east.
+    p = blk("p", 5, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 4, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures
+    assert all(b.path[0] == (27, 9) for b in r.belts)
+    assert next(b for b in r.belts if b.dst == "c").path[-1] == (11, 15)
+
+
+def test_a_flipped_folded_producer_merges_matching_ends():
+    # f folded n=4 at fnd (5, 1): 8 cells long (x 20..27), 14 deep (y 4..17); outputs
+    # rows 18 (main) and 3, side ends (27, 18) / (27, 3). c at fnd (1, 6): input row 23,
+    # x 4..11. Main output to (4, 23): from (27, 18) = 23+5 = 28, from (20, 18) = 16+5 = 21
+    # -> both output belts flip west; the merge joins (20, 3) -> (20, 18).
+    f = blk("f", 5, 1, n=4, outputs={"P": 60.0}, folded=True)
+    c = blk("c", 1, 6, inputs={"P": 60.0})
+    r = R.route_belts(lay(floor(0, [f, c])), belt_ipm=270)
+    assert not r.failures
+    ports = R.manifold_ports(f)
+    for ln in ports.outputs:
+        ln.reverse()
+    (merge,) = [b for b in r.belts if b.src == b.dst == "f"]
+    assert (merge.path[0], merge.path[-1]) == (ports.outputs[1][0], ports.outputs[0][0]) == ((20, 3), (20, 18))
+    assert next(b for b in r.belts if b.dst == "c").path[0] == (20, 18)
