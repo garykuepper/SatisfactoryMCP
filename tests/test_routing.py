@@ -486,7 +486,15 @@ def test_manifold_ends_face_the_floor_sides():
     f = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True), "E")
     assert f.inputs["A"][0] == (11, 11) and [o[0] for o in f.outputs] == [(4, 18), (4, 3)]
     r = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True), "E")
-    assert r.inputs["A"][0] == (3, 4)          # rotated belts keep their south end
+    assert (r.inputs["A"][0], r.outputs[0][0]) == ((9, 4), (3, 4))   # mirrored, south end first
+    w = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True), "W")
+    assert (w.inputs["A"][0], w.outputs[0][0]) == ((3, 4), (9, 4))
+    rf = R.manifold_ports(blk("rf", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1},
+                              folded=True, rotated=True), "E")
+    wf = R.manifold_ports(blk("rf", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1},
+                              folded=True, rotated=True), "W")
+    assert (wf.inputs["A"][0], [o[0] for o in wf.outputs]) == ((11, 4), [(18, 4), (3, 4)])
+    assert (rf.inputs["A"][0], [o[0] for o in rf.outputs]) == ((10, 4), [(3, 4), (18, 4)])
 
 
 def test_a_one_floor_lift_rises_on_the_output_side():

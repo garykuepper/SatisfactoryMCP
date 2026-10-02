@@ -46,12 +46,18 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
     own frame -- u along the row, v across it, v < 0 the input (S) side -- then placed
     on the slab, transposed when rotated. Each belt's first cell is the end facing its
     floor side: inputs feed from `input_side`, outputs exit on the opposite side
-    (serpentine spec). A rotated block's belts keep their south end first."""
+    (serpentine spec). A rotated block's belts are columns, south end first; its input
+    side is west (v < 0 at x0-1-k) on a W floor and is mirrored across the block's depth
+    on an E floor (inputs at x0+depth+k, outputs at x0-1), so a folded rotated block's
+    outputs still list the exit-side belt first."""
     p = b.packed
     length, depth = _cells(p.width_m), _cells(p.depth_m)
     x0, y0 = b.x_fnd * PER_FND, b.y_fnd * PER_FND
+    mirror = b.rotated and input_side == "E"
 
     def row(v: int) -> list[Cell]:
+        if mirror:
+            v = depth - 1 - v
         return [(x0 + v, y0 + u) if b.rotated else (x0 + u, y0 + v) for u in range(length)]
 
     items = sorted(b.inputs)
@@ -106,7 +112,7 @@ def walk_lanes(f: Floor) -> tuple[set[int], set[int]]:
 
 
 def strip_rows(f: Floor) -> list[int]:
-    """Lift-strip rows usable on this floor: the west column minus walk-lane rows (a
+    """Lift-strip rows usable on this floor: either edge column's rows minus walk-lane rows (a
     lift there would feed straight into a lane crossing a lane)."""
     _w, h = floor_cells(f)
     rows, _cols = walk_lanes(f)
