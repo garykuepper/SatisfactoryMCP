@@ -710,7 +710,7 @@ def plan_layout(
                 "slab_depth_foundations is set; grid-packed so manifolds line up, "
                 "extractors excluded -- they stand on their node); "
                 "0 = off, one stage per floor with a logistics deck between each pair, "
-                "matching plan_layout's behaviour before this parameter existed"
+                "floor partitioning as before this parameter existed (manifold shapes are one row / folded, so foundation counts differ)"
             )
         ),
     ] = 0,

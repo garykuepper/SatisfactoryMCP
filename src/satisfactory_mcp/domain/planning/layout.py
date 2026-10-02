@@ -150,9 +150,9 @@ class Floor:
     #: ``layout_service`` when floors are stacked per site, so a reader can tell three
     #: separate buildings from one tower.
     site: str = ""
-    #: Slab side in metres, set only for a slab-mode production floor. None in upstream
-    #: (slab_foundations=0) mode, where a floor's footprint is still the sum of its
-    #: blocks -- see Floor.foundations, unchanged below.
+    #: Slab side in metres, set only for a slab-mode production floor. None in
+    #: default (slab_foundations=0) mode, where a floor's footprint is still the sum of its
+    #: blocks -- see Floor.foundations.
     slab_side_m: float | None = None
     #: Slab depth in metres when the slab is rectangular; None means square (depth =
     #: slab_side_m).
@@ -173,7 +173,8 @@ class Floor:
     @property
     def foundations(self) -> int:
         """What you pour: the whole slab in slab mode (you build the full floor, not
-        just the covered part), otherwise the block sum -- unchanged from upstream."""
+        just the covered part), otherwise the block sum (floor partitioning as upstream; block shapes are
+        one row / folded since 2026-10-01)."""
         if self.slab_side_m is not None:
             depth_m = self.slab_depth_m or self.slab_side_m
             return round((self.slab_side_m / FOUNDATION_M) * (depth_m / FOUNDATION_M))
@@ -1068,8 +1069,9 @@ def build_layout(
     ``order_floors_by`` is "chain" (depth order, so the schematic reads in build order) or
     "head" (minimise fluid lift).
 
-    ``slab_foundations`` (0 = off, matching upstream exactly: one stage per floor, a
-    logistics deck between each pair) packs blocks shelf-style onto square slabs of
+    ``slab_foundations`` (0 = off: floor partitioning matches upstream -- one stage per floor, a
+    logistics deck between each pair -- but manifold shapes are one row / folded
+    (2026-10-01), so foundation counts differ from upstream) packs blocks shelf-style onto square slabs of
     that many foundations per side, ``aisle_foundations`` apart, extractors excluded
     (they go to ``Layout.off_slab`` -- see ``_pack_slab``). ``slab_depth_foundations``
     makes the slab rectangular (``slab_foundations`` wide by this deep); 0 = square.
@@ -1080,7 +1082,7 @@ def build_layout(
     floor(s), merging groups under 4 foundations into their biggest trading partner,
     and sizes every floor to the smallest even x even slab that fits, capped at
     ``max_slab_foundations``; the slab_* arguments are then ignored. "stage" (default)
-    is the behaviour before this parameter existed.
+    is the default stage-per-floor partitioning.
     """
     group_by = (group_by or "stage").strip().casefold()
     if group_by not in ("stage", "building"):
