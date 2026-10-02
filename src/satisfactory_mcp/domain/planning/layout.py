@@ -568,6 +568,56 @@ def _fit_slab(placed: list[_Placed], cap_fnd: int) -> tuple[int, int]:
     return min(cap_fnd, w + w % 2), min(cap_fnd, d + d % 2)
 
 
+#: A building group under this many foundations shares a floor rather than getting
+#: its own (spec 2026-10-01, Section 1).
+MERGE_BELOW_FND = 4
+
+
+def _mean_stage(blocks: list[Block]) -> float:
+    """Machine-weighted mean chain stage: where a floor of these blocks stacks."""
+    n = sum(b.machines for b in blocks) or 1
+    return sum(b.stage * b.machines for b in blocks) / n
+
+
+def _group_blocks(blocks: list[Block], buses: list[Bus]) -> list[tuple[str, list[Block]]]:
+    """(label, blocks) per floor group: one per building type, then each group under
+    MERGE_BELOW_FND foundations merged into the group it trades the most items/min
+    with (either direction; ties to the lower mean stage), smallest first, until none
+    is small or one is left. Label = member building names, most machines first."""
+    by_type: dict[str, list[Block]] = {}
+    for b in blocks:
+        by_type.setdefault(b.building, []).append(b)
+    members = list(by_type.values())
+
+    def size(g: list[Block]) -> int:
+        return sum(b.foundations for b in g)
+
+    def trade(a: list[Block], c: list[Block]) -> float:
+        ka, kc = {b.key for b in a}, {b.key for b in c}
+        return sum(
+            bus.rate for bus in buses
+            if (ka & set(bus.producers) and kc & set(bus.consumers))
+            or (kc & set(bus.producers) and ka & set(bus.consumers))
+        )
+
+    while len(members) > 1:
+        small = [g for g in members if size(g) < MERGE_BELOW_FND]
+        if not small:
+            break
+        g = min(small, key=size)
+        others = [o for o in members if o is not g]
+        partner = max(others, key=lambda o: (trade(g, o), -_mean_stage(o)))
+        members = [o for o in others if o is not partner] + [partner + g]
+
+    out = []
+    for g in members:
+        count: dict[str, int] = {}
+        for b in g:
+            count[b.building] = count.get(b.building, 0) + b.machines
+        out.append((" + ".join(sorted(count, key=lambda k: (-count[k], k))), g))
+    return out
+
+
 def _pack_slab(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:

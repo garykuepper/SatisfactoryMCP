@@ -897,3 +897,80 @@ def test_fit_slab_is_the_smallest_even_slab_and_respects_the_cap():
     assert _fit_slab([_Placed(b, 1, 1, 20, 2, False)], 16) == (16, 4)
     two = [_Placed(b, 1, 1, 2, 2, False), _Placed(b, 4, 1, 3, 5, False)]
     assert _fit_slab(two, 16) == (8, 8)  # 4+3+1=8, 1+5+1=7 -> 8
+
+
+def _typed_block(key, building, fnd, stage=0, machines=1, packed=True):
+    from satisfactory_mcp.core.gamedata.footprint import Packed
+    from satisfactory_mcp.domain.planning.layout import Block
+
+    b = Block(
+        key=key, label=key, building_id=building, building=building, recipe=None,
+        machines=machines, clock=1.0, part=1, parts=1,
+        packed=Packed(count=machines, columns=machines, rows=1, width_m=8.0 * fnd,
+                      depth_m=8.0, foundations=fnd) if packed else None,
+    )
+    b.stage = stage
+    return b
+
+
+def _bus(item, rate, producers, consumers):
+    from satisfactory_mcp.domain.planning.layout import Bus
+
+    return Bus(item=item, name=item, rate=rate, carrier="belt", unit="/min", lines=1,
+               producers=list(producers), consumers=list(consumers))
+
+
+def test_group_blocks_separates_building_types():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    blocks = [_typed_block("c1", "Constructor", 5), _typed_block("c2", "Constructor", 5),
+              _typed_block("a1", "Assembler", 6)]
+    groups = dict(_group_blocks(blocks, []))
+    assert {k: sorted(b.key for b in v) for k, v in groups.items()} == {
+        "Constructor": ["c1", "c2"], "Assembler": ["a1"]}
+
+
+def test_group_blocks_merges_a_tiny_group_into_its_biggest_trading_partner():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    s = _typed_block("s", "Smelter", 2, stage=0)
+    c = _typed_block("c", "Constructor", 6, stage=1, machines=4)
+    a = _typed_block("a", "Assembler", 6, stage=2, machines=2)
+    buses = [_bus("Ingot", 30.0, ["s"], ["c"]), _bus("Ingot2", 5.0, ["s"], ["a"])]
+    groups = dict(_group_blocks([s, c, a], buses))
+    assert sorted(b.key for b in groups["Constructor + Smelter"]) == ["c", "s"]
+    assert [b.key for b in groups["Assembler"]] == ["a"]
+
+
+def test_group_blocks_breaks_a_trade_tie_toward_the_lower_stage():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    s = _typed_block("s", "Smelter", 2, stage=1)
+    lo = _typed_block("lo", "Foundry", 6, stage=0)
+    hi = _typed_block("hi", "Assembler", 6, stage=3)
+    groups = dict(_group_blocks([s, lo, hi], []))  # no trade at all: a tie
+    assert "Foundry + Smelter" in groups
+
+
+def test_group_blocks_single_type_is_one_group():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    blocks = [_typed_block(f"c{i}", "Constructor", 1) for i in range(3)]
+    groups = _group_blocks(blocks, [])
+    assert [(label, len(bs)) for label, bs in groups] == [("Constructor", 3)]
+
+
+def test_group_blocks_all_tiny_terminates_in_one_group():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    groups = _group_blocks([_typed_block("s", "Smelter", 1), _typed_block("c", "Constructor", 1)], [])
+    assert len(groups) == 1
+    assert sorted(b.key for b in groups[0][1]) == ["c", "s"]
+
+
+def test_group_blocks_tolerates_a_block_without_clearance_data():
+    from satisfactory_mcp.domain.planning.layout import _group_blocks
+
+    bare = _typed_block("x", "Mystery", 0, packed=False)
+    groups = _group_blocks([bare, _typed_block("c", "Constructor", 6)], [])
+    assert len(groups) == 1 and len(groups[0][1]) == 2
