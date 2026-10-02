@@ -1199,7 +1199,8 @@ def test_five_inputs_reserve_three_splitter_rows_none_and_no_outputs_reserve_non
 def test_building_rows_stack_with_no_aisle():
     from satisfactory_mcp.domain.planning.layout import _building_floors
 
-    a, b = _manifold_block("a", 2), _manifold_block("b", 2)
+    # 6 machines = 6 fnd long: 6 + 1 gap + 6 > 10, so a row each (no sharing)
+    a, b = _manifold_block("a", 2, machines=6), _manifold_block("b", 2, machines=6)
     floors, _ = _building_floors([a, b], [], 16)
     # a reserves y 1..4 (body 2), b reserves 4..7 (body 5); 7 + 1 edge = 8
     assert sorted(x.y_fnd for x in (a, b)) == [2, 5]
@@ -1231,10 +1232,11 @@ def test_a_rotated_block_reserves_its_rows_west_and_east():
 def test_a_machine_whose_rounding_pad_fits_the_merger_band_and_lane_gets_no_merger_row():
     from satisfactory_mcp.domain.planning.layout import _building_floors
 
-    # Constructor-like: 8 x 10 m, 4 machines, 1 in / 1 out. Body 2 fnd (16 m), pad 6 m
+    # Constructor-like: 8 x 10 m, 6 machines (a row each: 6 + 1 + 6 > 10), 1 in / 1 out.
+    # Body 2 fnd (16 m), pad 6 m
     # >= band 4 m + lane 2 m -> merger 0. Reserved 1 + 2 + 0 = 3: a at y 1..4 (body 2),
     # b at 4..7 (body 5); 7 + 1 edge = 8. (With a merger row: 1..5, 5..9 -> 10.)
-    a, b = (_manifold_block(k, 1, depth_m=10.0) for k in "ab")
+    a, b = (_manifold_block(k, 1, machines=6, depth_m=10.0) for k in "ab")
     floors, _ = _building_floors([a, b], [], 16)
     assert (a.manifold_in_fnd, a.manifold_out_fnd) == (1, 0)
     assert sorted(x.y_fnd for x in (a, b)) == [2, 5]
@@ -1258,3 +1260,72 @@ def test_a_folded_block_skips_only_its_north_merger_row_when_the_pad_fits():
     floors, _ = _building_floors([f], [], 16)
     assert f.manifold_out_fnd == 0 and f.y_fnd == 2
     assert floors[0].slab_depth_m / 8 == 8
+
+
+# ------------------------------------------------- shared rows (owner, 2026-10-02)
+# Building mode, cap 16: inner_long = 16 - 2 edge - 2 west bay - 2 east bay = 10 fnd.
+# Rows are filled up to the longest manifold in the stack (never past inner_long), so
+# each test ends with _long(): a 10-machine row, 10 fnd long, last in chain order.
+
+
+def _long():
+    b = _manifold_block("L", 1, machines=10)
+    b.stage = 9
+    return b
+
+
+def test_short_manifolds_share_a_row_with_a_one_foundation_gap():
+    from satisfactory_mcp.domain.planning.layout import EDGE_FND, WEST_BAY_FND, _building_floors
+
+    # three 4-machine rows, 4 fnd long, reserved 1 + 1 + 1 = 3 deep. a + 1 + b = 9 <= 10
+    # share row y 1..4 (bodies at 2); c (9 + 1 + 4 = 14 > 10) starts row 4..7, body 5.
+    a, b, c = (_manifold_block(k, 1) for k in "abc")
+    floors, _ = _building_floors([a, b, c, _long()], [], 16)
+    x0 = EDGE_FND + WEST_BAY_FND
+    assert [(x.x_fnd, x.y_fnd) for x in (a, b, c)] == [(x0, 2), (x0 + 4 + 1, 2), (x0, 5)]
+    assert len(floors) == 1 and floors[0].slab_depth_m / 8 == 12   # L 7..10, + 1 edge = 11 -> 12
+
+
+def test_the_next_row_starts_past_the_deepest_block_in_the_row():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # b is 2 fnd deep (16 m, pad 0): reserved 1 + 2 + 1 = 4, so the row is y 1..5 and
+    # c's row starts at 5, body 6.
+    a, b, c = _manifold_block("a", 1), _manifold_block("b", 1, depth_m=16.0), _manifold_block("c", 1)
+    _building_floors([a, b, c, _long()], [], 16)
+    assert (a.y_fnd, b.y_fnd, c.y_fnd) == (2, 2, 6)
+
+
+def test_bodies_in_a_shared_row_start_on_one_line():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # a has 1 splitter row, b 2 (3 inputs): both bodies at row start 1 + max 2 = 3; a's
+    # reserved box is padded 1 row (y 2..4), b's is y 1..4. Row y 1..5 (2 + 1 + 1), L 5..8,
+    # + 1 edge = 9 -> 10.
+    a, b = _manifold_block("a", 1), _manifold_block("b", 3)
+    floors, _ = _building_floors([a, b, _long()], [], 16)
+    assert (a.y_fnd, b.y_fnd) == (3, 3) and b.x_fnd == a.x_fnd + 4 + 1
+    assert floors[0].slab_depth_m / 8 == 10
+
+
+def test_a_rotated_block_keeps_a_row_to_itself():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # r (one 8 x 16 m machine) turns; it would fit beside a (4 + 1 + 4 = 9) but doesn't
+    # share: a's row y 1..4, r's row 4..5 (reserved x 3..7), c (stage 1) row 5..8, body 6.
+    a = _manifold_block("a", 1)
+    r = _manifold_block("r", 1, machines=1, depth_m=16.0)
+    c = _manifold_block("c", 1)
+    c.stage = 1
+    _building_floors([a, r, c, _long()], [], 16)
+    assert r.rotated and (a.y_fnd, r.y_fnd, c.y_fnd) == (2, 4, 6)
+
+
+def test_sharing_never_makes_a_row_longer_than_the_longest_manifold():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # longest manifold 4 fnd: a + 1 + b = 9 > 4, so a row each and the slab stays
+    # 1 edge + 2 bay + 4 + 1 edge + 2 bay = 10 wide (not the 16 the cap allows).
+    a, b = _manifold_block("a", 1), _manifold_block("b", 1)
+    floors, _ = _building_floors([a, b], [], 16)
+    assert (a.y_fnd, b.y_fnd) == (2, 5) and floors[0].slab_side_m / 8 == 10

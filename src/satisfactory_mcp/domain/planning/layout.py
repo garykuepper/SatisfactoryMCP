@@ -569,6 +569,10 @@ WEST_BAY_FND = 2
 #: belt routing: the east edge carries the other lift strip and corridor.
 EAST_BAY_FND = 2
 
+#: Building mode: the gap between manifolds sharing a row -- a belt corridor (owner,
+#: 2026-10-02).
+ROW_GAP_FND = 1
+
 #: A merger row beside each output side: one 4 x 4 m merger per machine, snapped to the
 #: foundation grid (owner, 2026-10-02).
 MERGER_ROW_FND = 1
@@ -755,17 +759,23 @@ def _pack_slab(
 
 def _pack_rows(
     blocks: list[Block], slab_fnd: int, aisle_fnd: int, slab_depth_fnd: int = 0,
-    west_fnd: int = 0, east_fnd: int = 0,
+    west_fnd: int = 0, east_fnd: int = 0, row_gap: int | None = None, row_len: int = 0,
 ) -> tuple[list[list[_Placed]], list[Block], list[str]]:
-    """One manifold per row: every block is turned so its long side runs along the
-    slab's long side, starts flush at the EDGE_FND walkway, and gets a row to itself;
-    rows stack across the slab's short side, aisle_fnd apart (the lane between two
-    rows carries one row's output and the next row's input), in the given order. A
-    block that can't fit a row -- longer than the long side, or wider than the short
-    side -- is reported as oversized, like _pack_slab. west_fnd shifts every block
-    that many foundations further east (a west bay); west_fnd + east_fnd shrink the span along x.
-    A block's reserved manifold rows (manifold_in_fnd/_out_fnd) widen it across its
-    row: the _Placed box is the reserved box, not the body.
+    """Manifold rows: every block is turned so its long side runs along the slab's
+    long side, starting flush at the EDGE_FND walkway; rows stack across the slab's
+    short side, aisle_fnd apart (the lane between two rows carries one row's output
+    and the next row's input), in the given order. One manifold per row unless
+    row_gap is set (building mode, owner 2026-10-02): then short manifolds share a
+    row left to right, row_gap foundations apart, while they fit its length
+    (next-fit, in order); a row is as deep as its deepest block, and every body in it
+    starts on one line -- a block with fewer splitter rows than its neighbours is
+    padded, so its bands still sit against its body. A rotated block keeps a row to
+    itself. A block that can't fit a row -- longer than the long side, or wider than
+    the short side -- is reported as oversized, like _pack_slab. west_fnd shifts
+    every block that many foundations further east (a west bay); west_fnd + east_fnd
+    shrink the span along x. A block's reserved manifold rows
+    (manifold_in_fnd/_out_fnd) widen it across its row: the _Placed box is the
+    reserved box, not the body.
     """
     depth_fnd = slab_depth_fnd or slab_fnd
     long_is_y = depth_fnd > slab_fnd
@@ -775,6 +785,33 @@ def _pack_rows(
     oversized: list[Block] = []
     warnings: list[str] = []
     offset = 0  # along the short side, within the inner span
+
+    def pre(t: tuple) -> int:  # splitter rows before the body, across the row
+        return 0 if t[1] else _rows_before(t[0])
+
+    def depth(row: list[tuple]) -> int:
+        top = max(pre(t) for t in row)
+        return max(top - pre(t) + t[5] for t in row)
+
+    def place(row: list[tuple]) -> None:
+        nonlocal offset
+        start = offset + (aisle_fnd if floors[-1] else 0)
+        if floors[-1] and start + depth(row) > inner_short:
+            floors.append([])
+            start = 0
+        top, pos = max(pre(t) for t in row), 0
+        for t in row:
+            b, rotated, w, d, along, _span = t
+            across = start + top - pre(t)
+            if long_is_y:
+                x, y = EDGE_FND + west_fnd + across, EDGE_FND + pos
+            else:
+                x, y = EDGE_FND + west_fnd + pos, EDGE_FND + across
+            floors[-1].append(_Placed(b, x, y, w, d, rotated))
+            pos += along + (row_gap or 0)
+        offset = start + depth(row)
+
+    row: list[tuple] = []  # (block, rotated, w, d, along, span)
     for b in blocks:
         w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
         # Rendered width is along x: make the long side lie along the slab's long axis.
@@ -791,16 +828,18 @@ def _pack_rows(
                 "walkway) -- given its own floor at its real size"
             )
             continue
-        start = offset + (aisle_fnd if floors[-1] else 0)
-        if floors[-1] and start + span > inner_short:
-            floors.append([])
-            start = 0
-        if long_is_y:
-            x, y = EDGE_FND + west_fnd + start, EDGE_FND
-        else:
-            x, y = EDGE_FND + west_fnd, EDGE_FND + start
-        floors[-1].append(_Placed(b, x, y, w, d, rotated))
-        offset = start + span
+        t = (b, rotated, w, d, along, span)
+        used = sum(r[4] for r in row) + len(row) * (row_gap or 0)
+        if (row_gap is not None and row and not rotated and not row[0][1]
+                and used + along <= min(inner_long, row_len or inner_long)
+                and depth(row + [t]) <= inner_short):
+            row.append(t)
+            continue
+        if row:
+            place(row)
+        row = [t]
+    if row:
+        place(row)
     return floors, oversized, warnings
 
 
@@ -909,8 +948,9 @@ def _building_floors(
     wide_groups: frozenset[str] = frozenset(),
 ) -> tuple[list[Floor], list[str]]:
     """Floors grouped by building type (spec 2026-10-01): each group row-packed onto
-    a cap_fnd x cap_fnd slab, one manifold per row (_pack_rows, WEST_BAY_FND west bay)
-    with its splitter and merger rows reserved beside it and no aisle between rows --
+    a cap_fnd x cap_fnd slab in manifold rows (_pack_rows, WEST_BAY_FND west bay; short
+    manifolds share a row, ROW_GAP_FND apart) with their splitter and merger rows
+    reserved beside them and no aisle between rows --
     those rows are walkable and replace it (owner, 2026-10-02); a wide group keeps a
     2-foundation aisle -- spilling onto more floors of the same group, whole
     manifolds only, when it doesn't fit -- then every floor takes one shared slab: the
@@ -918,6 +958,10 @@ def _building_floors(
     sits at the bottom and final assembly on top."""
     specs: list[tuple[float, str, list[Block], tuple[int, int] | None]] = []
     warnings: list[str] = []
+    # Shared rows fill the longest manifold's length, not the cap: sharing shouldn't
+    # widen the slab (owner, 2026-10-02).
+    row_len = max((max(_to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)) for b in blocks
+                   if b.packed), default=0)
     for label, group in _group_blocks(blocks, buses):
         ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
         for b in ordered:
@@ -925,13 +969,13 @@ def _building_floors(
             b.manifold_rows = True
         packed_floors, oversized, warns = _pack_rows(
             ordered, cap_fnd, 2 if label in wide_groups else 0, west_fnd=WEST_BAY_FND,
-            east_fnd=EAST_BAY_FND,
+            east_fnd=EAST_BAY_FND, row_gap=ROW_GAP_FND, row_len=row_len,
         )
         warnings.extend(warns)
         for placed in packed_floors:
             if not placed:
                 continue
-            for p in placed:  # the body sits past its input-side reserved rows
+            for p in placed:  # the body sits past its input-side reserved rows (and padding)
                 pre = _rows_before(p.block, p.rotated)
                 p.block.x_fnd = p.x_fnd + (pre if p.rotated else 0)
                 p.block.y_fnd = p.y_fnd + (0 if p.rotated else pre)
