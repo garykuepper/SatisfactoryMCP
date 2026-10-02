@@ -39,6 +39,8 @@ class Ports:
     inputs: dict[str, list[Cell]]
     #: output manifold belts, exit end first; a folded block lists [north, south]
     outputs: list[list[Cell]]
+    #: splitter/merger bands (4 m each, both cell rows) when the block reserves rows
+    bands: list[list[Cell]] = field(default_factory=list)
 
 
 def manifold_ports(b: Block, input_side: str = "W") -> Ports:
@@ -49,7 +51,13 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
     (serpentine spec). A rotated block's belts are columns, south end first; its input
     side is west (v < 0 at x0-1-k) on a W floor and is mirrored across the block's depth
     on an E floor (inputs at x0+depth+k, outputs at x0-1), so a folded rotated block's
-    outputs still list the exit-side belt first."""
+    outputs still list the exit-side belt first.
+
+    A block with reserved manifold rows (building mode, 2026-10-02) puts each belt on
+    the outer cell of its 4 m splitter/merger band: input k at v = -2-2k (band
+    -1-2k, -2-2k), outputs at v = depth+1 (band depth, depth+1), a folded block's
+    south output at v = -2; `bands` lists those bands. Without reserved rows the belts
+    hug the body (v = -1-k, depth) and there are no bands."""
     p = b.packed
     length, depth = _cells(p.width_m), _cells(p.depth_m)
     x0, y0 = b.x_fnd * PER_FND, b.y_fnd * PER_FND
@@ -61,11 +69,15 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
         return [(x0 + v, y0 + u) if b.rotated else (x0 + u, y0 + v) for u in range(length)]
 
     items = sorted(b.inputs)
+    fi, fo = int(b.manifold_in_fnd > 0), int(b.manifold_out_fnd > 0)
     if p.folded:
         mid = int(p.depth_m / 2 / CELL_M)
-        ports = Ports({it: row(mid - k) for k, it in enumerate(items)}, [row(depth), row(-1)])
+        ports = Ports({it: row(mid - k) for k, it in enumerate(items)}, [row(depth + fo), row(-1 - fo)])
+        outer = [depth, -2] if fo else []
     else:
-        ports = Ports({it: row(-1 - k) for k, it in enumerate(items)}, [row(depth)])
+        ports = Ports({it: row(-1 - k - fi * (1 + k)) for k, it in enumerate(items)}, [row(depth + fo)])
+        outer = [-2 - 2 * k for k in range(len(items))] * fi + [depth] * fo
+    ports.bands = [row(v) + row(v + 1) for v in outer]
     if not b.rotated:
         for ln in ports.inputs.values() if input_side == "E" else ports.outputs:
             ln.reverse()
@@ -99,10 +111,16 @@ def floor_cells(f: Floor) -> tuple[int, int]:
 
 
 def walk_lanes(f: Floor) -> tuple[set[int], set[int]]:
-    """(rows, cols) of walk-lane cells: offset 1 inside every slab edge, and offset 1
-    above each row's reserved box when another row starts above it (its aisle band)."""
+    """(rows, cols) of walk-lane cells: offset 1 inside every slab edge, plus one
+    horizontal lane per row: just past each unrotated block's merger band (v = depth+2)
+    when its floor reserves manifold rows, else offset 1 above each row's reserved box
+    when another row starts above it (its aisle band)."""
     w, h = floor_cells(f)
     rows, cols = {1, h - 2}, {1, w - 2}
+    if any(b.manifold_in_fnd or b.manifold_out_fnd for b in f.blocks):
+        rows |= {b.y_fnd * PER_FND + _cells(b.packed.depth_m) + 2
+                 for b in f.blocks if b.manifold_out_fnd and not b.rotated}
+        return rows, cols
     starts = {b.y_fnd for b in f.blocks}
     for b in f.blocks:
         top = b.y_fnd + math.ceil(block_rect(b)[3] / PER_FND)
@@ -423,8 +441,9 @@ def _assign_cells(lifts: list[Lift], floors: dict[int, Floor], ports: dict[str, 
 
 def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
     """The floor's routing grid, and a description of the first manifold-belt clash
-    (a manifold belt on a walk lane, on another block, off the slab, or on another
-    manifold belt) -- '' when clean."""
+    (a manifold belt or splitter/merger band cell on a walk lane, on another block, off
+    the slab, or on another manifold belt or band) -- '' when clean. Band cells are
+    hard-blocked; belt cells stay usable as path ends."""
     w, h = floor_cells(f)
     rows, cols = walk_lanes(f)
     g = Grid(w, h, {(x, y) for x in (0, w - 1) for y in range(h)}, rows, cols)
@@ -438,12 +457,13 @@ def _grid(f: Floor, ports: dict[str, Ports]) -> tuple[Grid, str]:
     reserved: set[Cell] = set()
     for b in f.blocks:
         ps = ports[b.key]
-        for belt in (*ps.inputs.values(), *ps.outputs):
-            for c in belt:
-                if (not (0 < c[0] < w - 1 and 0 <= c[1] < h) or c in reserved or any(g.lanes(c))
-                        or footprint.get(c, b.key) != b.key):
-                    return g, f"{b.key} manifold belt at {c}"
-                reserved.add(c)
+        belts = [c for belt in (*ps.inputs.values(), *ps.outputs) for c in belt]
+        bands = {c for band in ps.bands for c in band} - set(belts)  # outer cells are belts
+        for c in (*belts, *sorted(bands)):
+            if (not (0 < c[0] < w - 1 and 0 <= c[1] < h) or c in reserved or any(g.lanes(c))
+                    or footprint.get(c, b.key) != b.key):
+                return g, f"{b.key} manifold belt at {c}"
+            reserved.add(c)
     g.blocked |= reserved
     return g, ""
 

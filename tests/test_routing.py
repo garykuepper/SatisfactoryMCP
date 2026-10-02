@@ -611,3 +611,43 @@ def test_a_flipped_folded_producer_merges_matching_ends():
     (merge,) = [b for b in r.belts if b.src == b.dst == "f"]
     assert (merge.path[0], merge.path[-1]) == (ports.outputs[1][0], ports.outputs[0][0]) == ((20, 3), (20, 18))
     assert next(b for b in r.belts if b.dst == "c").path[0] == (20, 18)
+
+
+def rows_blk(key, x, y, **kw):
+    """A building-mode block: splitter and merger rows reserved (layout sets these)."""
+    b = blk(key, x, y, **kw)
+    b.manifold_in_fnd = 0 if kw.get("folded") or not b.inputs else max(1, math.ceil(len(b.inputs) / 2))
+    b.manifold_out_fnd = 1 if b.outputs else 0
+    return b
+
+
+def test_reserved_rows_move_belts_to_the_outer_band_cell():
+    # body at y0 = 8, depth 10 m = 5 cells: input bands 7,6 (A) and 5,4 (B); merger 13,14
+    p = R.manifold_ports(rows_blk("a", 1, 2, inputs={"B": 1, "A": 1}, outputs={"P": 1}))
+    assert p.inputs["A"] == [(x, 6) for x in range(4, 12)]          # v = -2
+    assert p.inputs["B"] == [(x, 4) for x in range(4, 12)]          # v = -4
+    assert p.outputs == [[(x, 14) for x in range(11, 3, -1)]]       # v = depth + 1
+    assert sorted({c[1] for band in p.bands for c in band}) == [4, 5, 6, 7, 13, 14]
+
+
+def test_reserved_rows_on_a_folded_block_put_outputs_on_both_outer_bands():
+    # depth 28 m = 14 cells from y0 = 8: lane input stays at 8 + 7; outputs at 8+15 and 8-2
+    p = R.manifold_ports(rows_blk("f", 1, 2, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True))
+    assert p.inputs["A"] == [(x, 15) for x in range(4, 12)]
+    assert [ln[0][1] for ln in p.outputs] == [23, 6]
+    assert sorted({c[1] for band in p.bands for c in band}) == [6, 7, 22, 23]
+
+
+def test_band_cells_are_blocked_in_the_grid():
+    b = rows_blk("a", 1, 2, inputs={"A": 1}, outputs={"P": 1})
+    f = floor(0, [b])
+    g, clash = R._grid(f, {"a": R.manifold_ports(b)})
+    assert not clash
+    assert {(x, y) for x in range(4, 12) for y in (6, 7, 13, 14)} <= g.blocked
+
+
+def test_walk_lane_runs_just_past_the_merger_band():
+    lower, upper = rows_blk("a", 1, 2, inputs={"A": 1}, outputs={"P": 1}), rows_blk(
+        "b", 1, 6, inputs={"A": 1}, outputs={"P": 1})
+    rows, _cols = R.walk_lanes(floor(0, [lower, upper]))
+    assert rows == {1, 38, 8 + 5 + 2, 24 + 5 + 2}                   # no old aisle lane

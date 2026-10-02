@@ -1027,18 +1027,18 @@ def test_bad_group_by_or_slab_cap_is_an_error(game, oil_solution):
 def test_building_floors_stack_same_type_manifolds_on_one_floor():
     from satisfactory_mcp.domain.planning.layout import _building_floors
 
-    # four 8-machine Constructor rows, 8x2 foundations each: 4 rows + 3 aisles = 11 deep,
-    # fits one 16x16 slab's 14-foundation interior
+    # four 8-machine Constructor rows, 8x2 foundations each, no inputs/outputs so no
+    # manifold rows, and no aisle (2026-10-02): 4 x 2 = 8 deep, fits a 14-foundation interior
     blocks = [_typed_block(f"c{i}", "Constructor", 16) for i in range(4)]
     for b in blocks:
         b.packed = type(b.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
-    floors, warnings = _building_floors(blocks, [], 16, 1)
+    floors, warnings = _building_floors(blocks, [], 16)
     assert not warnings
     assert len(floors) == 1 and len(floors[0].blocks) == 4
     w, d = floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8
-    # x: 1 edge + 2 west bay + 8 long + 1 far edge + 2 east bay = 14; y: rows at 0,3,6,9 -> last ends 11,
-    # 1 + 11 + 1 = 13 -> even 14
-    assert (w, d) == (14, 14)
+    # x: 1 edge + 2 west bay + 8 long + 1 far edge + 2 east bay = 14; y: rows at 1,3,5,7 -> last ends 9,
+    # 9 + 1 edge = 10 (even)
+    assert (w, d) == (14, 10)
 
 
 def test_plan_layout_groups_by_building_and_reports_bad_args(game, state):
@@ -1063,7 +1063,7 @@ def test_building_floors_share_one_slab_size():
     con.packed = type(con.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
     asm = _typed_block("a", "Assembler", 6, stage=2)
     asm.packed = type(asm.packed)(count=3, columns=3, rows=1, width_m=24.0, depth_m=16.0, foundations=6)
-    floors, _warnings = _building_floors([con, asm], [], 16, 1)
+    floors, _warnings = _building_floors([con, asm], [], 16)
     sizes = {(f.slab_side_m / 8, f.slab_depth_m / 8) for f in floors}
     # alone (1 edge + 2 west bay + row + 1 edge): Constructor 1+2+8+1 = 12 x 4,
     # Assembler 1+2+3+1 = 7 -> 8 x 4; shared: 12 x 4
@@ -1088,10 +1088,10 @@ def test_a_wide_group_packs_with_two_foundation_aisles():
         bs = [_typed_block(f"c{i}", "Constructor", 16) for i in range(2)]
         for b in bs:
             b.packed = type(b.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
-        floors, _ = _building_floors(bs, [], 16, 1, wide_groups=wide)
+        floors, _ = _building_floors(bs, [], 16, wide_groups=wide)
         return sorted(b.y_fnd for b in floors[0].blocks)
 
-    assert rows(frozenset()) == [1, 4]                  # 2 deep + 1 aisle
+    assert rows(frozenset()) == [1, 3]                  # 2 deep + 0 aisle (manifold rows replace it)
     assert rows(frozenset({"Constructor"})) == [1, 5]   # 2 deep + 2 aisle
 
 
@@ -1103,7 +1103,7 @@ def test_building_rows_start_past_the_west_bay_stage_rows_do_not():
         b.packed = type(b.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
         return b
 
-    floors, _ = _building_floors([con()], [], 16, 1)
+    floors, _ = _building_floors([con()], [], 16)
     assert [b.x_fnd for b in floors[0].blocks] == [EDGE_FND + WEST_BAY_FND] == [3]
     placed, _, _ = _pack_rows([con()], slab_fnd=16, aisle_fnd=1)
     assert [p.x_fnd for p in placed[0]] == [1]
@@ -1114,7 +1114,7 @@ def test_building_floors_leave_a_two_foundation_bay_on_both_sides():
 
     c = _typed_block("c", "Constructor", 16)
     c.packed = type(c.packed)(count=8, columns=8, rows=1, width_m=64.0, depth_m=16.0, foundations=16)
-    floors, _ = _building_floors([c], [], 16, 1)
+    floors, _ = _building_floors([c], [], 16)
     assert c.x_fnd == 3                                   # 1 edge + 2 west bay
     assert floors[0].slab_side_m / 8 == 3 + 8 + 1 + 2     # block ends at 11, + edge + east bay = 14
 
@@ -1132,7 +1132,7 @@ def test_a_floor_with_a_tall_building_is_double_height():
     # 15.5 m does not.
     floors, warnings = _building_floors(
         [_tall_block("r", "Refinery", 30.0), _tall_block("a", "Assembler", 15.0),
-         _tall_block("x", "Tall Thing", 15.5)], [], 16, 1)
+         _tall_block("x", "Tall Thing", 15.5)], [], 16)
     assert not warnings
     assert {f.group: f.height_m for f in floors} == {
         "Refinery": 32.0, "Assembler": 16.0, "Tall Thing": 32.0}
@@ -1141,7 +1141,7 @@ def test_a_floor_with_a_tall_building_is_double_height():
 def test_a_building_taller_than_a_double_floor_is_warned():
     from satisfactory_mcp.domain.planning.layout import _building_floors
 
-    floors, warnings = _building_floors([_tall_block("t", "Tower", 40.0)], [], 16, 1)
+    floors, warnings = _building_floors([_tall_block("t", "Tower", 40.0)], [], 16)
     assert floors[0].height_m == 32.0
     assert any("Tower" in w and "40" in w for w in warnings)
 
@@ -1151,7 +1151,78 @@ def test_a_building_with_no_headroom_under_a_double_floor_is_warned_once():
 
     # 32 m + 1 m headroom > 32: flagged, and once for the building, not per manifold.
     blocks = [_tall_block(f"c{i}", "Coal-Powered Generator", 32.0) for i in range(2)]
-    _floors, warnings = _building_floors(blocks, [], 16, 1)
+    _floors, warnings = _building_floors(blocks, [], 16)
     tall = [w for w in warnings if "Coal-Powered Generator" in w]
     assert tall == ["Coal-Powered Generator is 32 m tall: no headroom under a 32 m double "
                     "floor (needs 33 m)"]
+
+
+def _manifold_block(key, n_inputs, machines=4, outputs=True, folded=False, width_m=8.0, depth_m=8.0):
+    from satisfactory_mcp.core.gamedata.footprint import Packed
+
+    b = _typed_block(key, "Constructor", machines, machines=machines)
+    if folded:
+        cols = math.ceil(machines / 2)
+        b.packed = Packed(count=machines, columns=cols, rows=2, width_m=cols * width_m,
+                          depth_m=2 * depth_m + 8.0, foundations=0, folded=True, lane_m=8.0)
+    else:
+        b.packed = Packed(count=machines, columns=machines, rows=1, width_m=machines * width_m,
+                          depth_m=depth_m, foundations=machines)
+    b.inputs = {f"I{k}": 1.0 for k in range(n_inputs)}
+    b.outputs = {"P": 1.0} if outputs else {}
+    return b
+
+
+def test_building_rows_reserve_a_splitter_and_a_merger_row():
+    from satisfactory_mcp.domain.planning.layout import EDGE_FND, _building_floors
+
+    # 2 inputs, 4 machines, body 1 fnd deep: reserved 1 + 1 + 1 = 3, body one row up.
+    b = _manifold_block("a", 2)
+    floors, _ = _building_floors([b], [], 16)
+    assert (b.manifold_in_fnd, b.manifold_out_fnd) == (1, 1)
+    assert b.y_fnd == EDGE_FND + 1 == 2
+    # reserved y 1..4, + 1 edge = 5 -> even 6 (the slab covers the reserved rows)
+    assert floors[0].slab_depth_m / 8 == 6
+    assert b.packed.foundations == 4  # footprint numbers unchanged
+
+
+def test_five_inputs_reserve_three_splitter_rows_none_and_no_outputs_reserve_none():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    five, src, sink = _manifold_block("a", 5), _manifold_block("s", 0), _manifold_block("k", 1, outputs=False)
+    _building_floors([five, src, sink], [], 16)
+    assert (five.manifold_in_fnd, five.manifold_out_fnd) == (3, 1)
+    assert (src.manifold_in_fnd, src.manifold_out_fnd) == (0, 1)
+    assert (sink.manifold_in_fnd, sink.manifold_out_fnd) == (1, 0)
+
+
+def test_building_rows_stack_with_no_aisle():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    a, b = _manifold_block("a", 2), _manifold_block("b", 2)
+    floors, _ = _building_floors([a, b], [], 16)
+    # a reserves y 1..4 (body 2), b reserves 4..7 (body 5); 7 + 1 edge = 8
+    assert sorted(x.y_fnd for x in (a, b)) == [2, 5]
+    assert floors[0].slab_depth_m / 8 == 8
+
+
+def test_a_folded_block_reserves_a_merger_row_on_both_outer_edges():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # depth 2*8 + 8 = 24 m = 3 fnd; reserved 1 + 3 + 1 = 5 from y 1, body at 2
+    b = _manifold_block("f", 3, machines=10, folded=True)
+    floors, _ = _building_floors([b], [], 16)
+    assert (b.manifold_in_fnd, b.manifold_out_fnd) == (0, 1)
+    assert b.y_fnd == 2
+    assert floors[0].slab_depth_m / 8 == 8  # reserved y 1..6, + 1 edge = 7 -> 8
+
+
+def test_a_rotated_block_reserves_its_rows_west_and_east():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # one machine 8 wide x 16 deep: turned, depth along x. Reserved x 3..7 (1 + 2 + 1),
+    # body at x 4; slab 7 + 1 edge + 2 east bay = 10 wide, depth 1 + 1 + 1 = 3 -> 4.
+    b = _manifold_block("r", 1, machines=1, depth_m=16.0)
+    floors, _ = _building_floors([b], [], 16)
+    assert b.rotated and b.x_fnd == 4 and b.y_fnd == 1
+    assert (floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8) == (10, 4)
