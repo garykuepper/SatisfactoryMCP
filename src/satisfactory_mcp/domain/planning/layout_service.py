@@ -22,6 +22,7 @@ from .layout import Layout, build_layout, fluid_head
 from .materials import build_materials
 from .optimize import Solution
 from .prepare import PreparedPlan, prepare
+from .routing import LiftStripFull, build_routed_layout
 from .sites import claim_processes, partition
 from .trunks import plan_trunks
 
@@ -175,6 +176,24 @@ def build_layout_report(
         report.show_payload = build_materials(
             g, [*sol.processes, *extra], st.stock(), lay.total_foundations
         )
+    elif show == "belts":
+        if (group_by or "stage").strip().casefold() != "building":
+            report.show_payload = "stage"
+        else:
+            try:
+                routing = build_routed_layout(
+                    g,
+                    sol,
+                    belt_ipm=tiers.belt_ipm,
+                    pipe_m3min=tiers.pipe_m3min,
+                    max_slab_foundations=max_slab_foundations,
+                    aisle_foundations=aisle_foundations,
+                )
+            except LiftStripFull as exc:
+                report.show_payload = exc
+            else:
+                report.show_payload = routing
+                report.lay = lay = routing.layout
     elif show == "trunks":
         # The destination decides which end of each chain is "far", so it decides the
         # sign of every lift. A named factory is the honest answer when there is one;

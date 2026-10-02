@@ -420,3 +420,16 @@ def test_different_items_from_one_exit_do_not_share_a_trunk():
         a = pi.index(c)
         k = pk.index(c)
         assert (pi[a - 1][1] == pi[a + 1][1]) != (pk[k - 1][1] == pk[k + 1][1])
+
+
+def test_plan_layout_shows_belts_for_the_versatile_framework_plan(game, state):
+    from satisfactory_mcp import server as srv
+
+    out = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
+                          export_minimums={"Versatile Framework": 10},
+                          group_by="building", show="belts")
+    assert "length m" in out and "lifts" in out.lower()
+    assert "unroutable" not in out
+    stage = srv.plan_layout(objective="min_raw", exports=["Versatile Framework"],
+                            export_minimums={"Versatile Framework": 10}, show="belts")
+    assert 'group_by="building"' in stage

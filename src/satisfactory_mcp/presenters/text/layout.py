@@ -100,10 +100,11 @@ def render_layout(
             "site independently, so heights and riser pump counts are per site -- "
             "nothing here prices the ground between them"
         )
-    notes.append(
-        "schematic only: no world coordinates or belt routing -- there is no terrain "
-        "data available, so those would be invented"
-    )
+    if show != "belts":
+        notes.append(
+            "schematic only: no world coordinates or belt routing -- there is no terrain "
+            "data available, so those would be invented"
+        )
     needed = {b.building_id for b in lay.blocks if b.building_id and st.built(b.building_id) == 0}
     if needed:
         notes.append(
@@ -267,6 +268,41 @@ def render_layout(
             "these are build-gun components, not ore. Call bom on any row to expand it "
             "-- flattening here would have to guess a depth through the Recycled loop"
         )
+    elif show == "belts":
+        payload = report.show_payload
+        if payload == "stage":
+            body = 'belts are routed only for floors by building type -- pass group_by="building"'
+        elif isinstance(payload, Exception):
+            body = f"! {payload}"
+        else:
+            names = {b.item: b.name for b in lay.buses}
+            parts = []
+            for f in lay.floors:
+                rows = [
+                    (names.get(b.item, b.item), f"{render.num(b.rate)}/min", b.src, b.dst, len(b.path) * 2)
+                    for b in payload.belts
+                    if b.floor == f.index
+                ]
+                if rows:
+                    parts.append(
+                        f"F{f.index} {f.group}\n"
+                        + render.table(
+                            ("item", "rate", "from", "to", "length m"), rows, total=len(rows)
+                        )
+                    )
+            lift_rows = [
+                (names.get(x.item, x.item), f"{render.num(x.rate)}/min", f"x0 y{x.cell[1]}",
+                 f"F{x.from_floor}->F{x.to_floor}", x.kind)
+                for x in payload.lifts
+            ]
+            parts.append(
+                "lifts\n"
+                + render.table(("item", "rate", "cell", "floors", "kind"), lift_rows, total=len(lift_rows))
+            )
+            if payload.widened:
+                parts.append("widened to 2-foundation aisles: " + ", ".join(payload.widened))
+            parts += [f"! {x}" for x in payload.failures]
+            body = "\n\n".join(parts)
     elif show == "trunks":
         tp = report.show_payload
         pump_head, pump_name = report.pump_head_m, report.pump_name
