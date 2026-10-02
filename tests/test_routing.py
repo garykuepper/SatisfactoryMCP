@@ -618,6 +618,7 @@ def rows_blk(key, x, y, **kw):
     b = blk(key, x, y, **kw)
     b.manifold_in_fnd = 0 if kw.get("folded") or not b.inputs else max(1, math.ceil(len(b.inputs) / 2))
     b.manifold_out_fnd = 1 if b.outputs else 0
+    b.manifold_rows = True
     return b
 
 
@@ -672,3 +673,19 @@ def test_a_rotated_four_input_block_keeps_its_bands_in_its_reserved_box_on_both_
     for side in ("W", "E"):
         xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
         assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)
+
+
+def test_without_a_merger_row_the_band_and_walk_lane_sit_in_the_body_pad():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # 4 machines 8 x 10 m: body 2 fnd = 8 cells, depth 5 cells, no merger row.
+    b = blk("c", 0, 0, n=4, w=8.0, d=10.0, inputs={"A": 1}, outputs={"P": 1})
+    floors, _ = _building_floors([b], [], 16)
+    assert b.manifold_out_fnd == 0
+    y0 = b.y_fnd * R.PER_FND
+    ports = R.manifold_ports(b)
+    north = {c[1] for band in ports.bands for c in band if c[1] >= y0}
+    assert north == {y0 + 5, y0 + 6} and max(north) < y0 + 2 * R.PER_FND   # inside the body box
+    assert ports.outputs[0][0][1] == y0 + 6
+    assert y0 + 5 + 2 in R.walk_lanes(floors[0])[0]
+    assert R._grid(floors[0], {"c": ports})[1] == ""

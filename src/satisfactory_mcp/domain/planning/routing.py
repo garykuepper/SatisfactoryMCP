@@ -53,10 +53,11 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
     on an E floor (inputs at x0+depth+k, outputs at x0-1), so a folded rotated block's
     outputs still list the exit-side belt first.
 
-    A block with reserved manifold rows (building mode, 2026-10-02) puts each belt on
+    A block with manifold rows (building mode, 2026-10-02) puts each belt on
     the outer cell of its 4 m splitter/merger band: input k at v = -2-2k (band
-    -1-2k, -2-2k), outputs at v = depth+1 (band depth, depth+1), a folded block's
-    south output at v = -2; `bands` lists those bands. Without reserved rows the belts
+    -1-2k, -2-2k), outputs at v = depth+1 (band depth, depth+1, inside the body's
+    rounding pad when it has no merger row), a folded block's south output at v = -2;
+    `bands` lists those bands. Outside building mode the belts
     hug the body (v = -1-k, depth) and there are no bands."""
     p = b.packed
     length, depth = _cells(p.width_m), _cells(p.depth_m)
@@ -69,7 +70,7 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
         return [(x0 + v, y0 + u) if b.rotated else (x0 + u, y0 + v) for u in range(length)]
 
     items = sorted(b.inputs)
-    fi, fo = int(b.manifold_in_fnd > 0), int(b.manifold_out_fnd > 0)
+    fi, fo = int(b.manifold_rows and bool(b.inputs)), int(b.manifold_rows and bool(b.outputs))
     if p.folded:
         mid = int(p.depth_m / 2 / CELL_M)
         ports = Ports({it: row(mid - k) for k, it in enumerate(items)}, [row(depth + fo), row(-1 - fo)])
@@ -113,13 +114,14 @@ def floor_cells(f: Floor) -> tuple[int, int]:
 def walk_lanes(f: Floor) -> tuple[set[int], set[int]]:
     """(rows, cols) of walk-lane cells: offset 1 inside every slab edge, plus one
     horizontal lane per row: just past each unrotated block's merger band (v = depth+2)
-    when its floor reserves manifold rows, else offset 1 above each row's reserved box
+    (whether or not it has a merger row) when its floor has manifold rows, else offset
+    1 above each row's reserved box
     when another row starts above it (its aisle band)."""
     w, h = floor_cells(f)
     rows, cols = {1, h - 2}, {1, w - 2}
-    if any(b.manifold_in_fnd or b.manifold_out_fnd for b in f.blocks):
+    if any(b.manifold_rows for b in f.blocks):
         rows |= {b.y_fnd * PER_FND + _cells(b.packed.depth_m) + 2
-                 for b in f.blocks if b.manifold_out_fnd and not b.rotated}
+                 for b in f.blocks if b.outputs and not b.rotated}
         return rows, cols
     starts = {b.y_fnd for b in f.blocks}
     for b in f.blocks:

@@ -102,6 +102,9 @@ class Block:
     #: lane). x_fnd/y_fnd stay the body's position; the rows sit outside it.
     manifold_in_fnd: int = 0
     manifold_out_fnd: int = 0
+    #: Building mode: the block has splitter/merger bands (even when its rows are 0 --
+    #: a merger band can sit in the body's own rounding pad, see _manifold_rows).
+    manifold_rows: bool = False
 
     @property
     def foundations(self) -> int:
@@ -569,22 +572,32 @@ EAST_BAY_FND = 2
 #: foundation grid (owner, 2026-10-02).
 MERGER_ROW_FND = 1
 
+#: A merger band (4 m) plus the walk lane past it (2 m): when the body's output-side
+#: rounding pad is at least this, they fit inside its own foundations (owner, 2026-10-02).
+MERGER_PAD_M = 6.0
+
 
 def _manifold_rows(b: Block) -> tuple[int, int]:
     """(splitter rows, merger rows) in foundations: one 4 m splitter band per input,
     two to a row -- none for a folded block, whose input lane is inside its depth -- and
-    MERGER_ROW_FND per output side; 0 when there are no inputs / outputs."""
+    MERGER_ROW_FND on the output (north) side; 0 when there are no inputs / outputs, or
+    when the body's rounding pad (whole foundations minus its depth) already holds the
+    merger band and walk lane. A folded block's south merger row is _rows_before's."""
     folded = bool(b.packed and b.packed.folded)
     ins = 0 if folded or not b.inputs else max(1, math.ceil(len(b.inputs) / 2))
-    return ins, MERGER_ROW_FND if b.outputs else 0
+    pad = _to_fnd(b.block_depth_m) * FOUNDATION_M - b.block_depth_m
+    return ins, MERGER_ROW_FND if b.outputs and pad < MERGER_PAD_M - 1e-9 else 0
 
 
 def _rows_before(b: Block, rotated: bool = False) -> int:
     """Reserved rows on the body's input (v < 0) side: a folded block's south merger
-    row, else its splitter rows. A rotated block reserves the larger side on both
-    sides: routing mirrors it across its depth on E-input floors, and floor parity
-    isn't known while packing."""
-    pre = b.manifold_out_fnd if b.packed and b.packed.folded else b.manifold_in_fnd
+    row (always: its band is outside the body), else its splitter rows. A rotated block
+    reserves the larger side on both sides: routing mirrors it across its depth on
+    E-input floors, and floor parity isn't known while packing."""
+    if b.packed and b.packed.folded:
+        pre = MERGER_ROW_FND if b.manifold_rows and b.outputs else 0
+    else:
+        pre = b.manifold_in_fnd
     return max(pre, b.manifold_out_fnd) if rotated else pre
 
 
@@ -908,6 +921,7 @@ def _building_floors(
         ordered = sorted(group, key=lambda b: (b.stage, -b.foundations))
         for b in ordered:
             b.manifold_in_fnd, b.manifold_out_fnd = _manifold_rows(b)
+            b.manifold_rows = True
         packed_floors, oversized, warns = _pack_rows(
             ordered, cap_fnd, 2 if label in wide_groups else 0, west_fnd=WEST_BAY_FND,
             east_fnd=EAST_BAY_FND,

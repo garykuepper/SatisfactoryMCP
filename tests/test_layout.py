@@ -1226,3 +1226,35 @@ def test_a_rotated_block_reserves_its_rows_west_and_east():
     floors, _ = _building_floors([b], [], 16)
     assert b.rotated and b.x_fnd == 4 and b.y_fnd == 1
     assert (floors[0].slab_side_m / 8, floors[0].slab_depth_m / 8) == (10, 4)
+
+
+def test_a_machine_whose_rounding_pad_fits_the_merger_band_and_lane_gets_no_merger_row():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # Constructor-like: 8 x 10 m, 4 machines, 1 in / 1 out. Body 2 fnd (16 m), pad 6 m
+    # >= band 4 m + lane 2 m -> merger 0. Reserved 1 + 2 + 0 = 3: a at y 1..4 (body 2),
+    # b at 4..7 (body 5); 7 + 1 edge = 8. (With a merger row: 1..5, 5..9 -> 10.)
+    a, b = (_manifold_block(k, 1, depth_m=10.0) for k in "ab")
+    floors, _ = _building_floors([a, b], [], 16)
+    assert (a.manifold_in_fnd, a.manifold_out_fnd) == (1, 0)
+    assert sorted(x.y_fnd for x in (a, b)) == [2, 5]
+    assert floors[0].slab_depth_m / 8 == 8
+
+
+def test_an_assembler_like_block_with_no_pad_keeps_its_merger_row():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    asm = _manifold_block("a", 2, machines=3, width_m=9.0, depth_m=16.0)  # pad 0
+    _building_floors([asm], [], 16)
+    assert (asm.manifold_in_fnd, asm.manifold_out_fnd) == (1, 1)
+
+
+def test_a_folded_block_skips_only_its_north_merger_row_when_the_pad_fits():
+    from satisfactory_mcp.domain.planning.layout import _building_floors
+
+    # folded depth 2 * 9 + 8 = 26 m -> 4 fnd, pad 6 m: north merger 0, south kept.
+    # Reserved 1 + 4 + 0 = 5 from y 1: body at 2, ends 6; 6 + 1 edge = 7 -> 8.
+    f = _manifold_block("f", 3, machines=10, folded=True, depth_m=9.0)
+    floors, _ = _building_floors([f], [], 16)
+    assert f.manifold_out_fnd == 0 and f.y_fnd == 2
+    assert floors[0].slab_depth_m / 8 == 8
