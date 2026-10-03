@@ -811,3 +811,13 @@ def test_one_walk_lane_per_shared_row_past_the_deepest_merger_band():
     assert rows == {1, 38, 17}
     ports = {k.key: R.manifold_ports(k) for k in (a, b)}
     assert R._grid(f, ports)[1] == ""
+
+
+def test_a_rounding_shortfall_does_not_invent_a_raw_input_lift():
+    # VF10 with Solid Steel: F0 makes 264.9999 Steel Ingot, F1 needs 240 + 25 = 265.
+    p = blk("p", 1, 1, outputs={"I": 264.9999})
+    c1 = blk("c1", 1, 1, inputs={"I": 240.0})
+    c2 = blk("c2", 1, 5, inputs={"I": 25.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c1, c2])), belt_ipm=270)
+    assert [(l.item, l.kind) for l in r.lifts] == [("I", "up")]
+    assert not r.failures

@@ -239,7 +239,7 @@ def mark_belt(g: Grid, path: list[Cell], shared: set[Cell] | frozenset = frozens
                           else "v" if p[0] == n[0] else "x")
 
 
-EPS = 1e-6
+EPS = 1e-3  # items/min; solver rates are rounded (264.9999 vs 265), so 1e-6 invented 0.0001/min lifts
 
 
 @dataclass
