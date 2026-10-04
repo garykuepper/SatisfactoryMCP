@@ -815,7 +815,10 @@ def _pack_rows(
     for b in blocks:
         w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
         # Rendered width is along x: make the long side lie along the slab's long axis.
-        rotated = w0 > d0 if long_is_y else d0 > w0
+        # A folded block stays unturned: it folded to get SHORTER along its row, and
+        # turning its two-row depth back along the row undoes that (2026-10-04).
+        folded = bool(b.packed and b.packed.folded)
+        rotated = not folded and (w0 > d0 if long_is_y else d0 > w0)
         w, d = (d0, w0) if rotated else (w0, d0)
         extra = _rows_before(b, rotated) + _rows_after(b, rotated)  # across: y, or x when turned
         w, d = (w + extra, d) if rotated else (w, d + extra)
@@ -1210,6 +1213,7 @@ def build_layout(
     group_by: str = "stage",
     max_slab_foundations: int = 16,
     wide_groups: frozenset[str] = frozenset(),
+    max_row_foundations: int = 0,
 ) -> Layout:
     """Decompose a solved plan into blocks, buses and floors.
 
@@ -1247,6 +1251,10 @@ def build_layout(
         max_row_fnd = max_slab_foundations - 2 * EDGE_FND - WEST_BAY_FND - EAST_BAY_FND
     elif slab_foundations > 0:
         max_row_fnd = min(slab_foundations, slab_depth_foundations or slab_foundations) - 2 * EDGE_FND
+    # Caller cap (0 = off): fold manifolds longer than this to narrow the slab, e.g. a
+    # 7-Smelter row that would otherwise widen every floor of the stack by 2 foundations.
+    if max_row_foundations > 0:
+        max_row_fnd = min(max_row_fnd or max_row_foundations, max_row_foundations)
     blocks = _blocks_from(game, sol, belt_ipm, pipe_m3min, max_row_fnd)
     _assign_stages(blocks)
     buses = _buses(game, blocks, sol, belt_ipm, pipe_m3min)

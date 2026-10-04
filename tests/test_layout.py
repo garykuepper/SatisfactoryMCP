@@ -1015,6 +1015,14 @@ def test_building_mode_folds_long_manifolds(game, oil_solution):
     assert all(b.packed.folded for b in long_ones)
 
 
+def test_max_row_folds_and_keeps_folded_blocks_unturned(game, oil_solution):
+    # 2026-10-04: a fold that gets turned puts its two-row depth back along the row,
+    # so the slab never narrows. max_row_foundations=4 must fold, and not turn, the long ones.
+    lay = build_layout(game, oil_solution, group_by="building", max_row_foundations=4)
+    folded = [b for b in lay.blocks if b.packed and b.packed.folded and b.key not in {o.key for o in lay.off_slab}]
+    assert folded and not any(b.rotated for b in folded)
+
+
 def test_bad_group_by_or_slab_cap_is_an_error(game, oil_solution):
     with pytest.raises(ValueError, match="group_by"):
         build_layout(game, oil_solution, group_by="type")
