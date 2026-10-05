@@ -819,10 +819,20 @@ def _pack_rows(
         # turning its two-row depth back along the row undoes that (2026-10-04).
         folded = bool(b.packed and b.packed.folded)
         rotated = not folded and (w0 > d0 if long_is_y else d0 > w0)
-        w, d = (d0, w0) if rotated else (w0, d0)
-        extra = _rows_before(b, rotated) + _rows_after(b, rotated)  # across: y, or x when turned
-        w, d = (w + extra, d) if rotated else (w, d + extra)
-        along, span = (d, w) if long_is_y else (w, d)
+
+        def fit(rotated: bool) -> tuple[int, int, int, int]:
+            w, d = (d0, w0) if rotated else (w0, d0)
+            extra = _rows_before(b, rotated) + _rows_after(b, rotated)  # across: y, or x when turned
+            w, d = (w + extra, d) if rotated else (w, d + extra)
+            return (w, d, *((d, w) if long_is_y else (w, d)))
+
+        w, d, along, span = fit(rotated)
+        # Turning adds the manifold rows to the width; if that no longer fits but the
+        # unturned block does, keep it unturned (a lone Refinery on 10x10, 2026-10-04).
+        if rotated and (along > inner_long or span > inner_short):
+            alt = fit(False)
+            if alt[2] <= inner_long and alt[3] <= inner_short:
+                rotated, (w, d, along, span) = False, alt
         if along > inner_long or span > inner_short:
             oversized.append(b)
             warnings.append(

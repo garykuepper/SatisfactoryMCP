@@ -839,6 +839,18 @@ def test_pack_rows_flags_a_manifold_longer_than_the_slab():
     assert oversized == [long_one] and warnings
 
 
+def test_pack_rows_keeps_a_block_unturned_when_turning_would_not_fit():
+    from satisfactory_mcp.domain.planning.layout import _pack_rows
+
+    # 2026-10-04: a lone Refinery (2x3 fnd) on 10x10 with 2-fnd lift bays. Turned, its
+    # splitter + merger rows land on the 4-fnd row (3 + 2 = 5): oversized, and the
+    # renderer crashed on the slab-less floor. Unturned it fits (2 along, 3 + 2 across).
+    b = _fake_block("refinery", 16, 24, 6)
+    b.manifold_in_fnd, b.manifold_out_fnd, b.manifold_rows = 1, 1, True
+    floors, oversized, _ = _pack_rows([b], slab_fnd=10, aisle_fnd=0, west_fnd=2, east_fnd=2)
+    assert not oversized and floors[0][0].rotated is False
+
+
 def test_rows_layout_puts_one_manifold_per_row(oil_layout, game):
     sol, _default = oil_layout
     lay = build_layout(game, sol, slab_foundations=10, slab_depth_foundations=16, slab_layout="rows")
