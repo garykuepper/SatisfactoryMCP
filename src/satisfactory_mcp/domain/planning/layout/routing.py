@@ -12,7 +12,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from ....core.gamedata.footprint import FOUNDATION_M
+from ....core.gamedata.footprint import FOUNDATION_M, Packed
 from ....core.gamedata.model import GameData
 from ..solver.model import Solution
 from .model import Block, Floor, Layout
@@ -26,6 +26,12 @@ Cell = tuple[int, int]
 Ends = dict[str, list[tuple[str, Cell, float]]]
 
 
+def _packed(b: Block) -> Packed:
+    """A routed block's foundation shape; only blocks with clearance data reach routing."""
+    assert b.packed is not None, f"{b.name} has no footprint to route around"
+    return b.packed
+
+
 def _cells(m: float) -> int:
     return max(1, math.ceil(m / CELL_M - 1e-9))
 
@@ -33,7 +39,7 @@ def _cells(m: float) -> int:
 def block_rect(b: Block) -> tuple[int, int, int, int]:
     """(x0, y0, w, h) in cells: the block's true footprint on its slab, turned when the
     layout rotated it."""
-    w, h = _cells(b.packed.width_m), _cells(b.packed.depth_m)
+    w, h = _cells(_packed(b).width_m), _cells(_packed(b).depth_m)
     if b.rotated:
         w, h = h, w
     return b.x_fnd * PER_FND, b.y_fnd * PER_FND, w, h
@@ -47,7 +53,7 @@ class Ports:
     outputs: list[list[Cell]]
     #: splitter/merger bands (4 m each, both cell rows) in building mode
     #: (Block.manifold_rows), whether or not the block reserves rows for them
-    bands: list[list[Cell]] = field(default_factory=list)
+    bands: list[list[Cell]] = field(default_factory=list[list[Cell]])
 
 
 def manifold_ports(b: Block, input_side: str = "W") -> Ports:
@@ -66,7 +72,7 @@ def manifold_ports(b: Block, input_side: str = "W") -> Ports:
     rounding pad when it has no merger row), a folded block's south output at v = -2;
     `bands` lists those bands. Outside building mode the belts
     hug the body (v = -1-k, depth) and there are no bands."""
-    p = b.packed
+    p = _packed(b)
     length, depth = _cells(p.width_m), _cells(p.depth_m)
     x0, y0 = b.x_fnd * PER_FND, b.y_fnd * PER_FND
     mirror = b.rotated and input_side == "E"
@@ -119,6 +125,7 @@ def _stub(cell: Cell, w: int) -> tuple[Cell, Cell, Cell]:
 
 
 def floor_cells(f: Floor) -> tuple[int, int]:
+    assert f.slab_side_m is not None and f.slab_depth_m is not None, "not a building-mode slab"
     return round(f.slab_side_m / CELL_M), round(f.slab_depth_m / CELL_M)
 
 
@@ -135,7 +142,7 @@ def walk_lanes(f: Floor) -> tuple[set[int], set[int]]:
         lane: dict[int, int] = {}
         for b in f.blocks:
             if b.outputs and not b.rotated:
-                v = b.y_fnd * PER_FND + _cells(b.packed.depth_m) + 2
+                v = b.y_fnd * PER_FND + _cells(_packed(b).depth_m) + 2
                 lane[b.y_fnd] = max(lane.get(b.y_fnd, v), v)
         return rows | set(lane.values()), cols
     starts = {b.y_fnd for b in f.blocks}
@@ -158,6 +165,8 @@ TURN_COST = 2
 CROSS_COST = 4
 CROSS_BELT_COST = 6
 _DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+#: The direction a search step entered its cell from; None at the start.
+_Step = tuple[int, int] | None
 
 
 @dataclass
@@ -167,10 +176,10 @@ class Grid:
 
     w: int
     h: int
-    blocked: set[Cell] = field(default_factory=set)
-    lane_rows: set[int] = field(default_factory=set)
-    lane_cols: set[int] = field(default_factory=set)
-    belt_dirs: dict[Cell, str] = field(default_factory=dict)
+    blocked: set[Cell] = field(default_factory=set[Cell])
+    lane_rows: set[int] = field(default_factory=set[int])
+    lane_cols: set[int] = field(default_factory=set[int])
+    belt_dirs: dict[Cell, str] = field(default_factory=dict[Cell, str])
 
     def lanes(self, c: Cell) -> tuple[bool, bool]:
         """(on a horizontal lane, on a vertical lane). Lanes stop short of the strip
@@ -183,7 +192,7 @@ class Grid:
 
 
 def astar(
-    g: Grid, start: Cell, goal: Cell, shared: set[Cell] | frozenset = frozenset()
+    g: Grid, start: Cell, goal: Cell, shared: set[Cell] | frozenset[Cell] = frozenset()
 ) -> list[Cell] | None:
     """Cheapest 4-connected path start -> goal, both included; both may be blocked
     cells (they are manifold or strip ends). Step 1, turn +TURN_COST, entering a
@@ -197,13 +206,14 @@ def astar(
         return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
 
     tie = 0
-    heap: list = [(est(start), 0, tie, start, None)]
-    best: dict = {(start, None): 0}
-    prev: dict = {}
+    heap: list[tuple[int, int, int, Cell, _Step]] = [(est(start), 0, tie, start, None)]
+    best: dict[tuple[Cell, _Step], int] = {(start, None): 0}
+    prev: dict[tuple[Cell, _Step], tuple[Cell, _Step]] = {}
     while heap:
         _f, cost, _t, cell, d = heapq.heappop(heap)
         if cell == goal:
-            path, key = [cell], (cell, d)
+            path: list[Cell] = [cell]
+            key: tuple[Cell, _Step] = (cell, d)
             while key in prev:
                 key = prev[key]
                 path.append(key[0])
@@ -242,7 +252,7 @@ def astar(
     return None
 
 
-def mark_belt(g: Grid, path: list[Cell], shared: set[Cell] | frozenset = frozenset()) -> None:
+def mark_belt(g: Grid, path: list[Cell], shared: set[Cell] | frozenset[Cell] = frozenset()) -> None:
     """Record a routed belt's interior cells in g.belt_dirs: 'h'/'v' where it runs
     straight, 'x' where it turns or crosses a belt already there. Cells in `shared`
     (its trunk with a same-item belt) keep their existing dir."""
@@ -283,18 +293,27 @@ class Lift:
 @dataclass
 class Routing:
     layout: Layout
-    belts: list[Belt] = field(default_factory=list)
-    lifts: list[Lift] = field(default_factory=list)
-    widened: list[str] = field(default_factory=list)
-    failures: list[str] = field(default_factory=list)
+    belts: list[Belt] = field(default_factory=list[Belt])
+    lifts: list[Lift] = field(default_factory=list[Lift])
+    widened: list[str] = field(default_factory=list[str])
+    failures: list[str] = field(default_factory=list[str])
     #: floor indexes with a failure -- what build_routed_layout widens
-    failed_floors: list[int] = field(default_factory=list)
+    failed_floors: list[int] = field(default_factory=list[int])
     #: the lift-row nudge (floor -> rows) that made it route; {} when none was needed
-    lift_bias: dict[int, int] = field(default_factory=dict)
+    lift_bias: dict[int, int] = field(default_factory=dict[int, int])
 
 
 class LiftStripFull(ValueError):
     """More lifts than free strip rows: a hard error, never a lift placed elsewhere."""
+
+
+@dataclass
+class _Spare:
+    """One producer's output belt and how much of it is not yet spoken for."""
+
+    key: str
+    exit: Cell
+    rate: float
 
 
 @dataclass
@@ -327,7 +346,7 @@ def _floor_plan(
     items = sorted({i for b in blocks for i in (*b.inputs, *b.outputs)} - pipes)
     for item in items:
         prod = [
-            [b.key, ports[b.key].outputs[0][0], b.outputs[item]]
+            _Spare(b.key, ports[b.key].outputs[0][0], b.outputs[item])
             for b in blocks
             if b.outputs.get(item, 0.0) > EPS
         ]
@@ -337,22 +356,22 @@ def _floor_plan(
                 continue
             feed = ports[b.key].inputs[item][0]
             while left > EPS:
-                live = [p for p in prod if p[2] > EPS]
+                live = [p for p in prod if p.rate > EPS]
                 if not live:
                     break
-                p = min(live, key=lambda p: (_dist(p[1], feed), p[0]))
-                take = min(left, p[2])
-                conns.append(_Conn(item, take, p[1], feed, p[0], b.key))
-                p[2] -= take
+                p = min(live, key=lambda p: (_dist(p.exit, feed), p.key))
+                take = min(left, p.rate)
+                conns.append(_Conn(item, take, p.exit, feed, p.key, b.key))
+                p.rate -= take
                 left -= take
             if left > EPS:
                 need.setdefault(item, []).append((b.key, feed, left))
-        for key, exit_, spare in prod:
-            if spare > EPS:
-                surplus.setdefault(item, []).append((key, exit_, spare))
+        for p in prod:
+            if p.rate > EPS:
+                surplus.setdefault(item, []).append((p.key, p.exit, p.rate))
     for b in blocks:  # a folded block's south output belt merges into its north one
         outs = ports[b.key].outputs
-        main = max(b.outputs, key=b.outputs.get) if b.outputs else ""
+        main = max(b.outputs, key=lambda k: b.outputs[k]) if b.outputs else ""
         if len(outs) == 2 and main and main not in pipes:
             conns.append(_Conn(main, b.outputs[main] / 2, outs[1][0], outs[0][0], b.key, b.key))
     return conns, need, surplus
@@ -412,7 +431,7 @@ def _plan_lifts(
         sinks = {
             fi: sum(r for _k, _c, r in needs[fi][item]) for fi in floor_ids if item in needs[fi]
         }
-        flows: dict[tuple[int, str], list] = {}
+        flows: dict[tuple[int, str], list[float]] = {}  # (source, kind) -> [rate, far floor]
         unmet: dict[int, float] = {}
         for t in sorted(sinks):
             left = sinks[t]
@@ -429,11 +448,11 @@ def _plan_lifts(
             if left > EPS:
                 unmet[t] = left
         for (s_, kind), (rate, far) in sorted(flows.items()):
-            plan.append((item, rate, s_, far, kind))
+            plan.append((item, rate, s_, int(far), kind))
         if unmet:
             plan.append((item, sum(unmet.values()), ground, max(unmet), "in"))
         plan += [(item, left, s_, s_, "out") for s_, left in sorted(avail.items()) if left > EPS]
-    lifts = []
+    lifts: list[Lift] = []
     for item, rate, a, b, kind in plan:
         n = max(1, math.ceil(rate / belt_ipm - EPS))
         lifts += [Lift(item, rate / n, (0, -1), a, b, kind) for _ in range(n)]
@@ -444,7 +463,7 @@ def _assign_cells(
     lifts: list[Lift],
     floors: dict[int, Floor],
     ports: dict[str, Ports],
-    plans: dict,
+    plans: dict[int, tuple[list[_Conn], Ends, Ends]],
     lift_bias: dict[int, int] | None = None,
 ) -> None:
     """Put each lift on its side's edge strip: up/down/out on the source floor's output
@@ -474,7 +493,8 @@ def _assign_cells(
     for lift in sorted(lifts, key=lambda l: (order.get(l.kind, 2), l.from_floor, l.item)):
         side = input_side(ground) if lift.kind == "in" else output_side(floors[lift.from_floor])
         span = [fi for fi in _span(lift) if fi in floors]
-        free = set.intersection(*(usable[(fi, side)] - taken[(fi, side)] for fi in span))
+        open_rows = [usable[(fi, side)] - taken[(fi, side)] for fi in span]
+        free = open_rows[0].intersection(*open_rows[1:])
         if not free:
             raise LiftStripFull(
                 f"lift strip full: no free strip row for {lift.item} on floors "
@@ -496,9 +516,10 @@ def _assign_cells(
             ]
             rows = strip_rows(floors[lift.from_floor])  # no ends: the strip's middle
             target = sum(ys) / len(ys) if ys else (min(rows) + max(rows)) / 2
-            biased = [fi for fi in span if fi in (lift_bias or {})]
+            bias = lift_bias or {}
+            biased = [fi for fi in span if fi in bias]
             if biased:
-                target += lift_bias[min(biased)]
+                target += bias[min(biased)]
             cy = min(free, key=lambda cy: (abs(cy - target), cy))
         lift.cell = (_strip_x(side, w), cy)
         for fi in span:
@@ -738,7 +759,13 @@ def _route_nudged(lay: Layout, belt_ipm: float) -> Routing:
 
 
 def build_routed_layout(
-    game: GameData, sol: Solution, belt_ipm: float, **layout_kwargs: object
+    game: GameData,
+    sol: Solution,
+    belt_ipm: float,
+    pipe_m3min: float = 600.0,
+    max_slab_foundations: int = 16,
+    aisle_foundations: int = 1,
+    max_row_foundations: int = 0,
 ) -> Routing:
     """build_layout(group_by="building") then route_belts. A floor that fails is first
     retried with its lift rows nudged (_route_nudged); if no nudge routes it, its group
@@ -750,9 +777,12 @@ def build_routed_layout(
             game,
             sol,
             belt_ipm=belt_ipm,
+            pipe_m3min=pipe_m3min,
             group_by="building",
+            max_slab_foundations=max_slab_foundations,
+            aisle_foundations=aisle_foundations,
             wide_groups=frozenset(wide),
-            **layout_kwargs,
+            max_row_foundations=max_row_foundations,
         )
         r = _route_nudged(lay, belt_ipm)
         new = {lay.floors[i].group for i in r.failed_floors} - wide

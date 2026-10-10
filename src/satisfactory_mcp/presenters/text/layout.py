@@ -300,7 +300,7 @@ def _belts_view(g: GameData, report: LayoutReport, limit: int) -> tuple[str, lis
         return f"! {payload}", []
     assert isinstance(payload, Routing), "show='belts' answers no routing"
     names = {b.item: b.name for b in layout.buses}
-    parts = []
+    parts: list[str] = []
     for f in layout.floors:
         rows = [
             (names.get(b.item, b.item), f"{render.num(b.rate)}/min", b.src, b.dst, len(b.path) * 2)

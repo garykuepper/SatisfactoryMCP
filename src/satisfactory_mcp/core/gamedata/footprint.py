@@ -204,7 +204,8 @@ def extract_footprint(raw: JsonValue) -> Footprint | None:
     base = _bounds([e for e in entries if e.get("Type") != "CT_Soft"]) or _bounds(entries)
     if base is None:
         return None
-    (lo, hi), top = base, _bounds(every)[1][2]
+    (lo, hi), whole = base, _bounds(every)
+    top = whole[1][2] if whole else hi[2]  # every box includes base's, so never None
     return Footprint(
         width_m=round((hi[0] - lo[0]) / 100.0, 2),
         depth_m=round((hi[1] - lo[1]) / 100.0, 2),

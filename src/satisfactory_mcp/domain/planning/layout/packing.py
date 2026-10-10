@@ -22,6 +22,10 @@ def _to_fnd(m: float) -> int:
     return max(1, math.ceil(m / FOUNDATION_M))
 
 
+#: One block in a row being packed: (block, rotated, w, d, along, span), in foundations.
+_RowItem = tuple[Block, bool, int, int, int, int]
+
+
 @dataclass
 class _Placed:
     """One block's grid-packed position, in foundations, within its floor."""
@@ -153,7 +157,7 @@ def _group_blocks(blocks: list[Block], buses: list[Bus]) -> list[tuple[str, list
         partner = max(others, key=lambda o: (trade(g, o), -_mean_stage(o)))
         members = [o for o in others if o is not partner] + [partner + g]
 
-    out = []
+    out: list[tuple[str, list[Block]]] = []
     for g in members:
         count: dict[str, int] = {}
         for b in g:
@@ -224,7 +228,7 @@ def _pack_slab(
             inner_d,
             aisle_fnd,
         )
-        placed = []
+        placed: list[_Placed] = []
         for i, b in enumerate(floor_blocks):
             col, row = i % cols, i // cols
             x = EDGE_FND + col * (cell + aisle_fnd)
@@ -274,14 +278,14 @@ def _pack_rows(
     warnings: list[str] = []
     offset = 0  # along the short side, within the inner span
 
-    def pre(t: tuple) -> int:  # splitter rows before the body, across the row
+    def pre(t: _RowItem) -> int:  # splitter rows before the body, across the row
         return 0 if t[1] else _rows_before(t[0])
 
-    def depth(row: list[tuple]) -> int:
+    def depth(row: list[_RowItem]) -> int:
         top = max(pre(t) for t in row)
         return max(top - pre(t) + t[5] for t in row)
 
-    def place(row: list[tuple]) -> None:
+    def place(row: list[_RowItem]) -> None:
         nonlocal offset
         start = offset + (aisle_fnd if floors[-1] else 0)
         if floors[-1] and start + depth(row) > inner_short:
@@ -299,7 +303,7 @@ def _pack_rows(
             pos += along + (row_gap or 0)
         offset = start + depth(row)
 
-    row: list[tuple] = []  # (block, rotated, w, d, along, span)
+    row: list[_RowItem] = []
     for b in blocks:
         w0, d0 = _to_fnd(b.block_width_m), _to_fnd(b.block_depth_m)
         # Rendered width is along x: make the long side lie along the slab's long axis.
@@ -367,7 +371,7 @@ def _attach_crossing_buses(floors: list[Floor], buses: list[Bus]) -> None:
     # actually holds which block fixes this regardless of how a stage's blocks are
     # spread across floors.
     for floor in floors:
-        crossing = []
+        crossing: list[Bus] = []
         for bus in buses:
             if bus.external:
                 continue
