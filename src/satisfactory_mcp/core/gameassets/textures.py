@@ -1,18 +1,16 @@
 """What a cooked texture's bytes are: how long the mip chain is, and the blocks unpacked.
 
-**The file's length is the integrity check.** A mip chain is stored largest-first with nothing
-between the levels, so its total is arithmetic: a ``.ubulk`` of any other length was re-cooked,
-i.e. the game changed, and is not decoded on a guess. :func:`inline_chain_side` is that check
-for a texture with no ``.ubulk``, whose levels are ``BulkDataMap`` entries in the ``.uasset``.
-
-All three decoders below hand back **BGRA**, so Pillow is told ``"raw", "BGRA"``; read as
-``"RGBA"`` the picture survives a glance with red and blue swapped. ``texture2ddecoder`` and
-Pillow arrive as arguments, so a machine without the ``gen`` extra still imports this module.
+A mip chain is stored largest-first with nothing between the levels, so **its length is the
+integrity check**: a ``.ubulk`` of any other length was re-cooked and is not decoded on a
+guess. The decoders hand back **BGRA**, so Pillow is told ``"raw", "BGRA"``; read as
+``"RGBA"`` the picture survives a glance with red and blue swapped.
 """
 
 from __future__ import annotations
 
 import math
+
+from .imaging import BlockDecoder, ImageFactory, ImageT
 
 #: Bytes per 4x4 block. BC1 (``PF_DXT1``) spends 8 and carries at most one bit of alpha; BC3
 #: (``PF_DXT5``) spends 16, the extra eight being an interpolated alpha block. Same grid, same
@@ -86,17 +84,21 @@ def inline_chain_side(
     return side
 
 
-def decode_bc1_rgba(decoder, image_mod, raw: bytes, px: int):
+def decode_bc1_rgba(
+    decoder: BlockDecoder, image_mod: ImageFactory[ImageT], raw: bytes, px: int
+) -> ImageT:
     """One square BC1 level as an image."""
     return image_mod.frombytes("RGBA", (px, px), decoder.decode_bc1(raw, px, px), "raw", "BGRA")
 
 
-def decode_bc3_rgba(decoder, image_mod, raw: bytes, px: int):
+def decode_bc3_rgba(
+    decoder: BlockDecoder, image_mod: ImageFactory[ImageT], raw: bytes, px: int
+) -> ImageT:
     """One square BC3 level as an image."""
     return image_mod.frombytes("RGBA", (px, px), decoder.decode_bc3(raw, px, px), "raw", "BGRA")
 
 
-def decode_bgra8_rgba(image_mod, raw: bytes, px: int):
+def decode_bgra8_rgba(image_mod: ImageFactory[ImageT], raw: bytes, px: int) -> ImageT:
     """One square ``PF_B8G8R8A8`` level as an image, taking no decoder because it is already
     texels. 113 of the game's 747 item icons are cooked uncompressed, four bytes a texel."""
     return image_mod.frombytes("RGBA", (px, px), raw, "raw", "BGRA")

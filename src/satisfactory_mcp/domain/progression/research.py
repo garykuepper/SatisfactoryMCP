@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
+from ...core.gamedata.constants import CAPABILITY_SCHEMATICS
 from ...core.gamedata.model import GameData
+from ...core.saveio.schema import Projection, ResearchBlock, UnlockFlags
+from .views import GateCost, ResearchGate
 
 if TYPE_CHECKING:
     from ..world.inventory import Inventory
+    from .ladder import Rung
     from .unlocks import UnlockSet
 
 __all__ = ["ResearchGates"]
@@ -18,7 +23,7 @@ __all__ = ["ResearchGates"]
 class ResearchGates:
     """The unlock flags a save carries, and the schematics behind the ones it lacks."""
 
-    projection: dict
+    projection: Projection
     game: GameData
     unlocks: UnlockSet
     inventory: Inventory
@@ -29,14 +34,8 @@ class ResearchGates:
         "production_boost": "mIsBuildingProductionBoostUnlocked",
     }
 
-    #: MAM tree -> the class-id prefixes its nodes carry. The trees themselves are not in
-    #: Docs.json (the BPD_ResearchTree_* assets do not ship) and the save names only which
-    #: trees are open, so membership is read off the schematic's class id. Nine trees pair
-    #: 1:1 with a prefix of their own name; [UNVERIFIED] the four alien-organism prefixes
-    #: are grouped by elimination -- they are the MAM nodes left once the other nine trees
-    #: have theirs, and no other tree remains for them.
-    #: BPD_ResearchTree_HardDrive_C is deliberately absent: its nodes are EST_Alternate
-    #: schematics won from drives, not EST_MAM rows, and no MAM view lists them.
+    #: MAM tree -> the class-id prefixes its nodes carry, read off the class id because the
+    #: trees do not ship; the alien-organism group is by elimination (save-projection §6.9).
     TREE_PREFIXES: ClassVar[dict[str, tuple[str, ...]]] = {
         "BPD_ResearchTree_AlienOrganisms_C": (
             "Research_ACarapace_",
@@ -55,11 +54,12 @@ class ResearchGates:
     }
 
     @property
-    def _unlock_flags(self) -> dict:
-        return self.projection.get("unlock_flags", {}) or {}
+    def _unlock_flags(self) -> Mapping[str, object]:
+        flags: UnlockFlags = self.projection.get("unlock_flags", {}) or {}
+        return flags
 
     @property
-    def _research(self) -> dict:
+    def _research(self) -> ResearchBlock:
         return self.projection.get("research", {}) or {}
 
     @property
@@ -111,38 +111,38 @@ class ResearchGates:
         tree = self.tree_of(schematic_id)
         return bool(tree) and self.knows_trees and tree not in self.unlocked_trees
 
+    def status(self, rung: Rung) -> str:
+        """A MAM node's status: DONE, RUNNING, TREE SHUT, or the ladder's own."""
+        if rung.done:
+            return "DONE"
+        if rung.schematic.cls in self.ongoing:
+            return "RUNNING"
+        if self.tree_locked(rung.schematic.cls):
+            return "TREE SHUT"
+        return rung.status
+
     def has_capability(self, name: str) -> bool:
-        """Whether a MAM-gated capability is researched.
-
-        The unlock flag wins when the projection carries one, because it is what the game
-        itself checks. The purchased-schematic set is the fallback, and it is not merely
-        belt-and-braces: the flag is absent from a save taken before the research AND from
-        any projection written before schema 10 extracted it, and those two look identical
-        from here. Falling back keeps an older projection answering correctly instead of
-        reporting every capability locked.
-        """
-        from ...core.gamedata.constants import CAPABILITY_SCHEMATICS
-
+        """Whether a MAM-gated capability is researched: the unlock flag where the projection
+        carries one, else the purchased schematics, since a pre-schema-10 projection lacks
+        the flag exactly as an unresearched save does (save-projection.md §6.9)."""
         flag = self.CAPABILITY_FLAGS.get(name)
         if flag and flag in self._unlock_flags:
             return bool(self._unlock_flags[flag])
         gate = CAPABILITY_SCHEMATICS.get(name)
         return bool(gate) and gate in self.unlocks.purchased_schematic_ids
 
-    def research_gate(self, name: str) -> dict | None:
+    def research_gate(self, name: str) -> ResearchGate | None:
         """The schematic that unlocks ``name``, its cost, and what the player holds.
 
         ``None`` when the capability is already researched, so a caller can treat a
         truthy result as "here is what is still in the way".
         """
-        from ...core.gamedata.constants import CAPABILITY_SCHEMATICS
-
         gate = CAPABILITY_SCHEMATICS.get(name)
         schematic = self.game.schematics.get(gate or "")
-        if schematic is None or self.has_capability(name):
+        if gate is None or schematic is None or self.has_capability(name):
             return None
         stock = self.inventory.stock()
-        rows = [
+        rows: list[GateCost] = [
             {
                 "item": f.item,
                 "name": self.game.item_name(f.item),

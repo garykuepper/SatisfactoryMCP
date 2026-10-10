@@ -63,26 +63,36 @@ class SchematicLadder:
     inventory: Inventory
 
     def rungs(self, type: str) -> list[Rung]:
-        """Every schematic of ``type``, in name order -- tier ordering is the caller's.
+        """Every schematic of ``type`` still on offer, in name order -- tier ordering is
+        the caller's. Retired nodes are left out, so no list or count can offer one.
 
         MAM nodes sit at tier 0 and 3 with no progression meaning, so sorting by tier here
         would reorder the MAM view for nothing.
         """
         done = self.unlocks.purchased_schematic_ids
         stock = self.inventory.stock()
-        out = []
-        for s in sorted(self.game.schematics.values(), key=lambda s: s.name):
-            if s.type != type:
+        out: list[Rung] = []
+        for schematic in sorted(
+            self.game.schematics.values(), key=lambda schematic: schematic.name.casefold()
+        ):
+            if schematic.type != type or schematic.is_retired:
                 continue
             missing = tuple(
-                Missing(item=f.item, need=f.amount, have=stock.get(f.item, 0.0))
-                for f in s.cost
-                if stock.get(f.item, 0.0) < f.amount
+                Missing(item=cost.item, need=cost.amount, have=stock.get(cost.item, 0.0))
+                for cost in schematic.cost
+                if stock.get(cost.item, 0.0) < cost.amount
             )
             blocked = tuple(
-                self.game.schematics[d].name
-                for d in s.dependencies
-                if d in self.game.schematics and d not in done
+                self.game.schematics[dependency].name
+                for dependency in schematic.dependencies
+                if dependency in self.game.schematics and dependency not in done
             )
-            out.append(Rung(schematic=s, done=s.cls in done, missing=missing, blocked_by=blocked))
+            out.append(
+                Rung(
+                    schematic=schematic,
+                    done=schematic.cls in done,
+                    missing=missing,
+                    blocked_by=blocked,
+                )
+            )
         return out

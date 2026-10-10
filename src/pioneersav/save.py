@@ -5,9 +5,7 @@ projection consumes: ``save.levels[i].actorAndComponentObjectHeaders`` parallel 
 **The body has to stay alive for the whole parse**, because every ``ObjectSlice`` and every
 ``ParsedObject.extra_offset`` is an absolute index into it and nothing is copied. This module
 is also where an actor's class is matched to a trailing-bytes reader, which
-``ParsedObject.actorSpecificInfo`` calls on first access rather than during the parse, since
-decoding every conveyor chain costs a fifth again of the parse for data no projection field
-reads.
+``ParsedObject.actorSpecificInfo`` calls on first access rather than during the parse.
 """
 
 from __future__ import annotations
@@ -20,12 +18,11 @@ from .chunks import decompress_body
 from .header import SaveInfo, read_info_bytes
 from .lightweight import LIGHTWEIGHT_SUBSYSTEM, read_lightweight
 from .objects import ActorHeader, ComponentHeader, read_body
-from .properties import ParsedObject, read_object
+from .properties import PLAIN_TRAILER, ParsedObject, read_object
 from .trailers import TRAILER_READERS, read_trailer
 from .versions import FIRST_MODERN_BODY
 
 __all__ = [
-    "PLAIN_TRAILER",
     "UNDECODED_TRAILER_CLASSES",
     "ParsedLevel",
     "ParsedSave",
@@ -69,21 +66,16 @@ class ParsedSave:
     #: placed by the map and not saved, so this negative record is the only thing that says
     #: which of them the player has taken. Merged from the three lists the save keeps; see
     #: ``objects.SaveBody.destroyed_actors``.
-    destroyed_actors: list[tuple[str, str]] = field(default_factory=list)
+    destroyed_actors: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     #: Everything skipped rather than understood, as ``(body offset, what)``, merged from the
     #: level walk and every object's property list. Diagnostics, not projection data: nothing
     #: above reads the fields they name, and the sidecar prints them to stderr rather than into
     #: the projection.
-    warnings: list[tuple[int, str]] = field(default_factory=list)
+    warnings: list[tuple[int, str]] = field(default_factory=list[tuple[int, str]])
 
     @property
     def object_count(self) -> int:
-        return sum(len(lv.objects) for lv in self.levels)
-
-
-#: What an actor leaves after its property list when its class writes nothing of its own.
-#: Which of the two an actor gets is not established.
-PLAIN_TRAILER = (4, 8)
+        return sum(len(level.objects) for level in self.levels)
 
 
 #: Class paths that carry their own bytes after the property list on a save below
@@ -119,29 +111,23 @@ def _attach_trailer(
     warnings: list[tuple[int, str]],
     save_version: int = FIRST_MODERN_BODY,
 ) -> None:
-    """Arrange for this object's trailing class-specific bytes to be decodable, and notice
-    when there are bytes nothing can account for.
+    """Attach a decoder for this actor's trailing class-specific bytes, which
+    ``ParsedObject.actorSpecificInfo`` calls on first access, and warn about bytes nothing can
+    account for.
 
-    Nothing is decoded here: only the class is known at this point, so what gets attached is
-    the *ability* to decode, which ``ParsedObject.actorSpecificInfo`` calls on first access.
-
-    An actor that neither has a reader nor leaves a plain 4 or 8 bytes is what a property list
-    which stopped early looks like, so it is worth saying out loud. It is a warning rather than
-    a refusal because a modded or future class carrying its own data looks the same, and that
-    should not cost the save.
+    An actor with no reader and more than a plain trailer looks like a property list that
+    stopped early. It warns rather than refuses, because a modded or future class carrying its
+    own data looks the same.
     """
-    class_path = getattr(header, "typePath", None)
+    class_path: str | None = getattr(header, "typePath", None)
     if save_version < FIRST_MODERN_BODY:
-        # No trailer reader has been verified against pre-1.0 bytes, and one would otherwise be
-        # attached wrongly: `Build_PowerLine_C` has the same class path in 2021 as in 2026, so
-        # the modern reader would be handed 2021 bytes. Leaving `decode_trailer` unset keeps
-        # `actorSpecificInfo` None, which says "not decoded" rather than "decoded, and empty".
-        unexplained = (
+        # no reader is verified on pre-1.0 bytes, though Build_PowerLine_C kept its class path;
+        # leaving decode_trailer unset keeps actorSpecificInfo None, "not decoded"
+        if (
             class_path is not None
             and obj.extra_length not in PLAIN_TRAILER
             and class_path not in UNDECODED_TRAILER_CLASSES
-        )
-        if unexplained:
+        ):
             what = (
                 f"{class_path.rsplit('.', 1)[-1]} left {obj.extra_length} trailing bytes on a "
                 f"saveVersion {save_version} save, and no class is known to"
@@ -172,25 +158,19 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
     with the file.
     """
     info = read_info_bytes(data)
-    # Everything below this line is version-gated on ONE number, read once, here. The header is
-    # the only part of a save that can be parsed without knowing which format it is, so this is
-    # the only place the choice can be made; each layer sniffing for itself risks two of them
-    # disagreeing.
+    # every layer below is gated on this one header-read version, so no two can disagree
     old = info.save_version < FIRST_MODERN_BODY
     body = decompress_body(data, info.body_offset, old=old)
-    # Passing build_version arms the changelist check inside read_body.
     parsed = read_body(body, info.save_version, info.build_version)
     warnings = list(parsed.warnings)
-    levels = []
+    levels: list[ParsedLevel] = []
     for level in parsed.levels:
-        objects = []
+        objects: list[ParsedObject] = []
         for header, slot in zip(level.headers, level.objects, strict=True):
             actor = isinstance(header, ActorHeader)
             obj = read_object(body, slot, actor=actor, save_version=info.save_version)
             if obj.warnings:
                 warnings.extend(obj.warnings)
-            # Only actors carry class-specific trailing bytes, and components outnumber actors
-            # in a save. Calling _attach_trailer for every object instead cost 5% of the parse.
             if actor:
                 _attach_trailer(body, header, obj, warnings, info.save_version)
             objects.append(obj)
@@ -208,9 +188,8 @@ def read_full_save_bytes(data: bytes) -> ParsedSave:
 def read_full_save(path: str | os.PathLike[str]) -> ParsedSave:
     """Read and fully parse the save at ``path``.
 
-    The whole file is read at once rather than streamed: it is 1 ms of the two seconds this
-    takes, and it is the closest thing available to an atomic snapshot of a file the running
-    game rewrites every few minutes.
+    The whole file is read at once rather than streamed: it is the closest thing available to
+    an atomic snapshot of a file the running game rewrites every few minutes.
 
     An unreadable *path* stays an ``OSError`` and is not turned into a ``ParseError``. A file
     that is missing or locked is not a save that cannot be parsed, and callers report the two

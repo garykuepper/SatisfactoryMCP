@@ -47,28 +47,36 @@ failure whose numbers cannot be looked at is a failure that cannot be fixed:
 Gates 3 and 4 are **vacuous** on a mesh with no Nanite resources, which is a fifth of the
 rock set. They report ``"n/a"`` rather than passing: a check that could not run is not
 evidence, and counting it as one is how a decode regression hides.
-
-numpy, and why it is imported at the top
-----------------------------------------
-``numpy`` is a dependency of this project outright -- ``[project] dependencies``, not an
-extra -- so importing it here does not make the server need anything it did not already.
-That is a different question from ``ooz``, ``texture2ddecoder`` and Pillow, which are the
-``gen`` extra, are imported at module scope nowhere, and stay that way.
 """
 
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field
+from typing import Required, TypeAlias
 
 import numpy as np
+from typing_extensions import TypedDict
 
+from ..arrays import F32Grid, F64Grid, I32Grid, I64Grid
 from .iostore import IoStore
+from .meshdata import (
+    CollisionHull,
+    Lod,
+    LodSurface,
+    MeshGates,
+    NaniteResource,
+    NaniteSummary,
+    PageSpan,
+    PageState,
+    RenderData,
+    Section,
+)
 from .packages import (
     AssetIndex,
+    BulkEntry,
     PackageView,
     ScriptObjects,
-    bulk_data_entries,
+    ZenExport,
     class_name_of,
     property_tags,
 )
@@ -77,20 +85,26 @@ __all__ = [
     "BOUNDS_INSIDE_MIN",
     "BOUNDS_PAD_CM",
     "BOUNDS_PAD_FRACTION",
+    "HULL_INSIDE_MIN",
     "TRIMESH_MARKER",
+    "CollisionHull",
     "Cursor",
     "Lod",
+    "LodSurface",
     "NaniteResource",
     "PageSpan",
+    "PageState",
     "ParseError",
     "Section",
-    "bulk_data_map",
+    "bounds_pad",
     "bulk_size",
     "collision_hull",
     "extended_bounds",
     "extract",
+    "inside_fraction",
     "load_nanite",
     "lod0_buffers",
+    "lod0_surface",
     "page_table_problems",
     "parse_render_data",
     "render_tail",
@@ -98,13 +112,16 @@ __all__ = [
 ]
 
 #: A ``FHierarchyNodeSlice`` is 52 bytes and the fanout is 4.
-HIER_NODE = 208
+HIERARCHY_NODE_BYTES = 208
 
 #: How far past its own ``ExtendedBounds`` a vertex may sit before the decode is disbelieved.
 #: Both a gate and, per triangle downstream, a clamp against stray far vertices.
 BOUNDS_PAD_CM = 4.0
 BOUNDS_PAD_FRACTION = 0.05
 BOUNDS_INSIDE_MIN = 0.99
+
+#: The share of a collision hull's vertices that must sit inside the padded bounds.
+HULL_INSIDE_MIN = 0.90
 
 #: The cooked Chaos ``FTriangleMeshImplicitObject`` marker, and the window it is searched
 #: in. Searched, never indexed: a fixed offset is a guess that keeps working until it does
@@ -119,6 +136,33 @@ LOD_COUNT_SEARCH = (38, 36, 40, 34, 42, 30, 32, 44, 46)
 #: Where the socket count sits, and the arithmetic it implies. Tried before the ladder.
 SOCKET_COUNT_AT = 34
 SOCKET_MAX = 64
+
+#: ``ExtendedBounds`` as ``(low, high)`` corners, in mesh-local centimetres.
+Bounds: TypeAlias = tuple[F64Grid, F64Grid]
+
+#: LOD 0 as ``(positions, triangles, max vertex)``.
+Lod0: TypeAlias = tuple[F32Grid, I64Grid, int]
+
+
+class MeshRow(TypedDict, total=False):
+    """What :func:`extract` reports for one mesh, filled in as each gate runs."""
+
+    mesh: Required[str]
+    gates: Required[MeshGates]
+    ok: bool
+    error: str
+    parse_error: str
+    package: str
+    route: str
+    lod_triangles: list[int]
+    nanite: NaniteSummary
+    inside_fraction: float | None
+    verts: F32Grid
+    idx: I32Grid
+    bounds_local_cm: list[list[float]] | None
+    view: PackageView
+    tail: bytes
+    parsed: RenderData | None
 
 
 class ParseError(Exception):
@@ -167,18 +211,14 @@ class Cursor:
         return size, count, at
 
 
-def bulk_data_map(blob: bytes, names_end: int, first_section: int) -> list[dict]:
-    """The Zen header's ``BulkDataMap``, which is what an ``FByteBulkData`` indexes into.
+def bounds_pad(low: F64Grid, high: F64Grid) -> float:
+    """How far outside ``ExtendedBounds`` a vertex may sit, in centimetres."""
+    return BOUNDS_PAD_CM + BOUNDS_PAD_FRACTION * float(np.max(np.asarray(high) - np.asarray(low)))
 
-    The parsing lives in :func:`packages.bulk_data_entries` since the day the item icons
-    needed the same table for a texture with no ``.ubulk``; this wrapper keeps the mesh
-    module's contract, which is that a header that does not hold together is a
-    :class:`ParseError` and never a silently different answer.
-    """
-    try:
-        return bulk_data_entries(blob, names_end, first_section)
-    except ValueError as exc:
-        raise ParseError(str(exc)) from exc
+
+def inside_fraction(verts: F32Grid, low: F64Grid, high: F64Grid, pad: float) -> float:
+    """The share of ``verts`` inside ``[low - pad, high + pad]`` on every axis."""
+    return float(((verts >= low - pad) & (verts <= high + pad)).all(axis=1).mean())
 
 
 # --------------------------------------------------------------------------------------
@@ -186,80 +226,9 @@ def bulk_data_map(blob: bytes, names_end: int, first_section: int) -> list[dict]
 # --------------------------------------------------------------------------------------
 
 
-@dataclass
-class Section:
-    material: int
-    first_index: int
-    triangles: int
-    min_vertex: int
-    max_vertex: int
-
-
-@dataclass
-class Lod:
-    index: int
-    sections: list[Section]
-    max_deviation: float
-    cooked_out: bool
-    inlined: bool
-    position_stride: int = 0
-    vertices: int = 0
-    positions_at: int = 0
-    index_bytes: int = 0
-    index_32bit: bool = False
-    indices_at: int = 0
-    start: int = 0
-    end: int = 0
-
-    @property
-    def triangles(self) -> int:
-        return sum(s.triangles for s in self.sections)
-
-    @property
-    def max_vertex(self) -> int:
-        return max((s.max_vertex for s in self.sections), default=-1)
-
-
-@dataclass
-class PageSpan:
-    """One Nanite page: where its bytes live, what the table claims, and the bytes."""
-
-    index: int
-    offset: int
-    size: int
-    page_size: int
-    deps_start: int
-    deps_num: int
-    depth: int
-    flags: int
-    is_root: bool
-    data: bytes = b""
-
-
-@dataclass
-class NaniteResource:
-    """``FNaniteResources``, with the offsets a page decode needs kept rather than dropped."""
-
-    present: bool
-    resource_flags: int = 0
-    bulk_index: int = -1
-    root_bytes: int = 0
-    root_data_at: int = 0
-    root_pages: int = 0
-    position_precision: int = 0
-    normal_precision: int = 0
-    input_triangles: int = 0
-    input_vertices: int = 0
-    clusters: int = 0
-    mesh_bounds: tuple[float, ...] = ()
-    page_states: list[tuple[int, ...]] = field(default_factory=list)
-    page_dependencies: list[int] = field(default_factory=list)
-    pages: list[PageSpan] = field(default_factory=list)
-
-
 def _section(cur: Cursor) -> Section:
-    v = struct.unpack("<10i", cur.take(40))
-    return Section(v[0], v[1], v[2], v[3], v[4])
+    values = struct.unpack("<10i", cur.take(40))
+    return Section(*values[:5])
 
 
 def _index_buffer(cur: Cursor) -> tuple[bool, int, int]:
@@ -294,20 +263,27 @@ def _serialize_buffers(cur: Cursor, lod: Lod) -> None:
         )
 
     tangent_strip = cur.u8(), cur.u8()
-    cur.i32()  # NumTexCoords
+    uv_sets = cur.i32()
     vertex_count = cur.i32()
     cur.skip(8)  # bUseFullPrecisionUVs, bUseHighPrecisionTangentBasis
     if vertex_count != lod.vertices:
         raise ParseError(f"tangent buffer has {vertex_count} vertices, positions {lod.vertices}")
     if not tangent_strip[0] & 2:
-        cur.bulk_array()  # tangents
-        cur.bulk_array()  # texcoords
+        lod.tangent_stride, tangents, lod.tangents_at = cur.bulk_array()
+        lod.uv_stride, uvs, lod.uvs_at = cur.bulk_array()
+        # recorded only where both agree with the positions; the walk never fails on them
+        if tangents != lod.vertices or uvs != lod.vertices * uv_sets:
+            lod.tangent_stride = lod.uv_stride = 0
+        else:
+            lod.uv_sets = uv_sets
 
     colour_strip = cur.u8(), cur.u8()
     cur.skip(4)  # Stride
     colour_vertices = cur.i32()
     if not colour_strip[0] & 2 and colour_vertices > 0:
-        cur.bulk_array()
+        stride, colours, at = cur.bulk_array()
+        if stride == 4 and colours == lod.vertices:
+            lod.colours_at = at
 
     lod.index_32bit, lod.index_bytes, lod.indices_at = _index_buffer(cur)
     if not strip_class & 4:  # CDSF_ReversedIndexBuffer
@@ -348,9 +324,11 @@ def _lod(cur: Cursor, index: int) -> Lod:
         _serialize_buffers(cur, lod)
         cur.skip(12)  # the three buffer sizes
     lod.start, lod.end = start, cur.pos
-    for s in sections:
-        if lod.vertices and s.max_vertex >= lod.vertices:
-            raise ParseError(f"LOD {index}: section max vertex {s.max_vertex} >= {lod.vertices}")
+    for section in sections:
+        if lod.vertices and section.max_vertex >= lod.vertices:
+            raise ParseError(
+                f"LOD {index}: section max vertex {section.max_vertex} >= {lod.vertices}"
+            )
     return lod
 
 
@@ -364,13 +342,13 @@ def _nanite(cur: Cursor) -> NaniteResource:
     root_data_at = cur.pos
     cur.skip(root_bytes)
 
-    states = []
+    states: list[PageState] = []
     for _ in range(cur.i32()):
         offset, size, page_size, deps_start = struct.unpack("<4I", cur.take(16))
         deps_num, depth, page_flags = struct.unpack("<H2B", cur.take(4))
-        states.append((offset, size, page_size, deps_start, deps_num, depth, page_flags))
+        states.append(PageState(offset, size, page_size, deps_start, deps_num, depth, page_flags))
 
-    cur.skip(cur.i32() * HIER_NODE)
+    cur.skip(cur.i32() * HIERARCHY_NODE_BYTES)
     cur.skip(cur.i32() * 4)  # hierarchy root offsets
     n_deps = cur.i32()
     deps = list(struct.unpack(f"<{n_deps}I", cur.take(n_deps * 4))) if n_deps else []
@@ -395,62 +373,85 @@ def _nanite(cur: Cursor) -> NaniteResource:
     )
 
 
-def page_table_problems(nanite: NaniteResource, bulk_size: int | None) -> list[str]:
-    """Independent arithmetic on the page table. An empty list means every check passed.
-
-    Gates 3 and 4. The root pages must tile ``RootData`` byte-exactly from zero, and the
-    streaming pages must tile the ``.ubulk`` payload the ``BulkDataMap`` names -- two
-    statements the file makes about itself in two different places, which agree only if
-    both were read correctly.
-    """
-    problems: list[str] = []
+def _root_tiling_problems(nanite: NaniteResource) -> list[str]:
+    """Gate 3: the root pages must tile ``RootData`` byte-exactly from zero."""
     if not nanite.page_states:
-        return problems
+        return []
+    problems: list[str] = []
     root = nanite.page_states[: nanite.root_pages]
-    stream = nanite.page_states[nanite.root_pages :]
-    covered = sum(s[1] for s in root)
+    covered = sum(state.size for state in root)
     if covered != nanite.root_bytes:
         problems.append(f"root pages cover {covered} of {nanite.root_bytes} RootData bytes")
     at = 0
-    for s in root:
-        if s[0] != at:
-            problems.append(f"root page starts at {s[0]}, expected {at}")
+    for state in root:
+        if state.offset != at:
+            problems.append(f"root page starts at {state.offset}, expected {at}")
             break
-        at += s[1]
-    at = 0
-    for s in stream:
-        if s[0] != at:
-            problems.append(f"streaming page starts at {s[0]}, expected {at}")
-            break
-        at += s[1]
-    if bulk_size is not None and stream and at != bulk_size:
-        problems.append(f"streaming pages cover {at} bytes, the .ubulk entry says {bulk_size}")
+        at += state.size
     return problems
 
 
-def parse_render_data(tail: bytes, lod_count_at: int | None = None) -> dict:
-    """The cooked render data of one ``StaticMesh`` export, from past its property tags."""
-    if lod_count_at is None:
-        first: ParseError | None = None
-        candidates: list[int] = []
-        try:
-            sockets = struct.unpack_from("<I", tail, SOCKET_COUNT_AT)[0]
-            if 0 < sockets <= SOCKET_MAX:
-                candidates.append(38 + 4 * sockets)
-        except struct.error:
-            pass
-        for candidate in [*candidates, *LOD_COUNT_SEARCH]:
-            try:
-                parsed = parse_render_data(tail, candidate)
-            except ParseError as exc:
-                first = first or exc
-                continue
-            if page_table_problems(parsed["nanite"], None):
-                first = first or ParseError(f"offset {candidate}: nanite page table disagrees")
-                continue
-            return parsed
-        raise first or ParseError("no LOD array offset parses")
+def _stream_tiling_problems(nanite: NaniteResource, ubulk_bytes: int | None) -> list[str]:
+    """Gate 4: the streaming pages must tile the ``.ubulk`` payload the ``BulkDataMap`` names."""
+    if not nanite.page_states:
+        return []
+    problems: list[str] = []
+    stream = nanite.page_states[nanite.root_pages :]
+    at = 0
+    for state in stream:
+        if state.offset != at:
+            problems.append(f"streaming page starts at {state.offset}, expected {at}")
+            break
+        at += state.size
+    if ubulk_bytes is not None and stream and at != ubulk_bytes:
+        problems.append(f"streaming pages cover {at} bytes, the .ubulk entry says {ubulk_bytes}")
+    return problems
 
+
+def page_table_problems(nanite: NaniteResource, bulk_size: int | None) -> list[str]:
+    """Independent arithmetic on the page table. An empty list means every check passed.
+
+    Gates 3 and 4: two statements the file makes about itself in two different places,
+    which agree only if both were read correctly.
+    """
+    return _root_tiling_problems(nanite) + _stream_tiling_problems(nanite, bulk_size)
+
+
+def _lod_count_candidates(tail: bytes) -> list[int]:
+    """Where the LOD count may be: derived from the socket count first, then the ladder."""
+    candidates: list[int] = []
+    try:
+        sockets = struct.unpack_from("<I", tail, SOCKET_COUNT_AT)[0]
+        if 0 < sockets <= SOCKET_MAX:
+            candidates.append(38 + 4 * sockets)
+    except struct.error:
+        pass
+    return [*candidates, *LOD_COUNT_SEARCH]
+
+
+def parse_render_data(tail: bytes, lod_count_at: int | None = None) -> RenderData:
+    """The cooked render data of one ``StaticMesh`` export, from past its property tags.
+
+    Without ``lod_count_at`` the offset is searched, and a candidate whose Nanite page table
+    disagrees with itself is rejected like one that does not parse.
+    """
+    if lod_count_at is not None:
+        return _parse_render_data_at(tail, lod_count_at)
+    first: ParseError | None = None
+    for candidate in _lod_count_candidates(tail):
+        try:
+            parsed = _parse_render_data_at(tail, candidate)
+        except ParseError as exc:
+            first = first or exc
+            continue
+        if page_table_problems(parsed["nanite"], None):
+            first = first or ParseError(f"offset {candidate}: nanite page table disagrees")
+            continue
+        return parsed
+    raise first or ParseError("no LOD array offset parses")
+
+
+def _parse_render_data_at(tail: bytes, lod_count_at: int) -> RenderData:
     cur = Cursor(tail, lod_count_at)
     count = cur.i32()
     if not 1 <= count <= 8:
@@ -473,15 +474,19 @@ def parse_render_data(tail: bytes, lod_count_at: int | None = None) -> dict:
 # --------------------------------------------------------------------------------------
 
 
-def static_mesh_export(view: PackageView) -> dict | None:
+def static_mesh_export(view: PackageView) -> ZenExport | None:
     """The package's ``StaticMesh`` export, or ``None``."""
     return next(
-        (e for e in view.exports if class_name_of(view.class_of.get(e["slot"])) == "StaticMesh"),
+        (
+            export
+            for export in view.exports
+            if class_name_of(view.class_of.get(export["slot"])) == "StaticMesh"
+        ),
         None,
     )
 
 
-def extended_bounds(view: PackageView, export: dict) -> tuple[np.ndarray, np.ndarray] | None:
+def extended_bounds(view: PackageView, export: ZenExport) -> Bounds | None:
     """``ExtendedBounds`` as ``(low, high)`` in mesh-local centimetres, or ``None``.
 
     The mesh's own statement about where its vertices are, and therefore the only check
@@ -494,34 +499,73 @@ def extended_bounds(view: PackageView, export: dict) -> tuple[np.ndarray, np.nda
     origin, extent = decoded.get("Origin"), decoded.get("BoxExtent")
     if not isinstance(origin, dict) or not isinstance(extent, dict):
         return None
-    try:
-        o = np.array(struct.unpack("<3d", bytes.fromhex(origin["_raw"])[:24]))
-        e = np.array(struct.unpack("<3d", bytes.fromhex(extent["_raw"])[:24]))
-    except (KeyError, ValueError, struct.error):
+    origin_hex, extent_hex = origin.get("_raw"), extent.get("_raw")
+    if not isinstance(origin_hex, str) or not isinstance(extent_hex, str):
         return None
-    return o - e, o + e
+    try:
+        centre = np.array(struct.unpack("<3d", bytes.fromhex(origin_hex)[:24]))
+        half_size = np.array(struct.unpack("<3d", bytes.fromhex(extent_hex)[:24]))
+    except (ValueError, struct.error):
+        return None
+    return centre - half_size, centre + half_size
 
 
-def render_tail(view: PackageView, export: dict) -> bytes:
+def render_tail(view: PackageView, export: ZenExport) -> bytes:
+    """The untagged bytes behind an export's property tags."""
     body = view.pkg.body(export)
     _tags, end = property_tags(body, view.pkg.names)
     return body[end:]
 
 
-def lod0_buffers(tail: bytes, parsed: dict) -> tuple[np.ndarray, np.ndarray, int] | None:
+def lod0_buffers(tail: bytes, parsed: RenderData) -> Lod0 | None:
+    """LOD0's ``(positions, triangles, max vertex)`` from a parsed walk, or None."""
     lod = parsed["lods"][0]
     if not lod.vertices or not lod.index_bytes or lod.position_stride != 12:
         return None
     verts = np.frombuffer(tail, "<f4", count=3 * lod.vertices, offset=lod.positions_at)
     width = 4 if lod.index_32bit else 2
-    n = lod.index_bytes // width
-    if n % 3:
+    index_count = lod.index_bytes // width
+    if index_count % 3:
         return None
-    idx = np.frombuffer(tail, f"<u{width}", count=n, offset=lod.indices_at).reshape(-1, 3)
-    return verts.reshape(-1, 3), idx.astype(np.int64), lod.max_vertex
+    indices = np.frombuffer(tail, f"<u{width}", count=index_count, offset=lod.indices_at).reshape(
+        -1, 3
+    )
+    return verts.reshape(-1, 3), indices.astype(np.int64), lod.max_vertex
 
 
-def _lod0_by_search(tail: bytes) -> tuple[np.ndarray, np.ndarray, int] | None:
+def lod0_surface(tail: bytes, parsed: RenderData) -> LodSurface | None:
+    """LOD0's first UV set, tangent basis and vertex colours, or None where the walk did not
+    find the first two.
+
+    A texcoord is two float32 (full precision) or two float16. The basis is two packed
+    vectors a vertex, four int8 (or int16 at high precision) over 127 (32767): the tangent,
+    then the normal, whose fourth component is the bitangent's sign. A colour is an
+    ``FColor``, stored BGRA.
+    """
+    lod = parsed["lods"][0]
+    n = lod.vertices
+    if not lod.uv_sets or lod.uv_stride not in (4, 8) or lod.tangent_stride not in (8, 16):
+        return None
+    uv_dtype = "<f4" if lod.uv_stride == 8 else "<f2"
+    uvs = np.frombuffer(tail, uv_dtype, count=2 * n * lod.uv_sets, offset=lod.uvs_at)
+    uvs = uvs.reshape(n, lod.uv_sets, 2)[:, 0].astype(np.float32)
+    basis_dtype, top = ("<i2", 32767.0) if lod.tangent_stride == 16 else ("i1", 127.0)
+    basis = np.frombuffer(tail, basis_dtype, count=8 * n, offset=lod.tangents_at).reshape(n, 2, 4)
+    unit = (basis.astype(np.float32) / np.float32(top)).astype(np.float32)
+    colours = None
+    if lod.colours_at:
+        bgra = np.frombuffer(tail, np.uint8, count=4 * n, offset=lod.colours_at).reshape(n, 4)
+        colours = np.ascontiguousarray(bgra[:, [2, 1, 0, 3]])
+    return LodSurface(
+        uvs=uvs,
+        normals=np.ascontiguousarray(unit[:, 1, :3]),
+        tangents=np.ascontiguousarray(unit[:, 0, :3]),
+        signs=np.where(unit[:, 1, 3] < 0, -1.0, 1.0).astype(np.float32),
+        colours=colours,
+    )
+
+
+def _lod0_by_search(tail: bytes) -> Lod0 | None:
     """The fallback route: the section table at a fixed offset, then SEARCH for the indices.
 
     Kept because it does one thing the walk does not -- it finds the index buffer by
@@ -529,46 +573,117 @@ def _lod0_by_search(tail: bytes) -> tuple[np.ndarray, np.ndarray, int] | None:
     gates as the walk, so a mesh that comes out of here is not trusted more cheaply.
     """
     try:
-        n_sections = struct.unpack_from("<I", tail, 44)[0]
-        if not 1 <= n_sections <= 64:
+        section_count = struct.unpack_from("<I", tail, 44)[0]
+        if not 1 <= section_count <= 64:
             return None
-        tris = maxv = 0
-        for s in range(n_sections):
-            values = struct.unpack_from("<10I", tail, 48 + s * 40)
-            tris += values[2]
-            maxv = max(maxv, values[4])
-        pos = 48 + n_sections * 40 + 56 + 16
-        stride, num_verts = struct.unpack_from("<II", tail, pos + 2)
-        elem, count = struct.unpack_from("<II", tail, pos + 10)
-        if stride != 12 or elem != 12 or count != num_verts or num_verts != maxv + 1:
+        triangles = max_vertex = 0
+        for section in range(section_count):
+            values = struct.unpack_from("<10I", tail, 48 + section * 40)
+            triangles += values[2]
+            max_vertex = max(max_vertex, values[4])
+        pos = 48 + section_count * 40 + 56 + 16
+        stride, vertex_count = struct.unpack_from("<II", tail, pos + 2)
+        element_size, count = struct.unpack_from("<II", tail, pos + 10)
+        if (
+            stride != 12
+            or element_size != 12
+            or count != vertex_count
+            or vertex_count != max_vertex + 1
+        ):
             return None
         at = pos + 18
-        verts = np.frombuffer(tail, "<f4", count=num_verts * 3, offset=at).reshape(-1, 3)
-        at += num_verts * 12
+        verts = np.frombuffer(tail, "<f4", count=vertex_count * 3, offset=at).reshape(-1, 3)
+        at += vertex_count * 12
         for width in (2, 4):
-            want = struct.pack("<III", 1 if width == 4 else 0, 1, tris * 3 * width)
+            want = struct.pack("<III", 1 if width == 4 else 0, 1, triangles * 3 * width)
             probe = tail.find(want, at, at + 16384)
             if probe < 0:
                 continue
             start = probe + 12
-            if start + tris * 3 * width > len(tail):
+            if start + triangles * 3 * width > len(tail):
                 continue
-            idx = np.frombuffer(tail, f"<u{width}", count=tris * 3, offset=start).reshape(-1, 3)
-            if int(idx.max()) == maxv:
-                return verts, idx.astype(np.int64), maxv
+            indices = np.frombuffer(tail, f"<u{width}", count=triangles * 3, offset=start).reshape(
+                -1, 3
+            )
+            if int(indices.max()) == max_vertex:
+                return verts, indices.astype(np.int64), max_vertex
         return None
     except (struct.error, IndexError, ValueError):
         return None
 
 
-def extract(store: IoStore, scripts: ScriptObjects, index: AssetIndex, mesh_path: str) -> dict:
+def _render_walk(tail: bytes, out: MeshRow, gates: MeshGates) -> RenderData | None:
+    """Gates 1 and 2: the render-data walk, which raises when either fails."""
+    try:
+        parsed = parse_render_data(tail)
+    except ParseError as exc:
+        gates["1_section_max_vertex"] = gates["2_position_buffer_header"] = False
+        out["parse_error"] = str(exc)
+        return None
+    gates["1_section_max_vertex"] = True
+    gates["2_position_buffer_header"] = True
+    out["route"] = "render-data walk"
+    out["lod_triangles"] = [lod.triangles for lod in parsed["lods"]]
+    return parsed
+
+
+def _nanite_gates(
+    view: PackageView, parsed: RenderData | None, out: MeshRow, gates: MeshGates
+) -> None:
+    """Gates 3 and 4, ``"n/a"`` on a mesh with no Nanite pages."""
+    nanite = parsed["nanite"] if parsed is not None else None
+    if nanite is None or not nanite.page_states:
+        gates["3_nanite_root_tiling"] = gates["4_nanite_stream_tiling"] = "n/a"
+        absent: NaniteSummary = {"present": False}
+        out["nanite"] = absent
+        return
+    root_problems = _root_tiling_problems(nanite)
+    stream_problems = _stream_tiling_problems(nanite, bulk_size(view, nanite))
+    gates["3_nanite_root_tiling"] = not root_problems
+    gates["4_nanite_stream_tiling"] = not stream_problems
+    summary: NaniteSummary = {
+        "present": True,
+        "input_triangles": int(nanite.input_triangles),
+        "clusters": int(nanite.clusters),
+        "problems": root_problems + stream_problems,
+    }
+    out["nanite"] = summary
+
+
+def _lod0_geometry(
+    tail: bytes, parsed: RenderData | None, out: MeshRow, gates: MeshGates
+) -> Lod0 | None:
+    """LOD0 off the walk, or off the index search, which then also passes gates 1 and 2."""
+    got = lod0_buffers(tail, parsed) if parsed is not None else None
+    if got is None:
+        got = _lod0_by_search(tail)
+        if got is not None:
+            out["route"] = "index search"
+            gates["1_section_max_vertex"] = gates["2_position_buffer_header"] = True
+    return got
+
+
+def _bounds_gate(verts: F32Grid, bounds: Bounds | None, out: MeshRow, gates: MeshGates) -> None:
+    """Gate 6: nearly every position inside the mesh's own padded ``ExtendedBounds``."""
+    if bounds is None:
+        gates["6_inside_bounds"] = "n/a"
+        out["inside_fraction"] = None
+        return
+    low, high = bounds
+    inside = inside_fraction(verts, low, high, bounds_pad(low, high))
+    gates["6_inside_bounds"] = inside >= BOUNDS_INSIDE_MIN
+    out["inside_fraction"] = round(inside, 5)
+
+
+def extract(store: IoStore, scripts: ScriptObjects, index: AssetIndex, mesh_path: str) -> MeshRow:
     """LOD0 triangles for one placed mesh, with the verdict of every gate attached.
 
     ``ok`` is true only when every gate that could run passed. The geometry comes back even
     when it is false, deliberately: a caller that cannot look at the numbers of a failure
     cannot fix it. Nothing downstream is expected to consume a row whose ``ok`` is false.
     """
-    out: dict = {"mesh": mesh_path, "gates": {}}
+    gates: MeshGates = {}
+    out: MeshRow = {"mesh": mesh_path, "gates": gates}
     package = index.path_for(mesh_path)
     if not package:
         out["error"] = "unresolved: no container path"
@@ -576,78 +691,41 @@ def extract(store: IoStore, scripts: ScriptObjects, index: AssetIndex, mesh_path
         return out
     out["package"] = package
     view = PackageView(store.read_path(package), scripts)
-    sm = static_mesh_export(view)
-    if sm is None:
+    mesh_export = static_mesh_export(view)
+    if mesh_export is None:
         out["error"] = "no StaticMesh export"
         out["ok"] = False
         return out
 
-    bounds = extended_bounds(view, sm)
-    tail = render_tail(view, sm)
-    gates = out["gates"]
-
-    parsed = None
-    try:
-        parsed = parse_render_data(tail)
-        gates["1_section_max_vertex"] = True  # parse_render_data raises when either fails
-        gates["2_position_buffer_header"] = True
-        out["route"] = "render-data walk"
-        out["lod_triangles"] = [lod.triangles for lod in parsed["lods"]]
-    except ParseError as exc:
-        gates["1_section_max_vertex"] = gates["2_position_buffer_header"] = False
-        out["parse_error"] = str(exc)
-
-    nanite = parsed["nanite"] if parsed is not None else None
-    if nanite is not None and nanite.page_states:
-        problems = page_table_problems(nanite, bulk_size(view, nanite))
-        gates["3_nanite_root_tiling"] = not any("root" in p for p in problems)
-        gates["4_nanite_stream_tiling"] = not any("streaming" in p for p in problems)
-        out["nanite"] = {
-            "present": True,
-            "input_triangles": int(nanite.input_triangles),
-            "clusters": int(nanite.clusters),
-            "problems": problems,
-        }
-    else:
-        gates["3_nanite_root_tiling"] = gates["4_nanite_stream_tiling"] = "n/a"
-        out["nanite"] = {"present": False}
-
-    got = lod0_buffers(tail, parsed) if parsed is not None else None
-    if got is None:
-        got = _lod0_by_search(tail)
-        if got is not None:
-            out["route"] = "index search"
-            gates["1_section_max_vertex"] = gates["2_position_buffer_header"] = True
+    bounds = extended_bounds(view, mesh_export)
+    tail = render_tail(view, mesh_export)
+    parsed = _render_walk(tail, out, gates)
+    _nanite_gates(view, parsed, out, gates)
+    got = _lod0_geometry(tail, parsed, out, gates)
     if got is None:
         out["error"] = out.get("parse_error", "no LOD0 buffers found")
         out["ok"] = False
         return out
 
-    verts, idx, maxv = got
+    verts, indices, max_vertex = got
     gates["5_positions_finite"] = bool(np.isfinite(verts).all())
-    gates["7_max_index_is_max_vertex"] = bool(int(idx.max()) == maxv)
-    if bounds is None:
-        gates["6_inside_bounds"] = "n/a"
-        out["inside_fraction"] = None
-    else:
-        low, high = bounds
-        pad = BOUNDS_PAD_CM + BOUNDS_PAD_FRACTION * float(np.max(high - low))
-        inside = float(((verts >= low - pad) & (verts <= high + pad)).all(axis=1).mean())
-        gates["6_inside_bounds"] = inside >= BOUNDS_INSIDE_MIN
-        out["inside_fraction"] = round(inside, 5)
+    gates["7_max_index_is_max_vertex"] = bool(int(indices.max()) == max_vertex)
+    _bounds_gate(verts, bounds, out, gates)
 
     out["verts"] = verts.astype(np.float32)
-    out["idx"] = idx.astype(np.int32)
+    out["idx"] = indices.astype(np.int32)
     out["bounds_local_cm"] = None if bounds is None else [b.tolist() for b in bounds]
     out["view"] = view
     out["tail"] = tail
     out["parsed"] = parsed
-    out["ok"] = all(v is True for v in gates.values() if v != "n/a")
+    out["ok"] = all(verdict is True for verdict in gates.values() if verdict != "n/a")
     return out
 
 
-def collision_hull(view: PackageView, low, high):
-    """The cooked Chaos trimesh out of a ``BodySetup``, as ``(result, why)``.
+def collision_hull(
+    view: PackageView, low: F64Grid, high: F64Grid
+) -> tuple[CollisionHull | None, str | None]:
+    """The cooked Chaos trimesh out of a ``BodySetup``, as ``(hull, why)``.
 
     Layout, past the export's property tags::
 
@@ -664,7 +742,11 @@ def collision_hull(view: PackageView, low, high):
     meshes legitimately ship no cooked trimesh and the sidecar names the reason for each.
     """
     body_setup = next(
-        (e for e in view.exports if class_name_of(view.class_of.get(e["slot"])) == "BodySetup"),
+        (
+            export
+            for export in view.exports
+            if class_name_of(view.class_of.get(export["slot"])) == "BodySetup"
+        ),
         None,
     )
     if body_setup is None:
@@ -680,50 +762,47 @@ def collision_hull(view: PackageView, low, high):
     verts = np.frombuffer(blob, "<f4", count=3 * count, offset=pos).reshape(count, 3)
     if not np.isfinite(verts).all():
         return None, "non-finite vertices"
-    pad = BOUNDS_PAD_CM + BOUNDS_PAD_FRACTION * float(np.max(np.asarray(high) - np.asarray(low)))
-    inside = ((verts >= low - pad) & (verts <= high + pad)).all(axis=1)
-    if inside.mean() <= 0.90:
-        return None, f"only {inside.mean():.1%} of vertices inside ExtendedBounds"
+    pad = bounds_pad(low, high)
+    inside = inside_fraction(verts, low, high, pad)
+    if inside <= HULL_INSIDE_MIN:
+        return None, f"only {inside:.1%} of vertices inside ExtendedBounds"
     pos += 12 * count
-    _zero, tris = struct.unpack_from("<II", blob, pos)
+    _zero, triangles = struct.unpack_from("<II", blob, pos)
     pos += 8
     for width, dtype in ((2, "<u2"), (4, "<u4")):
-        if tris > 0 and pos + 3 * tris * width <= len(blob):
-            candidate = np.frombuffer(blob, dtype, count=3 * tris, offset=pos).reshape(tris, 3)
+        if triangles > 0 and pos + 3 * triangles * width <= len(blob):
+            candidate = np.frombuffer(blob, dtype, count=3 * triangles, offset=pos).reshape(
+                triangles, 3
+            )
             if candidate.max() < count:
-                return (verts.astype(np.float32), candidate.astype(np.int32), pad), None
-    return None, f"no index width fits {tris} triangles over {count} vertices"
+                hull = CollisionHull(verts.astype(np.float32), candidate.astype(np.int32), pad)
+                return hull, None
+    return None, f"no index width fits {triangles} triangles over {count} vertices"
 
 
 # --------------------------------------------------------------------------------------
 # Nanite page bytes: inline root plus the streamed tail.
 # --------------------------------------------------------------------------------------
 
-_NAME_BATCH_AT = 60
+
+def _bulk_entries(view: PackageView) -> list[BulkEntry] | None:
+    """The package's ``BulkDataMap``, or None where its header does not hold together."""
+    try:
+        return view.pkg.bulk_entries()
+    except (ValueError, struct.error, IndexError):
+        return None
 
 
 def bulk_size(view: PackageView, nanite: NaniteResource) -> int | None:
     """The size of the ``.ubulk`` payload the resource's ``BulkDataMap`` entry names."""
-    entries = _bulk_map(view)
+    entries = _bulk_entries(view)
     if entries is None or not 0 <= nanite.bulk_index < len(entries):
         return None
     return entries[nanite.bulk_index]["size"]
 
 
-def _bulk_map(view: PackageView) -> list[dict] | None:
-    from .packages import _name_batch
-
-    blob = view.pkg.blob
-    try:
-        summary = struct.unpack_from("<15I", blob, 0)
-        _names, names_end = _name_batch(blob, _NAME_BATCH_AT)
-        return bulk_data_map(blob, names_end, min(w for w in summary[6:13] if w))
-    except (ParseError, ValueError, struct.error, IndexError):
-        return None
-
-
 def load_nanite(
-    store: IoStore, package_path: str, view: PackageView, parsed: dict, tail: bytes
+    store: IoStore, package_path: str, view: PackageView, parsed: RenderData, tail: bytes
 ) -> NaniteResource | None:
     """Fill a parsed :class:`NaniteResource` with its pages' actual bytes, or ``None``.
 
@@ -732,13 +811,13 @@ def load_nanite(
     the Zen ``BulkDataMap`` locates. Both are checked to tile exactly before anything is
     decoded, which is gates 3 and 4 again at the point where being wrong would matter.
     """
-    nanite: NaniteResource = parsed["nanite"]
+    nanite = parsed["nanite"]
     if not nanite.present or not nanite.page_states:
         return None
     root_blob = tail[nanite.root_data_at : nanite.root_data_at + nanite.root_bytes]
 
     bulk_blob = b""
-    entries = _bulk_map(view)
+    entries = _bulk_entries(view)
     if entries is not None and 0 <= nanite.bulk_index < len(entries):
         entry = entries[nanite.bulk_index]
         bulk_path = package_path.rsplit(".", 1)[0] + ".ubulk"
@@ -747,23 +826,23 @@ def load_nanite(
             bulk_blob = raw[entry["offset"] : entry["offset"] + entry["size"]]
 
     pages: list[PageSpan] = []
-    for i, state in enumerate(nanite.page_states):
-        offset, size = state[0], state[1]
-        source = root_blob if i < nanite.root_pages else bulk_blob
-        data = source[offset : offset + size]
-        if len(data) != size:
-            raise ParseError(f"nanite page {i} wants {size} bytes, got {len(data)}")
+    for page_index, state in enumerate(nanite.page_states):
+        is_root = page_index < nanite.root_pages
+        source = root_blob if is_root else bulk_blob
+        data = source[state.offset : state.offset + state.size]
+        if len(data) != state.size:
+            raise ParseError(f"nanite page {page_index} wants {state.size} bytes, got {len(data)}")
         pages.append(
             PageSpan(
-                index=i,
-                offset=offset,
-                size=size,
-                page_size=state[2],
-                deps_start=state[3],
-                deps_num=state[4],
-                depth=state[5],
-                flags=state[6],
-                is_root=i < nanite.root_pages,
+                index=page_index,
+                offset=state.offset,
+                size=state.size,
+                page_size=state.page_size,
+                deps_start=state.deps_start,
+                deps_num=state.deps_num,
+                depth=state.depth,
+                flags=state.flags,
+                is_root=is_root,
                 data=data,
             )
         )

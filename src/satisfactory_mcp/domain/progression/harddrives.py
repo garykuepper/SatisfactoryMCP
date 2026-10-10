@@ -6,37 +6,50 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
-from ...core.gamedata.model import GameData
+from typing_extensions import TypedDict
+
+from ...core.gamedata.model import GameData, Recipe
+from ...core.saveio.schema import Projection
 
 if TYPE_CHECKING:
     from ..world.inventory import Inventory
     from .unlocks import UnlockSet
 
-__all__ = ["HardDriveDesk", "HardDriveOffer"]
+__all__ = ["HardDriveDesk", "HardDriveOffer", "HardDriveOption"]
+
+
+class HardDriveOption(TypedDict):
+    """One reward a drive offers; an unknown schematic is its own name, granting nothing."""
+
+    schematic: str
+    name: str
+    recipes: list[Recipe]
+    slots: int
 
 
 @dataclass
 class HardDriveOffer:
     hard_drive_id: int | None
     rerolls_left: int
-    options: list[dict]  # {schematic, name, recipes: [Recipe], inventory_slots}
+    options: list[HardDriveOption]
 
 
 @dataclass
 class HardDriveDesk:
     """Pending hard-drive choices, each option resolved to the recipes it would grant."""
 
-    projection: dict
+    projection: Projection
     game: GameData
     unlocks: UnlockSet
 
     @property
     def last_used_hard_drive_id(self) -> int | None:
-        """The id of the drive whose choice was settled most recently.
+        """The id of the drive analysed most recently in the MAM.
 
-        mLastUsedHardDriveID, which the game keeps to number the next one. Continuity for
-        a reader resuming a session, never an index into the pending offers: a settled
-        drive is gone from that list.
+        mLastUsedHardDriveID, the counter the game numbers each analysed drive with. The
+        drive it names can still be pending: on the reference save it is 36, and drive 36
+        is the newest row among the unclaimed offers. It says nothing about which choice
+        was settled.
         """
         raw = self.projection.get("research", {}).get("last_used_hard_drive_id")
         return raw if isinstance(raw, int) else None
@@ -46,7 +59,7 @@ class HardDriveDesk:
         """The player's live pending choices, straight from the save."""
         out: list[HardDriveOffer] = []
         for entry in self.projection.get("research", {}).get("unclaimed_hard_drives", ()):
-            options = []
+            options: list[HardDriveOption] = []
             for sid in entry.get("options", ()):
                 s = self.game.schematics.get(sid)
                 if s is None:

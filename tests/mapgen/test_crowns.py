@@ -1,0 +1,361 @@
+"""Tree crowns: the records in the paint store, their stamping from the crown sprites, their
+colour and their light.
+
+docs/map/light-and-crowns.md section 36. Synthetic fixtures throughout: no install, no field.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+
+from mapgen.gamedata.frame import ORIGIN_X_CM, ORIGIN_Y_CM
+from mapgen.gamedata.vegetation import crown_sprites as data
+from mapgen.gamedata.vegetation.trees import RADIUS_BINS_M, canopy_cover
+from mapgen.lighting.hillshade import FLAT_SUN_DOT
+from mapgen.palette.painted.trees import crown_layer, crown_sun, over_crowns
+from mapgen.palette.styles import PAINTED_PALETTE
+from mapgen.sprites.raster import SpritePlanes
+from mapgen.terrain.crown_stamp import CrownSet, load_crowns, meshed_species, stamp_crowns
+from tests.support.crown_sprites import draw_atlas, flat_sprite
+
+LEAF = (0.1, 0.3, 0.05)
+
+
+def _card(x0, y0, x1, y1, z):
+    """A flat rectangle as two triangles, mesh-local cm."""
+    verts = np.array([[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]], np.float32)
+    return verts, np.array([[0, 1, 2], [0, 2, 3]], np.int64)
+
+
+def _tau(opacity):
+    return np.array([-np.log(1.0 - opacity)] + [0.0] * 255, np.float32)
+
+
+def _matrix(x, y, z, yaw_deg=0.0, scale=1.0, tilt_deg=0.0):
+    yaw, tilt = np.radians(yaw_deg), np.radians(tilt_deg)
+    turn = np.array([[np.cos(yaw), np.sin(yaw), 0], [-np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
+    lean = np.array([[1, 0, 0], [0, np.cos(tilt), np.sin(tilt)], [0, -np.sin(tilt), np.cos(tilt)]])
+    m = np.eye(4)
+    m[:3, :3] = scale * (turn @ lean)
+    m[3, :3] = (x, y, z)
+    return m
+
+
+def _store(tmp_path, sprites, records, colours, names=None):
+    """The records in a paint store, over crown sprites of the paint store sprites' shape in
+    each species' flat colour."""
+    (tmp_path / data.CROWNS_NAME).write_bytes(data.encode_records(records))
+    names = names or [f"S{i}" for i in range(len(sprites))]
+    species = [{"name": name, "mesh": f"/Trees/{name}"} for name in names]
+    atlas = draw_atlas([flat_sprite(s, [c]) for s, c in zip(sprites, colours, strict=True)], names)
+    return load_crowns(tmp_path, {"species": species}, {data.CROWNS_NAME}, atlas)
+
+
+# ----------------------------------------------------------------------- the paint input
+
+
+def test_a_sprite_is_the_mesh_from_above_and_stacked_cards_are_denser():
+    verts, tris = _card(-200, -100, 200, 100, 1200)
+    one = data.rasterise_sprite(verts, tris, np.zeros(2, np.int64), _tau(0.5))
+    assert one["cover"].max() == round(0.5 * 255)
+    assert one["top_cm"].max() == 1200 and one["slot"][one["cover"] > 0].max() == 0
+    covered = (one["cover"] > 0).sum() * data.SPRITE_M**2
+    assert covered == pytest.approx(4.0 * 2.0, rel=0.05), "a 4 m x 2 m card covers 8 m^2"
+    v2 = np.vstack([verts, verts + [0, 0, 100]])
+    t2 = np.vstack([tris, tris + 4])
+    two = data.rasterise_sprite(v2, t2, np.zeros(4, np.int64), _tau(0.5))
+    assert two["cover"].max() == round(0.75 * 255), "two half-clear cards let a quarter through"
+    assert two["top_cm"].max() == 1300, "the top is the higher card"
+    assert data.rasterise_sprite(verts, tris[:0], np.zeros(0, np.int64), _tau(0.5)) is None
+
+
+def test_a_records_yaw_scale_and_lean_come_from_its_matrix():
+    trees = {"/Trees/A": np.array([_matrix(100, 200, 300, 30, 2.0), _matrix(0, 0, 0, 0, 1, 20)])}
+    records, stats = data.crown_records(trees, ["A"])
+    first, second = records
+    assert (first["x"], first["y"], first["z"]) == (100, 200, 300)
+    assert first["yaw"] == pytest.approx(30.0, abs=1e-4)
+    assert first["scale"] == pytest.approx(2.0) and first["scale_z"] == pytest.approx(2.0)
+    assert first["axis_z"] == pytest.approx(1.0)
+    assert np.hypot(second["axis_x"], second["axis_y"]) == pytest.approx(np.sin(np.radians(20)))
+    assert stats == {"instances": 2, "tilt_max_deg": 20.0}
+    assert data.crown_records({"/Trees/B": trees["/Trees/A"]}, ["A"])[1]["instances"] == 0
+
+
+def test_records_and_sprites_survive_the_store():
+    verts, tris = _card(-100, -100, 100, 100, 500)
+    sprite = data.rasterise_sprite(verts, tris, np.zeros(2, np.int64), _tau(0.9))
+    blob, index = data.encode_sprites([sprite, sprite])
+    back = data.decode_sprites(blob, index)
+    assert len(back) == 2 and index[1]["offset"] > 0
+    for key in ("cover", "top_cm", "slot"):
+        assert (back[1][key] == sprite[key]).all()
+    records, _ = data.crown_records({"/A": np.array([_matrix(1, 2, 3, 45)])}, ["A"])
+    assert data.decode_records(data.encode_records(records)).tolist() == records.tolist()
+
+
+def test_the_crown_top_plane_is_the_highest_crown_texel():
+    verts, tris = _card(-150, -150, 150, 150, 800)
+    sprite = data.rasterise_sprite(verts, tris, np.zeros(2, np.int64), _tau(0.9))
+    records, _ = data.crown_records({"/A": np.array([_matrix(1000, 1000, 50)])}, ["A"])
+    top = data.stamp_tops(records, [sprite], 20, 0.0, 0.0, 100.0)
+    assert np.nanmax(top) == pytest.approx(850.0)
+    assert np.isfinite(top[8:12, 8:12]).all() and np.isnan(top[0, 0])
+
+
+def test_a_mask_is_an_alpha_that_varies_and_names_sort_materials():
+    opaque = np.ones((4, 4), np.float32)
+    half = np.tile(np.repeat(np.array([0.0, 1.0], np.float32), 4), (8, 1))
+    assert data.leaf_mask([opaque], (4, 4)).all()
+    mask = data.leaf_mask([opaque, half], (4, 4))
+    assert mask.shape == (4, 4) and mask.mean() == 0.5, "the first alpha that varies, resized"
+    assert data.material_kind("/X/MI_Kapok_Bark_02") == "bark"
+    assert data.material_kind("/X/MI_Lianas_02") == "skip"
+    assert data.material_kind("/X/MI_CatP1_BB") == "skip"
+    assert data.material_kind("/X/MI_Kapok_Branch_02") == "leaf"
+    assert (
+        data.material_kind("/X/GreenTree_01", {"vector": {"Moss Color Tint": (1, 1, 1, 1)}})
+        == "bark"
+    )
+
+
+def test_an_alpha_with_no_leaf_texel_is_no_mask():
+    faint = np.full((4, 4), 0.3, np.float32)
+    assert data.leaf_mask([faint], (4, 4)).all(), "nothing over the leaf threshold: no mask"
+    half = np.tile(np.repeat(np.array([0.0, 1.0], np.float32), 2), (4, 1))
+    assert data.leaf_mask([faint, half], (4, 4)).mean() == 0.5, "the next alpha is the mask"
+
+
+def test_a_measured_opacity_of_zero_is_clear_and_a_missing_one_opaque():
+    clear = {"kind": "leaf", "linear": None, "opacity": 0.0}
+    unknown = {"kind": "leaf", "linear": None, "opacity": None}
+    skipped = {"kind": "skip", "linear": None, "opacity": 0.5}
+    tau = data.optical_depths([clear, unknown, skipped])
+    assert tau.shape == (data.MATERIAL_NONE + 1,) and tau.dtype == np.float32
+    assert tau[0] == 0.0, "a measured opacity of 0 lets everything through"
+    assert tau[1] == pytest.approx(data.TAU_MAX), "no measurement: an opaque card"
+    assert tau[2] == 0.0 and not tau[3:].any()
+
+
+def test_the_canopy_takes_the_measured_radius_scaled_per_tree():
+    x, y = ORIGIN_X_CM + 2000.0, ORIGIN_Y_CM + 2000.0
+    tree = np.array([_matrix(x, y, 0.0)])
+    big = np.array([_matrix(x, y, 0.0, scale=2.0)])
+    small_cover, _ = canopy_cover({"/T": tree}, 40, {"/T": 3.0})
+    big_cover, counts = canopy_cover({"/T": big}, 40, {"/T": 3.0})
+    assert big_cover.sum() > 3.0 * small_cover.sum()
+    assert set(map(float, counts)) <= set(RADIUS_BINS_M.tolist())
+
+
+# ----------------------------------------------------------------------- drawing
+
+
+def _l_sprite():
+    """An L: a 6 m bar along +x and a half-metre stub along +y, both at 10 m."""
+    va, ta = _card(0, 0, 600, 100, 1000)
+    vb, tb = _card(0, 100, 100, 150, 1000)
+    verts, tris = np.vstack([va, vb]), np.vstack([ta, tb + 4])
+    return data.rasterise_sprite(verts, tris, np.zeros(4, np.int64), _tau(0.95))
+
+
+def _band(crowns, step_cm=22.9, size=80, x0=-900.0, y0=-900.0):
+    centres = (np.arange(size) + 0.5) * step_cm
+    return stamp_crowns(crowns, x0 + centres, y0 + centres, step_cm)
+
+
+def test_a_tree_stamps_its_sprite_turned_by_its_yaw(tmp_path):
+    sprite = _l_sprite()
+    records, _ = data.crown_records({"/A": np.array([_matrix(0, 0, 0)])}, ["A"])
+    flat = _store(tmp_path, [sprite], records, [LEAF])
+    band = _band(flat)
+    rows, cols = np.nonzero(band["cover"] > 0.5)
+    assert np.ptp(cols) > 3 * np.ptp(rows), "unturned, the bar runs east"
+    records, _ = data.crown_records({"/A": np.array([_matrix(0, 0, 0, 90)])}, ["A"])
+    turned = _store(tmp_path, [sprite], records, [LEAF])
+    rows, cols = np.nonzero(_band(turned)["cover"] > 0.5)
+    assert np.ptp(rows) > 3 * np.ptp(cols), "turned 90 degrees, it runs south"
+    colour = band["rgb"][band["cover"] > 0.9] / band["cover"][band["cover"] > 0.9][:, None]
+    np.testing.assert_allclose(colour.mean(0), LEAF, rtol=0.02)
+    top = band["top_cm"]
+    assert np.nanmax(top) == pytest.approx(1000.0, abs=1.0) and np.isnan(top[0, 0])
+
+
+def test_the_taller_crown_is_drawn_over_the_lower_one(tmp_path):
+    verts, tris = _card(-300, -300, 300, 300, 1000)
+    sprite = data.rasterise_sprite(verts, tris, np.zeros(2, np.int64), _tau(0.95))
+    records, _ = data.crown_records(
+        {"/A": np.array([_matrix(0, 0, 500)]), "/B": np.array([_matrix(0, 0, 0)])}, ["A", "B"]
+    )
+    red, blue = (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)
+    crowns = _store(tmp_path, [sprite, sprite], records, [red, blue], ["A", "B"])
+    band = _band(crowns)
+    centre = band["rgb"][40, 40] / band["cover"][40, 40]
+    assert centre[0] > 0.9 and centre[2] < 0.1, "the crown standing 5 m higher is on top"
+    assert band["top_cm"][40, 40] == pytest.approx(1500.0, abs=1.0)
+
+
+def test_a_coarse_sheet_keeps_a_crowns_area(tmp_path):
+    sprite = _l_sprite()
+    records, _ = data.crown_records({"/A": np.array([_matrix(0, 0, 0)])}, ["A"])
+    crowns = _store(tmp_path, [sprite], records, [LEAF])
+    fine = _band(crowns, 22.9, 80).get("cover").sum() * 0.229**2
+    coarse = _band(crowns, 183.2, 10).get("cover").sum() * 1.832**2
+    assert coarse == pytest.approx(fine, rel=0.2), "the mip average keeps the area"
+    assert fine == pytest.approx(6.5 * 0.95, rel=0.1)
+    assert crowns.atlas.counts[0] > 3
+
+
+def test_a_crown_draws_the_same_in_any_band_or_window(tmp_path):
+    step = 7500.0 * 100.0 / 32768
+    records, _ = data.crown_records({"/A": np.array([_matrix(0, 0, 0, 30)])}, ["A"])
+    crowns = _store(tmp_path, [_l_sprite()], records, [LEAF])
+    x, y = (np.arange(-60, 60) + 0.5) * step, (np.arange(-300, 60) + 0.5) * step
+    whole = stamp_crowns(crowns, x, y, step)
+    assert whole["cover"].max() > 0.9
+    for first_row, first_col in ((16, 0), (280, 3), (299, 41)):
+        part = stamp_crowns(crowns, x[first_col:], y[first_row:], step)
+        for name, plane in part.items():
+            np.testing.assert_array_equal(plane, whole[name][first_row:, first_col:], name)
+
+
+def test_a_band_with_no_tree_is_empty(tmp_path):
+    records, _ = data.crown_records({"/A": np.array([_matrix(50000, 50000, 0)])}, ["A"])
+    crowns = _store(tmp_path, [_l_sprite()], records, [LEAF])
+    band = _band(crowns)
+    assert not band["cover"].any() and np.isnan(band["top_cm"]).all()
+
+
+def test_a_coral_tree_is_left_to_its_mesh_and_not_drawn_as_a_crown(tmp_path):
+    coral = "/Game/FactoryGame/World/Environment/Foliage/Coral/CoralTree/SM_CoralTreeSmall_01"
+    tree = "/Game/FactoryGame/World/Environment/Foliage/Trees/GreenTree/SM_GreenTree_01"
+    verts, tris = _card(-300, -300, 300, 300, 1000)
+    sprite = data.rasterise_sprite(verts, tris, np.zeros(2, np.int64), _tau(0.95))
+    names = ["SM_CoralTreeSmall_01", "SM_GreenTree_01"]
+    records, _ = data.crown_records(
+        {coral: np.array([_matrix(0, 0, 0)]), tree: np.array([_matrix(5000, 5000, 0)])}, names
+    )
+    (tmp_path / data.CROWNS_NAME).write_bytes(data.encode_records(records))
+    species = [{"name": name, "mesh": mesh} for name, mesh in zip(names, (coral, tree))]
+    assert meshed_species(species).tolist() == [True, False]
+    atlas = draw_atlas([flat_sprite(sprite, [LEAF])] * 2, names)
+    crowns = load_crowns(tmp_path, {"species": species}, {data.CROWNS_NAME}, atlas)
+    assert crowns.records["species"].tolist() == [1], "the render-only mesh pass draws coral"
+    assert not _band(crowns)["cover"].any(), "no crown stands over the coral's own top"
+    assert _band(crowns, x0=4100.0, y0=4100.0)["cover"].max() > 0.9, "the tree is drawn"
+
+
+def test_a_species_without_a_sprite_draws_no_crown(tmp_path):
+    records, _ = data.crown_records({"/A": np.array([_matrix(0, 0, 0)])}, ["A"])
+    (tmp_path / data.CROWNS_NAME).write_bytes(data.encode_records(records))
+    atlas = draw_atlas([flat_sprite(_l_sprite(), [LEAF])], ["B"])
+    species = [{"name": "A", "mesh": "/Trees/A"}]
+    crowns = load_crowns(tmp_path, {"species": species}, {data.CROWNS_NAME}, atlas)
+    assert crowns is not None and not len(crowns.records)
+
+
+def _tilted(x_tilt: float) -> SpritePlanes:
+    """A 3 m square crown whose every normal leans ``x_tilt`` toward +X."""
+    alpha = np.ones((24, 24), np.float32)
+    normal = np.zeros((24, 24, 3), np.float32)
+    normal[..., 0], normal[..., 2] = x_tilt, np.sqrt(1.0 - x_tilt**2)
+    colour = np.tile(np.float32(LEAF), (24, 24, 1))
+    return SpritePlanes(-150.0, -150.0, alpha, colour, normal, np.full((24, 24), 900.0, np.float32))
+
+
+def test_a_crown_is_lit_by_its_normals_turned_with_the_tree():
+    records = np.zeros(2, data.CROWN_RECORD)
+    records["scale"] = records["scale_z"] = records["axis_z"] = 1.0
+    records["x"], records["yaw"] = [0.0, 1000.0], [0.0, 180.0]
+    crowns = CrownSet(records, draw_atlas([_tilted(0.6)]))
+    step = 22.9
+    x = -400.0 + (np.arange(70) + 0.5) * step
+    y = -100.0 + (np.arange(9) + 0.5) * step
+    band = stamp_crowns(crowns, x, y, step)
+    east, west = band["normal"][4, 17], band["normal"][4, 61]
+    assert east[0] == pytest.approx(0.6, abs=0.02) and west[0] == pytest.approx(-0.6, abs=0.02)
+    lit = crown_sun(band, unlit=False)
+    assert lit[4, 61] > lit[4, 17], "the north-west sun lights the crown leaning west"
+    assert lit[0, 0] == np.float32(FLAT_SUN_DOT) and band["cover"][0, 0] == 0.0
+    upright = CrownSet(records[:1], draw_atlas([_tilted(0.0)]))
+    flat = stamp_crowns(upright, x, y, step)
+    for unlit in (False, True):
+        np.testing.assert_allclose(crown_sun(flat, unlit)[4, 17], FLAT_SUN_DOT, rtol=1e-5)
+    default = crown_sun(band, unlit=True)
+    assert default[4, 61] != lit[4, 61], "drawn unlit, the light's default sun"
+
+
+def test_a_sets_opacity_scales_its_crowns():
+    records = np.zeros(1, data.CROWN_RECORD)
+    records["scale"] = records["scale_z"] = records["axis_z"] = 1.0
+    atlas = draw_atlas([_tilted(0.0)])
+    x = (np.arange(20) - 10 + 0.5) * 22.9
+    whole = stamp_crowns(CrownSet(records, atlas), x, x, 22.9)
+    half = stamp_crowns(CrownSet(records, atlas, 0.5), x, x, 22.9)
+    assert whole["cover"][10, 10] == pytest.approx(1.0)
+    assert half["cover"][10, 10] == pytest.approx(0.5)
+    np.testing.assert_allclose(half["rgb"][10, 10], np.float32(LEAF) * 0.5, rtol=0.02)
+
+
+# ----------------------------------------------------------------------- colour
+
+
+def _scene(z_m, water=0.0, depth_m=0.0):
+    shape = (1, 3)
+    return {
+        "z_m": np.full(shape, z_m, np.float32),
+        "ndl_flat": np.float32(np.sin(np.radians(45.0))),
+        "water": {"cover": np.full(shape, water, np.float32),
+                  "depth_m": np.full(shape, depth_m, np.float32)},
+    }  # fmt: skip
+
+
+def _crown_terms(top_cm=1500.0):
+    shape = (1, 3)
+    return {
+        "cover": np.ones(shape, np.float32),
+        "rgb": np.tile(np.array(LEAF, np.float32), (*shape, 1)),
+        "top_cm": np.full(shape, top_cm, np.float32),
+        "ndl": np.full(shape, np.sin(np.radians(45.0)), np.float32),
+    }
+
+
+def _over(ground, scene, top_cm=1500.0):
+    layer = crown_layer(_crown_terms(top_cm), scene, PAINTED_PALETTE, 0.4, 1.0)
+    return over_crowns(ground, layer), layer
+
+
+def test_a_crown_is_hidden_under_a_higher_surface_and_whole_over_water_it_rises_from():
+    ground = np.full((1, 3, 3), 0.5, np.float32)
+    shown, _ = _over(ground, _scene(5.0))
+    assert (np.abs(shown - ground) > 0.1).all(), "a crown above the ground is drawn"
+    hidden, _ = _over(ground, _scene(40.0))
+    np.testing.assert_allclose(hidden, ground)
+    awash, layer = _over(ground, _scene(5.0, water=1.0, depth_m=0.25))
+    np.testing.assert_array_equal(awash, shown)
+    assert not layer["sunk"].any(), "10 m out of the water, nothing of it is under"
+    drowned, layer = _over(ground, _scene(5.0, water=1.0, depth_m=12.0))
+    np.testing.assert_array_equal(drowned, ground)
+    np.testing.assert_array_equal(layer["sunk"], 1.0)
+
+
+def test_the_waterline_cuts_a_crown_over_a_tenth_of_a_metre():
+    terms = _crown_terms()
+    terms["top_cm"] = np.array([[1490.0, 1500.0, 1510.0]], np.float32)
+    layer = crown_layer(terms, _scene(5.0, water=1.0, depth_m=10.0), PAINTED_PALETTE, 0.4, 1.0)
+    assert PAINTED_PALETTE["crowns"]["waterline_m"] == 0.1
+    np.testing.assert_allclose(layer["sunk"], [[1.0, 0.5, 0.0]], atol=1e-5)
+    dry = crown_layer(terms, _scene(-5.0, water=0.0, depth_m=30.0), PAINTED_PALETTE, 0.4, 1.0)
+    assert not dry["sunk"].any(), "no water, nothing sunk"
+
+
+def test_the_painted_palette_draws_crowns_instead_of_the_soft_canopy():
+    style = PAINTED_PALETTE["crowns"]
+    assert style["draw"] is True and style["canopy_kept"] == 0.0
+    assert set(style) >= {"opacity", "darkening", "chroma", "shade_clamp", "hidden_below_m",
+                          "waterline_m"}  # fmt: skip
+    assert "over_water" not in style, "a crown out of the water is drawn whole"
+    assert "dome_gain" not in style, "a crown is lit by its sprite's normals, not a dome"
+    json.dumps(style)

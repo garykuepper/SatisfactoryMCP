@@ -109,7 +109,8 @@ uv run satisfactory-mcp-web
 
 The map is at <http://127.0.0.1:8712>, and it follows your saves live as you play. It binds to
 localhost on purpose: the API answers with the contents of your save directory and has no
-authentication, so it is a local tool.
+authentication, so it is a local tool. To use another port, set `SATISFACTORY_WEB_PORT` for
+both the web server and the MCP server, so the map links the tools print point at it.
 
 ### Where your saves come from
 
@@ -119,6 +120,10 @@ Both locations are auto-detected:
   with `SATISFACTORY_SAVES`.
 - **Game data**: `CommunityResources/Docs/en-US.json` under common Steam and Epic install
   paths. Override with `SATISFACTORY_DOCS` (pointing at the `en-US.json` file itself).
+- **Your factory names and plans** are kept in the platform's user data directory
+  (`%LOCALAPPDATA%\satisfactory-mcp`). Override with `SATISFACTORY_USER_DATA`. Pointing it at
+  an empty folder lets you try naming without touching your real labels.
+  `satisfactory-mcp-web --port N` serves the map on another port.
 
 Saves are grouped into worlds; within a world the newest save is used by default, and every
 answer says which file it read.

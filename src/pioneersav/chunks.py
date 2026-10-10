@@ -72,10 +72,10 @@ def decompress_body(data: bytes, offset: int, *, old: bool = False) -> bytes:
                 "being written"
             )
         max_plain = r.i64()
-        algo = ZLIB if old else r.i8()
-        if algo != ZLIB:
+        compressor = ZLIB if old else r.i8()
+        if compressor != ZLIB:
             raise ParseError(
-                f"chunk at {start} uses compressor {algo}, only {ZLIB} (zlib) is known"
+                f"chunk at {start} uses compressor {compressor}, only {ZLIB} (zlib) is known"
             )
         first_compressed, first_plain = r.i64(), r.i64()
         compressed, plain = r.i64(), r.i64()
@@ -95,10 +95,10 @@ def decompress_body(data: bytes, offset: int, *, old: bool = False) -> bytes:
                 f"{compressed - r.remaining} -- the file is almost certainly still being "
                 "written, since the game rewrites a save in place every few minutes"
             )
-        # The maximum is checked against the sizes beside it rather than against 131072: a
-        # different block size is a writer's choice, not a format change, so requiring the
-        # constant would refuse a save the day the game picks another one.
-        if not 0 < max_plain or plain > max_plain or compressed > max_plain:
+        # The maximum bounds the uncompressed size beside it, not 131072: a different block
+        # size is a writer's choice, not a format change. The compressed size is not bounded,
+        # since zlib output of incompressible data is larger than its input.
+        if not 0 < max_plain or plain > max_plain:
             raise ParseError(
                 f"chunk at {start} declares a maximum of {max_plain} bytes but holds "
                 f"{compressed} compressed / {plain} uncompressed. The preamble contradicts "

@@ -18,14 +18,14 @@ want a unified and sleek interface, no duplicate vocabulary even to keep backwar
 Five rows closed that day as **breaks** rather than aliases: the retired spellings error and
 name their replacement. They closed in a chain, and the chain is the point — settling the
 radius syntax exposed that the two sides accepted different *places*, and settling that removed
-the last place resolver in the codebase that was not `resolve_origin`. **There is now one place
+the last place resolver in the codebase that was not `resolve_place`. **There is now one place
 grammar, one radius grammar and one resolver.** Two deliberate rows survive, because settling
 them is a judgement about the surface and not a defect.
 
 **Two sections were added on 2026-08-10 and are deliberately not counted above.**
 
 **P6, items 37–42** — in-game measurements the fluid model is waiting on. Not code defects at
-all: each is a rig to build in the owner's world, and every one of them needs him in the game.
+all: each is a rig to build in the reference world, and every one of them needs someone in the game.
 They are here because the alternative is that they are remembered rather than findable.
 
 **P7, items 43–55** — thirteen items that lived only in [roadmap.md](roadmap.md), in the parked
@@ -65,6 +65,7 @@ All closed. These produced a false belief in the reader, so nothing outranked th
 | 9c | `mam_research` said cost was checked against "carried, crates and the Dimensional Depot" when schema 19 deliberately took crates OUT of spendable stock. Both the tool note and the same stale sentence in `save-projection.md` now say storage containers, and name what does not count. | `a0a2ec9` |
 | 9d | `mam_research` ignored `research["unlocked_trees"]` and `research["ongoing"]`, so a node in an unopened tree read `READY` and research already underway read `todo`. Now `TREE SHUT` and `RUNNING {n}s`, both excluded from `startable=`. | `a0a2ec9` |
 | 9e | `trace_upstream` carried `Trace.ambiguous` and `Trace.truncated` and reported a possibly over-counted, depth-truncated walk as complete. Both print, and a truncated walk says it is a FLOOR. | `43fac87` |
+| 9f | `search_resource_nodes` read every oil node at twice its rate, a pure node 480 m³/min where an Oil Extractor gives 240: `node_rate` filtered extractors by `mAllowedResources`, which is empty on every miner, so Miner Mk.3 out-bid the extractor on crude. It filters by `mAllowedResourceForms` now, which the dump's cycle fields and the wiki's Crude Oil table confirm at 100% and 250%; the LP and `plan_layout` were always right. The rule is spatial-and-map.md §7.2c. | `486314d` |
 
 ## P1 — instructions the client could not follow, and dead ends
 
@@ -73,7 +74,7 @@ All closed.
 | # | What it was | Closed by |
 |---|---|---|
 | 10 | 15 tools printed "call again with `offset=N`" and had no `offset` parameter; only 5 of 44 accepted one. 23 of 50 tools take one now, `search_resource_nodes` among them, and the sentence is gated: passing `offset` to `render.table` is the caller's DECLARATION that it pages, and everything else says "narrow the query, or raise limit". | `91c4d90` |
-| 11 | `search_conduits` printed `connects: pipe:333 -> pipe:335` and told the reader to follow it while taking no run id. `resolve_origin` now accepts `chain:`/`pipe:` for every tool that resolves a place. The spelling was settled on the tool's ident; the map's belt popup keeps `chain #n` as a caption of the same number. | `8f6f03e` |
+| 11 | `search_conduits` printed `connects: pipe:333 -> pipe:335` and told the reader to follow it while taking no run id. `resolve_place` now accepts `chain:`/`pipe:` for every tool that resolves a place. The spelling was settled on the tool's ident; the map's belt popup keeps `chain #n` as a caption of the same number. | `8f6f03e` |
 | 12 | `diff_vs_save` ordered actions and dropped the instance ids it had already computed. Each actionable row carries `act_instances` — the verb's own machines, deliberately not the first three of `have_instances` — rendered as reusable `machine:` selectors. | `ce2ba66`, `ae87521` |
 | 13 | Bare platforms were listed by an index no tool accepted. `slab:<n>` now resolves for `describe_location`, `show_on_map` and `plan_factory(site_at=)`, and closes item 28 with it. | `1b6b242`, `56abf09`, `70df1ae` |
 | 14 | `diff_vs_save` documented a plan-id cross-check that `plan_factory` never printed for an unsaved plan. | `7d063c9`, `97ce1f6` |
@@ -83,12 +84,12 @@ All closed.
 All closed.
 
 **15 — CLOSED.** Floors, storage contents and crates were closed first: `factory_floors`
-(`interfaces/mcp/tools/floors.py`), `storage` and `crates` (`interfaces/mcp/tools/inventory.py`),
+(`interfaces/mcp/tools/factories/floors.py`), `storage` and `crates` (`interfaces/mcp/tools/inventory.py`),
 landed by `4f47e33`, `571a59a` and `3678718`.
 
 The power half was less blind than this row originally claimed, and the correction mattered
 because it changed the remedy. Power ISLANDS already reached text:
-`domain/factories/identity.py::bases` calls `graph.machine_components("power",
+`domain/factories/candidates.py::bases` calls `graph.machine_components("power",
 skip=graph.towers())` and `factory_map show=candidates` prints them under
 `## power islands (bases)`.
 
@@ -121,19 +122,19 @@ spot are written up in [save-projection.md](save-projection.md) §6.1a.
 **All eleven closed**, in one chain on 2026-08-10 under the owner's instruction: *one
 vocabulary, no alias kept alive for compatibility.* Each unification exposed the next
 divergence under it — the radius syntax showed that the two sides accepted different **places**,
-closing that removed the last place resolver which was not `resolve_origin`, and the inventory
+closing that removed the last place resolver which was not `resolve_place`, and the inventory
 taken for the last three rows turned up a fourth family nobody had named.
 
 **A correction, kept because the ledger is a record and not a scoreboard.** Until 2026-08-10
 three of these rows read "deliberately left alone" and "narrowed". **Nobody ever decided that.**
 The words were written on 2026-08-08 by the pass that closed the rows around them, in this
 file's voice, and a reader — including the assistant, later, out loud to the owner — took them
-for his ruling. They were open and unexamined the whole time.
+for a ruling. They were open and unexamined the whole time.
 
 - **Two radius grammars — CLOSED** (`538f08f`). `@` won on an argument rather than a
   preference: `save-projection.md` states that **commas inside one term are ORed**, so a radius
   as a third comma value made `near:` the one exception to a rule the language already had.
-  `near:<place>@<radius_m>` on both sides, parsed by one shared `origin.parse_near`, and the
+  `near:<place>@<radius_m>` on both sides, parsed by one shared `places.parse_near`, and the
   radius is now **required** — the machine side's undocumented 150 m default was the same
   complaint one level down. The comma form errors with the rewrite generated from the input.
   The grammar is written out in [selectors.md](selectors.md).
@@ -164,7 +165,7 @@ for his ruling. They were open and unexamined the whole time.
   `group` — renaming only the MCP parameter would have made that agreement worse. Its second,
   unrelated meaning went with the view row above.
 - **`near:` accepts a different set of PLACES on each side — CLOSED** (`798efca`). Both
-  selector modules are handed the world state and call `origin.resolve_origin`; **neither
+  selector modules are handed the world state and call `places.resolve_place`; **neither
   resolves a place itself any more**, which is what the divergence was actually made of. Seven
   kinds work everywhere `near:` appears — `x,y`, `me`, a factory, `node:<id>`, `slab:<n>`,
   `chain:<n>`/`pipe:<n>`, `plan:<name>` — and the two map facts among them resolve with no save
@@ -242,7 +243,7 @@ for his ruling. They were open and unexamined the whole time.
 
 ## P5 — capability already built, not yet reachable: WIRE IT UP
 
-Lukas's decision, 2026-08-02: **wire these up, do not delete them.** All closed but item 36,
+Decided 2026-08-02: **wire these up, do not delete them.** All closed but item 36,
 which was misfiled from the start.
 
 | # | What was unreachable | Closed by |
@@ -332,7 +333,7 @@ has capacity 14.87 m³, safely above the knee, and the two hypotheses predict es
 **42 — The free control: dismantle two pumps on one coal network. OPEN, not yet in the model
 document, and it costs about thirty seconds in-game.** Thirty-two Coal Generators in the owner's
 base sit **8.150 m above their extractors** at 100% uptime and 96% supply utilisation, which is
-the most flow-sensitive load he has — but every one of those networks has pumps on it, so none of
+the most flow-sensitive load it has — but every one of those networks has pumps on it, so none of
 them is currently evidence about machine head lift. Two of the networks carry only **two pumps
 each** (numbered components 0 and 18 by the walk that found them, so re-derive the numbering
 rather than trusting the index). Dismantling both pumps on **one** of them leaves 8 generators
@@ -440,6 +441,27 @@ already be smaller than remembered.
 conversation and neither has a written specification. **Write down what each would claim, and
 what save evidence supports it, before either is built.** Filed so they are not lost, not
 because they are ready.
+
+### One tagged-property walk
+
+**56 — Two walks over the same tagged-property streams.** The cooked game packages are read by
+two walks in `core/gameassets/packages/properties.py`. `tagged_properties` reads the tag the way
+UE 5.4 writes it: after `Size` comes a flag byte that says whether an array index, a GUID or an
+extension block follows, and the stream ends at a `None` name wherever the package keeps it. The
+map's curves, its atmosphere volumes and the sweep's tag dictionaries use it. `property_tags` is
+older and reads none of those blocks: it keeps the flag byte as a `BoolProperty` value, and it
+stops only at a `None` that is the package's name 0. The water actors, the mesh, material and
+ground-layer reads, the map area, the static-mesh reader and `PackageView` still use it, and
+the generators' outputs were made with it.
+
+Measured on 2026-10-07 over every level the sweep opens: the two walks disagree on 273,266 of
+422,929 streams, nearly all of them a `None` at a name index other than 0 (which the old walk
+does not take as the end) or an indexed tag. Moving the heightmap's water reads to
+the new walk changes the generator's water outputs, so it is a re-baseline with its own gate
+run rather than a refactor. The curves and the volumes read identically under both walks, and
+the sweep's tag dictionaries match the old `flagged_tags` on all 182,947 streams, which is why
+those moved and the rest did not. **Switch the remaining callers in one change, compare the
+water outputs before and after, and delete `property_tags` once nothing calls it.**
 
 ## Not doing, and why
 

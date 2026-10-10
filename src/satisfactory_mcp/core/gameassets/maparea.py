@@ -1,26 +1,10 @@
 """The game's own map areas: a 4096x4096 raster, and what each palette index is called.
 
-``/Game/FactoryGame/Interface/UI/Minimap/MapAreaPersistenLevel/MapareatexturePersistentLevel``
-is an ``FGMapAreaTexture``. It carries ``mDataWidth`` 4096, ``mAreaData`` -- 4096x4096 palette
-indices, row 0 north -- and ``mColorToArea``, one entry per index naming the ``UFGMapArea``
-object that index means and the bounding box of its extent in texels. This is the game's own
-biome geometry: exact polygon boundaries rasterised at 1.83 m, not an approximation of them.
-
-**A palette index resolves to one area by ``PublicExportHash``, never by package name.** This
-build ships thirty-five ``Area_*`` assets under eighteen package names -- ``Area_RedJungle_1``
-and ``Area_RedJungle_2`` are both ``.../Area_RedJungle`` -- and such a pair does not always
-mean one place: the two ``Area_crater`` assets carry different display names. The hash is
-unique across the container, so :meth:`PackageView.import_export_hash` against an asset's own
-export map says exactly which file.
-
-**The names are the game's own.** Each asset's default object carries ``mDisplayName``, an
-``FText`` whose history is a string-table reference, and the KEY is what is read here --
-``Area_Savanna_1`` announcing ``Locations/RockyDesert`` is the game saying those two areas are
-one named region. The localised string it points at lives in ``AllStringTables.locres``, which
-this reader does not open.
-
-Nothing here is artwork: the raster is palette indices, the areas are identifiers, and
-``mColorPalette`` is decoded only for the record -- it is a minimap legend of flat primaries.
+The ``FGMapAreaTexture`` ``MapareatexturePersistentLevel`` carries ``mAreaData`` -- palette
+indices, row 0 north, the game's own biome boundaries rasterised at 1.83 m -- and
+``mColorToArea``, naming the ``UFGMapArea`` each index means and its texel bounding box. Nothing
+here is artwork: the raster is indices, the areas are identifiers, and the names are the
+game's own string-table keys.
 """
 
 from __future__ import annotations
@@ -28,6 +12,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from .iostore import IoStore
 from .packages import PackageView, ScriptObjects, property_tags
 
 __all__ = [
@@ -127,7 +112,7 @@ class MapAreaError(Exception):
     expected and what was found, because the only response is to go and look at the asset."""
 
 
-def read_map_areas(store, scripts: ScriptObjects) -> MapAreas:
+def read_map_areas(store: IoStore, scripts: ScriptObjects) -> MapAreas:
     """Decode the map-area texture and resolve every palette index to one area asset. A shape
     that is not the known one means the asset was re-cooked, i.e. the game changed, and every
     check below refuses rather than decoding whatever is there."""
@@ -168,7 +153,7 @@ def read_map_areas(store, scripts: ScriptObjects) -> MapAreas:
 
     palette_raw = props["mColorPalette"]
     entries = struct.unpack_from("<i", palette_raw, 0)[0]
-    palette = tuple(tuple(palette_raw[4 + i * 4 : 8 + i * 4]) for i in range(entries))  # type: ignore[arg-type]
+    palette = tuple(struct.unpack_from("<4B", palette_raw, 4 + i * 4) for i in range(entries))
 
     areas, boxes = _colour_to_area(store, view, props["mColorToArea"])
     if len(areas) != entries:
@@ -186,7 +171,7 @@ def read_map_areas(store, scripts: ScriptObjects) -> MapAreas:
 
 
 def _colour_to_area(
-    store, view: PackageView, blob: bytes
+    store: IoStore, view: PackageView, blob: bytes
 ) -> tuple[tuple[Area | None, ...], tuple[tuple[int, int, int, int], ...]]:
     """``mColorToArea`` -> one :class:`Area` per palette index, plus each index's extent.
 
@@ -201,7 +186,7 @@ def _colour_to_area(
     pos = 4
     for index in range(count):
         tags, end = property_tags(blob, view.pkg.names, pos)
-        fields = {name: payload for name, _kind, payload, _value in tags}
+        fields = {tag.name: tag.payload for tag in tags}
         if "MapArea" not in fields:
             raise MapAreaError(
                 "an mColorToArea entry carries no MapArea reference -- the struct this reader "
@@ -222,21 +207,22 @@ def _colour_to_area(
                     "The areas moved, or one of them is no longer where the texture looks."
                 )
             areas.append(area)
-        boxes.append(
-            tuple(  # type: ignore[arg-type]
-                struct.unpack("<i", fields[key])[0] if key in fields else 0
-                for key in ("MinX", "MinY", "MaxX", "MaxY")
-            )
+        min_x, min_y, max_x, max_y = (
+            struct.unpack("<i", fields[key])[0] if key in fields else 0
+            for key in ("MinX", "MinY", "MaxX", "MaxY")
         )
+        boxes.append((min_x, min_y, max_x, max_y))
         pos = end
     return tuple(areas), tuple(boxes)
 
 
-def _areas_by_export_hash(store, scripts: ScriptObjects | None) -> dict[int, Area]:
+def _areas_by_export_hash(store: IoStore, scripts: ScriptObjects | None) -> dict[int, Area]:
     """Every ``Area_*`` asset beside the texture, keyed by the hash an import names it by.
 
-    A directory scan rather than a list, because a list is a claim about the game that goes
-    stale silently: this build has an ``Area_EasternDuneForest_1`` the texture never references.
+    By ``PublicExportHash``, never by package name: this build ships thirty-five ``Area_*``
+    assets under eighteen package names, and such a pair is not always one place -- the two
+    ``Area_crater`` assets carry different display names. A directory scan rather than a list,
+    because a list goes stale silently: ``Area_EasternDuneForest_1`` is never referenced.
     """
     out: dict[int, Area] = {}
     for path in sorted(store.by_path):
@@ -274,7 +260,9 @@ def _display_name(view: PackageView) -> tuple[str | None, str | None]:
     The property is an ``FText``: ``int32`` flags, one history byte, then the history's payload.
     History 11 is a string-table entry, whose payload is an ``FName`` table id and an ``FString``
     key. Anything else comes back as nothing rather than guessed at, because inventing a label
-    defeats a table whose point is that the labels come from the game.
+    defeats a table whose point is that the labels come from the game. The KEY is the answer
+    (``Area_Savanna_1`` announcing ``Locations/RockyDesert`` joins two areas into one region);
+    the localised string lives in ``AllStringTables.locres``, which this does not open.
     """
     for export in view.exports:
         payload = view.props(export["slot"]).get(_DISPLAY_NAME)
@@ -288,7 +276,7 @@ def _display_name(view: PackageView) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _view(store, path: str, scripts: ScriptObjects | None) -> PackageView:
+def _view(store: IoStore, path: str, scripts: ScriptObjects | None) -> PackageView:
     if path not in store.by_path:
         raise MapAreaError(
             f"{path} is not in the container. The map areas moved or were renamed, which "

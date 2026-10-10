@@ -1,8 +1,6 @@
 """What you own and where it is: stock by item, containers, and the crates on the ground.
 
-The text twins of ``/api/storage`` and ``/api/crates``. The projection has carried both
-tables since schemas 15 and 18 and only the map read them, so an assistant could be told
-"short 500 Quartz" and had no way to ask what was in the boxes.
+The text twins of ``/api/storage`` and ``/api/crates``.
 """
 
 from __future__ import annotations
@@ -11,29 +9,32 @@ from typing import Annotated
 
 from pydantic import Field
 
+from ....core.gamedata.model import GameData
 from ....domain.spatial import regions as regions_mod
-from ....domain.spatial.origin import resolve_origin
+from ....domain.spatial.places import resolve_place
+from ....domain.spatial.regions import RegionMap
 from ....domain.world.inventory import CRATE_KIND_TEXT, Holding
+from ....domain.world.state import WorldState
 from ....presenters.text import primitives as render
-from ..app import AsOf, Limit, _item_id, _state, mcp, retired
+from .. import app
+from ..params import AsOf, Limit
 
 #: How many item kinds a place lists before the rest become "+N more". Three names and a
 #: count read as a box; twelve names read as a wall.
 CONTENTS_KINDS = 3
 
 
-def _place(rm, holding: Holding) -> tuple[str, str]:
+def _place(regions: RegionMap, holding: Holding) -> tuple[str, str]:
     """A holding's region name and its coordinate in metres, both as printable cells."""
     if holding.pos is None:
         return "-", "-"
     x, y, _ = holding.pos
-    return rm.label_for(x, y).name or regions_mod.OFF_MAP, f"{x / 100:.0f},{y / 100:.0f}"
+    return regions.label_for(x, y).name or regions_mod.OFF_MAP, f"{x / 100:.0f},{y / 100:.0f}"
 
 
-def _contents(game, holding: Holding, kinds: int = CONTENTS_KINDS) -> str:
-    shown = [f"{render.num(n)} {game.item_name(i)}" for i, n in holding.items[:kinds]]
-    extra = len(holding.items) - len(shown)
-    return ", ".join(shown + ([f"+{extra} more"] if extra > 0 else [])) or "-"
+def _contents(game: GameData, holding: Holding, kinds: int = CONTENTS_KINDS) -> str:
+    held = [f"{render.num(n)} {game.item_name(i)}" for i, n in holding.items]
+    return render.capped(held, kinds, more=", +{n} more") or "-"
 
 
 def _fullness(holding: Holding) -> tuple[str, str]:
@@ -47,7 +48,101 @@ def _fullness(holding: Holding) -> tuple[str, str]:
     return fill, f"{holding.slots_used}/{holding.slots}"
 
 
-@mcp.tool(structured_output=False)
+def _stock_totals(
+    st: WorldState,
+    breakdown: dict[str, dict[str, float]],
+    wanted: str | None,
+    window: render.Page,
+    limit: int,
+    notes: list[str],
+) -> str:
+    """One row per item: spendable, and where the rest of it sits."""
+    g = st.game
+    rows = sorted(
+        ((i, v) for i, v in breakdown.items() if wanted is None or i == wanted),
+        key=lambda kv: (-kv[1]["spendable"], -kv[1]["machine"]),
+    )
+    table = render.table(
+        ("item", "spendable", "carried", "storage", "depot", "buffers", "crates"),
+        [
+            (
+                g.item_name(i),
+                render.num(v["spendable"]),
+                render.num(v["player"]) if v["player"] else "",
+                render.num(v["storage"]) if v["storage"] else "",
+                render.num(v["depot"]) if v["depot"] else "",
+                render.num(v["machine"]) if v["machine"] else "",
+                render.num(v["crate"]) if v["crate"] else "",
+            )
+            for i, v in window.of(rows)
+        ],
+        total=len(rows),
+        offset=window.start,
+        limit=limit,
+    )
+    notes.append("stock(item=..., where=True) says which containers hold one of them")
+    return render.envelope(
+        f"# {st.age_note}\n"
+        f"# {len(breakdown)} item kind(s) held, "
+        f"{sum(1 for v in breakdown.values() if v['spendable'])} of them spendable",
+        table,
+        notes,
+    )
+
+
+def _stock_places(
+    st: WorldState,
+    breakdown: dict[str, dict[str, float]],
+    wanted: str | None,
+    window: render.Page,
+    limit: int,
+    notes: list[str],
+) -> str:
+    """One row per container or crate holding the item, or holding anything at all."""
+    g = st.game
+    regions = regions_mod.load_regions()
+    holdings = st.inventory.holdings(wanted)
+    headers = ("amount" if wanted is not None else "holds", "place", "region", "x,y(m)", "source")
+    rows: list[tuple[str, ...]] = []
+    for h in window.of(holdings):
+        region, at = _place(regions, h)
+        rows.append(
+            (
+                render.num(h.amount_of(wanted)) if wanted is not None else _contents(g, h, 2),
+                g.building_name(h.cls) or h.cls,
+                region,
+                at,
+                h.source if h.crate_kind is None else f"crate({h.crate_kind})",
+            )
+        )
+
+    total: dict[str, float] = breakdown.get(wanted, {}) if wanted is not None else {}
+    summary = f"# {st.age_note}\n# " + (
+        render.kv(
+            [
+                ("item", g.item_name(wanted)),
+                ("spendable", render.num(total.get("spendable", 0.0))),
+                ("carried", render.num(total.get("player", 0.0))),
+                ("depot", render.num(total.get("depot", 0.0))),
+                ("in_buffers", render.num(total.get("machine", 0.0))),
+            ]
+        )
+        if wanted is not None
+        else f"{len(holdings)} place(s) hold something, biggest first"
+    )
+    notes.append(
+        "carried and Depot stock stands nowhere on the map, so it is on the summary line "
+        "rather than in a row"
+    )
+    notes.append("storage(item=...) says how full each of those containers is")
+    return render.envelope(
+        summary,
+        render.table(headers, rows, total=len(holdings), offset=window.start, limit=limit),
+        notes,
+    )
+
+
+@app.tool()
 def stock(
     item: Annotated[
         str | None, Field(description="one item by name; omit for everything you own")
@@ -72,20 +167,16 @@ def stock(
     item, with the region it stands in and its coordinate. Carried and Depot stock has no
     place, so it is reported on the summary line instead. Fluids are in m3.
     """
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
     g = st.game
 
-    wanted = None
+    wanted: str | None = None
     if item is not None:
-        wanted = _item_id(item)
+        wanted = app.resolve_item_id(item)
         if wanted is None:
             return f"no item matches {item!r}"
 
-    inv = st.inventory
-    breakdown = inv.breakdown()
+    breakdown = st.inventory.breakdown()
     if wanted is not None and wanted not in breakdown:
         return (
             f"# {st.age_note}\n"
@@ -101,86 +192,13 @@ def stock(
         ),
         "fluids are m3",
     ]
-
+    window = render.page(limit, offset, default=25)
     if not where:
-        rows = sorted(
-            ((i, v) for i, v in breakdown.items() if wanted is None or i == wanted),
-            key=lambda kv: (-kv[1]["spendable"], -kv[1]["machine"]),
-        )
-        start = max(0, offset)
-        table = render.table(
-            ("item", "spendable", "carried", "storage", "depot", "buffers", "crates"),
-            [
-                (
-                    g.item_name(i),
-                    render.num(v["spendable"]),
-                    render.num(v["player"]) if v["player"] else "",
-                    render.num(v["storage"]) if v["storage"] else "",
-                    render.num(v["depot"]) if v["depot"] else "",
-                    render.num(v["machine"]) if v["machine"] else "",
-                    render.num(v["crate"]) if v["crate"] else "",
-                )
-                for i, v in rows[start : start + render.clamp(limit, default=25)]
-            ],
-            total=len(rows),
-            offset=start,
-            limit=limit,
-        )
-        notes.append("stock(item=..., where=True) says which containers hold one of them")
-        return render.envelope(
-            f"# {st.age_note}\n"
-            f"# {len(breakdown)} item kind(s) held, "
-            f"{sum(1 for v in breakdown.values() if v['spendable'])} of them spendable",
-            table,
-            notes,
-        )
-
-    rm = regions_mod.load_regions()
-    holdings = inv.holdings(wanted)
-    # Named item: one number per place. No item: the place's biggest stacks, which is the
-    # same question asked of a world rather than of one item.
-    headers = ("amount" if wanted is not None else "holds", "place", "region", "x,y(m)", "source")
-    start = max(0, offset)
-    rows = []
-    for h in holdings[start : start + render.clamp(limit, default=25)]:
-        region, at = _place(rm, h)
-        rows.append(
-            (
-                render.num(h.amount_of(wanted)) if wanted is not None else _contents(g, h, 2),
-                g.building_name(h.cls) or h.cls,
-                region,
-                at,
-                h.source if h.crate_kind is None else f"crate({h.crate_kind})",
-            )
-        )
-
-    total = breakdown.get(wanted, {}) if wanted is not None else {}
-    summary = f"# {st.age_note}\n# " + (
-        render.kv(
-            [
-                ("item", g.item_name(wanted)),
-                ("spendable", render.num(total.get("spendable", 0.0))),
-                ("carried", render.num(total.get("player", 0.0))),
-                ("depot", render.num(total.get("depot", 0.0))),
-                ("in_buffers", render.num(total.get("machine", 0.0))),
-            ]
-        )
-        if wanted is not None
-        else f"{len(holdings)} place(s) hold something, biggest first"
-    )
-    notes.append(
-        "carried and Depot stock stands nowhere on the map, so it is on the summary line "
-        "rather than in a row"
-    )
-    notes.append("storage(item=...) says how full each of those containers is")
-    return render.envelope(
-        summary,
-        render.table(headers, rows, total=len(holdings), offset=start, limit=limit),
-        notes,
-    )
+        return _stock_totals(st, breakdown, wanted, window, limit, notes)
+    return _stock_places(st, breakdown, wanted, window, limit, notes)
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def storage(
     item: Annotated[
         str | None, Field(description="only containers holding this item, fullest first")
@@ -212,17 +230,14 @@ def storage(
     slots, stacking each item at its own stack size, and a buffer is its m3 over what the
     class holds. It is ``-`` where either number is unknown.
     """
-    if gone := retired(("kind", kind, "container_kind")):
+    if gone := app.retired(("kind", kind, "container_kind")):
         return gone
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
     g = st.game
 
-    wanted = None
+    wanted: str | None = None
     if item is not None:
-        wanted = _item_id(item)
+        wanted = app.resolve_item_id(item)
         if wanted is None:
             return f"no item matches {item!r}"
     want_kind = (container_kind or "").strip().casefold() or None
@@ -231,24 +246,53 @@ def storage(
     if want_kind not in (None, "solid", "fluid"):
         return f"! unknown container_kind {container_kind!r}. Choose from: solid, fluid, all"
 
-    origin, at = None, ""
+    origin: tuple[float, float] | None = None
+    at = ""
     if near is not None:
         try:
-            origin, at = resolve_origin(st, near)
+            origin, at = resolve_place(st, near)
         except ValueError as exc:
             return f"! {exc}"
 
-    # The census counts every container in the world and the filters decide only which are
-    # SHOWN: a header that moved with `item=` would answer "how many containers have I got"
-    # with the number holding concrete.
+    # The census counts every container and the filters decide only which are SHOWN.
     containers = [h for h in st.inventory.holdings() if h.source == "storage"]
+    hits = _shown_containers(containers, want_kind, wanted, empty, origin, radius_m)
+    scope = f" within {radius_m:g}m of {at}" if origin is not None else ""
+    if wanted is not None:
+        scope += f", holding {g.item_name(wanted)}"
+
+    regions = regions_mod.load_regions()
+    window = render.page(limit, offset, default=15)
+    rows = [_container_row(g, regions, h) for h in window.of(hits)]
+    return render.envelope(
+        _storage_summary(st, containers, len(hits), scope),
+        render.table(
+            ("container", "region", "x,y(m)", "fill", "used", "holds"),
+            rows,
+            total=len(hits),
+            offset=window.start,
+            limit=limit,
+        ),
+        _storage_notes(containers, hits, empty),
+    )
+
+
+def _shown_containers(
+    containers: list[Holding],
+    want_kind: str | None,
+    wanted: str | None,
+    empty: bool,
+    origin: tuple[float, float] | None,
+    radius_m: float,
+) -> list[Holding]:
+    """The containers the filters keep: kind, item (fullest first), non-empty, in reach."""
     hits = [h for h in containers if want_kind is None or h.kind == want_kind]
     if wanted is not None:
         hits = sorted((h for h in hits if h.amount_of(wanted)), key=lambda h: -h.amount_of(wanted))
     if not empty:
         hits = [h for h in hits if h.total]
     if origin is not None:
-        # ``resolve_origin`` answers in centimetres, which is what the placements are in.
+        # ``resolve_place`` answers in centimetres, which is what the placements are in.
         reach = (radius_m * 100.0) ** 2
         hits = [
             h
@@ -256,39 +300,37 @@ def storage(
             if h.pos is not None
             and (h.pos[0] - origin[0]) ** 2 + (h.pos[1] - origin[1]) ** 2 <= reach
         ]
+    return hits
 
+
+def _storage_summary(st: WorldState, containers: list[Holding], shown: int, scope: str) -> str:
     solids = [h for h in containers if h.kind == "solid"]
     fluids = [h for h in containers if h.kind == "fluid"]
-    scope = f" within {radius_m:g}m of {at}" if origin is not None else ""
-    if wanted is not None:
-        scope += f", holding {g.item_name(wanted)}"
-    summary = (
+    return (
         f"# {st.age_note}\n"
         f"# {len(containers)} container(s): {len(solids)} solid "
         f"({sum(1 for h in solids if h.total)} with something in), "
         f"{len(fluids)} fluid buffer(s); "
         f"{render.num(sum(h.total for h in solids))} item(s), "
         f"{render.num(sum(h.total for h in fluids))} m3\n"
-        f"# {len(hits)} shown{scope}"
+        f"# {shown} shown{scope}"
     )
 
-    rm = regions_mod.load_regions()
-    start = max(0, offset)
-    rows = []
-    for h in hits[start : start + render.clamp(limit, default=15)]:
-        region, where = _place(rm, h)
-        fill, used = _fullness(h)
-        rows.append(
-            (
-                g.building_name(h.cls) or h.cls,
-                region,
-                where,
-                fill,
-                used,
-                _contents(g, h),
-            )
-        )
 
+def _container_row(g: GameData, regions: RegionMap, holding: Holding) -> tuple[str, ...]:
+    region, where = _place(regions, holding)
+    fill, used = _fullness(holding)
+    return (
+        g.building_name(holding.cls) or holding.cls,
+        region,
+        where,
+        fill,
+        used,
+        _contents(g, holding),
+    )
+
+
+def _storage_notes(containers: list[Holding], hits: list[Holding], empty: bool) -> list[str]:
     notes = [
         (
             "fill is used slots over slots for a container (each item at its own stack size) "
@@ -309,20 +351,10 @@ def storage(
             "widen radius_m or drop a filter rather than reading it as an empty world"
         )
     notes.append("stock() is the same material summed per item rather than per box")
-    return render.envelope(
-        summary,
-        render.table(
-            ("container", "region", "x,y(m)", "fill", "used", "holds"),
-            rows,
-            total=len(hits),
-            offset=start,
-            limit=limit,
-        ),
-        notes,
-    )
+    return notes
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def crates(
     save: str | None = None,
     world: str | None = None,
@@ -340,18 +372,15 @@ def crates(
     Whose crate it is the save does not say: the crate's only saved property is its type,
     so there is no owner, no timestamp and no cause to report.
     """
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
     g = st.game
 
     holdings = [h for h in st.inventory.holdings() if h.source == "crate"]
-    rm = regions_mod.load_regions()
-    start = max(0, offset)
-    rows = []
-    for h in holdings[start : start + render.clamp(limit, default=25)]:
-        region, at = _place(rm, h)
+    regions = regions_mod.load_regions()
+    window = render.page(limit, offset, default=25)
+    rows: list[tuple[object, ...]] = []
+    for h in window.of(holdings):
+        region, at = _place(regions, h)
         z = "-" if h.pos is None else f"{h.pos[2] / 100:.0f}"
         rows.append(
             (
@@ -385,7 +414,7 @@ def crates(
             ("kind", "region", "x,y(m)", "z(m)", "kinds", "items", "contents"),
             rows,
             total=len(holdings),
-            offset=start,
+            offset=window.start,
             limit=limit,
         ),
         notes,

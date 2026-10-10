@@ -35,7 +35,7 @@ not an argument about whether to ship.
 | 1.5 | Where the broken machine is, on the map, instead of a table of instance ids. | `4fa7e0f` | `blocked` is not a fault on a mature base — 326 machines are blocked world-wide. Painting them the same red as starved cries wolf, so the two carry different weights. |
 | 1.6 | Water, without being told there is none. `search_resource_nodes(resource="Water")` used to answer "0 free and reachable" on a map that is 32.4% water. | `c97853e` | Open water carries no node, and the answer has to say that rather than imply a missing table. Part (b), a `water_m`/`lift_m` column, was correctly held for the terrain window and arrived with it (`cfee408`). |
 | 1.7 | A coal plant with a broken water pipe, told from one running flat out. | `a6305d8` | A load-following generator legitimately reads below 1.0, so the empty-tank test leads and uptime only corroborates. All 52 generators read 1.0 today; the value is naming *which* plant on the evening one does not. |
-| 1.8 | Whether the pad you reserved clears the belt and fits between the cliffs. | `898e77f`; `routers/plans.py`, `frontend/src/plans.ts` | Worth a lot the evening a siting is stored and nothing the other four. `siting.contains_cm` was already written as the explicit inverse of the frontend's `footprintCorners` — the two halves agreed about the rectangle and had never met. |
+| 1.8 | Whether the pad you reserved clears the belt and fits between the cliffs. | `898e77f`; `routers/plans/plan_index.py`, `frontend/src/map/drawn/plan-sitings.ts` | Worth a lot the evening a siting is stored and nothing the other four. `siting.contains_cm` was already written as the explicit inverse of the frontend's `footprintCorners` — the two halves agreed about the rectangle and had never met. |
 
 ---
 
@@ -164,15 +164,17 @@ Two are defused. Four are live, and their ordering is unchanged.
 4. **Both invariant channels unread.** p = whenever a patch breaks normalisation; damage =
    publishing a smaller world and calling it the world, silently. See §3.
 5. **`/api/worlds` publishes the Windows username and SteamID64, and the server accepts any Host
-   header.** **DEFERRED by Lukas, 2026-08-09**, on his own environment: the machine sits behind
-   NAT on a household network with two people on it, so the exposure he cares about is not
-   there. Recorded rather than closed, and with one honest asterisk — **that reasoning is his
+   header.** **DEFERRED 2026-08-09**, on the maintainer's own environment: the machine sits behind
+   NAT on a household network with two people on it, so the exposure that matters there is not
+   present. Recorded rather than closed, and with one honest asterisk — **that reasoning is one
    network's, not the code's.** The repo is public, and a stranger who clones it inherits the
    same behaviour without inheriting the NAT, so this stays on the list for the stranger-facing
    cluster in §5 and should be revisited before the project is advertised anywhere.
+   **Partly closed 2026-09-27:** every non-GET request now passes a Host/Origin guard
+   (frontend_vision.md §9.2), added with the first write routes. Reads still accept any Host.
    Low p in any case — it needs a hostile page open while the map runs, and DNS rebinding
    defeats the absent CORS header. Fix is a Host allowlist with an env override. Caveat:
-   dropping `path` is costlier than pitched, because `routers/world.py:41` documents it as the
+   dropping `path` is costlier than pitched, because `routers/world/worlds.py:41` documents it as the
    pin `?save=` takes back verbatim, so schema, frontend and the filename resolver's
    cross-world ambiguity move together.
 6. **`cohere.propose` is between quadratic and cubic.** 0.35 s at 581 machines, 10.92 s at 2,324,
@@ -216,10 +218,10 @@ Unchanged, and the section most worth reading before proposing anything.
   nobody built.
 - **Viewport paging.** Weeks across every router and the frontend, for a page that is 0.54 s warm
   at 581 machines.
-- **CI.** Changes no answer he gets. Contributor infrastructure for a repo with one contributor.
+- **CI.** Changes no answer the player gets. Contributor infrastructure for a repo with one contributor.
   (Counter, recorded: it is the only thing that makes a stranger's PR mean anything, and 44 of
   111 test files are integration-marked. Revisit only if the repo gets contributors.)
-- **The wiki/MCP directory listing.** On the player-value axis this is negative: it spends his
+- **The wiki/MCP directory listing.** On the player-value axis this is negative: it spends the maintainer's
   evenings on other people's modded and Linux installs. If ever done, it must come after the
   modded-save note and a README install step, per its own risk section.
 - **Co-op / dedicated-server support**, **the README transcript**, **the README's `data/local`

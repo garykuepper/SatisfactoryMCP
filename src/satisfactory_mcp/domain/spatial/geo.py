@@ -11,14 +11,18 @@ Everything in this module is derived and exact. Fuzzy biome *names* live in
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 __all__ = [
     "CM_PER_M",
     "DIRECTIONS",
+    "FIELD_LINK_M",
     "GRID_CELL",
+    "MAP_SQUARE_M",
     "Cluster",
+    "PlacedT",
     "bbox",
     "bearing_deg",
     "centroid",
@@ -29,9 +33,15 @@ __all__ = [
     "distance_m",
     "grid_cell",
     "in_direction",
+    "inside",
+    "xy_of",
 ]
 
 CM_PER_M = 100.0
+
+#: Single-linkage distance that recovers the real resource fields: the widest oil field
+#: spreads 288 m, far less than any gap between two fields.
+FIELD_LINK_M = 200.0
 
 #: Biome grid: 1.024 km cells, numbered from the SOUTH-WEST corner. [WIKI]
 GRID_CELL = 102_400.0
@@ -42,6 +52,9 @@ GRID_Y0_SOUTH = 302_800.0  # south edge of row Y0
 #: ``data/world_resource_nodes.json`` and ``data/world_collectibles.json``, and
 #: reproducible from those two files alone.
 CONTENT_BBOX = (-298_838.0, -314_104.0, 406_564.0, 304_196.0)  # minx, miny, maxx, maxy
+
+#: The in-game map square in metres (minx, miny, maxx, maxy); ``tiles.DEFAULT_MAP_BOUNDS_M``.
+MAP_SQUARE_M = (-3247.0, -3750.0, 4253.0, 3750.0)
 
 #: Compass bearings in degrees, clockwise from north.
 DIRECTIONS: dict[str, float] = {
@@ -125,10 +138,10 @@ def _hemisphere(x: float, y: float, direction: str) -> bool:
     return _angle_gap(b, target) <= 90.0
 
 
-def distance_m(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Planar XY distance in metres. Z is excluded: it matters for pipe head, not for
-    proximity, where a 40 m climb is noise against a 400 m walk."""
-    return math.dist(a, b) / CM_PER_M
+def distance_m(a: Sequence[float], b: Sequence[float]) -> float:
+    """Planar XY distance in metres between two cm points; any Z is ignored. It matters for
+    pipe head, not for proximity, where a 40 m climb is noise against a 400 m walk."""
+    return math.dist(a[:2], b[:2]) / CM_PER_M
 
 
 def distance_3d_m(a: Sequence[float], b: Sequence[float]) -> float:
@@ -167,6 +180,19 @@ def bbox(points: Sequence[tuple[float, float]]) -> tuple[float, float, float, fl
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def inside(point: tuple[float, float], polygon: Sequence[tuple[float, float]]) -> bool:
+    """Even-odd test: whether ``point`` falls within ``polygon``, both in the same units."""
+    x, y = point
+    hit = False
+    n = len(polygon)
+    for i in range(n):
+        ax, ay = polygon[i]
+        bx, by = polygon[i - 1]
+        if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+            hit = not hit
+    return hit
+
+
 def diameter_m(points: Sequence[tuple[float, float]]) -> float:
     """Largest pairwise distance in metres -- the honest measure of spread."""
     if len(points) < 2:
@@ -178,11 +204,35 @@ def diameter_m(points: Sequence[tuple[float, float]]) -> float:
     )
 
 
+#: A row placed by its ``x``, ``y`` and ``z`` keys in centimetres: a node row, or a
+#: building's point.
+PlacedT = TypeVar("PlacedT", bound=Mapping[str, object])
+
+
+def _number(member: Mapping[str, object], key: str) -> float:
+    value = member[key]
+    if not isinstance(value, int | float):
+        raise TypeError(f"{key} is {value!r}, not a number")
+    return value
+
+
+def _word(member: Mapping[str, object], key: str) -> str:
+    value = member[key]
+    if not isinstance(value, str):
+        raise TypeError(f"{key} is {value!r}, not a string")
+    return value
+
+
+def xy_of(member: Mapping[str, object]) -> tuple[float, float]:
+    """The ``x``, ``y`` of a placed row, in centimetres."""
+    return _number(member, "x"), _number(member, "y")
+
+
 @dataclass
-class Cluster:
+class Cluster(Generic[PlacedT]):
     """A group of nearby nodes. Named by CONTENT, never by biome."""
 
-    members: list[dict]
+    members: list[PlacedT]
 
     @property
     def size(self) -> int:
@@ -192,14 +242,14 @@ class Cluster:
     def centroid(self) -> tuple[float, float, float]:
         n = len(self.members)
         return (
-            sum(m["x"] for m in self.members) / n,
-            sum(m["y"] for m in self.members) / n,
-            sum(m["z"] for m in self.members) / n,
+            sum(_number(m, "x") for m in self.members) / n,
+            sum(_number(m, "y") for m in self.members) / n,
+            sum(_number(m, "z") for m in self.members) / n,
         )
 
     @property
     def diameter_m(self) -> float:
-        return diameter_m([(m["x"], m["y"]) for m in self.members])
+        return diameter_m([xy_of(m) for m in self.members])
 
     @property
     def grid_cell(self) -> str:
@@ -213,26 +263,24 @@ class Cluster:
         cluster merges 6 well satellites with a plain node 85 m away, and reading 'well' off
         the first understates that field by 120 m3/min.
         """
-        out: dict[str, int] = {}
-        for m in self.members:
-            out[m["kind"]] = out.get(m["kind"], 0) + 1
-        return out
+        return self._tally("kind")
 
     def purities(self) -> dict[str, int]:
+        return self._tally("purity")
+
+    def _tally(self, key: str) -> dict[str, int]:
         out: dict[str, int] = {}
         for m in self.members:
-            out[m["purity"]] = out.get(m["purity"], 0) + 1
+            word = _word(m, key)
+            out[word] = out.get(word, 0) + 1
         return out
 
 
-def cluster(nodes: list[dict], link_m: float = 200.0) -> list[Cluster]:
-    """Single-linkage clustering on XY.
-
-    200 m is the empirically right link distance: it recovers the real oil fields
-    (max within-field spread 288 m, far smaller than any between-field gap).
-    """
+def cluster(nodes: Sequence[PlacedT], link_m: float = FIELD_LINK_M) -> list[Cluster[PlacedT]]:
+    """Single-linkage clustering on XY, by default into the fields ``FIELD_LINK_M`` joins."""
     remaining = list(nodes)
-    out: list[Cluster] = []
+    points = {id(node): xy_of(node) for node in remaining}
+    out: list[Cluster[PlacedT]] = []
     while remaining:
         seed = remaining.pop()
         group = [seed]
@@ -240,8 +288,8 @@ def cluster(nodes: list[dict], link_m: float = 200.0) -> list[Cluster]:
         while changed:
             changed = False
             for cand in list(remaining):
-                cp = (cand["x"], cand["y"])
-                if any(distance_m(cp, (m["x"], m["y"])) <= link_m for m in group):
+                cp = points[id(cand)]
+                if any(distance_m(cp, points[id(m)]) <= link_m for m in group):
                     group.append(cand)
                     remaining.remove(cand)
                     changed = True

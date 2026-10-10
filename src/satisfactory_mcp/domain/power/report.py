@@ -2,26 +2,89 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from ...core.gamedata.model import GameData
+from typing_extensions import TypedDict
 
-__all__ = ["PowerLedger", "dry_input_classes", "dry_inputs", "measured_share"]
+from ...core.gamedata.constants import BUILDING_CLASS_ALIASES
+from ...core.gamedata.model import Building, GameData
+from ...core.saveio.records import instance_leaf
+from ...core.saveio.schema import (
+    BuildableRecord,
+    ExtractorRecord,
+    GeneratorRecord,
+    MachineRecord,
+    Projection,
+)
+from .views import GeneratorTotal, PowerReport, StarvedEntry
+
+__all__ = [
+    "BIOMASS_BURNERS",
+    "NO_FUEL",
+    "MachineGroups",
+    "PowerLedger",
+    "biomass_note",
+    "dry_input_classes",
+    "dry_inputs",
+    "generator_building",
+    "measured_share",
+    "starved_cause",
+    "wired_actors",
+]
 
 #: Stands in for a fuel class where the save records none -- a hand-fed burner sitting
 #: empty. Not an item name; it is printed as it reads.
 NO_FUEL = "(no fuel)"
 
+#: Rated hand-fed burners, out of generation unless asked for: their MW is a player's arm,
+#: not a plant (frontend_vision.md, "Decided 2026-09-27").
+BIOMASS_BURNERS = frozenset(
+    {
+        "Build_GeneratorBiomass_C",
+        "Build_GeneratorBiomass_Automated_C",
+    }
+)
 
-def measured_share(record: dict) -> float | None:
+
+def wired_actors(projection: Projection) -> frozenset[str] | None:
+    """Every actor at either end of a power edge, or ``None`` when the projection carries no
+    power layer at all -- an older projection, where no record may be called unwired."""
+    payload = projection.get("graph") or {}
+    if "power" not in payload:
+        return None
+    actors = payload.get("actors") or []
+    return frozenset(actors[i] for row in payload["power"] for i in row[:2] if 0 <= i < len(actors))
+
+
+def generator_building(game: GameData, cls: str) -> Building | None:
+    """The game-data building for a generator class, through the save-to-dump aliases."""
+    return game.buildings.get(cls) or game.buildings.get(BUILDING_CLASS_ALIASES.get(cls, ""))
+
+
+def starved_cause(missing: list[str] | tuple[str, ...]) -> str:
+    """What a starved generator lacks, in one phrase."""
+    named = [m for m in missing if m != NO_FUEL]
+    return "out of " + ", ".join(named) if named else "no fuel loaded"
+
+
+def biomass_note(report: PowerReport) -> str:
+    """The one line naming what ``biomass=False`` left out, or "" when nothing was."""
+    n = report.get("biomass_generators") or 0
+    if not n or (report.get("biomass_mw") or 0) <= 0:
+        return ""
+    return (
+        f"+{report['biomass_mw']:,.0f} MW biomass not counted: {n} hand-fed burner(s) left "
+        "out of generation and headroom; pass biomass=true to count them"
+    )
+
+
+def measured_share(record: BuildableRecord) -> float | None:
     """How much of a machine's rated draw the save says it is really taking, 0..1.
 
     ``None`` where the machine keeps no productivity monitor. A caller weighting a machine's
-    DRAW must charge such a machine IN FULL: no monitor is not evidence of idleness, and
-    treating it as idle would make the measured figure optimistic in exactly the case
-    nothing can check it. The safe direction inverts for output -- see
-    ``domain/factories/query.py`` -- so a caller weighting production must not copy that
-    rule across.
+    DRAW must charge such a machine IN FULL: no monitor is not evidence of idleness. The safe
+    direction inverts for output -- see ``domain/factories/query.py`` -- so a caller
+    weighting production must not copy that rule across.
     """
     uptime = record.get("uptime") or {}
     window = uptime.get("window_s") or 0.0
@@ -30,15 +93,19 @@ def measured_share(record: dict) -> float | None:
     return (uptime.get("produce_s") or 0.0) / window
 
 
-def dry_inputs(game: GameData, record: dict) -> tuple[str, ...]:
+def _never_ran(record: BuildableRecord) -> bool:
+    """Whether the machine's monitor saw it produce nothing at all; False without a monitor."""
+    share = measured_share(record)
+    return share is not None and share <= 0.0
+
+
+def dry_inputs(game: GameData, record: BuildableRecord) -> tuple[str, ...]:
     """Which of a generator's inputs its fuel inventory has run out of, by item name.
 
     Empty when it holds everything it burns, and empty when the record carries no fuel
-    inventory at all -- an absent buffer is not an empty one.
-
-    A coal plant's fuel inventory holds its coal AND its supplemental water, so asking
-    whether that inventory is empty cannot see the failure worth catching: a full hopper
-    behind a broken water pipe. Each class the generator needs is tested by name instead.
+    inventory at all -- an absent buffer is not an empty one. Each class is tested by name,
+    because a coal plant's one inventory holds coal AND water, and a full hopper behind a
+    broken water pipe is the failure worth catching.
     """
     return tuple(
         NO_FUEL if cls == NO_FUEL else game.item_name(cls)
@@ -46,7 +113,7 @@ def dry_inputs(game: GameData, record: dict) -> tuple[str, ...]:
     )
 
 
-def dry_input_classes(game: GameData, record: dict) -> tuple[str, ...]:
+def dry_input_classes(game: GameData, record: BuildableRecord) -> tuple[str, ...]:
     """`dry_inputs` by item class, for callers that have to join on one. Carries the bare
     ``NO_FUEL`` marker through, which is a state and not a class."""
     fuel = (record.get("buffers") or {}).get("fuel")
@@ -54,16 +121,85 @@ def dry_input_classes(game: GameData, record: dict) -> tuple[str, ...]:
         return ()
     held = fuel.get("items") or {}
     building = game.buildings.get(record.get("cls", ""))
-    burning = record.get("fuel")
+    burning: str | None = record.get("fuel")
     spec = None
     if building is not None and burning:
         spec = next((f for f in building.fuels if f.fuel_class == burning), None)
-    if spec is None:
+    if spec is None or building is None:
         return () if any(v > 0 for v in held.values()) else (NO_FUEL,)
     wanted = [spec.fuel_class]
     if building.requires_supplemental and spec.supplemental_class:
         wanted.append(spec.supplemental_class)
     return tuple(cls for cls in wanted if not held.get(cls))
+
+
+def _generator_mw(building: Building | None, record: BuildableRecord) -> float:
+    if building is None:
+        return 0.0
+    clock = record.get("clock") or 1.0
+    if not building.power_production_mw and building.variable_power_factor:
+        return building.variable_power_factor * clock  # geothermal: normal-geyser average
+    return building.power_production_mw * clock
+
+
+@dataclass
+class _GenerationTally:
+    """Generation capacity, the plants that are not capacity, and what was left out."""
+
+    by_generator: dict[str, GeneratorTotal] = field(default_factory=dict[str, GeneratorTotal])
+    total_mw: float = 0.0
+    unmodellable: list[str] = field(default_factory=list[str])
+    starved: list[StarvedEntry] = field(default_factory=list[StarvedEntry])
+    starved_mw: float = 0.0
+    unwired: int = 0
+    unwired_mw: float = 0.0
+    burners: int = 0
+    burner_mw: float = 0.0
+
+
+@dataclass
+class _DrawTally:
+    """Draw, nameplate and measured, and what was left out of it."""
+
+    draw_mw: float = 0.0
+    measured_mw: float = 0.0
+    monitored: int = 0
+    unmonitored: int = 0
+    paused: int = 0
+    unwired: int = 0
+    unwired_mw: float = 0.0
+    unwired_paused: int = 0
+
+    def charge(self, rated: float | None, record: BuildableRecord, wired: bool) -> None:
+        """Add one machine to both totals, weighting the measured one by uptime."""
+        if not wired:
+            self.unwired += 1
+            if record.get("paused"):
+                self.unwired_paused += 1
+            elif rated is not None:
+                self.unwired_mw += rated
+            return
+        if record.get("paused"):
+            self.paused += 1
+            return
+        if rated is None:
+            return
+        self.draw_mw += rated
+        share = measured_share(record)
+        if share is None:
+            self.unmonitored += 1
+            self.measured_mw += rated
+        else:
+            self.monitored += 1
+            self.measured_mw += rated * share
+
+
+class MachineGroups(TypedDict):
+    """The record lists a ledger reads: a whole projection, or one circuit's share of it."""
+
+    machines: list[MachineRecord]
+    extractors: list[ExtractorRecord]
+    generators: list[GeneratorRecord]
 
 
 @dataclass
@@ -74,119 +210,102 @@ class PowerLedger:
     the total to report it.
     """
 
-    projection: dict
+    projection: MachineGroups
     game: GameData
     paused_count: int = 0
+    wired: frozenset[str] | None = None
 
-    def power_report(self) -> dict:
-        """Generation capacity, and draw both nameplate and measured.
+    def _is_wired(self, record: BuildableRecord) -> bool:
+        return self.wired is None or instance_leaf(record["instance"]) in self.wired
 
-        Uptime is the projection's 300 s productivity monitor, carried by **524 of 570**
-        records on the reference save. Both draws are reported because they answer different
-        questions:
-
-        * ``headroom_mw`` (nameplate) is the **safe** figure -- what is free if everything
-          currently built ran at once. Energising a block can un-starve idle machines
-          downstream, so this is the one not to exceed if you cannot watch it.
-        * ``measured_headroom_mw`` is the **current** figure, weighted by how much of the
-          factory is actually running.
-
-        They are far apart: on the reference save nameplate draw is **6,901 MW** against a
-        measured **2,389 MW**, so 649 MW of headroom nameplate against roughly
-        **5,161 MW** actual.
-
-        A machine with no productivity monitor is charged at full nameplate on both sides:
-        unknown utilisation must not read as idle. Generators are capacity either way,
-        since they burn to meet demand rather than at a rate of their own. Paused buildings
-        are excluded from both sides.
-
-        ``starved_generators`` is the exception to "generation is capacity": a plant with a
-        dry input is not capacity, it is a number that will not appear when the grid asks
-        for it. It names each one, since knowing WHICH plant is the whole value.
-        """
-        gen: dict[str, dict] = {}
-        total_mw = 0.0
-        variable: list[str] = []
-        starved: list[dict] = []
-        starved_mw = 0.0
-        for g in self.projection.get("generators", ()):
-            if g.get("paused"):
+    def _generation(self, biomass: bool) -> _GenerationTally:
+        tally = _GenerationTally()
+        for generator_record in self.projection.get("generators", ()):
+            cls = generator_record["cls"]
+            building = generator_building(self.game, cls)
+            mw = _generator_mw(building, generator_record)
+            if not self._is_wired(generator_record):
+                tally.unwired += 1
+                tally.unwired_mw += 0.0 if generator_record.get("paused") else mw
                 continue
-            b = self.game.buildings.get(g["cls"])
-            if b is None:
-                variable.append(g["cls"])  # e.g. the two biomass classes absent from Docs
+            if generator_record.get("paused"):
                 continue
-            clock = g.get("clock") or 1.0
-            mw = b.power_production_mw * clock
-            if not b.power_production_mw and b.variable_power_factor:
-                mw = b.variable_power_factor * clock  # geothermal: normal-geyser average
-            entry = gen.setdefault(g["cls"], {"name": b.name, "count": 0, "mw": 0.0})
+            if not biomass and cls in BIOMASS_BURNERS:
+                tally.burners += 1
+                tally.burner_mw += mw
+                continue
+            if building is None:
+                tally.unmodellable.append(cls)  # the HUB's built-in burner, absent from Docs
+                continue
+            entry = tally.by_generator.setdefault(
+                cls, {"name": building.name, "count": 0, "mw": 0.0}
+            )
             entry["count"] += 1
             entry["mw"] += mw
-            total_mw += mw
-            # The DRY INPUT decides; uptime only corroborates. A generator load-follows, so
-            # it legitimately reads below 1.0 with full tanks and calling that starved would
-            # condemn every healthy plant on a quiet grid. Zero is the corroboration, and a
-            # plant with no monitor gets none -- so it is left alone rather than accused.
-            missing = dry_inputs(self.game, g)
-            if missing and measured_share(g) == 0.0:
-                starved.append(
+            tally.total_mw += mw
+            # The DRY INPUT decides and a zero uptime corroborates: a generator load-follows,
+            # and one with no monitor is left alone rather than accused.
+            missing = dry_inputs(self.game, generator_record)
+            if missing and _never_ran(generator_record):
+                tally.starved.append(
                     {
-                        "instance": g["instance"].rsplit(".", 1)[-1],
-                        "name": b.name,
+                        "instance": instance_leaf(generator_record["instance"]),
+                        "name": building.name,
                         "mw": mw,
                         "missing": list(missing),
                     }
                 )
-                starved_mw += mw
+                tally.starved_mw += mw
+        return tally
 
-        draw = 0.0
-        measured = 0.0
-        monitored = 0
-        unmonitored = 0
-
-        def _charge(rated: float, record: dict) -> None:
-            """Add one machine to both totals, weighting the measured one by uptime."""
-            nonlocal draw, measured, monitored, unmonitored
-            draw += rated
-            share = measured_share(record)
-            if share is None:
-                unmonitored += 1
-                measured += rated
+    def _draw(self) -> _DrawTally:
+        tally = _DrawTally()
+        for machine_record in self.projection.get("machines", ()):
+            recipe = self.game.recipes.get(machine_record.get("recipe") or "")
+            clock = machine_record.get("clock") or 1.0
+            if recipe is not None:
+                rated = self.game.recipe_power_mw(recipe, clock)
             else:
-                monitored += 1
-                measured += rated * share
+                building = self.game.buildings.get(machine_record["cls"])
+                rated = building.power_at(clock) if building else None
+            tally.charge(rated, machine_record, self._is_wired(machine_record))
+        for extractor_record in self.projection.get("extractors", ()):
+            building = self.game.buildings.get(extractor_record["cls"])
+            rated = building.power_at(extractor_record.get("clock") or 1.0) if building else None
+            tally.charge(rated, extractor_record, self._is_wired(extractor_record))
+        return tally
 
-        for m in self.projection.get("machines", ()):
-            if m.get("paused"):
-                continue
-            r = self.game.recipes.get(m.get("recipe") or "")
-            clock = m.get("clock") or 1.0
-            if r is not None:
-                _charge(self.game.recipe_power_mw(r, clock), m)
-            else:
-                b = self.game.buildings.get(m["cls"])
-                if b:
-                    _charge(b.power_at(clock), m)
-        for e in self.projection.get("extractors", ()):
-            if e.get("paused"):
-                continue
-            b = self.game.buildings.get(e["cls"])
-            if b:
-                _charge(b.power_at(e.get("clock") or 1.0), e)
+    def power_report(self, *, biomass: bool = False) -> PowerReport:
+        """Generation capacity, and draw both nameplate and measured (save-projection §6.1a).
 
+        ``headroom_mw`` is the safe figure, what is free if everything built ran at once;
+        ``measured_headroom_mw`` the current one. Unmonitored machines are charged in full,
+        unwired records and (without ``biomass``) hand-fed burners are summed apart.
+        """
+        generation = self._generation(biomass)
+        draw = self._draw()
+        total_mw = generation.total_mw
         return {
             "generation_mw": total_mw,
-            "draw_mw": draw,
-            "headroom_mw": total_mw - draw,
-            "measured_draw_mw": measured,
-            "measured_headroom_mw": total_mw - measured,
-            "monitored": monitored,
-            "unmonitored": unmonitored,
-            "utilisation": (measured / draw) if draw else 1.0,
-            "by_generator": gen,
-            "unmodellable": sorted(set(variable)),
+            "draw_mw": draw.draw_mw,
+            "headroom_mw": total_mw - draw.draw_mw,
+            "measured_draw_mw": draw.measured_mw,
+            "measured_headroom_mw": total_mw - draw.measured_mw,
+            "monitored": draw.monitored,
+            "unmonitored": draw.unmonitored,
+            "paused_consumers": draw.paused,
+            "utilisation": (draw.measured_mw / draw.draw_mw) if draw.draw_mw else 1.0,
+            "by_generator": generation.by_generator,
+            "unmodellable": sorted(set(generation.unmodellable)),
             "paused_count": self.paused_count,
-            "starved_generators": sorted(starved, key=lambda s: -s["mw"]),
-            "starved_generation_mw": starved_mw,
+            "starved_generators": sorted(generation.starved, key=lambda s: -s["mw"]),
+            "starved_generation_mw": generation.starved_mw,
+            "unwired_generators": generation.unwired,
+            "unwired_generation_mw": generation.unwired_mw,
+            "unwired_consumers": draw.unwired,
+            "unwired_draw_mw": draw.unwired_mw,
+            "unwired_paused": draw.unwired_paused,
+            "biomass_counted": biomass,
+            "biomass_generators": generation.burners,
+            "biomass_mw": generation.burner_mw,
         }

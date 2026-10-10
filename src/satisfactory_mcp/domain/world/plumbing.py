@@ -9,11 +9,23 @@ climbs past it stops climbing and no machine on it looks broken. See `docs/plumb
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ...core.gamedata.constants import BUFFER_BALANCE_HEAD_M
 from ...core.gamedata.model import GameData
+from ...core.saveio.records import instance_leaf
+from ...core.saveio.schema import Position, Projection
 
-__all__ = ["PUMP_CLASSES", "ThrottledBuffer", "balance_level_m3", "dark_pumps", "throttled_buffers"]
+if TYPE_CHECKING:
+    from ..factories.model import FactoryGraph
+
+__all__ = [
+    "PUMP_CLASSES",
+    "ThrottledBuffer",
+    "balance_level_m3",
+    "throttled_buffers",
+    "unwired_pumps",
+]
 
 #: The classes that lift. A Valve is the same native class and is deliberately not one:
 #: its ``mDesignPressure`` is 0, so leaving one unpowered costs no head lift.
@@ -29,7 +41,7 @@ class ThrottledBuffer:
     fluid: str | None
     stored_m3: float
     balance_m3: float
-    pos: list | None = None
+    pos: Position | None = None
 
     @property
     def share(self) -> float:
@@ -52,7 +64,7 @@ def balance_level_m3(game: GameData, cls: str) -> float | None:
     return building.storage_capacity_m3 * BUFFER_BALANCE_HEAD_M / height
 
 
-def throttled_buffers(projection: dict, game: GameData) -> list[ThrottledBuffer]:
+def throttled_buffers(projection: Projection, game: GameData) -> list[ThrottledBuffer]:
     """Every fluid buffer in the world below its balance level, emptiest first.
 
     A level of zero counts: an empty buffer delivers nothing, and it is the same fault at
@@ -69,7 +81,7 @@ def throttled_buffers(projection: dict, game: GameData) -> list[ThrottledBuffer]
             continue
         out.append(
             ThrottledBuffer(
-                instance=str(row.get("instance", "")).rsplit(".", 1)[-1],
+                instance=instance_leaf(row.get("instance", "")),
                 cls=cls,
                 fluid=row.get("fluid"),
                 stored_m3=float(level),
@@ -80,7 +92,7 @@ def throttled_buffers(projection: dict, game: GameData) -> list[ThrottledBuffer]
     return sorted(out, key=lambda b: b.share)
 
 
-def dark_pumps(projection: dict, graph) -> tuple[list[str], int]:
+def unwired_pumps(projection: Projection, graph: FactoryGraph) -> tuple[list[str], int]:
     """Pipeline pumps no wire reaches, and how many pumps this could not see.
 
     The second number is the guard on the first: the graph's actor list is cut from EDGES,
@@ -90,5 +102,5 @@ def dark_pumps(projection: dict, graph) -> tuple[list[str], int]:
     counts = projection.get("building_counts") or {}
     standing = sum(int(counts.get(cls, 0)) for cls in PUMP_CLASSES)
     seen = [name for name, cls in graph.cls.items() if cls in PUMP_CLASSES]
-    dark = sorted(name for name in seen if not graph.neighbours(name, "power"))
-    return dark, max(0, standing - len(seen))
+    unwired = sorted(name for name in seen if not graph.neighbours(name, "power"))
+    return unwired, max(0, standing - len(seen))

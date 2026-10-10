@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
+from ...core.gamedata.constants import BUILDING_CLASS_ALIASES
 from ...core.gamedata.model import GameData
+from ...core.saveio.records import MACHINE_GROUPS, instance_leaf
+from ...core.saveio.schema import BuildableRecord, MachineRecord, Projection
 
 if TYPE_CHECKING:
     from ..progression.unlocks import UnlockSet
@@ -23,7 +26,7 @@ class BuildCensus:
     elevation and the site clustering all iterate it.
     """
 
-    projection: dict
+    projection: Projection
     game: GameData
     unlocks: UnlockSet
 
@@ -34,8 +37,6 @@ class BuildCensus:
         FGLightweightBuildableSubsystem holds Build_* classes that appear in no actor
         header, so a header-only count understates what exists.
         """
-        from ...core.gamedata.constants import BUILDING_CLASS_ALIASES
-
         out: dict[str, int] = {}
         for source in (
             self.projection.get("building_counts", {}),
@@ -63,26 +64,26 @@ class BuildCensus:
         return sorted(cls for cls in interesting if self.built(cls) == 0)
 
     @cached_property
-    def paused(self) -> list[dict]:
+    def paused(self) -> list[BuildableRecord]:
         return [r for r in self.all_records() if r.get("paused")]
 
     @cached_property
-    def misconfigured(self) -> list[dict]:
+    def misconfigured(self) -> list[MachineRecord]:
         """Manufacturers with no recipe selected -- they produce nothing."""
         return [m for m in self.projection.get("machines", ()) if not m.get("recipe")]
 
     @cached_property
-    def overclocked(self) -> list[dict]:
+    def overclocked(self) -> list[BuildableRecord]:
         return [
             r
             for r in self.all_records()
-            if r.get("clock") is not None and abs(r["clock"] - 1.0) > 1e-6
+            if (clock := r.get("clock")) is not None and abs(clock - 1.0) > 1e-6
         ]
 
-    def all_records(self) -> list[dict]:
-        p = self.projection
-        return [*p.get("machines", ()), *p.get("extractors", ()), *p.get("generators", ())]
+    def all_records(self) -> list[BuildableRecord]:
+        return [record for group in MACHINE_GROUPS for record in self.projection.get(group, ())]
 
-    #: The name this was born with, kept because callers outside this package still
-    #: spell it that way.
-    _all_records = all_records
+    @cached_property
+    def by_leaf(self) -> dict[str, BuildableRecord]:
+        """``all_records`` by short instance name; of two records sharing one, the later."""
+        return {instance_leaf(r["instance"]): r for r in self.all_records()}

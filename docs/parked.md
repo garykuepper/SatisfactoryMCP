@@ -38,8 +38,8 @@ All steps below are **done**; kept as a record of dependency order.
 3. **`render.py` + game-data tools** — compact TSV, schema-capped limits, honest truncation.
 4. **Save-state tools** — unlocks, power, progression, sites.
 5. **`spatial/`** — exact geometry, generated node table, region-name layer, selector language.
-6. **`planning/optimize.py`** — equality balance, both guards, two-phase solve, grid-import model.
-7. **`planning/advisor.py`** — hard-drive counterfactuals incl. an own-output objective.
+6. **`planning/solver/optimize.py`** — equality balance, both guards, two-phase solve, grid-import model.
+7. **`planning/analysis/advisor.py`** — hard-drive counterfactuals incl. an own-output objective.
 
 Everything in the spec is now built, including §10.3's resources and prompts and
 `rank_build_sites`.
@@ -58,7 +58,7 @@ that means fluid flows downhill and needs no pipeline pumps.
 
 **Decided in principle, not built.** Every artifact under `data/` that describes map placements is a
 pinned snapshot with a shelf life, and the shelf life is a game update: *"in updates, resource nodes
-tend to move if the map gets changed"* (Lukas, 2026-07-30). That is not an anomaly to document once,
+tend to move if the map gets changed"* (2026-07-30). That is not an anomaly to document once,
 it is the normal lifecycle, and it is already visible in the tree.
 
 **The node table half is BUILT (2026-07-30).** `data/world_resource_nodes.json` is now generated
@@ -74,7 +74,7 @@ caches keyed on `build_version`.
 **Two silent failure modes, which is why the gate machinery stays.** A join by instance name simply
 *misses* after a rename — and a per-kind count check cannot see it, because 459 == 459 across a
 rename. And a position can be a metre out while the answer stays confident. The **node-table skew
-gate** — `domain/spatial/nodes.py`, pinned by `tests/test_node_table_skew.py` — reads whatever
+gate** — `domain/spatial/nodes/`, pinned by `tests/data/test_node_table_skew.py` — reads whatever
 drift the artifact records; today's table matches the installed build so it records none and the
 gate is silent, and the synthetic tests keep the firing half honest for the next update.
 
@@ -127,6 +127,10 @@ non-obvious and would be expensive to redo.
 where a factory floor actually has room -- an outline you declare, against which a plan can be
 fit-checked. Read-only; no editing.
 
+> **2026-09-27:** the read-only rule no longer covers factory **labels**. On
+> request, the web page now detects unnamed factories and writes their names
+> (frontend_vision.md §9). Plans and site outlines stay read-only on the page.
+
 **The finding that makes it feasible.** Existing foundations are fully readable from the save.
 `FGLightweightBuildableSubsystem.actorSpecificInfo` is shaped
 `[count, [classPath, [instance, ...]], ...]`, and each instance is a 12-field list where
@@ -167,7 +171,7 @@ a user data directory, not the repo.
 **Still not derivable, and would be invention:** world placement, belt routing, terrain
 fitting, foundation alignment to the world grid.
 
-## 16b. Built: floor-wise factory view (Lukas, 2026-07-31 — "only think about that idea")
+## 16b. Built: floor-wise factory view (2026-07-31 — "only think about that idea")
 
 **Kept as a record, not as a plan.** What follows is the idea as it was parked, then the four
 stages that built it, in the order they ran — the kill-switch measurement first, because every
@@ -241,8 +245,8 @@ on-terrain; (3) lift consistency — endpoints land on two distinct bands.
 
 **Stage 0 is the kill-switch:** run the Z-histogram against the reference world's 8
 platforms from raw projection data in a scratch script, before any schema work. Either clean
-bands emerge or the idea dies for the cost of an afternoon. Open input from Lukas before
-stage 2: are his multi-floor factories uniform-height stacks or mixed heights (4 m logistics
+bands emerge or the idea dies for the cost of an afternoon. Open input needed before
+stage 2: are the reference world's multi-floor factories uniform-height stacks or mixed heights (4 m logistics
 under 8 m machine floors)? That decides how clever band-height inference must be.
 
 ### Stage 0 ran, 2026-07-30: GO, with corrections
@@ -274,6 +278,20 @@ the oldest lightweight-capable save (Oct 2025): 99.82%. What the measurement cor
   slab spans 287 m of Z) — use slabs for NAMING, flood-fill for floors.
 * **Pre-U8 saves emit zero `structures`**: the feature says "this save is too old", never
   "this world has no floors".
+
+The constants `domain/factories/floors.py` ships, and the measurement behind each:
+
+| constant | value | why |
+|---|---|---|
+| `CLUSTER_TOL_CM` | 50 | anything from 10 to 50 gives the identical decomposition; only past 100 does the band count collapse |
+| `BAND_EPS_CM` | 25 | the bands are exact: 5 and 50 report the same pieces as banded |
+| `MIN_BAND_PIECES` | 3 | below three every stray piece becomes its own storey; above, real half-steps disappear |
+| `DECK_SLACK_CM` | 25 | float slop only, since a building's pivot is its base: at 0 dozens fall out to the orphan group, and 5 to 450 all agree |
+| `RUN_SLACK_CM` | 50 | a run endpoint sits a metre up; widen towards 450 and a deck several storeys above starts winning, which flatters every same-deck statistic. 50 absorbs a kerb and nothing more |
+| `BELT_HEIGHT_CM` | 100 | the median attachment sits at +100.2 cm; the legal endpoint heights are 100/300/500 |
+| `RISER_CM` | 600 | below it a lift is a belt-height jog, as 24% of lift chains are |
+| `TERRAIN_TOL_M` | 2 | 89% of orphans are inside it, 4% of band-assigned things are |
+| `MINOR_SHARE` | 0.25 | a mezzanine, a walkway ledge, a machine plinth: reported, never merged and never dropped |
 
 Stage 1 was already shipped by the map work (yaw + belts + pipes + attachments, schemas
 12-14); the stage-0 slice image was drawn from the projection alone. Stage 2 shipped as
@@ -384,7 +402,7 @@ its own, because the world map drew angled platforms as staircases and drew no b
   already only the bends — 2,237 of 3,085 pieces are 2-point straight lines — so
   Douglas-Peucker at 1 cm drops 8% of points to save 1.2% of the projection, and at a lossy
   100 cm still saves only 3.2%. There is nothing there to win.
-* **The parity ripple resolved as planned.** `tests/test_savparse_parity.py` filters the
+* **The parity ripple resolved as planned.** `tests/pioneersav/test_vendor_parity.py` filters the
   projection back to the schema-11 shape through an explicit list of what 12 added, and
   `vendor_parity.json` is untouched.
 
@@ -656,7 +674,7 @@ the artifacts under `data/` do, and these are what cuts them.
 | `pyramid.py` | 253 | `tiles/{z}/{x}_{y}.png`, cut and renamed into place | map image, renders |
 
 `gen_world_collectibles.py` lost 904 lines and is 2,880; the three importers lost their loaders.
-`tools/` gained a package marker and `tools/_common.py` — `DEFAULT_GAME`, the shared `--game`
+`tools/` gained a package marker and `tools/_common.py` (now `tools/mapgen/src/mapgen/common.py`) — `DEFAULT_GAME`, the shared `--game`
 parser, and `require_gen`. The test suite reaches the generators the same way anything else does,
 `from tools import gen_map_image`, and no test loads a `tools/*.py` by path any more.
 
@@ -669,7 +687,8 @@ one, which is what lets the suite drive them with stand-ins and lets the whole p
 on a machine that has none of the decoders installed. `iostore.oodle_decompress` is the real one,
 ready to be handed in, and its `import ooz` is inside the function body.
 
-Three rules are enforced by reading the source in `tests/test_architecture.py`, not by intention:
+Three rules are enforced by reading the source in `tests/architecture/test_optional_extras.py`, not
+by intention:
 
 * `test_the_gen_extra_is_optional_at_import_time` — outside `core.gameassets`, no module under
   `satisfactory_mcp` or `pioneersav` has an edge to `ooz`, `pyooz`, `texture2ddecoder` or `PIL` at
@@ -755,172 +774,13 @@ sharing badly.
 
 ## 20. Built: the renders' two-regime sampler, and the ragged edge (parked 2026-07-30, built 2026-07-31)
 
-**Built, and two of its parts turned out to be wrong when the picture was looked at.** The
-design below is kept verbatim because it is what was implemented against; what shipped, what it
-measured and where it departed are in
-[`docs/spatial-and-map.md`](spatial-and-map.md#20-the-two-regime-sampler-and-a-smoothed-z7-2026-07-31).
-The half that was right and is unchanged: `tools/gen_map_renders.py` imports the heightmap
-generator's own sweep, mesh decode, cull rules and `MaxZRaster` and rasterises the same rocks
-into its own 32768² grid at 0.229 m, banded, once, shared by both layers.
-
-The two that were wrong, and neither would have been found by any statistic in this file:
-
-* **"Catmull-Rom on the 1 m landscape lattice and everywhere else" has to mean the LATTICE.**
-  Interpolating the composed field over a rim reconstructs its own 1 m fold — a texel just
-  outside a rock is still a cliff-top height, because a cliff-top texel is one of the four the
-  stencil reads — so the rim stays on the staircase the fold put it on at any output
-  resolution, and z7 then draws that staircase *more sharply* than a bilinear upscale of z6
-  did. The kernel is given the landscape and fill lattices with the cliff province removed,
-  and the rocks are composited on top at 0.229 m.
-* **The density plane cannot gate the composition, because where the worst rims are it is
-  zero.** `prov == 4` means the rasteriser reached the texel by interpolating a triangle wider
-  than itself, which is `density == 0` by construction; on the 234 m window with the highest
-  cliff fraction on the map, **0.00%** of texels meet "≥ 1 sample per output texel" at z7. A
-  weight built from that plane cannot reach those rims however it is shaped, and narrowing the
-  feather (measured, a sweep of seven widths) only moved 0.387 to 0.696 on the texels that do
-  qualify. What decides that the rocks are drawn is their own **coverage** of the pixel — the
-  same rule the field uses one metre coarser, with a smoothed positive part so a rock raises
-  the ground and never lowers it. The density plane says what to *call* the answer, and the
-  sidecar counts measurements against facets per province.
-
-Three smaller deviations, each with its reason:
-
-* **One sub-sample per texel, not a supersample.** The silhouette antialiasing is a
-  coverage-weighted 3×3 tent over the binary coverage. A 2×2 supersample costs 4× a pass that
-  already runs thirteen minutes, to antialias an edge already at 0.229 m. `--direct-subsamples`
-  runs it and the sidecar records which was used.
-* **The fill contour smoothing is a convolution, not a marching-squares polyline.** Smoothing
-  every level's indicator with one kernel and summing them is, by the linearity of a
-  convolution, the same array as smoothing the level field itself. Clamped to one 3.9 m step,
-  because an artifact is at most one step tall and a larger correction is a blur erasing a
-  scarp the raster did resolve.
-* **The @2x tree stayed at z5.** Cutting it from the 32768 sheet would give it a z6 weighing as
-  much as the entire 1x pyramid, for pixels a retina client gets by asking for the 1x tile one
-  level deeper — which is what Leaflet's own retina path does.
-
-And the seam trace, which had to be rebuilt twice because **both earlier versions passed
-everything**. Pooling around `w = 0.5` measures the one place a hard join has nothing to show,
-since a feather's second derivative is zero at its own midpoint by symmetry. Comparing against
-the two pure regimes measures the *terrain* once the composition is by coverage, because then
-the join is the rock's silhouette — a real cliff edge, where enormous curvature is correct.
-What ships is two bounds that both have to hold: against the hard `max` on the same texels
-(bound 1.0), and the design's own comparison against the terrain restricted to the texels where
-the two surfaces agree to within half a metre (bound 1.5), which is the premise it never had to
-state. The harness test drives both with a fade and with a one-texel join and requires the
-second to fail.
-
----
-
-Heightfield v3 landed the density improvement — the cliff layer is the Nanite leaf now, 11.6×
-the triangles, world-space median triangle edge 2.48 m → 0.48 m, 73.0% of cliff texels
-containing at least one source vertex. What it did **not** do is change how the renders read
-that field, and a before/after of the same 512 m cliff window at z6 shows exactly what each
-half is worth:
-
-* **v3's win is real and visible.** Rock interiors that were faceted polygonal blobs under the
-  collision hull come out granular and textured under the Nanite leaf. That is the density claim,
-  drawn.
-* **The ragged edge is untouched, because it was never the geometry.** Every rock in that crop
-  carries a dark rim — the near-vertical drop from a cliff top to the landscape beneath, which the
-  hillshade renders as a line — and that rim is a **1 m staircase upsampled 2.18×**. Denser
-  triangles do not move it by a pixel, and the v2 and v3 crops confirm it: the rims are unchanged.
-
-So the edge work is a **sampler** problem, and it is parked here with its design rather than
-half-built, because the honest version of it needs something this repository does not have yet.
-
-### Why "rasterize-direct at output resolution" is not a field-only change
-
-The plan the research left was: rasterize-direct where `density ≥ 1`, Catmull-Rom below it. The
-first half of that cannot be done from `height.i16.z`. A direct answer at 0.458 m means evaluating
-the **triangles** at 0.458 m — the field is a 1 m max-Z fold, and every reconstruction from it is
-by definition an interpolation. There is no kernel over a 1 m raster that is "direct".
-
-That makes the real shape of the work: `tools/gen_map_renders.py` grows a cliff pass that opens
-the container, decodes the same geometry `gen_world_heightmap.py` does, and rasterises it into the
-**render's own grid**, banded so memory stays bounded (a 16384² float32 raster is 1.07 GB and the
-render already holds 805 MB of output; a 272-row band at 16384 wide is 18 MB). Triangles are
-0.48 m at the median, so each touches one or two bands and a per-placement y-bbox test is enough
-to select them. Cost, extrapolating the 1 m run: ~15 s of sweep, ~17 s of decode, and roughly
-4.8× the 150 s spent rasterising at 1 m, once, shared by both layers.
-
-### The seam, which must not be a switch
-
-A hard switch between a C1 interpolant and a rasterized surface produces a **derivative
-discontinuity**, and the hillshade is a function of the derivative. That is precisely the bug class
-that moved this file from bilinear to Catmull-Rom in the first place — *"its derivative jumps at
-every texel boundary, and the hillshade is a function of the derivative, so sampling the field
-below its own spacing ruled the relief into 1 m squares"*. A rasterize/kernel switch would draw
-the density plane's own boundaries into the relief as ridges.
-
-The precedent to copy is already in that file: the artwork luminance high-pass **fades out on the
-provenance byte over 6 m** rather than switching on it. So:
-
-* **Cross-fade the height**, not the choice. `z = w·z_direct + (1−w)·z_kernel`, with `w` a smooth
-  function of the density plane sampled as a *coverage* — bilinear, clipped to [0, 1], never
-  cubic, because a coverage outside [0, 1] is not a coverage.
-* **Feather `w` over a few texels**, on the same 6 m scale the artwork borrow uses, so that `w`
-  and its first derivative are both continuous and the blend can never introduce an edge the
-  surface does not have.
-* Where the 4×4 Catmull-Rom stencil is not whole, fall back to 2×2 as the shipped code already
-  does. A cubic has negative lobes and one straddling a hole overshoots; a fifth of this field is
-  no-data, so that boundary is long.
-* **Validate the seam visually, not only statistically.** A hillshade of the density boundary at
-  z6 shows artifacts no per-probe statistic detects, because the probes are sparse relative to the
-  seam. The measurement to take is a *trace*: sample the second derivative of the rendered height
-  along a line crossing the seam and check that it does not spike where `w` crosses 0.5.
-
-Two more pieces belong with it, both aimed at the same staircase and neither needing the
-triangles: **supersampled coverage antialiasing** on the direct-regime silhouettes (the rim is a
-binary per-texel province decision, and a coverage fraction from a 4×4 subsample of the provenance
-plane blends it), and **marching-squares contours with a spline smoothed along the line** for the
-fill province, whose 3.9 m vertical quantisation over 3.66 m cells draws terraces that no kernel
-can un-terrace, because those steps are real in the data and not in the world.
-
-### z7, re-evaluated on the v3 field, by the book
-
-The two statistics that rejected 32768 were re-run on the new pipeline. Four 512 m windows chosen
-by rule rather than by eye — the two squares with the highest cliff fraction and the two with the
-highest landscape fraction, kept apart — rendered at 4096/8192/16384/32768-equivalent scales from
-both the v2 and the v3 field. The artwork's borrowed high-pass is **held out**: it is a fixed
-8192 px raster, so its own high-frequency energy at 32768 is a property of that texture rather
-than of the terrain, and holding it out makes the test *more* able to invert.
-
-High-frequency energy per pixel (above a 3×3 box low pass, mean absolute per channel), v3:
-
-| window | 4096 | 8192 | 16384 | 32768 |
-|---|---|---|---|---|
-| cliff-1 | 5.35 | 4.15 | 3.05 | **1.50** |
-| cliff-2 | 6.93 | 5.42 | 3.98 | **1.94** |
-| landscape-1 | 0.489 | 0.429 | 0.332 | 0.200 |
-| landscape-2 | 0.414 | 0.377 | 0.301 | 0.186 |
-
-Mean absolute per-channel delta between doublings, v3, in levels of 255:
-
-| window | 4096→8192 | 8192→16384 | 16384→32768 |
-|---|---|---|---|
-| cliff-1 | 43.48 | 2.92 | 2.82 |
-| cliff-2 | 35.46 | 3.83 | 3.34 |
-| landscape-1 | 3.80 | 0.286 | **0.307** |
-| landscape-2 | 3.57 | 0.260 | **0.264** |
-
-**z7 is refused again, and cleanly.** The falsifier required statistic 2 to **rise** at
-16384→32768 on the cliff windows and **not** rise on the landscape windows. It does the opposite:
-it halves on both cliff windows (3.05 → 1.50, 3.98 → 1.94). Statistic 1 has all but stopped
-falling on the cliff windows — but it has stopped falling on the *landscape* windows too, and in
-fact rises a hundredth of a level there, which under the pre-registered reading is a sampler
-artifact rather than new information, since nothing in this work touches the landscape at all.
-
-The one thing that did move is worth recording, because it is the density improvement showing up
-in a picture: v3's high-frequency energy is **2–4% higher than v2's at every level on both cliff
-windows** (5.345 against 5.145, 3.054 against 2.959, 1.505 against 1.473 on cliff-1), and
-bit-identical on the landscape windows, which is the control behaving. Finer geometry puts a
-little more detail into every zoom level; it does not change the direction of either statistic,
-and it does not earn a level.
-
-Absolute levels here are **not comparable** to the 3.34 / 2.69 / 1.38 recorded in
-`docs/spatial-and-map.md`: those were pooled over whole renders in both layers with the artwork
-lift in, where flat landscape dominates. Only the directions are comparable, and the directions
-are what the falsifier was written on.
+**Built, and superseded by what shipped.** The design parked here was implemented on
+2026-07-31, and two of its parts turned out to be wrong when the picture was looked at: the
+kernel has to interpolate the lattice under the rocks, not the field's fold, and the density
+plane cannot gate the composition, because where the worst rims are it is zero. The sampler as
+built, the seam trace, the z7 measurements on the v3 field and the @2x tree are the map's
+section 20, in [docs/map/renders.md](map/renders.md#20-the-two-regime-sampler-and-a-smoothed-z7-2026-07-31);
+the design itself was deleted once the build replaced it.
 
 ---
 
@@ -1045,7 +905,7 @@ A full projection per save would be far too expensive to do eagerly, so the shap
 INDEX: one small row per save (playtime, mtime, machine count, power drawn and installed, phase,
 a few inventory totals, per-factory machine counts), computed once and cached beside the
 projection cache, with deep pairwise diffs only on demand between two chosen saves — sharing
-`domain/planning/diff.py`'s machinery rather than growing a second one. Measured on the reference
+`domain/planning/progress/diff.py`'s machinery rather than growing a second one. Measured on the reference
 install: **112 s to index 50 saves cold** — one parse each, and only ever once — for **101 kB**
 of index. Every later question is answered from the rows.
 

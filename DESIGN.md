@@ -17,19 +17,27 @@ second; ~90 corrections from that pass are folded in.
 
 This file is the **spine**: what the project is for, what was decided, where the data comes from, how
 the tree is arranged, and the contract that turns the game's dump into numbers. Everything else lives
-in `docs/`, and **section numbers are unique across the whole set** — a reference to `§8.5d` or `§6.11`
-resolves through this table wherever it is written, in a document or in a docstring.
+in `docs/`, and **section numbers are unique across the whole set**, with the one exception below — a
+reference to `§8.5d` or `§6.11` resolves through this table wherever it is written, in a document or in a
+docstring.
 
 | sections | file | what it holds |
 |---|---|---|
 | §1–§5, §13, appendices | **this file** | scope, decisions, data sources, architecture, the normalization contract, the licence, and the reference world every number was measured against |
-| §6, §6.9–§6.11, §13a, §13b | [docs/save-projection.md](docs/save-projection.md) | what the sidecar emits and how each fact in it was verified; the parser that replaced the vendored one, and the parity that can never be re-run |
-| §7, §17, §18, §19 | [docs/spatial-and-map.md](docs/spatial-and-map.md) | coordinate frame, regions, node lookup and the selector language; the map's three base layers, the mode model and the heightfield's water channel |
+| §6–§6.16, §13a, §13b, §13c | [docs/save-projection.md](docs/save-projection.md) | what the sidecar emits and how each fact in it was verified, the row layouts and the schema history; the parser that replaced the vendored one, and the parity that can never be re-run; the save facts the web map's placement layers rest on |
+| §7, §17–§42 | [docs/spatial-and-map.md](docs/spatial-and-map.md) and [docs/map/](docs/map/) | coordinate frame, regions, node lookup and the selector language; the web map: its base layers and page, the heightfield and its water, the drawn renders, their styles, water, light and caches. spatial-and-map.md holds §7 and §37 and indexes the rest by file |
 | §8, §9 | [docs/planning.md](docs/planning.md) | the LP/MILP formulation, layout, commissioning, diffing against the save, and the hard-drive advisor |
 | §10, §11, §12 | [docs/mcp-surface.md](docs/mcp-surface.md) | the tools with their transcripts, the context budget, caching, and the testing contract |
 | §14, §15, §15b, §16, §16b, §19–§22 | [docs/parked.md](docs/parked.md) | open questions, parked work with the measurements that would otherwise be redone, and finished work kept as a record |
 | §23 | [docs/residency.md](docs/residency.md) | what an autosave costs the two processes, and why the answer is a pre-warming watcher rather than a resident daemon |
 | §24 | [docs/plumbing.md](docs/plumbing.md) | head lift and flow: which of the manual's constants the dump confirms, the one it does not carry, what the save measures about pipes, buffers and pumps, and the connection → head lift → flow rate ladder a missing fluid is diagnosed on |
+
+**The exception: §19 to §24 were given out twice.** The map has its own §19 to §24, and so do
+parked.md (§19–§22), residency.md (§23) and plumbing.md (§24). The file named with the number
+decides: `parked.md §20` is the parked sampler's record, `spatial-and-map.md §20` the sampler as
+built. Inside one of those documents a number with no file named means that document's own
+section. Renumbering either side would mean editing every reference to the six across the docs and
+the code, so they stay as they are, and no new section takes a number already given.
 
 Four documents carry no section numbers of their own. Two are ledgers rather than design:
 [docs/backlog.md](docs/backlog.md) is every known defect with the commit that closed it, and
@@ -170,7 +178,7 @@ Two third-party sources preceded it, and both retirements are on the record rath
   disagreement accounted for as the game moving the map after 2024: 25 nodes moved 9.5–80.4 cm
   vertically, one pure Limestone node renamed and moved 150 cm, both confirmed independently against
   saveVersion 52 vs 60 save actors. The full record is `_meta.retired_mit_table` in
-  `data/world_resource_nodes.json`, pinned by `tests/test_nodes_provenance.py`.
+  `data/world_resource_nodes.json`, pinned by `tests/data/test_nodes_provenance.py`.
 
 > **The bug the two-source era found, and the mistake that hid it.** SCIM was missing
 > `BP_ResourceNode11`, a pure Limestone node worth 480/min. The save proves it exists — 459
@@ -212,11 +220,12 @@ SatisfactoryMcp/
     server.py          # thin: imports the tool modules, re-exports, main()
     config.py          # env: SATISFACTORY_DOCS, SATISFACTORY_SAVES, cache dir
     core/              # knows nothing about anything above it
-      gameassets/      # GENERATION-TIME only, used by tools/gen_*.py and nothing else
-                       # (§19, docs/parked.md):
+      gameassets/      # the generators' readers; the server reads only versions,
+                       # provenance and pyramid (§19, docs/parked.md):
                        # iostore.py (the game's own .utoc/.ucas container, Oodle
-                       # decompressor injected) + packages.py (a cooked package's
-                       # exports, property tags and transform chain)
+                       # decompressor injected) + packages/ (a cooked package's
+                       # Zen header, exports, property tags and transform chain)
+                       # staticmesh.py + nanite.py (mesh LODs, hulls, Nanite pages)
                        # provenance.py (which build an artifact was cut from, and the
                        # staged rename that stops one saying two things at once)
                        # textures.py (a mip chain's length, BC1 -> RGBA) +
@@ -226,44 +235,46 @@ SatisfactoryMcp/
                        # normalize.py (-> items / recipes / buildings / schematics)
                        # model.py  search.py  footprint.py  constants.py
       saveio/          # projection.py: spawns the extractor, validates, caches
-                       # extract.py: runs IN the child, builds the schema-16 projection
-      text.py          # num + plural ONLY — the two helpers domain may reach
+                       # extract/: runs IN the child and builds the projection --
+                       # walk.py (the object pass), parser.py (the only pioneersav
+                       # import), cli.py, and one module per table family
+      text.py          # the plain-text helpers domain may reach: num, plural, hours...
     domain/            # returns dataclasses and dicts, NEVER formatted text
       world/           # state.py: WorldState, a thin aggregate over the facets
                        # identity  inventory  census  carriers  water  sites  flow
       progression/     # unlocks  phases  research  harddrives  shards
       power/           # report.py: PowerLedger
-      factories/       # model  build  structure  identity  cohere  labels
-                       # select  query  health  trace  resolve  floors
-      spatial/         # geo  nodes  regions  select  maplink  origin
-                       # ranking  elevation  heightfield
+      factories/       # model  build  structure  candidates  cohere  labels
+                       # select  query  health  trace  floors
+      spatial/         # geo  regions  places  surroundings  maplink  ranking
+                       # elevation  heightfield; nodes/ (table, search, selectors)
       collectibles/    # table  removed  service
-      planning/        # optimize  scenario  prepare  slice  diff  layout
-                       # supply  bom  fit  store  byproducts  compare  carrier
-                       # advisor  commission  materials  sensitivity  sites  trunks
-                       # recall  report
-                       # + one *_service module per tool-sized use case
+      planning/        # solver/  readout/  analysis/  layout/  siting/
+                       # progress/  stored/ -- one subpackage per stage of a plan
+      session/         # pins  asks  focus  journal: what chat and page share
     presenters/
       text/            # ALL response formatting: primitives.py (TSV, envelopes,
                        # truncation) + one module per concept
     interfaces/
       mcp/
         app.py         # the mcp object + what more than one tool group needs
-        tools/         # one module per concern; importing it registers everything
-          gamedata.py  world.py  progression.py  factories.py
-          spatial.py   planning.py  harddrives.py  resources.py  prompts.py
-      web/             # optional [web] extra: app.py (create_app)  serial.py  terrain.py
+        resources.py  prompts.py
+        tools/         # one module or package per concern; importing it registers
+                       # everything: gamedata  world  progression  collectibles
+                       # harddrives  inventory  settings, and the factories/,
+                       # spatial/ and planning/ packages
+      web/             # optional [web] extra: app.py (create_app)  serial/  terrain.py
                        # routers/ (one module per concern, ALL_ROUTERS is the mount order)
-                       # __main__.py (the console script)  watch.py (save-file SSE)
+                       # __main__.py (the console script)  watch/ (save-file SSE)
         frontend/      # BUILD-TIME ONLY: the page's TypeScript, built by Vite into
                        # static/ and excluded from the wheel
         static/        # UNTRACKED: the bundle the build writes; gitignored — no game
                        # assets, no dependency's compiled code in the tree
   src/pioneersav/      # our parser: reads all 66 saves, six saveVersions. A standalone
                        # library — it imports nothing from satisfactory_mcp, and only
-                       # core/saveio/extract.py imports it, inside the child process
+                       # core/saveio/extract/parser.py imports it, inside the child
   tools/               # a package, not a directory of loose scripts: gen_*.py, plus
-                       # _common.py (DEFAULT_GAME, the shared --game parser, require_gen)
+                       # collectibles/ (the steps gen_world_collectibles.py runs)
   tests/
     fixtures/          # tiny Docs slice + ~9 kB save projection (committed)
 ```
@@ -272,12 +283,12 @@ SatisfactoryMcp/
 `domain`, `interfaces` know everything. Only the interface layer may import the MCP SDK. All formatting
 lives in `presenters/text/` — context efficiency is cross-cutting and silently regresses if each tool
 formats its own output, so a domain function returns a dataclass and a `render_*` function turns it into
-the TSV a model reads. The two exceptions are `core/text.py`'s `num` and `plural`, which domain code may
+the TSV a model reads. The exception is `core/text.py` (`num`, `plural`, `hours` and a few more), which domain code may
 use for note strings it embeds in its own results. `server.py` contains no logic; it stays at the package
 root because the console script names `satisfactory_mcp.server:main`.
 
 None of that is checkable at runtime — a lazy `import` three frames deep inside a method body loads fine
-and violates the architecture silently. So `tests/test_architecture.py` parses every module with `ast` and
+and violates the architecture silently. So `tests/architecture/test_import_direction.py` parses every module with `ast` and
 looks at *every* import node at *any* depth. It runs stdlib-only in under a second, and its whitelist of
 tolerated violations is empty.
 
@@ -290,12 +301,25 @@ path whose only job is to forward an import is a second name for one module, and
 always goes stale. `git log --follow` reaches through every move.
 
 **Generation time is not runtime.** `core/gameassets/` and `tools/` exist to cut the artifacts under
-`data/` out of the installed game; nothing the server answers a request with goes through them. They sit
-in `core` because four generators share them, and `tools/` is a package so the suite imports a generator
-by name rather than loading a file by path. Their decoders — `pyooz`, `texture2ddecoder`, `pillow` — are
-the optional `gen` extra, **optional at import time**: the server, the parser, the domain and the whole
-test suite run on a machine with none of the three installed, and `tests/test_architecture.py` reads the
-AST to keep it that way. The full record is §19, in [docs/parked.md](docs/parked.md).
+`data/` out of the installed game, and the server answers no request by reading the game's container.
+What it does take from `core/gameassets` is three small modules: `versions` (the artifact versions a
+render is checked against), `provenance` (which build an artifact, or the install, is) and `pyramid`
+(the tile layout the map serves). The package sits in `core` because several generators share it, and
+`tools/` is a package so the suite imports a generator by name rather than loading a file by path. The
+decoders — `pyooz`, `texture2ddecoder`, `pillow` — the render caches' codec, `zstandard`, and the
+render's kernel compiler, `numba`, are the optional `gen` extra, **optional at import time**: no module
+imports one at module scope. The decoders
+are injected rather than found. `IoStore` takes its block decompressor as a callable
+(`iostore.oodle_decompress` is a convenience a caller may pass), `textures.decode_bc1_rgba` takes the BC1
+decoder and Pillow, and `pyramid.install_pyramid` takes the image module, so the suite drives all three
+with stand-ins. The one body that imports Pillow itself is
+`pyramid.encode_tile_row`, because a spawned worker cannot be handed a module through a pickle;
+`zstandard` is imported inside the `mapgen.bandstore` readers and writers that use it, and `numba` by
+`mapgen.jit` once a run asks for its kernels; without it a render draws the same bytes with the numpy
+reference (§41). The server, the
+parser, the domain and the whole test suite run on a machine with none of them installed, and
+`tests/architecture/test_optional_extras.py` reads the AST to keep it that way. The full record is §19, in
+[docs/parked.md](docs/parked.md).
 
 **The web adapter.** `interfaces/web/` is a *sibling* of `interfaces/mcp/`, not a layer above it: both are
 thin adapters over the same domain, and neither imports the other — the web app duplicates the two-line
@@ -308,7 +332,7 @@ the same AST-checked rule that confines the MCP SDK to `interfaces/mcp/`. The pa
 under `web/frontend/`, built by Vite into the **untracked** bundle at `web/static/` — gitignored, because
 minified Leaflet is a dependency's compiled code and the repository does not carry it. A fresh clone runs
 `npm ci && npm run build` there once (until then the server answers `/` with that instruction and the
-JSON API is unaffected), and `tests/test_architecture.py` insists both that nothing under `static/` is
+JSON API is unaffected), and `tests/architecture/test_frontend_layout.py` insists both that nothing under `static/` is
 ever tracked and that every built file carries the build banner. The map ships no game textures and no
 map tiles: Leaflet is bundled into that page with its BSD-2-Clause licence beside it in `static/vendor/`
 — copied at build time from `node_modules/leaflet/LICENSE`, so every build stays self-compliant for
@@ -334,9 +358,9 @@ Reasons (licensing is *not* one of them — it never was, and the parser is ours
   suite then runs with no game install and no parser.
 
 The parser itself is `src/pioneersav`, a standalone package beside the application rather than inside
-it: it implements a file format and knows nothing about factories, plans or MCP. `tests/test_architecture.py`
-pins both halves — `pioneersav` imports nothing from `satisfactory_mcp`, and `core/saveio/extract.py` is
-the only module in the application allowed to import `pioneersav`, because everything else reaches it
+it: it implements a file format and knows nothing about factories, plans or MCP. `tests/architecture/test_import_direction.py`
+pins both halves — `pioneersav` imports nothing from `satisfactory_mcp`, and `core/saveio/extract/parser.py`
+is the only module in the application allowed to import `pioneersav`, because everything else reaches it
 through the subprocess.
 
 Subprocess overhead measured at **~60 ms**, and only on cache miss.
@@ -347,7 +371,7 @@ Subprocess overhead measured at **~60 ms**, and only on cache miss.
 > bytes the client sent to the server. The symptom was maximally unhelpful: every save-reading tool hung
 > until its 180 s timeout, with no error, no log and no partial output, and **only** when launched as a
 > real MCP server. Calling the same functions directly always worked, because then stdin is a terminal.
-> Fixed with `stdin=subprocess.DEVNULL`; `tests/test_sidecar_spawn.py` pins it, along with the
+> Fixed with `stdin=subprocess.DEVNULL`; `tests/core/saveio/test_sidecar_spawn.py` pins it, along with the
 > neighbouring trap that `sys.executable` must be an interpreter and never the console script, which
 > would spawn a second MCP server that waits on stdin and emits nothing.
 
@@ -547,8 +571,10 @@ Pipes `mFlowLimit × 60` → **300 / 600** m³/min. Both self-corroborated by ea
 
 ### 5.6 Hardcoded constants register
 
-Four values are **not** in `Docs.json`. They live in one module, each with a comment saying so, and each
-unit-tested. Nothing else may be hardcoded.
+The values absent from or overriding `Docs.json` live in one module, `core/gamedata/constants.py`, each
+tagged with where it comes from and unit-tested. Nothing else may be hardcoded. The four that shape every
+rate are below; the fluid and planning ones carry their evidence in `docs/fluids_model.md` and
+`docs/planning.md`.
 
 | constant | value | justification |
 |---|---|---|
@@ -570,8 +596,10 @@ unit-tested. Nothing else may be hardcoded.
 
 **The shard maths lives with the constant, not next to it.** `max_clock()` and `shards_for_clock()`
 are in `constants.py` because they are the only two places `POTENTIAL_SHARD_SLOTS` meets data:
-`max_clock = 1 + slots × mExtraPotential` and `shards = min(slots, ceil((clock − 1) / mExtraPotential))`.
-Writing `2.5` as a literal anywhere would bury the one game-knowledge input inside a derived number.
+`max_clock = mMaxPotential + slots × mExtraPotential` and
+`shards = min(slots, ceil((clock − 1) / mExtraPotential))`. `normalize` stores the first on every
+`Building` as `max_clock`. Writing `2.5` as a literal anywhere would bury the one game-knowledge input
+inside a derived number.
 Two traps, both found by measurement:
 
 - **Round before ceiling.** Saved clocks are floats and 2.0 arrives as 1.9999999 often enough that a

@@ -1,7 +1,4 @@
-"""Project Assembly phases and Power Shard budgeting.
-
-These were spliced in under the resources banner during a parallel merge and
-are tools, not resources -- both read the save and one takes a hypothetical."""
+"""Progression: elevator phases, milestones, MAM research, power shards and somersloops."""
 
 from __future__ import annotations
 
@@ -12,15 +9,22 @@ from pydantic import Field
 
 from ....core.gamedata.constants import CAPABILITY_SCHEMATICS, max_clock, shards_for_clock
 from ....core.gamedata.model import GameData
-from ....domain.collectibles.service import collect_view
 from ....domain.progression.ladder import Rung, SchematicLadder
+from ....domain.progression.views import PhaseRequirements, PhaseRow, ShardBudget
+from ....domain.world.state import WorldState
 from ....presenters.text import primitives as render
-from ....presenters.text.collectibles import render_collectibles
-from ..app import AsOf, Limit, _state, mcp, retired
+from .. import app
+from ..params import AsOf, Limit
 
 #: The three views onto a schematic ladder, spelled the same way by both tools that walk
 #: one. Adding a fourth here without teaching ``_select`` about it silently shows everything.
 LADDER_VIEWS = ("all", "todo", "affordable")
+
+SPENDABLE_NOTE = (
+    "cost is checked against spendable stock only: carried, storage containers "
+    "and the Dimensional Depot. Machine buffers do not count, and neither do the "
+    "crates on the ground -- a crate deletes itself once emptied"
+)
 
 
 def _select(
@@ -32,7 +36,7 @@ def _select(
     """One ladder view. ``affordable`` keeps BLOCKED rungs, because their bill IS covered
     and they are the rows whose answer is "go and clear the prerequisite first"; anything a
     ladder knows cannot be STARTED today belongs in ``startable`` instead."""
-    out = []
+    out: list[Rung] = []
     for r in rungs:
         if wanted != "all" and r.done:
             continue
@@ -52,7 +56,7 @@ def _shortfall(g: GameData, rung: Rung) -> str:
     return ", ".join(f"{m.short_by:.0f} {g.item_name(m.item)}" for m in rung.missing)
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def phase_requirements(
     save: str | None = None, world: str | None = None, as_of: AsOf = None
 ) -> str:
@@ -61,16 +65,49 @@ def phase_requirements(
     The per-phase item table in the save is DEPRECATED and frozen, so it is shown
     labelled rather than believed. Read the header line first.
     """
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
     g = st.game
     req = st.phase_requirements()
-    stock = st.stock()
+    rows, short_by_phase = _phase_rows(g, req, st.stock())
 
-    rows = []
-    short_by_phase = {}
+    target_row = next((r for r in req["phases"] if r["phase"] == req["target_phase"]), None)
+    outstanding_total = sum(target_row["outstanding"].values()) if target_row else 0
+    paid = req["paid_off_target"]
+    deliverable = _deliverable(target_row, short_by_phase.get(req["target_phase"]) or {})
+
+    return render.envelope(
+        "\n".join(
+            [
+                f"# {st.age_note}",
+                render.kv(
+                    [
+                        ("current_phase", req["current_phase"]),
+                        ("target_phase", req["target_phase"]),
+                        ("outstanding_on_target", outstanding_total or "-"),
+                        ("target_deliverable_now", deliverable),
+                    ]
+                ),
+                "delivered to target: "
+                + (
+                    " + ".join(f"{render.num(a)} {g.item_name(i)}" for i, a in sorted(paid.items()))
+                    or "nothing"
+                ),
+            ]
+        ),
+        render.table(
+            ("phase", "legacy_key", "trust", "outstanding", "done", "items", "have", "short by"),
+            rows,
+        ),
+        _phase_notes(req, paid),
+    )
+
+
+def _phase_rows(
+    g: GameData, req: PhaseRequirements, stock: dict[str, float]
+) -> tuple[list[tuple[object, ...]], dict[str, dict[str, float]]]:
+    """One row per phase against spendable stock, and each phase's shortfall by item."""
+    rows: list[tuple[object, ...]] = []
+    short_by_phase: dict[str, dict[str, float]] = {}
     for row in req["phases"]:
         outstanding = row["outstanding"]
         ordered = sorted(outstanding.items(), key=lambda kv: -kv[1])
@@ -91,26 +128,28 @@ def phase_requirements(
                 " + ".join(f"{render.num(a)} {g.item_name(i)}" for i, a in short.items()) or "-",
             )
         )
+    return rows, short_by_phase
 
-    target_row = next((r for r in req["phases"] if r["phase"] == req["target_phase"]), None)
-    outstanding_total = sum(target_row["outstanding"].values()) if target_row else 0
-    target_short = short_by_phase.get(req["target_phase"]) or {}
-    paid = req["paid_off_target"]
 
-    deliverable = ""
-    if target_row is not None:
-        if target_short:
-            deliverable = (
-                f"no, short on {len(target_short)} of "
-                f"{len(target_row['outstanding'])} item(s) -- see the short by column"
-            )
-        else:
-            deliverable = "yes, every outstanding item is in stock"
-        # The verdict is only as good as the row it reads, and every row but an untouched
-        # one is a frozen snapshot of a cost the player may already have paid.
-        if target_row["stale"] != "usable":
-            deliverable += f" (from a {target_row['stale']} row)"
+def _deliverable(target_row: PhaseRow | None, target_short: dict[str, float]) -> str:
+    """Whether the target phase could be delivered now, and which kind of row says so."""
+    if target_row is None:
+        return ""
+    if target_short:
+        deliverable = (
+            f"no, short on {len(target_short)} of "
+            f"{len(target_row['outstanding'])} item(s) -- see the short by column"
+        )
+    else:
+        deliverable = "yes, every outstanding item is in stock"
+    # Every row but an untouched one is a frozen snapshot of a cost that may be paid already.
+    if target_row["stale"] != "usable":
+        deliverable += f" (from a {target_row['stale']} row)"
+    return deliverable
 
+
+def _phase_notes(req: PhaseRequirements, paid: dict[str, float]) -> list[str]:
+    """Which of the save's two phase records each number comes from, and how far to trust it."""
     notes = [
         (
             "the per-phase amounts come from mGamePhaseCosts, which FGGamePhaseManager.h "
@@ -153,35 +192,10 @@ def phase_requirements(
             "nothing has been delivered toward the target phase yet "
             "(mTargetGamePhasePaidOffCosts absent = empty)"
         )
-
-    return render.envelope(
-        "\n".join(
-            [
-                f"# {st.age_note}",
-                render.kv(
-                    [
-                        ("current_phase", req["current_phase"]),
-                        ("target_phase", req["target_phase"]),
-                        ("outstanding_on_target", outstanding_total or "-"),
-                        ("target_deliverable_now", deliverable),
-                    ]
-                ),
-                "delivered to target: "
-                + (
-                    " + ".join(f"{render.num(a)} {g.item_name(i)}" for i, a in sorted(paid.items()))
-                    or "nothing"
-                ),
-            ]
-        ),
-        render.table(
-            ("phase", "legacy_key", "trust", "outstanding", "done", "items", "have", "short by"),
-            rows,
-        ),
-        notes,
-    )
+    return notes
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def power_shards(
     save: str | None = None,
     world: str | None = None,
@@ -196,15 +210,44 @@ def power_shards(
     ``plan_machines`` machines at ``plan_clock`` costs shards per machine; the answer
     says whether the free pool covers it.
     """
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
     budget = st.shard_budget()
     per_shard = max(budget["shard_items"].values()) if budget["shard_items"] else 0.0
-    ceiling = max_clock(per_shard)
+    notes = _shard_notes(budget, per_shard)
+    if plan_machines:
+        notes.append(_shard_plan_note(budget, per_shard, plan_machines, plan_clock))
 
-    notes = []
+    window = render.page(limit, offset)
+    rows = [
+        (h["cls"], render.num(h["clock"]), h["slotted"], h["needed"], h["idle"] or "")
+        for h in window.of(budget["holders"])
+    ]
+    return render.envelope(
+        f"# {st.age_note}\n"
+        + render.kv(
+            [
+                ("free", render.num(budget["free"])),
+                ("craftable_from_slugs", render.num(budget["craftable"])),
+                ("potential", render.num(budget["potential"])),
+                ("committed", budget["committed"]),
+                ("owned", render.num(budget["owned"])),
+                ("overclocked_buildings", len(budget["holders"])),
+            ]
+        ),
+        render.table(
+            ("building", "clock", "slotted", "needed", "idle"),
+            rows,
+            total=len(budget["holders"]),
+            offset=window.start,
+            limit=window.size,
+        ),
+        notes,
+    )
+
+
+def _shard_notes(budget: ShardBudget, per_shard: float) -> list[str]:
+    """What the shard budget rests on: the measurement, the slot count, slugs, idle slots."""
+    notes: list[str] = []
     if not budget["measured"]:
         notes.append(
             "[UNVERIFIED] this projection predates schema 9 and carries no "
@@ -213,7 +256,7 @@ def power_shards(
     notes.append(
         f"a shard adds {render.num(per_shard)} max clock (mExtraPotential, from "
         f"Docs.json) and a building takes {budget['slots_per_building']} of them, so "
-        f"max clock is {render.num(ceiling)}. The slot count is the only hardcoded "
+        f"max clock is {render.num(max_clock(per_shard))}. The slot count is the only hardcoded "
         "number here -- mPotentialShardSlots is 0 on every building in the dump. [WIKI]"
     )
     if budget["slugs"]:
@@ -242,60 +285,35 @@ def power_shards(
             "read from InventoryPotential and never derived from clock"
         )
 
-    if plan_machines:
-        need_each = shards_for_clock(plan_clock, per_shard)
-        need = need_each * plan_machines
-        short = need - budget["free"]
-        line = (
-            f"plan: {plan_machines} machine(s) at clock {render.num(plan_clock)} needs "
-            f"{need_each} shard(s) each = {need}; free {render.num(budget['free'])}"
-        )
-        if short <= 0:
-            notes.append(line + " -> affordable now")
-        elif short <= budget["craftable"]:
-            # Craftable, not free: the slugs cover it but somebody has to press craft.
-            notes.append(
-                line + f" -> SHORT by {render.num(short)}, but "
-                f"{render.num(budget['craftable'])} more are craftable from slugs you "
-                "already hold, so it is affordable after crafting"
-            )
-        else:
-            notes.append(
-                line + f" -> SHORT by {render.num(short)}; even crafting every slug "
-                f"({render.num(budget['craftable'])}) leaves you "
-                f"{render.num(need - budget['potential'])} short"
-            )
+    return notes
 
-    start = max(0, offset)
-    n = render.clamp(limit, default=10)
-    rows = [
-        (h["cls"], render.num(h["clock"]), h["slotted"], h["needed"], h["idle"] or "")
-        for h in budget["holders"][start : start + n]
-    ]
-    return render.envelope(
-        f"# {st.age_note}\n"
-        + render.kv(
-            [
-                ("free", render.num(budget["free"])),
-                ("craftable_from_slugs", render.num(budget["craftable"])),
-                ("potential", render.num(budget["potential"])),
-                ("committed", budget["committed"]),
-                ("owned", render.num(budget["owned"])),
-                ("overclocked_buildings", len(budget["holders"])),
-            ]
-        ),
-        render.table(
-            ("building", "clock", "slotted", "needed", "idle"),
-            rows,
-            total=len(budget["holders"]),
-            offset=start,
-            limit=n,
-        ),
-        notes,
+
+def _shard_plan_note(budget: ShardBudget, per_shard: float, machines: int, clock: float) -> str:
+    """Whether ``machines`` at ``clock`` fit the free shards, the craftable ones, or neither."""
+    need_each = shards_for_clock(clock, per_shard)
+    need = need_each * machines
+    short = need - budget["free"]
+    line = (
+        f"plan: {machines} machine(s) at clock {render.num(clock)} needs "
+        f"{need_each} shard(s) each = {need}; free {render.num(budget['free'])}"
+    )
+    if short <= 0:
+        return line + " -> affordable now"
+    if short <= budget["craftable"]:
+        # Craftable, not free: the slugs cover it but somebody has to press craft.
+        return (
+            line + f" -> SHORT by {render.num(short)}, but "
+            f"{render.num(budget['craftable'])} more are craftable from slugs you "
+            "already hold, so it is affordable after crafting"
+        )
+    return (
+        line + f" -> SHORT by {render.num(short)}; even crafting every slug "
+        f"({render.num(budget['craftable'])}) leaves you "
+        f"{render.num(need - budget['potential'])} short"
     )
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def mam_research(
     show: Annotated[
         str, Field(description="all | todo | affordable -- todo hides finished research")
@@ -311,79 +329,73 @@ def mam_research(
 ) -> str:
     """MAM research: what is left, what it costs, and what you can afford right now.
 
-    The MAM is where CAPABILITIES live, as opposed to recipes -- the Dimensional Depot,
-    the Power Augmenter, and Production Amplifier, which is the one that lets a
-    Somersloop go into a machine at all.
-
-    That last one has no flag in the save. `BP_UnlockSubsystem_C` records overclocking as
-    `mIsBuildingOverclockUnlocked`, but nothing anywhere in the file records production
-    amplification, so it is derived from the purchased-schematic set instead. Capability
-    rows are marked LOCKS so it is obvious which research gates a tool argument rather
-    than just adding a recipe.
+    The MAM is where CAPABILITIES live, as opposed to recipes -- the Dimensional Depot, the
+    Power Augmenter, and the Production Amplifier, which lets a Somersloop go into a
+    machine. The save has no flag for that last one, so it is derived from the purchased
+    schematics. Rows marked LOCKS gate a tool argument rather than add a recipe.
     """
-    if gone := retired(("status", status, "show"), ("search", search, "query")):
+    if gone := app.retired(("status", status, "show"), ("search", search, "query")):
         return gone
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
 
-    g = st.game
-    start = max(0, offset)
-    n = render.clamp(limit, default=25)
+    window = render.page(limit, offset, default=25)
     wanted = (show or "todo").strip().casefold()
     if wanted not in LADDER_VIEWS:
         return f"! unknown show {show!r}. Choose from: all, todo, affordable"
 
-    gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
-    ladder = SchematicLadder(game=g, unlocks=st.unlocks, inventory=st.inventory).rungs("EST_MAM")
+    ladder = SchematicLadder(game=st.game, unlocks=st.unlocks, inventory=st.inventory)
+    rungs = ladder.rungs("EST_MAM")
     ongoing = st.research.ongoing
-    shut = {r.schematic.cls: st.research.tree_locked(r.schematic.cls) for r in ladder}
-    outstanding = [r for r in ladder if not r.done]
-    n_todo = len(outstanding)
+    shut = {r.schematic.cls: st.research.tree_locked(r.schematic.cls) for r in rungs}
+    outstanding = [r for r in rungs if not r.done]
     n_running = sum(1 for r in outstanding if r.schematic.cls in ongoing)
     n_shut = sum(1 for r in outstanding if shut[r.schematic.cls])
-
-    rows = []
     # Neither an in-flight node nor one in a shut tree can be started now, whatever the
     # bill says, so affordable does not offer them.
-    for rung in _select(
-        ladder,
+    picked = _select(
+        rungs,
         wanted,
         query,
         startable=lambda r: r.schematic.cls not in ongoing and not shut[r.schematic.cls],
-    ):
-        cls = rung.schematic.cls
-        running = ongoing.get(cls)
-        if rung.done:
-            state = "DONE"
-        elif running is not None:
-            state = f"RUNNING {running:.0f}s"
-        elif shut[cls]:
-            state = "TREE SHUT"
-        else:
-            state = rung.status
-        rows.append(
-            (
-                state,
-                rung.schematic.name[:30],
-                "LOCKS " + gates[cls] if cls in gates else "",
-                _bill(g, rung)[:52],
-                _shortfall(g, rung)[:34],
-                ", ".join(rung.blocked_by)[:24],
-            )
-        )
+    )
+    rows = [_research_row(st, rung) for rung in picked]
 
+    return render.envelope(
+        f"# {st.age_note}\n# {len(outstanding)} MAM research node(s) outstanding"
+        + (f", {n_running} under way" if n_running else "")
+        + (f", {n_shut} in an unopened tree" if n_shut else "")
+        + f", showing {wanted}",
+        render.paged_table(
+            ("status", "research", "capability", "cost", "short by", "blocked by"), rows, window
+        ),
+        _research_notes(st, n_running, n_shut),
+    )
+
+
+def _research_row(st: WorldState, rung: Rung) -> tuple[str, ...]:
+    cls = rung.schematic.cls
+    state = st.research.status(rung)
+    if state == "RUNNING":
+        state = f"RUNNING {st.research.ongoing[cls]:.0f}s"
+    gates = {v: k for k, v in CAPABILITY_SCHEMATICS.items()}
+    return (
+        state,
+        rung.schematic.name[:30],
+        "LOCKS " + gates[cls] if cls in gates else "",
+        _bill(st.game, rung)[:52],
+        _shortfall(st.game, rung)[:34],
+        ", ".join(rung.blocked_by)[:24],
+    )
+
+
+def _research_notes(st: WorldState, n_running: int, n_shut: int) -> list[str]:
+    """The reading notes, then one line per capability the MAM has not yet granted."""
     notes = [
         (
             "MAM research is where CAPABILITIES live, not just recipes -- 'LOCKS x' marks "
             "one that gates a feature of this MCP rather than adding a recipe"
         ),
-        (
-            "cost is checked against spendable stock only: carried, storage containers "
-            "and the Dimensional Depot. Machine buffers do not count, and neither do the "
-            "crates on the ground -- a crate deletes itself once emptied"
-        ),
+        SPENDABLE_NOTE,
     ]
     if n_running:
         notes.append(
@@ -417,24 +429,10 @@ def mam_research(
             f"{name} is NOT researched: needs {gate['schematic_name']} in the MAM "
             f"({bill}) -- {verdict}.{blocked}"
         )
-
-    return render.envelope(
-        f"# {st.age_note}\n# {n_todo} MAM research node(s) outstanding"
-        + (f", {n_running} under way" if n_running else "")
-        + (f", {n_shut} in an unopened tree" if n_shut else "")
-        + f", showing {wanted}",
-        render.table(
-            ("status", "research", "capability", "cost", "short by", "blocked by"),
-            rows[start : start + n],
-            total=len(rows),
-            offset=start,
-            limit=n,
-        ),
-        notes,
-    )
+    return notes
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def milestones(
     show: Annotated[
         str, Field(description="all | todo | affordable -- todo hides finished milestones")
@@ -461,16 +459,12 @@ def milestones(
     deliveries, that gate is in no shipped data, and `phase_requirements` is where the
     elevator stands.
     """
-    if gone := retired(("status", status, "show"), ("search", search, "query")):
+    if gone := app.retired(("status", status, "show"), ("search", search, "query")):
         return gone
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
 
     g = st.game
-    start = max(0, offset)
-    n = render.clamp(limit, default=25)
+    window = render.page(limit, offset, default=25)
     wanted = (show or "todo").strip().casefold()
     if wanted not in LADDER_VIEWS:
         return f"! unknown show {show!r}. Choose from: all, todo, affordable"
@@ -489,14 +483,14 @@ def milestones(
     outstanding = [r for r in rungs if not r.done]
     ready = [r for r in outstanding if r.status == "READY"]
 
-    page = picked[start : start + n]
+    page = window.of(picked)
     show_blocked = any(r.blocked_by for r in page)
     headers = ["status", "tier", "milestone", "cost", "short by", "unlocks"]
     if show_blocked:
         headers.append("blocked by")
-    rows = []
+    rows: list[list[object]] = []
     for rung in page:
-        row = [
+        row: list[object] = [
             rung.status,
             rung.schematic.tier,
             rung.schematic.name,
@@ -510,11 +504,7 @@ def milestones(
 
     prog = st.progression()
     notes = [
-        (
-            "cost is checked against spendable stock only: carried, storage containers "
-            "and the Dimensional Depot. Machine buffers do not count, and neither do the "
-            "crates on the ground -- a crate deletes itself once emptied"
-        ),
+        SPENDABLE_NOTE,
         (
             "READY is about the bill, not about access: a HUB tier is opened by delivering "
             "to the Space Elevator, and no milestone schematic in Docs.json carries that "
@@ -541,12 +531,12 @@ def milestones(
                 ("affordable_now", len(ready)),
             ]
         ),
-        render.table(headers, rows, total=len(picked), offset=start, limit=n),
+        render.table(headers, rows, total=len(picked), offset=window.start, limit=window.size),
         notes,
     )
 
 
-@mcp.tool(structured_output=False)
+@app.tool()
 def somersloops(
     save: str | None = None,
     world: str | None = None,
@@ -556,24 +546,15 @@ def somersloops(
 ) -> str:
     """Somersloops held, slotted and owned -- the sibling of power_shards.
 
-    `sloop_budget` has existed since sloops became spendable and nothing exposed it, so
-    the only way to learn how many you had was to guess a `sloops=` budget and read the
-    shortfall warning: you had to guess the budget to discover the budget.
-
-    Free and committed are both exact. Slotted ones live in `InventoryPotential`, the same
-    component as Power Shards, so this counts slot contents rather than inverting a boost
-    multiplier.
+    Free and committed are both exact: slotted ones are counted from `InventoryPotential`,
+    the same component as Power Shards, not inverted from a boost multiplier.
     """
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
+    st = app.load_world(save, world, as_of)
 
     budget = st.sloop_budget()
     gate = st.research_gate("production_boost")
     holders = budget["holders"]
-    start = max(0, offset)
-    n = render.clamp(limit, default=20)
+    window = render.page(limit, offset, default=20)
     rows = [
         (
             h["name"],
@@ -582,14 +563,14 @@ def somersloops(
             f"{h['boost']:g}x" if h["boost"] else "",
             f"{h['boost_in_save']:g}x" if h["boost_in_save"] else "-",
         )
-        for h in holders[start : start + n]
+        for h in window.of(holders)
     ]
     disagree = [
         h
         for h in holders
         if h["boost"] and h["boost_in_save"] and abs(h["boost"] - h["boost_in_save"]) > 1e-6
     ]
-    notes = []
+    notes: list[str] = []
     if gate is not None:
         bill = ", ".join(f"{r['need']:g} {r['name']}" for r in gate["cost"])
         notes.append(
@@ -642,62 +623,8 @@ def somersloops(
             ("building", "instance", "sloops", "boost", "boost_in_save"),
             rows,
             total=len(holders),
-            offset=start,
-            limit=n,
+            offset=window.start,
+            limit=window.size,
         ),
         notes,
     )
-
-
-@mcp.tool(structured_output=False)
-def collected_from_world(
-    group: Annotated[
-        str | None,
-        Field(description="one category, e.g. 'power_slug_blue'. Omit to see them all"),
-    ] = None,
-    show: Annotated[
-        str,
-        Field(description="census | collected | remaining | nearest"),
-    ] = "census",
-    mode: Annotated[str | None, Field(description="retired -- write show= instead")] = None,
-    near: Annotated[
-        str | None,
-        Field(
-            description="origin for show=nearest: 'x,y' in metres, 'me', or a factory name. "
-            "Defaults to where the player is standing"
-        ),
-    ] = None,
-    save: str | None = None,
-    world: str | None = None,
-    as_of: AsOf = None,
-    limit: Limit = 25,
-    offset: int = 0,
-) -> str:
-    """Map collectibles: how many exist, how many you took, what is left and what is closest.
-
-    Slugs, somersloops, Mercer spheres and their shrines, mushrooms, drop pods and the loot
-    caches around them. Two sources, and neither is asked the other's question:
-
-    * **the map** says what exists and where, read from the installed game's own cooked
-      packages, so ``placed`` is exact and every coordinate is exact;
-    * **the save** says what is gone. The world is not saved -- a save never mentions a slug
-      still lying there -- so its destroyed-actor list *is* the collected list, and it is
-      exact too. ``remaining`` is the subtraction of the two.
-
-    Views: ``census`` (default) counts every category; ``collected`` and ``remaining`` list
-    individual placements with coordinates; ``nearest`` lists the remaining ones by distance
-    from ``near``, defaulting to the player.
-
-    A placement in a cell no save has ever loaded is counted as remaining and reported as
-    ``never_streamed``. It is never called present -- the map says where it is and nothing
-    on disk says whether it is still there.
-    """
-    if gone := retired(("mode", mode, "show")):
-        return gone
-    try:
-        st = _state(save, world, as_of)
-    except Exception as exc:
-        return f"could not read save: {exc}"
-
-    view = collect_view(st, group, show, near)
-    return render_collectibles(st, view, limit, offset=offset)

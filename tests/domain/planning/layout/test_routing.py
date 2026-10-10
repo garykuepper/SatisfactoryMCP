@@ -1,0 +1,899 @@
+"""Belt routing (spec ~/satisfactory/docs/superpowers/specs/2026-10-01-belt-routing-and-lifts-design.md).
+Pure: hand-built blocks and floors, no game data."""
+
+from __future__ import annotations
+
+import math
+from itertools import pairwise
+
+import pytest
+
+from satisfactory_mcp.core.gamedata.footprint import Packed
+from satisfactory_mcp.domain.planning.layout import routing as R
+from satisfactory_mcp.domain.planning.layout.model import Block, Bus, Floor, Layout
+
+
+def blk(key, x, y, n=2, w=8.0, d=10.0, inputs=None, outputs=None, folded=False, rotated=False):
+    if folded:
+        cols = math.ceil(n / 2)
+        packed = Packed(
+            count=n,
+            columns=cols,
+            rows=2,
+            width_m=cols * w,
+            depth_m=2 * d + 8.0,
+            foundations=0,
+            folded=True,
+            lane_m=8.0,
+        )
+    else:
+        packed = Packed(count=n, columns=n, rows=1, width_m=n * w, depth_m=d, foundations=0)
+    b = Block(
+        key=key,
+        label=key,
+        building_id="x",
+        building="Constructor",
+        recipe=None,
+        machines=n,
+        clock=1.0,
+        part=1,
+        parts=1,
+        inputs=dict(inputs or {}),
+        outputs=dict(outputs or {}),
+        packed=packed,
+    )
+    b.x_fnd, b.y_fnd, b.rotated = x, y, rotated
+    return b
+
+
+def floor(i, blocks, w=10, d=10, group=None):
+    return Floor(
+        index=i,
+        kind="production",
+        stage=i,
+        height_m=16.0,
+        blocks=blocks,
+        slab_side_m=w * 8.0,
+        slab_depth_m=d * 8.0,
+        group=group or f"G{i}",
+    )
+
+
+def bus(item, carrier="belt"):
+    return Bus(item=item, name=item, rate=1.0, carrier=carrier, unit="/min", lines=1)
+
+
+def test_block_rect_is_the_true_footprint_in_2m_cells():
+    assert R.block_rect(blk("a", 1, 1)) == (4, 4, 8, 5)  # 16 m x 10 m
+    assert R.block_rect(blk("a", 1, 1, rotated=True)) == (4, 4, 5, 8)
+
+
+def test_straight_row_input_below_output_above_feed_west_exit_east():
+    p = R.manifold_ports(blk("a", 1, 1, inputs={"B": 1, "A": 1}, outputs={"P": 1}))
+    assert p.inputs["A"] == [(x, 3) for x in range(4, 12)]  # first input, sorted
+    assert p.inputs["B"] == [(x, 2) for x in range(4, 12)]  # second, one row out
+    assert p.outputs == [
+        [(x, 9) for x in range(11, 3, -1)]
+    ]  # y0 + 5; exit end east (F0 output side)
+
+
+def test_folded_row_input_in_the_lane_outputs_on_both_edges():
+    p = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True))
+    # 2 columns x 8 m = 16 m -> 8 cells long; depth 2*10+8 = 28 m -> 14 cells; lane middle int(28/2/2) = 7
+    assert p.inputs["A"] == [(x, 11) for x in range(4, 12)]
+    assert p.outputs == [
+        [(x, 18) for x in range(11, 3, -1)],
+        [(x, 3) for x in range(11, 3, -1)],
+    ]  # exits east
+
+
+def test_rotated_block_turns_its_belts_into_columns_south_end_first():
+    p = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True))
+    assert p.inputs["A"] == [(3, y) for y in range(4, 12)]
+    assert p.outputs == [[(9, y) for y in range(4, 12)]]
+
+
+def test_walk_lanes_ring_plus_one_per_aisle_band():
+    lower, upper = blk("a", 1, 1), blk("b", 1, 4)  # lower reserves 2 fnd -> top at fnd 3
+    rows, cols = R.walk_lanes(floor(0, [lower, upper]))
+    assert rows == {1, 38, 13} and cols == {1, 38}
+    assert R.walk_lanes(floor(0, [lower]))[0] == {1, 38}  # no row above: no aisle lane
+
+
+def test_strip_rows_skip_walk_lane_rows():
+    rows = R.strip_rows(floor(0, [blk("a", 1, 1), blk("b", 1, 4)]))
+    assert 1 not in rows and 13 not in rows and 38 not in rows
+    assert rows[:3] == [0, 2, 3]
+
+
+def _turns(path):
+    dirs = [(b[0] - a[0], b[1] - a[1]) for a, b in pairwise(path)]
+    return sum(1 for a, b in pairwise(dirs) if a != b)
+
+
+def test_astar_straight_line():
+    g = R.Grid(10, 3, set(), set(), set())
+    assert R.astar(g, (0, 1), (9, 1)) == [(x, 1) for x in range(10)]
+
+
+def test_astar_prefers_one_turn_over_a_staircase():
+    path = R.astar(R.Grid(4, 4, set(), set(), set()), (0, 0), (3, 3))
+    assert len(path) == 7 and _turns(path) == 1
+
+
+def test_astar_goes_around_blocked_cells_and_may_end_on_blocked_ends():
+    wall = {(2, y) for y in range(5) if y != 4}
+    g = R.Grid(5, 5, wall | {(0, 0), (4, 0)}, set(), set())
+    path = R.astar(g, (0, 0), (4, 0))
+    assert path[0] == (0, 0) and path[-1] == (4, 0) and (2, 4) in path
+    assert not (set(path[1:-1]) & g.blocked)
+
+
+def test_astar_forced_lane_crossing_is_straight_and_costs_cross_cost():
+    # Wall on row 3 with one gap at (2, 3), a lane cell; the only route crosses it vertically.
+    # Fails if lane cells were impassable (None) or the crossing were free (cost check).
+    g = R.Grid(7, 7, {(x, 3) for x in range(7) if x != 2}, {3}, set())
+    path = R.astar(g, (2, 0), (2, 6))
+    assert path == [(2, y) for y in range(7)]
+    assert len(path) - 1 + R.CROSS_COST == 6 + 4  # 6 steps + one lane entry
+
+
+def test_astar_lane_crossing_cell_is_impassable():
+    # Wall on column 3, only gap (3, 3) = row-lane and col-lane cell. Without a lane rule the
+    # path squeezes through the gap; with it the gap is impassable (note the per-axis
+    # perpendicular rules already imply this, so it is not separately mutable).
+    g = R.Grid(7, 7, {(3, y) for y in range(7) if y != 3}, {3}, {3})
+    assert R.astar(g, (0, 0), (6, 0)) is None
+
+
+def test_astar_refuses_to_run_along_a_lane():
+    # One-row corridor that is exactly the lane row; without the "perpendicular only"
+    # rule start (0,1) -> goal (6,1) runs straight along it.
+    g = R.Grid(7, 3, {(x, y) for x in range(7) for y in (0, 2)}, {1}, set())
+    assert R.astar(g, (0, 1), (6, 1)) is None
+
+
+def test_astar_refuses_to_turn_on_a_lane_cell():
+    # (1, 3) is a lane cell and the goal (0, 3) is only reachable from it (its other
+    # neighbours are walled). Entering vertically then leaving west is a turn on the lane;
+    # without the no-turn rule the path (1,0)..(1,3),(0,3) exists.
+    g = R.Grid(7, 7, {(0, 2), (0, 4)}, {3}, set())
+    assert R.astar(g, (1, 0), (0, 3)) is None
+
+
+def test_astar_returns_none_when_walled_off():
+    g = R.Grid(5, 5, {(3, y) for y in range(5)}, set(), set())
+    assert R.astar(g, (0, 2), (4, 2)) is None
+
+
+def _belt_wall(gap):
+    # 7x7 grid, a routed vertical belt down column 3 ('v'), open only at (3, gap) if given.
+    g = R.Grid(7, 7, set(), set(), set())
+    g.belt_dirs = {(3, y): "v" for y in range(7) if y != gap}
+    return g
+
+
+def test_a_belt_crosses_another_straight_through():
+    # No way round: the path crosses the belt with straight horizontal moves.
+    # Without crossings the wall is impassable (None).
+    path = R.astar(_belt_wall(None), (0, 0), (6, 2))
+    i = next(i for i, c in enumerate(path) if c[0] == 3)
+    assert path[i - 1][1] == path[i][1] == path[i + 1][1]
+    # Crossing route costs 8 steps + 1 turn + CROSS_BELT_COST = 16; a detour through the
+    # gap at (3, g) costs 2g + 8. g=3 -> 14 (detour wins), g=5 -> 18 (crossing wins):
+    # brackets the crossing cost to (4, 8), so a free or huge crossing fails one of them.
+    assert R.CROSS_BELT_COST == 6
+    assert (3, 3) in R.astar(_belt_wall(3), (0, 0), (6, 2))
+    assert (3, 5) not in R.astar(_belt_wall(5), (0, 0), (6, 2))
+
+
+def test_a_belt_never_crosses_at_a_turn_or_runs_along_a_belt():
+    # Column 3 is all 'x' (turn cells): impassable. Without the 'x' rule the path
+    # would cross straight through like an 'h'/'v' cell.
+    g = R.Grid(7, 7, set(), set(), set())
+    g.belt_dirs = {(3, y): "x" for y in range(7)}
+    assert R.astar(g, (0, 3), (6, 3)) is None
+    # One-row corridor whose middle cell is an 'h' belt: running along it is refused.
+    # Without the rule start -> goal runs straight along the corridor.
+    g = R.Grid(7, 3, {(x, y) for x in range(7) for y in (0, 2)}, set(), set())
+    g.belt_dirs = {(3, 1): "h"}
+    assert R.astar(g, (0, 1), (6, 1)) is None
+
+
+def test_a_double_crossing_cell_is_impassable():
+    g = R.Grid(7, 7, set(), set(), set())
+    first = [(3, y) for y in range(7)]
+    R.mark_belt(g, first)
+    second = R.astar(g, (0, 3), (6, 3))
+    assert second == [(x, 3) for x in range(7)]
+    R.mark_belt(g, second)
+    assert g.belt_dirs[(3, 3)] == "x" and g.belt_dirs[(2, 3)] == "h"
+    # A third belt along column 3's crossing row can't cross (3, 3) again: wall the
+    # rest of column 3 and row 3 is the only way, through an 'x' cell.
+    g.belt_dirs.update({(3, y): "x" for y in range(7) if y != 3})
+    g.belt_dirs = {c: d for c, d in g.belt_dirs.items() if c[1] != 3 or c == (3, 3)}
+    assert R.astar(g, (0, 3), (6, 3)) is None
+    g.belt_dirs[(3, 3)] = "v"  # a single crossing would be fine
+    assert R.astar(g, (0, 3), (6, 3)) is not None
+
+
+def lay(*floors_, buses=()):
+    blocks = [b for f in floors_ for b in f.blocks]
+    return Layout(blocks=blocks, buses=list(buses), floors=list(floors_))
+
+
+def test_one_producer_feeds_two_consumers_on_its_floor():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c1 = blk("c1", 1, 4, inputs={"I": 30.0})
+    c2 = blk("c2", 1, 7, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p, c1, c2], d=12)), belt_ipm=270)
+    assert not r.failures and not r.lifts
+    assert sorted((b.src, b.dst, b.rate) for b in r.belts) == [("p", "c1", 30.0), ("p", "c2", 30.0)]
+    # Same-floor only, so p exits at its nearer end: to the feeds (4, 15) and (4, 27),
+    # east (11, 9) = 13 + 25 = 38, west (4, 9) = 6 + 18 = 24 -> west.
+    for b in r.belts:
+        assert b.path[0] == R.manifold_ports(p).outputs[0][-1] == (4, 9)
+
+
+def test_an_item_made_below_goes_up_one_lift_at_one_cell():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert [(l.item, l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("I", "up", 0, 1)]
+    cell = r.lifts[0].cell
+    assert cell[0] == 39  # F0's output side is E: the east strip
+    assert {(b.floor, b.src, b.dst) for b in r.belts} == {(0, "p", "lift:I"), (1, "lift:I", "c")}
+    assert [b.path[-1] for b in r.belts if b.floor == 0] == [cell]
+    assert [b.path[0] for b in r.belts if b.floor == 1] == [cell]
+
+
+def test_an_item_made_above_its_user_goes_down():
+    c = blk("c", 1, 1, inputs={"I": 10.0})
+    p = blk("p", 1, 1, outputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [c]), floor(1, [p])), belt_ipm=270)
+    assert [(l.kind, l.from_floor, l.to_floor) for l in r.lifts] == [("down", 1, 0)]
+    assert {(b.floor, b.src, b.dst) for b in r.belts} == {(1, "p", "lift:I"), (0, "lift:I", "c")}
+
+
+def test_raw_items_come_in_on_the_ground_floor_and_exports_go_out():
+    c = blk("c", 1, 1, inputs={"Ore": 30.0}, outputs={"Ingot": 30.0})
+    r = R.route_belts(lay(floor(0, [c])), belt_ipm=270)
+    assert sorted((l.item, l.kind) for l in r.lifts) == [("Ingot", "out"), ("Ore", "in")]
+    assert not r.failures
+
+
+def test_lift_cells_are_deterministic_and_shared_across_spanned_floors():
+    p = blk("p", 1, 1, outputs={"A": 1.0, "B": 1.0})
+    c = blk("c", 1, 1, inputs={"A": 1.0, "B": 1.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    by_item = {l.item: l.cell for l in r.lifts}
+    # target rows: A = mean(exit 9, feed 3) = 6, B = mean(9, 2) = 5.5; A goes first
+    # (by item) and takes 6, so B gets the nearest free row, 5
+    assert (by_item["A"][1], by_item["B"][1]) == (6, 5)
+    rows0, rows1 = set(R.strip_rows(floor(0, [p]))), set(R.strip_rows(floor(1, [c])))
+    assert all(cell[1] in rows0 & rows1 for cell in by_item.values())
+
+
+def test_a_full_lift_strip_is_a_hard_error():
+    # 2-foundation-deep floor: 8 strip rows minus lane rows {1, 6} = 6 usable
+    c = blk("c", 1, 1, inputs={f"Raw{k}": 1.0 for k in range(7)})
+    with pytest.raises(R.LiftStripFull, match="lift strip full"):
+        R.route_belts(lay(floor(0, [c], d=2)), belt_ipm=270)
+
+
+def _two_by_two():
+    p1, p2 = blk("p1", 1, 1, outputs={"I": 250.0}), blk("p2", 1, 4, outputs={"I": 250.0})
+    c1, c2 = blk("c1", 1, 1, inputs={"I": 250.0}), blk("c2", 1, 4, inputs={"I": 250.0})
+    return R.route_belts(lay(floor(0, [p1, p2]), floor(1, [c1, c2])), belt_ipm=270)
+
+
+def test_a_lift_gets_one_line_per_belt_and_each_manifold_takes_one():
+    r = _two_by_two()
+    assert not r.failures
+    assert len(r.lifts) == 2 and len({l.cell for l in r.lifts}) == 2
+    assert {l.kind for l in r.lifts} == {"up"}
+    f0 = {b.src: b for b in r.belts if b.floor == 0}
+    f1 = {b.dst: b for b in r.belts if b.floor == 1}
+    assert sorted(f0) == ["p1", "p2"] and sorted(f1) == ["c1", "c2"]
+    assert f0["p1"].path[-1] != f0["p2"].path[-1] and f1["c1"].path[0] != f1["c2"].path[0]
+    assert all(b.rate == 250.0 for b in r.belts)
+
+
+def _line_loads(r):
+    """{(floor, lift cell): rate} summed over the belts touching each lift cell."""
+    loads = {}
+    for b in r.belts:
+        for end in (b.path[0], b.path[-1]):
+            if end[0] in (0, 39):  # either edge strip of a 40-cell floor
+                loads[(b.floor, end)] = loads.get((b.floor, end), 0.0) + b.rate
+    return loads
+
+
+def test_consumers_take_the_lift_line_with_most_capacity_left():
+    # 'in' lift of 510 -> 2 lines; round-robin put 250+250 on one line (500 > 270)
+    cs = [blk(f"c{i}", 1, 1 + 3 * i, inputs={"Ore": r}) for i, r in enumerate((250.0, 10.0, 250.0))]
+    r = R.route_belts(lay(floor(0, cs, d=12)), belt_ipm=270)
+    assert not r.failures
+    assert sorted(_line_loads(r).values()) == [250.0, 260.0]
+    assert sorted(l.rate for l in r.lifts) == [250.0, 260.0]  # real loads, not 255/255
+    assert {(0, l.cell): l.rate for l in r.lifts} == _line_loads(r)
+
+
+def test_producers_fill_the_emptiest_line_and_an_overloaded_line_is_flagged():
+    ps = [blk(f"p{i}", 1, 1 + 3 * i, outputs={"I": r}) for i, r in enumerate((260.0, 10.0, 130.0))]
+    q = blk("q", 1, 1, inputs={"I": 400.0}, n=4)
+    r = R.route_belts(lay(floor(0, ps, d=12), floor(1, [q], d=12)), belt_ipm=270)
+    src = {cell: v for (fi, cell), v in _line_loads(r).items() if fi == 0}
+    assert sorted(src.values()) == [140.0, 260.0]  # 260 | 130+10
+    assert {l.cell: l.rate for l in r.lifts} == src
+    # one 400/min consumer can only draw from one line: that line overflows
+    lines = [f for f in r.failures if "lift line" in f]
+    assert any("400/min out (belt 270/min)" in f for f in lines)
+    assert r.failed_floors == []
+
+
+def test_an_over_capacity_connection_is_flagged_not_split():
+    p = blk("p", 1, 1, outputs={"I": 600.0})
+    c = blk("c", 1, 1, inputs={"I": 600.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert sorted(b.floor for b in r.belts) == [0, 1]
+    assert any("exceeds one belt" in f for f in r.failures)
+    assert r.failed_floors == []
+
+
+def test_a_folded_producer_merges_its_two_output_belts():
+    f = blk("f", 1, 1, n=12, outputs={"P": 60.0}, folded=True)
+    r = R.route_belts(lay(floor(0, [f], w=16, d=16)), belt_ipm=270)
+    ports = R.manifold_ports(f)
+    merges = [b for b in r.belts if b.src == b.dst == "f"]
+    assert len(merges) == 1
+    assert (merges[0].path[0], merges[0].path[-1]) == (ports.outputs[1][0], ports.outputs[0][0])
+
+
+def test_pipes_are_listed_not_routed():
+    c = blk("c", 1, 1, inputs={"Water": 30.0, "Ore": 10.0})
+    r = R.route_belts(lay(floor(0, [c]), buses=[bus("Water", "pipe"), bus("Ore")]), belt_ipm=270)
+    assert "Water: pipe, not routed" in r.failures
+    assert all(b.item != "Water" for b in r.belts) and all(l.item != "Water" for l in r.lifts)
+
+
+def test_an_oversized_floor_is_reported_not_routed():
+    big = Floor(
+        index=1,
+        kind="production",
+        stage=1,
+        height_m=16.0,
+        blocks=[blk("x", 0, 0)],
+        slab_side_m=None,
+        slab_depth_m=None,
+        group="Big",
+    )
+    r = R.route_belts(lay(floor(0, [blk("c", 1, 1, inputs={"Ore": 1.0})]), big), belt_ipm=270)
+    assert "F1: oversized floor, not routed" in r.failures
+    assert any(b.floor == 0 for b in r.belts)
+
+
+def test_colliding_manifold_belts_fail_the_floor_without_dropping_others():
+    lower = blk("a", 1, 1, outputs={"P": 1.0})
+    upper = blk("b", 1, 4, inputs={"X": 1.0, "Y": 1.0, "Z": 1.0})  # 3rd input row lands on lane 13
+    r = R.route_belts(lay(floor(0, [lower, upper])), belt_ipm=270)
+    assert r.failed_floors == [0]
+    assert any("collide" in f for f in r.failures)
+
+
+def test_lift_exit_stubs_are_not_crossed_by_other_lifts_belts():
+    # Without the reserved 3-cell stub, a long belt to one lift hugs column 2 and
+    # seals the other lift off, so it comes out unroutable.
+    r = _two_by_two()
+    assert not r.failures
+    for b in r.belts:
+        for l in r.lifts:
+            if set(R._stub(l.cell, 40)) & set(b.path) and b.floor in _span_floors(l):
+                assert l.cell in (b.path[0], b.path[-1])
+
+
+def _span_floors(l):
+    return range(min(l.from_floor, l.to_floor), max(l.from_floor, l.to_floor) + 1)
+
+
+def test_a_source_between_two_users_lifts_both_ways():
+    c0 = blk("c0", 1, 1, inputs={"I": 10.0})
+    p = blk("p", 1, 1, outputs={"I": 20.0})
+    c2 = blk("c2", 1, 1, inputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [c0]), floor(1, [p]), floor(2, [c2])), belt_ipm=270)
+    assert not r.failures
+    assert sorted((l.kind, l.from_floor, l.to_floor) for l in r.lifts) == [
+        ("down", 1, 0),
+        ("up", 1, 2),
+    ]
+    assert {b.dst for b in r.belts if b.floor in (0, 2)} == {"c0", "c2"}
+
+
+def test_a_partial_producer_tops_up_from_below_not_a_self_loop():
+    p = blk("p", 1, 4, outputs={"I": 60.0})
+    c1 = blk("c1", 1, 7, inputs={"I": 30.0})
+    c2 = blk("c2", 1, 1, inputs={"I": 40.0})
+    r = R.route_belts(lay(floor(0, [p, c1, c2], d=12)), belt_ipm=270)
+    assert not r.failures
+    assert not [l for l in r.lifts if l.from_floor == l.to_floor and l.kind in ("up", "down")]
+    assert [(l.kind, l.rate) for l in r.lifts] == [("in", pytest.approx(10.0))]
+    got = sorted((b.src, b.dst, round(b.rate, 6)) for b in r.belts)
+    assert ("p", "c2", 30.0) in got and ("lift:I", "c2", 10.0) in got and ("p", "c1", 30.0) in got
+
+
+def test_partial_surplus_goes_up_and_the_rest_out():
+    p = blk("p", 1, 1, outputs={"I": 100.0})
+    c = blk("c", 1, 1, inputs={"I": 10.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    assert not r.failures
+    assert sorted((l.kind, l.rate) for l in r.lifts) == [
+        ("out", pytest.approx(90.0)),
+        ("up", pytest.approx(10.0)),
+    ]
+
+
+def _clash_layout(wide):
+    lower = blk("a", 1, 1, outputs={"P": 1.0})
+    upper = blk("b", 1, 5 if wide else 4, inputs={"X": 1.0, "Y": 1.0, "Z": 1.0})
+    return lay(floor(0, [lower, upper], d=12, group="Constructor"))
+
+
+def test_build_routed_layout_widens_a_failing_floor_and_retries(monkeypatch):
+    calls = []
+
+    def fake_build_layout(game, sol, **kw):
+        calls.append(kw["wide_groups"])
+        assert kw["group_by"] == "building"
+        return _clash_layout("Constructor" in kw["wide_groups"])
+
+    monkeypatch.setattr(R, "build_layout", fake_build_layout)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [frozenset(), frozenset({"Constructor"})]
+    assert r.widened == ["Constructor"] and not r.failed_floors
+
+
+def test_build_routed_layout_reports_a_floor_that_fails_even_when_wide(monkeypatch):
+    monkeypatch.setattr(R, "build_layout", lambda game, sol, **kw: _clash_layout(False))
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
+    assert any("collide" in f for f in r.failures)
+
+
+def test_belts_sharing_an_end_may_run_along_each_other():
+    # In lifts sit level with their feeds. I feeds rows 3 (c1) and 19 (c2): target 11.
+    # A (feed row 11) goes first and takes 11; I's nearest free rows tie at 10/12 -> 10;
+    # J (feed row 10) moves to 9. So I's stub end (3, 10) is boxed in by A's and J's ends
+    # (N/S) and its own stub (W): its one free neighbour is (4, 10). Both I belts must
+    # leave through it; without the shared trunk the first belt marks (4, 10) 'h' and
+    # the second is unroutable.
+    c1 = blk("c1", 3, 1, n=1, inputs={"I": 10.0})
+    c2 = blk("c2", 3, 5, n=1, inputs={"I": 10.0})
+    c3 = blk("c3", 6, 3, n=1, inputs={"A": 1.0, "J": 1.0})
+    r = R.route_belts(lay(floor(0, [c1, c2, c3], w=12, d=12)), belt_ipm=270)
+    assert {l.item: l.cell[1] for l in r.lifts} == {"A": 11, "I": 10, "J": 9}
+    assert not r.failures
+    i1, i2 = [b.path for b in r.belts if b.item == "I"]
+    assert i1[:6] == i2[:6] and i1[4] == (4, 10)
+
+
+def test_a_belt_of_another_item_cannot_run_along_a_trunk():
+    # Same boxed-in end at (1, 1): its only way out is east along row 1, where a belt of
+    # a different item already runs ('h'). route_belts passes `shared` only for the same
+    # item; with it the trunk is reusable, without it the end is sealed.
+    g = R.Grid(8, 3, {(0, 1), (1, 0), (1, 2)}, set(), set())
+    first = R.astar(g, (1, 1), (7, 1))
+    R.mark_belt(g, first)
+    assert R.astar(g, (1, 1), (6, 0)) is None
+    second = R.astar(g, (1, 1), (6, 0), shared=set(first[1:-1]))
+    assert second[:3] == first[:3]
+    # Marking the second belt leaves the trunk's dirs alone: (2, 1) stays a crossable 'h'
+    # rather than turning into a double-crossing 'x'.
+    R.mark_belt(g, second, shared=set(first[1:-1]))
+    assert g.belt_dirs[(2, 1)] == "h"
+
+
+def test_different_items_from_one_exit_do_not_share_a_trunk():
+    # A two-output block's I and K belts start at the same exit end and, with block o
+    # in the way, both want column 11 north. Without the same-item filter I rides K's
+    # cells for free; with it I may only cross K perpendicularly.
+    p = blk("p", 3, 1, outputs={"I": 10.0, "K": 10.0})
+    o = blk("o", 3, 3)
+    ci, ck = blk("ci", 3, 6, inputs={"I": 10.0}), blk("ck", 3, 9, inputs={"K": 10.0})
+    r = R.route_belts(lay(floor(0, [p, o, ci, ck], w=12, d=12)), belt_ipm=270)
+    assert not r.failures
+    (pi,), (pk,) = ([b.path for b in r.belts if b.dst == d] for d in ("ci", "ck"))
+    assert pi[0] == pk[0]
+    common = set(pi[1:-1]) & set(pk[1:-1])
+    for c in common:  # each common cell is a perpendicular crossing, never a run along
+        a = pi.index(c)
+        k = pk.index(c)
+        assert (pi[a - 1][1] == pi[a + 1][1]) != (pk[k - 1][1] == pk[k + 1][1])
+
+
+def test_plan_layout_shows_belts_for_the_versatile_framework_plan(game, state):
+    from satisfactory_mcp import server as srv
+
+    out = srv.plan_layout(
+        objective="min_raw",
+        exports=["Versatile Framework"],
+        export_minimums={"Versatile Framework": 10},
+        group_by="building",
+        show="belts",
+    )
+    assert "length m" in out and "lifts" in out.lower()
+    assert "unroutable" not in out
+    stage = srv.plan_layout(
+        objective="min_raw",
+        exports=["Versatile Framework"],
+        export_minimums={"Versatile Framework": 10},
+        show="belts",
+    )
+    assert 'group_by="building"' in stage
+
+
+def test_sides_alternate_by_floor():
+    assert [R.input_side(floor(i, [])) for i in range(4)] == ["W", "E", "W", "E"]
+    assert [R.output_side(floor(i, [])) for i in range(2)] == ["E", "W"]
+
+
+def test_manifold_ends_face_the_floor_sides():
+    b = blk("a", 1, 1, inputs={"A": 1}, outputs={"P": 1})
+    west_in, east_in = R.manifold_ports(b, "W"), R.manifold_ports(b, "E")
+    assert (west_in.inputs["A"][0], west_in.outputs[0][0]) == ((4, 3), (11, 9))
+    assert (east_in.inputs["A"][0], east_in.outputs[0][0]) == ((11, 3), (4, 9))
+    f = R.manifold_ports(blk("f", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True), "E")
+    assert f.inputs["A"][0] == (11, 11) and [o[0] for o in f.outputs] == [(4, 18), (4, 3)]
+    r = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True), "E")
+    assert (r.inputs["A"][0], r.outputs[0][0]) == ((9, 4), (3, 4))  # mirrored, south end first
+    w = R.manifold_ports(blk("r", 1, 1, inputs={"A": 1}, outputs={"P": 1}, rotated=True), "W")
+    assert (w.inputs["A"][0], w.outputs[0][0]) == ((3, 4), (9, 4))
+    rf = R.manifold_ports(
+        blk("rf", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True, rotated=True), "E"
+    )
+    wf = R.manifold_ports(
+        blk("rf", 1, 1, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True, rotated=True), "W"
+    )
+    assert (wf.inputs["A"][0], [o[0] for o in wf.outputs]) == ((11, 4), [(18, 4), (3, 4)])
+    assert (rf.inputs["A"][0], [o[0] for o in rf.outputs]) == ((10, 4), [(3, 4), (18, 4)])
+
+
+def test_a_one_floor_lift_rises_on_the_output_side():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert lift.cell[0] == 39  # 10-fnd floor = 40 cells; F0 out = E = F1 in
+    assert not r.failures
+
+
+def test_an_express_lift_keeps_its_source_side_and_still_routes():
+    p = blk("p", 1, 1, outputs={"I": 30.0})
+    c = blk("c", 1, 1, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, []), floor(2, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert (lift.from_floor, lift.to_floor, lift.cell[0]) == (0, 2, 39)  # F2's output side
+    assert not r.failures and any(b.floor == 2 and b.dst == "c" for b in r.belts)
+
+
+def test_an_east_lift_stub_mirrors_the_west_one():
+    p = blk("p", 1, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 1, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    cy = r.lifts[0].cell[1]
+    up = next(b for b in r.belts if b.floor == 1)
+    assert up.path[:4] == [(39, cy), (38, cy), (37, cy), (36, cy)]
+    assert R._stub((39, cy), 40) == ((38, cy), (37, cy), (36, cy))
+    assert R._stub((0, cy), 40) == ((1, cy), (2, cy), (3, cy))
+
+
+def test_in_lifts_sit_level_with_their_feeds_and_out_lifts_take_the_north_corner():
+    c = blk("c", 1, 1, inputs={"Ore": 30.0}, outputs={"Ingot": 30.0})
+    f0 = floor(0, [c])
+    r = R.route_belts(lay(f0), belt_ipm=270)
+    by = {l.kind: l.cell for l in r.lifts}
+    rows = R.strip_rows(f0)
+    # c at foundation (1, 1) -> rect (4, 4, 8, 5); its Ore input row runs (4, 3)..(11, 3),
+    # so the feed is the west end (4, 3) and the target row is 3. Lanes are rows/cols
+    # {1, 38}; row 3 is a strip row and its stub (1..3, 3) misses every manifold cell.
+    assert by["in"] == (0, 3)  # F0 input side W, level with the Ore feed
+    assert by["out"] == (39, max(rows))  # F0 output side E, north end
+    assert not r.failures
+
+
+def test_a_lift_sits_level_with_the_rows_it_serves():
+    p = blk("p", 1, 6, outputs={"I": 30.0})  # F0 exit: east end of row y = 24 + 5 = 29
+    c = blk("c", 1, 7, inputs={"I": 30.0})  # F1 feed: east end of row y = 28 - 1 = 27
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    (lift,) = r.lifts
+    assert lift.cell == (39, 28)  # mean of 29 and 27
+    assert not r.failures
+
+
+def test_two_lifts_with_the_same_target_get_neighbouring_rows():
+    p = blk("p", 1, 6, outputs={"A": 30.0, "B": 30.0})
+    c = blk("c", 1, 6, inputs={"A": 30.0, "B": 30.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c])), belt_ipm=270)
+    rows = sorted(l.cell[1] for l in r.lifts)
+    assert len(set(rows)) == 2 and rows[1] - rows[0] <= 2  # distinct, near each other
+    usable = set(R.strip_rows(floor(0, [p]))) & set(R.strip_rows(floor(1, [c])))
+    assert all(y in usable for y in rows)
+
+
+def test_a_same_floor_only_feed_uses_the_nearer_end():
+    # F0 (input W). p at fnd (5, 1): output row y 9, x 20..27, side end (27, 9).
+    # c at fnd (1, 4): input row y 15, x 4..11, side end (4, 15).
+    # p's output: to c's feed (4, 15) from (27, 9) = 23+6 = 29, from (20, 9) = 16+6 = 22 -> west.
+    # c's input: to p's new exit (20, 9) from (4, 15) = 16+6 = 22, from (11, 15) = 9+6 = 15 -> east.
+    p = blk("p", 5, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 4, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures and not r.lifts
+    (b,) = r.belts
+    assert (b.path[0], b.path[-1]) == ((20, 9), (11, 15))
+
+
+def test_a_lift_fed_belt_keeps_the_input_side_end():
+    # Same geometry; c needs 60 but p makes 30, so 30 comes up an 'in' lift: c's input
+    # belt keeps its W end (4, 15). p is same-floor only: flips west to (20, 9) (22 < 29).
+    p = blk("p", 5, 1, outputs={"I": 30.0})
+    c = blk("c", 1, 4, inputs={"I": 60.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures
+    assert {b.src: (b.path[0], b.path[-1]) for b in r.belts}["p"] == ((20, 9), (4, 15))
+    assert all(b.path[-1] == (4, 15) for b in r.belts)
+
+
+def test_an_output_feeding_a_lift_keeps_the_output_side_end():
+    # p makes 60, c takes 30, 30 goes out a lift: p keeps its E end (27, 9).
+    # c is same-floor only: to (27, 9) from (4, 15) = 23+6 = 29, from (11, 15) = 16+6 = 22 -> east.
+    p = blk("p", 5, 1, outputs={"I": 60.0})
+    c = blk("c", 1, 4, inputs={"I": 30.0})
+    r = R.route_belts(lay(floor(0, [p, c])), belt_ipm=270)
+    assert not r.failures
+    assert all(b.path[0] == (27, 9) for b in r.belts)
+    assert next(b for b in r.belts if b.dst == "c").path[-1] == (11, 15)
+
+
+def test_a_flipped_folded_producer_merges_matching_ends():
+    # f folded n=4 at fnd (5, 1): 8 cells long (x 20..27), 14 deep (y 4..17); outputs
+    # rows 18 (main) and 3, side ends (27, 18) / (27, 3). c at fnd (1, 6): input row 23,
+    # x 4..11. Main output to (4, 23): from (27, 18) = 23+5 = 28, from (20, 18) = 16+5 = 21
+    # -> both output belts flip west; the merge joins (20, 3) -> (20, 18).
+    f = blk("f", 5, 1, n=4, outputs={"P": 60.0}, folded=True)
+    c = blk("c", 1, 6, inputs={"P": 60.0})
+    r = R.route_belts(lay(floor(0, [f, c])), belt_ipm=270)
+    assert not r.failures
+    ports = R.manifold_ports(f)
+    for ln in ports.outputs:
+        ln.reverse()
+    (merge,) = [b for b in r.belts if b.src == b.dst == "f"]
+    assert (
+        (merge.path[0], merge.path[-1])
+        == (ports.outputs[1][0], ports.outputs[0][0])
+        == ((20, 3), (20, 18))
+    )
+    assert next(b for b in r.belts if b.dst == "c").path[0] == (20, 18)
+
+
+def rows_blk(key, x, y, **kw):
+    """A building-mode block: splitter and merger rows reserved (layout sets these)."""
+    b = blk(key, x, y, **kw)
+    b.manifold_in_fnd = (
+        0 if kw.get("folded") or not b.inputs else max(1, math.ceil(len(b.inputs) / 2))
+    )
+    b.manifold_out_fnd = 1 if b.outputs else 0
+    b.manifold_rows = True
+    return b
+
+
+def test_reserved_rows_move_belts_to_the_outer_band_cell():
+    # body at y0 = 8, depth 10 m = 5 cells: input bands 7,6 (A) and 5,4 (B); merger 13,14
+    p = R.manifold_ports(rows_blk("a", 1, 2, inputs={"B": 1, "A": 1}, outputs={"P": 1}))
+    assert p.inputs["A"] == [(x, 6) for x in range(4, 12)]  # v = -2
+    assert p.inputs["B"] == [(x, 4) for x in range(4, 12)]  # v = -4
+    assert p.outputs == [[(x, 14) for x in range(11, 3, -1)]]  # v = depth + 1
+    assert sorted({c[1] for band in p.bands for c in band}) == [4, 5, 6, 7, 13, 14]
+
+
+def test_reserved_rows_on_a_folded_block_put_outputs_on_both_outer_bands():
+    # depth 28 m = 14 cells from y0 = 8: lane input stays at 8 + 7; outputs at 8+15 and 8-2
+    p = R.manifold_ports(rows_blk("f", 1, 2, n=4, inputs={"A": 1}, outputs={"P": 1}, folded=True))
+    assert p.inputs["A"] == [(x, 15) for x in range(4, 12)]
+    assert [ln[0][1] for ln in p.outputs] == [23, 6]
+    assert sorted({c[1] for band in p.bands for c in band}) == [6, 7, 22, 23]
+
+
+def test_band_cells_are_blocked_in_the_grid():
+    b = rows_blk("a", 1, 2, inputs={"A": 1}, outputs={"P": 1})
+    f = floor(0, [b])
+    g, clash = R._grid(f, {"a": R.manifold_ports(b)})
+    assert not clash
+    assert {(x, y) for x in range(4, 12) for y in (6, 7, 13, 14)} <= g.blocked
+
+
+def test_walk_lane_runs_just_past_the_merger_band():
+    lower, upper = (
+        rows_blk("a", 1, 2, inputs={"A": 1}, outputs={"P": 1}),
+        rows_blk("b", 1, 6, inputs={"A": 1}, outputs={"P": 1}),
+    )
+    rows, _cols = R.walk_lanes(floor(0, [lower, upper]))
+    assert rows == {1, 38, 8 + 5 + 2, 24 + 5 + 2}  # no old aisle lane
+
+
+def test_a_rotated_four_input_block_keeps_its_bands_in_its_reserved_box_on_both_sides():
+    from satisfactory_mcp.domain.planning.layout.packing import building_floors
+
+    # One machine 8 wide x 16 deep (8 cells, exactly 2 fnd), 4 inputs: in 2, out 1 ->
+    # rotated reserves max(2, 1) = 2 both sides: x 3..9 fnd = cells 12..35, body at x 5.
+    # On an E floor input 3's band mirrors to depth-1-(-8) = 15 -> cell 20 + 15 = 35; the
+    # old west 2 / east 1 box (cells 12..31) left it outside.
+    b = blk("q", 0, 0, n=1, w=8.0, d=16.0, inputs={f"I{k}": 1 for k in range(4)}, outputs={"P": 1})
+    b.packed = Packed(count=1, columns=1, rows=1, width_m=8.0, depth_m=16.0, foundations=2)
+    from satisfactory_mcp.domain.planning.layout.packing import WEST_BAY_FND, _pack_rows
+
+    building_floors([b], [], 16)
+    assert b.rotated and b.x_fnd == 5 and (b.manifold_in_fnd, b.manifold_out_fnd) == (2, 1)
+    [[box]], _, _ = _pack_rows([b], 16, 0, west_fnd=WEST_BAY_FND, east_fnd=2)  # the reserved box
+    assert (box.x_fnd, box.w_fnd) == (3, 6)
+    lo, hi = box.x_fnd * R.PER_FND, (box.x_fnd + box.w_fnd) * R.PER_FND - 1
+    for side in ("W", "E"):
+        xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
+        assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)
+
+
+def test_without_a_merger_row_the_band_and_walk_lane_sit_in_the_body_pad():
+    from satisfactory_mcp.domain.planning.layout.packing import building_floors
+
+    # 4 machines 8 x 10 m: body 2 fnd = 8 cells, depth 5 cells, no merger row.
+    b = blk("c", 0, 0, n=4, w=8.0, d=10.0, inputs={"A": 1}, outputs={"P": 1})
+    floors, _ = building_floors([b], [], 16)
+    assert b.manifold_out_fnd == 0
+    y0 = b.y_fnd * R.PER_FND
+    ports = R.manifold_ports(b)
+    north = {c[1] for band in ports.bands for c in band if c[1] >= y0}
+    assert north == {y0 + 5, y0 + 6} and max(north) < y0 + 2 * R.PER_FND  # inside the body box
+    assert ports.outputs[0][0][1] == y0 + 6
+    assert y0 + 5 + 2 in R.walk_lanes(floors[0])[0]
+    assert R._grid(floors[0], {"c": ports})[1] == ""
+
+
+def test_lift_bias_shifts_an_in_lifts_row_on_its_floor():
+    # One in lift feeding c's input belt (y0 4, input row 3): unbiased it sits level
+    # with the feed; a +3 bias on F0 moves it 3 rows north.
+    c = blk("c", 3, 1, inputs={"I": 10.0})
+    base = R.route_belts(lay(floor(0, [c], d=12)), belt_ipm=270)
+    nudged = R.route_belts(lay(floor(0, [c], d=12)), belt_ipm=270, lift_bias={0: 3})
+    assert [l.cell[1] for l in base.lifts] == [3]
+    assert [l.cell[1] for l in nudged.lifts] == [6]
+    assert not nudged.failures
+
+
+def _fake_routes(monkeypatch, ok_bias):
+    """route_belts that fails floor 0 unless given ok_bias (None = never routes)."""
+    calls = []
+
+    def fake_route(layout, belt_ipm, lift_bias=None):
+        calls.append((layout.floors[0].group, dict(lift_bias or {})))
+        r = R.Routing(layout=layout, lift_bias=dict(lift_bias or {}))
+        if lift_bias != ok_bias or ok_bias is None:
+            r.failures, r.failed_floors = ["F0: X a -> b unroutable"], [0]
+        return r
+
+    monkeypatch.setattr(R, "route_belts", fake_route)
+    monkeypatch.setattr(
+        R, "build_layout", lambda game, sol, **kw: _clash_layout("Constructor" in kw["wide_groups"])
+    )
+    return calls
+
+
+def test_build_routed_layout_nudges_lift_rows_before_widening(monkeypatch):
+    calls = _fake_routes(monkeypatch, {0: -1})
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert [b for _g, b in calls] == [{}, {0: 1}, {0: -1}]
+    assert not r.failures and r.widened == [] and r.lift_bias == {0: -1}
+
+
+def test_build_routed_layout_widens_when_no_nudge_helps(monkeypatch):
+    calls = _fake_routes(monkeypatch, None)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    ks = [k for m in range(1, 9) for k in (m, -m)]
+    per_layout = [{}] + [{0: k} for k in ks]
+    assert [b for _g, b in calls] == per_layout * 2  # nudged again after widening
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
+
+
+def _scripted_routes(monkeypatch, script):
+    """route_belts returning script(lift_bias) -> (failures, failed_floors); calls logged."""
+    calls = []
+
+    def fake_route(layout, belt_ipm, lift_bias=None):
+        calls.append(dict(lift_bias or {}))
+        r = R.Routing(layout=layout, lift_bias=dict(lift_bias or {}))
+        r.failures, r.failed_floors = script(lift_bias)
+        return r
+
+    monkeypatch.setattr(R, "route_belts", fake_route)
+    monkeypatch.setattr(
+        R, "build_layout", lambda game, sol, **kw: _clash_layout("Constructor" in kw["wide_groups"])
+    )
+    return calls
+
+
+def test_a_pre_existing_lift_line_failure_does_not_block_a_nudge(monkeypatch):
+    def script(bias):
+        if not bias:
+            return [
+                "Iron lift line y5: 300/min in, 300/min out (belt 270/min)",
+                "F0: X a -> b unroutable",
+            ], [0]
+        return ["Iron lift line y6: 300/min in, 300/min out (belt 270/min)"], []  # same line, moved
+
+    calls = _scripted_routes(monkeypatch, script)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {0: 1}] and r.widened == [] and r.lift_bias == {0: 1}
+
+
+def test_a_new_failure_still_rejects_a_nudge(monkeypatch):
+    def script(bias):
+        if not bias:
+            return ["F0: X a -> b unroutable"], [0]
+        if bias == {0: 1}:
+            return ["Iron lift line y6: 300/min in, 300/min out (belt 270/min)"], []
+        return [], []
+
+    calls = _scripted_routes(monkeypatch, script)
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {0: 1}, {0: -1}] and r.lift_bias == {0: -1}
+
+
+def test_clashing_manifolds_skip_the_nudges(monkeypatch):
+    calls = _scripted_routes(
+        monkeypatch, lambda bias: (["F0: manifold belts collide (a at (1, 2))"], [0])
+    )
+    r = R.build_routed_layout(None, None, belt_ipm=270)
+    assert calls == [{}, {}]  # one route per layout: original, widened
+    assert r.widened == ["Constructor"] and r.failed_floors == [0]
+
+
+def test_a_rotated_output_only_block_keeps_a_merger_row_on_both_sides():
+    from satisfactory_mcp.domain.planning.layout.packing import (
+        WEST_BAY_FND,
+        _pack_rows,
+        building_floors,
+    )
+
+    # One machine 8 x 10 m (pad 6 m: no merger row straight), no inputs: rotated it still
+    # reserves 1 + 2 + 1 = 4 fnd (x 3..7, cells 12..27), body at x 4 (cells 16..20).
+    # On an E floor its merger band mirrors to v = -2, -1 -> cells 14, 15.
+    b = blk("o", 0, 0, n=1, w=8.0, d=10.0, outputs={"P": 1})
+    b.packed = Packed(count=1, columns=1, rows=1, width_m=8.0, depth_m=10.0, foundations=2)
+    building_floors([b], [], 16)
+    assert b.rotated and b.x_fnd == 4 and (b.manifold_in_fnd, b.manifold_out_fnd) == (0, 0)
+    [[box]], _, _ = _pack_rows([b], 16, 0, west_fnd=WEST_BAY_FND, east_fnd=2)
+    assert (box.x_fnd, box.w_fnd) == (3, 4)
+    lo, hi = box.x_fnd * R.PER_FND, (box.x_fnd + box.w_fnd) * R.PER_FND - 1
+    for side in ("W", "E"):
+        xs = {c[0] for band in R.manifold_ports(b, side).bands for c in band}
+        assert xs and lo <= min(xs) and max(xs) <= hi, (side, sorted(xs), lo, hi)
+
+
+def test_one_walk_lane_per_shared_row_past_the_deepest_merger_band():
+    # One row, bodies at y0 = 8: a 5 cells deep (merger band 13, 14), b 7 deep (band
+    # 15, 16). One lane at 8 + 7 + 2 = 17 -- not a's 15, which lands on b's band.
+    a = rows_blk("a", 3, 2, inputs={"A": 1}, outputs={"P": 1})
+    b = rows_blk("b", 6, 2, d=14.0, inputs={"A": 1}, outputs={"P": 1})
+    f = floor(0, [a, b])
+    rows, _cols = R.walk_lanes(f)
+    assert rows == {1, 38, 17}
+    ports = {k.key: R.manifold_ports(k) for k in (a, b)}
+    assert R._grid(f, ports)[1] == ""
+
+
+def test_a_rounding_shortfall_does_not_invent_a_raw_input_lift():
+    # VF10 with Solid Steel: F0 makes 264.9999 Steel Ingot, F1 needs 240 + 25 = 265.
+    p = blk("p", 1, 1, outputs={"I": 264.9999})
+    c1 = blk("c1", 1, 1, inputs={"I": 240.0})
+    c2 = blk("c2", 1, 5, inputs={"I": 25.0})
+    r = R.route_belts(lay(floor(0, [p]), floor(1, [c1, c2])), belt_ipm=270)
+    assert [(l.item, l.kind) for l in r.lifts] == [("I", "up")]
+    assert not r.failures

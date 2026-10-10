@@ -69,6 +69,23 @@ def saves_root() -> Path:
     return Path(local) / "FactoryGame" / "Saved" / "SaveGames"
 
 
+WEB_HOST = "127.0.0.1"
+WEB_PORT = 8712
+
+
+def web_port() -> int:
+    """The web map's port: ``SATISFACTORY_WEB_PORT`` when it is a valid port, else 8712."""
+    raw = (os.environ.get("SATISFACTORY_WEB_PORT") or "").strip()
+    if raw.isdigit() and 0 < int(raw) < 65536:
+        return int(raw)
+    return WEB_PORT
+
+
+def web_url() -> str:
+    """The web map's root URL, as the server started with the same environment binds it."""
+    return f"http://{WEB_HOST}:{web_port()}/"
+
+
 #: The extractor, named as a module rather than a file. Spawning it with ``-m`` means the
 #: child resolves it through the same import machinery this process used, so it can never
 #: run a stale copy sitting next to a path someone built by hand.
@@ -102,11 +119,17 @@ def cache_dir() -> Path:
     return d
 
 
+def user_dir() -> Path:
+    """Where the player's own writing lives: ``SATISFACTORY_USER_DATA``, else the platform's."""
+    env = os.environ.get("SATISFACTORY_USER_DATA")
+    return Path(env) if env else Path(user_data_dir("satisfactory-mcp", appauthor=False))
+
+
 @lru_cache(maxsize=1)
 def plans_dir() -> Path:
     """Named plans the player saved. Same reasoning as labels_dir: not regenerable,
     not the cache, not the repo."""
-    d = Path(user_data_dir("satisfactory-mcp", appauthor=False)) / "plans"
+    d = user_dir() / "plans"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -119,6 +142,51 @@ def labels_dir() -> Path:
     that tree, and a hand-written name is not regenerable. Out of the repo because it
     belongs to a save file, not to the source.
     """
-    d = Path(user_data_dir("satisfactory-mcp", appauthor=False)) / "labels"
+    d = user_dir() / "labels"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+@lru_cache(maxsize=1)
+def activity_dir() -> Path:
+    """The activity journal, one file per writing process (docs/planner_slice_contract.md §8)."""
+    d = user_dir() / "activity"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@lru_cache(maxsize=1)
+def ui_dir() -> Path:
+    """What the page has open, written by the web server alone (contract §9)."""
+    d = user_dir() / "ui"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@lru_cache(maxsize=1)
+def pins_dir() -> Path:
+    """Pins the player placed from the page, one file per world (docs/planner-p3_contract.md §4)."""
+    return user_dir() / "pins"
+
+
+@lru_cache(maxsize=1)
+def asks_dir() -> Path:
+    """Questions the page queued for chat, one file per world (docs/planner-p4_contract.md §4)."""
+    return user_dir() / "asks"
+
+
+@lru_cache(maxsize=1)
+def advice_dir() -> Path:
+    """Advisories the page or chat hid, one file per world (docs/advisors_contract.md §4)."""
+    return user_dir() / "advice"
+
+
+@lru_cache(maxsize=1)
+def settings_path() -> Path:
+    """Settings the page and chat share, one file for every world (docs/shared-settings.md)."""
+    return user_dir() / "settings.json"
+
+
+def world_file_stem(world_id: str) -> str:
+    """``world_id`` cut to the characters safe in a file name; ``"world"`` when none are."""
+    return "".join(c for c in world_id if c.isalnum() or c in "-_") or "world"

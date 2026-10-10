@@ -1,6 +1,6 @@
 """Normalized game-data model.
 
-Every field here is derived from Docs.json except the four in ``constants.py``.
+Every field here is derived from Docs.json except the values ``constants.py`` registers.
 Rates are per minute at 100% clock with no somersloops; fluids are in m3 (already
 divided by 1000).
 """
@@ -10,6 +10,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .constants import (
+    BUILDING_CLASS_ALIASES,
+    CLASS_NAMES,
+    FLUIDS_CANNOT_BE_SUNK,
+    MAX_PRODUCTION_BOOST,
+    PURITY_MULT,
+)
 from .footprint import Footprint
 
 __all__ = [
@@ -39,15 +46,14 @@ def pretty_class(cls: str | None) -> str | None:
     """
     if not cls:
         return None
-    leaf = re.sub(r"^(Build|Desc|Recipe|BP)_", "", str(cls))
+    leaf = re.sub(r"^(Build|Desc|Recipe|BP)_((Equipment|Item)Descriptor)?", "", str(cls))
     leaf = re.sub(r"_C$", "", leaf)
     words = _CAMEL.sub(" ", leaf.replace("_", " ")).strip()
     return words or str(cls)
 
 
-#: The 11 classes that make a recipe automatable. Both natives are required --
-#: omitting FGBuildableManufacturerVariablePower silently loses the 43
-#: Particle-Accelerator / Converter / Quantum-Encoder recipes.
+#: The natives whose buildings make a recipe automatable. Both are required: without the
+#: variable-power one, every Particle Accelerator, Converter and Quantum Encoder recipe is lost.
 MANUFACTURER_NATIVES = ("FGBuildableManufacturer", "FGBuildableManufacturerVariablePower")
 
 
@@ -81,8 +87,6 @@ class Item:
     def sinkable(self) -> bool:
         """Whether an AWESOME Sink can consume this. Fluids are excluded against what the
         dump says -- see ``constants.FLUIDS_CANNOT_BE_SUNK``."""
-        from .constants import FLUIDS_CANNOT_BE_SUNK
-
         if self.is_fluid and FLUIDS_CANNOT_BE_SUNK:
             return False
         return self.sink_points > 0 and self.can_be_discarded
@@ -125,6 +129,11 @@ class Recipe:
     def is_event(self) -> bool:
         return bool(self.events)
 
+    @property
+    def main_product(self) -> str | None:
+        """The item the recipe is named for: its first product, or None with no products."""
+        return self.products[0].item if self.products else None
+
     def rate_of(self, item: str) -> float:
         """Net per-minute rate of ``item`` for one machine at 100% clock."""
         out = sum(f.per_min for f in self.products if f.item == item)
@@ -156,6 +165,8 @@ class Building:
     sloop_mult: float
     base_boost: float
     mfg_speed: float
+    #: The highest clock with every shard slot filled; 1.0 where the building cannot overclock.
+    max_clock: float = 1.0
     descriptor: str | None = None
     build_cost: tuple[Flow, ...] = ()
     unlocked_by: tuple[str, ...] = ()
@@ -199,14 +210,6 @@ class Building:
     machine_head_lift_m: float = 0.0
 
     @property
-    def max_clock(self) -> float:
-        from .constants import POTENTIAL_SHARD_SLOTS
-
-        if not self.can_overclock:
-            return 1.0
-        return self.base_max_clock + POTENTIAL_SHARD_SLOTS * 0.5
-
-    @property
     def is_manufacturer(self) -> bool:
         return self.native in MANUFACTURER_NATIVES
 
@@ -222,23 +225,24 @@ class Building:
     def is_generator(self) -> bool:
         return self.native.startswith("FGBuildableGenerator")
 
-    def power_at(self, clock: float = 1.0, sloops: int = 0) -> float:
-        """Consumption in MW at a given clock and somersloop count."""
+    def power_at(self, clock: float = 1.0, sloops: int = 0, base_mw: float | None = None) -> float:
+        """Consumption in MW at a given clock and somersloop count.
+
+        ``base_mw`` replaces the building's own draw, for the variable-power machines whose
+        draw comes from the recipe.
+        """
+        base = self.power_mw if base_mw is None else base_mw
         boost = self.boost_for(sloops)
-        return self.power_mw * (clock**self.power_exponent) * (boost**self.boost_power_exponent)
+        return base * (clock**self.power_exponent) * (boost**self.boost_power_exponent)
 
     def boost_for(self, sloops: int) -> float:
         """Output multiplier from ``sloops`` somersloops. Capped at 2x everywhere."""
-        from .constants import MAX_PRODUCTION_BOOST
-
         if not self.can_boost or sloops <= 0:
             return self.base_boost
-        n = min(sloops, self.sloop_slots)
-        return min(self.base_boost + n * self.sloop_mult, MAX_PRODUCTION_BOOST)
+        slotted = min(sloops, self.sloop_slots)
+        return min(self.base_boost + slotted * self.sloop_mult, MAX_PRODUCTION_BOOST)
 
     def extract_rate(self, purity: str = "normal", clock: float = 1.0) -> float:
-        from .constants import PURITY_MULT
-
         return self.base_extract_rate * PURITY_MULT[purity] * clock
 
     def fuel_rate_per_min(self, item: Item) -> float:
@@ -272,6 +276,12 @@ class Schematic:
     def is_alternate(self) -> bool:
         return self.type == "EST_Alternate"
 
+    @property
+    def is_retired(self) -> bool:
+        """A node the game ships but no longer offers: named "Discontinued - ...", the
+        "SPWN" prototype, or carrying no name at all."""
+        return self.name in ("", self.cls, "SPWN") or self.name.startswith("Discontinued")
+
 
 @dataclass
 class GameData:
@@ -280,13 +290,33 @@ class GameData:
     buildings: dict[str, Building]
     schematics: dict[str, Schematic]
     docs_sha256: str
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list[str])
+    _events: frozenset[str] | None = field(default=None, init=False, repr=False, compare=False)
 
     # ---- lookups -------------------------------------------------------
 
     def item_name(self, cls: str) -> str:
+        """The item's display name; a building's for a building class; else the id in words."""
         it = self.items.get(cls)
-        return it.name if it else cls
+        if it is not None and it.name != cls:
+            return it.name
+        return self.building_name(cls) or cls
+
+    def event_items(self) -> frozenset[str]:
+        """Items that belong to a seasonal event: made only by event recipes, or named for
+        FICSMAS, which covers the Gift that no recipe makes."""
+        if self._events is None:
+            makers: dict[str, list[Recipe]] = {}
+            for r in self.recipes.values():
+                for f in r.products:
+                    makers.setdefault(f.item, []).append(r)
+            self._events = frozenset(
+                cls
+                for cls, item in self.items.items()
+                if "FICSMAS" in item.name
+                or (cls in makers and all(r.is_event for r in makers[cls]))
+            )
+        return self._events
 
     def building_name(self, cls: str | None) -> str | None:
         """The building's display name, or a readable rendering of its class id.
@@ -294,8 +324,15 @@ class GameData:
         ``None`` in, ``None`` out -- an occupant that is not there is not a building with an
         unknown name, and the callers that pass an optional id keep the difference.
         """
-        b = self.buildings.get(cls or "")
-        return b.name if b else pretty_class(cls)
+        b = self.buildings.get(cls or "") or self.buildings.get(
+            BUILDING_CLASS_ALIASES.get(cls or "", "")
+        )
+        if b is not None:
+            return b.name
+        it = self.items.get(cls or "")
+        if it is not None and it.name != cls:
+            return it.name
+        return CLASS_NAMES.get(cls or "") or pretty_class(cls)
 
     def clock_shards(self) -> dict[str, float]:
         """Item class -> max-clock added per unit slotted, for every shard that overclocks.
@@ -327,9 +364,6 @@ class GameData:
     def part_recipes(self) -> list[Recipe]:
         return [r for r in self.recipes.values() if r.kind == "part"]
 
-    def automatable(self, include_events: bool = False) -> list[Recipe]:
-        return [r for r in self.part_recipes() if include_events or not r.is_event]
-
     def producers_of(self, item_cls: str, kind: str = "part") -> list[Recipe]:
         return [
             r
@@ -356,21 +390,9 @@ class GameData:
         Variable-power machines (Particle Accelerator, Converter, Quantum Encoder)
         have mPowerConsumption == 0 and take their draw from the recipe instead.
         """
-        b = self.machine(recipe)
-        if b is None:
+        building = self.machine(recipe)
+        if building is None:
             return 0.0
         if recipe.is_variable_power:
-            base = recipe.power_avg_mw
-            boost = b.boost_for(sloops)
-            return base * (clock**b.power_exponent) * (boost**b.boost_power_exponent)
-        return b.power_at(clock, sloops)
-
-    def builds(self, building_cls: str) -> Recipe | None:
-        """The build-gun recipe that constructs a building, for build costs."""
-        b = self.buildings.get(building_cls)
-        if b is None or not b.descriptor:
-            return None
-        for r in self.recipes.values():
-            if r.kind == "building" and any(f.item == b.descriptor for f in r.products):
-                return r
-        return None
+            return building.power_at(clock, sloops, base_mw=recipe.power_avg_mw)
+        return building.power_at(clock, sloops)

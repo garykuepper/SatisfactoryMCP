@@ -13,7 +13,20 @@ testing contract. Section numbers are continuous with the rest of the spec;
 
 > **`structured_output=False` on every text tool.** A tool annotated `-> str` gets an `outputSchema`
 > *and* has its payload echoed into `structuredContent` — a measured **1.96×** wire-size tax for zero
-> benefit (580 → 1,136 bytes on the real Plastic response). Enforce via a shared decorator.
+> benefit (580 → 1,136 bytes on the real Plastic response). Enforced by the shared decorator
+> `app.tool`.
+
+> **An argument a tool does not declare is refused, on every tool.** FastMCP validates a call
+> against a model that ignores unknown keys, so `diff_vs_save`, `commission_plan`,
+> `rank_unlocks` and `plan_layout` dropped the `plan_factory` arguments they lack (`sloops`,
+> `required`, `supplied`, …) and answered for a different plant without a word. A misspelt
+> optional argument went the same way. `app.StrictFastMCP.call_tool` compares the names with
+> the tool's published schema before the tool runs and answers
+> `! <tool> does not take x=; nothing ran.`, with the declared name it resembles, and on a
+> tool that takes `plan=` the way to carry a stored plan argument: save it with
+> `plan_factory(save_as=)`, then pass `plan=`. It overrides FastMCP's own `call_tool`, so
+> `tests/mcp/test_undeclared_arguments.py` drives a real client session: an mcp upgrade that
+> routes calls past the override fails there.
 
 ### 10.1 Tools
 
@@ -22,7 +35,8 @@ testing contract. Section numbers are continuous with the rest of the spec;
 **Factories:** `factory_map`, `propose_factories`, `factory_query`, `factory_health`, `select_machines`, `name_factory`, `rename_factory`, `amend_factory`, `list_factories`, `forget_factory`, `factory_floors`, `trace_upstream`
 **Inventory:** `stock`, `storage`, `crates`
 **Spatial:** `list_regions`, `describe_location`, `search_resource_nodes`, `search_conduits`, `rank_build_sites`, `show_on_map`
-**Planning:** `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `rank_unlocks`, `list_plans`, `site_plan`, `rename_plan`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
+**Planning:** `plan_factory`, `plan_layout`, `commission_plan`, `diff_vs_save`, `bom`, `rank_unlocks`, `list_plans`, `plan_log`, `site_plan`, `rename_plan`, `forget_plan`, `explain_byproducts`, `compare_recipe_options`
+**The page:** `ui_context`, `settings`
 **Hard drives:** `list_pending_hard_drive_choices`, `advise_hard_drive_pick`
 
 ```
@@ -35,8 +49,8 @@ plan_factory(objective="max_mw", target_item=None, sources=[...],
      + a logistics table of `limit` flows, plus any logistics_items pinned
 
 search_resource_nodes(sources=[...], resource=None, purity=None, kind=None,
-                      only_free=False, show="fields"|"nodes"|"nearest", near=None,
-                      limit=25, offset=0)
+                      only_free=False, status="free"|"tapped"|"all"|None,
+                      show="fields"|"nodes"|"nearest", near=None, limit=25, offset=0)
   -> per-field clusters (region, grid, centre, purity mix, total/free, spread)
      or per-node rows whose ids feed straight back in as node: selectors
 
@@ -76,8 +90,11 @@ plan_factory(..., save_as="north oil", plan_notes_text="...", for_factory="oil s
 plan_factory(plan="north oil")            # recall and re-solve
 diff_vs_save(plan="north oil")            # diff without retyping
 plan_layout(plan="north oil")
-list_plans() / forget_plan(name)
+list_plans() / forget_plan(name, base_rev=14)
 ```
+
+Every stored plan is versioned and every change to one takes `base_rev`; see
+[§10.1k](#101k-plan-versions-and-the-activity-journal).
 
 **The request is stored, never the solution.** A solve depends on the unlocked recipe
 set, which nodes are free and which buildings exist — all of which move as the game is
@@ -122,8 +139,9 @@ filtered to those that shape the solve — not `limit` (presentation) or `save`/
 reads as the request that was made. `Plan.kwargs()` filters unknown keys so a plan saved
 by an older build cannot break a newer `build_scenario`.
 
-Stored per world under `saveIdentifier` in `user_data_dir/plans/`, beside the labels and
-for the same reason.
+Stored per world under `saveIdentifier` in `user_data_dir/plans/<world>/`, beside the labels
+and for the same reason, as one append-only op log per plan
+([planner_slice_contract.md](planner_slice_contract.md) §5).
 
 **Siting.** A stored plan may also record **where it stands**: origin (the footprint's
 centre, metres, optional z), yaw (degrees about world Z, +X towards +Y — the same
@@ -185,7 +203,7 @@ eight speculative calls, and at the end of them still no way to say the list was
 was specific and correct: *"if some Tier 7-9 building eats rubber, I'd have missed it."*
 
 **A parameter on `search_recipes`, not a new tool**, for the same reason `search_resource_nodes` took a
-`mode` instead of splitting ([§7.2a](spatial-and-map.md#72a-node-lookup--one-tool-three-modes)): the body is ~90 % shared —
+`show` instead of splitting ([§7.2a](spatial-and-map.md#72a-node-lookup--one-tool-three-views)): the body is ~90 % shared —
 filter, sort, page, render, HAVE/LOCKED — and only the predicate differs. §10.3's rule against duplicate
 surfaces applies with more force here, since a `consumers_of_item` tool would sit directly beside
 `alternates_for_item` and make tool selection worse. `produces=` comes along free and is the only way to
@@ -273,33 +291,41 @@ its recipe.
 
 ### 10.1d One module per concern
 
-`server.py` reached **3,467 lines and 36 tools** before being split. It is now 143 lines
-that import and re-export; the tools live in `tools/`, one module per concern:
+`server.py` reached **3,467 lines and 36 tools** before being split. It now only imports and
+re-exports; the tools live in `interfaces/mcp/tools/`, one module per concern, and the three
+biggest concerns are packages of their own: `planning/` (stored plans, solve, layout,
+staging, siting, analysis, the page's context), `factories/` (discovery, query, health,
+labels, trace, floors) and `spatial/` (places, nodes, conduits, map links). Resources and
+prompts sit beside `app.py` and `params.py` in `interfaces/mcp/`. Module sizes are not
+tabled here because they move: `TOOL_MODULE_MAX_LINES` in `tests/architecture/test_module_caps.py`
+caps every module under `interfaces/mcp/` at 650 lines.
 
-| module | tools | lines |
-|---|---|---|
-| `planning` | 11 | 1,240 |
-| `factories` | 8 | 818 |
-| `spatial` | 6 | 577 |
-| `gamedata` | 5 | 240 |
-| `world` | 5 | 198 |
-| `progression` | 2 | 205 |
-| `harddrives` | 2 | 116 |
-| `resources` / `prompts` | 4 / 3 | 102 / 69 |
+These rules hold it together, each with a test:
 
-Three rules hold it together, each with a test:
-
-- **`tools/__init__.py` imports every module for its side effects.** The decorators run on
-  import, and that is what attaches a tool to the shared `mcp`. Those imports look unused
-  and are not — a module dropped from that list would leave the server starting cleanly and
-  simply not offering its tools. A test walks the directory and asserts nothing is missing.
-- **Tool modules never import each other.** Shared resolvers live with their domains —
-  `graph.resolve.resolve_factory`, `spatial.origin.resolve_origin` — because more than one
-  group needs each, and a resolver is a domain decision rather than an app detail. `app`
-  keeps the old private names bound so `server`'s re-exports still resolve. A sibling
-  import is the first step back toward one file, so a test forbids it.
-- **`server` re-exports every public name.** Tests and scripts reach for
-  `server.plan_factory`, and a caller should not need to know which module a tool landed in.
+- **Every tools `__init__.py` imports its modules for their side effects.** The decorators
+  run on import, and that is what attaches a tool to the shared `mcp`. Those imports look
+  unused and are not — a module dropped from its package's imports would leave the server
+  starting cleanly and simply not offering its tools. A test walks every package and asserts
+  nothing is missing. A subpackage's `__init__` re-exports its tools by name.
+- **Tool modules never import each other.** What every group needs lives in `app` — the
+  `mcp` object, `load_world`, the `tool` decorator, `Refusal` — and parameter types shared by
+  several schemas live in `params`. Inside a package the only sibling imports allowed are its
+  private helper modules (`planning/_plan_log.py`, `planning/_requests.py`). Shared resolvers
+  live with their domains — `factories.select.resolve_factory`, `spatial.places.resolve_place`
+  — because a resolver is a domain decision rather than an app detail. A sibling import is the
+  first step back toward one file, so a test forbids it.
+- **`server` re-exports every tool.** Tests and scripts reach for `server.plan_factory`, and
+  a caller should not need to know which module a tool landed in.
+- **One seam to the save.** Every tool reads its world through `app.load_world`, which turns
+  any failure into the refusal `could not read save: …`; a tool that answers without a save
+  uses `app.load_world_or_none`. Tests serve a world through the `use_world` fixture, which
+  patches that one function, rather than patching each tool module.
+- **A refusal is an answer.** `app.tool` registers a text tool and returns a raised
+  `Refusal`'s text, or a selector error as `! …`, as the tool's reply.
+- **A tool's context is `app.ToolContext`.** FastMCP finds the parameter that receives its
+  `Context` by the annotation and leaves it out of the schema. `ToolContext` is `Context`
+  itself at runtime and its parametrised form only to the type checker, so that lookup, and
+  every published schema, stay exactly as they were.
 
 The move was mechanical — every tool body is byte-identical — but two classes of breakage
 were invisible to the linter and only showed at runtime: relative imports written for the
@@ -326,7 +352,7 @@ silently re-solved at defaults and schematised a different plan than the one it 
 to draw — **15,043 MW against 83,737**. Nothing in its output said arguments had been
 dropped, because from its own point of view none had.
 
-`planning/prepare.py` is that sequence, once. It returns a `PreparedPlan` carrying either a
+`planning/solver/prepare.py` is that sequence, once. It returns a `PreparedPlan` carrying either a
 solution or a `PlanFailure` of headline plus notes.
 
 **It renders nothing**, and a test asserts so. Wording stays with the tool because the three
@@ -339,11 +365,14 @@ must report a bad request identically. There is also a test that `prepare` works
 MCP layer at all, which is the point of the extraction — a script or a batch planner gets
 the same guards.
 
-**Not everything was extracted, deliberately.** `search_resource_nodes` (177 lines) and
-`factory_query` (185) are long but their length is filtering and table-building against a
-domain call that already exists; there is no second copy to drift from. Extracting those
-would add indirection and remove nothing. The rule applied was: extract where logic is
-*duplicated* or *unreachable without the MCP layer*, not wherever a function is long.
+**Not everything was extracted, deliberately.** `factory_query` (185 lines) is long but its
+length is filtering and table-building against a domain call that already exists; there is
+no second copy to drift from. The rule applied was: extract where logic is *duplicated* or
+*unreachable without the MCP layer*, not wherever a function is long. `search_resource_nodes`
+met the second half of that rule once the World page needed the same answer: its selection,
+status, totals and fields are `domain/spatial/nodes/search.py` now, beside `rank_build_sites`, `surroundings.player_surroundings`,
+`surroundings.describe_point`, `conduit_search.search` and `regions.region_rows`, and each spatial tool is that
+call plus its text (frontend_vision.md §18).
 
 ### 10.1f `search_conduits` — belts and pipes become queryable text
 
@@ -355,9 +384,12 @@ could not look.
 
 ```
 search_conduits(near="x,y"|"me"|<factory>, radius_m=250, to=None, to_radius_m=None,
-                conduit_kind="belt"|"pipe"|"all"|None, limit=12, offset=0)
+                conduit_kind="belt"|"pipe"|"all"|None, show="runs"|"networks",
+                network=None, limit=12, offset=0)
   -> per-run rows: id (chain:<n> / pipe:<row>), kind+tier, drawn length, both ends
      (position + what stands there where known), elevation span, carries, connects
+     network=<id> lists every pipe of one fluid network (ids from show="networks"),
+     whatever the radius
 ```
 
 Decisions that took measurement:
@@ -377,13 +409,20 @@ Decisions that took measurement:
 - **`connects` is labelled a geometric read**, and it is the one part of this tool that still
   is. Ends are attributed to the nearest placed thing whose footprint (plus port reach) covers
   them, `?` where nothing known stands there, and a `chain:`/`pipe:` ident where the run
-  simply continues into another — which is what lets a route be followed piece to piece. The
-  EXACT answer to the same question is `factory_health` and `trace_upstream`, which read the
-  save's connection records instead; since schema 20 both tables carry an actor index, so the
-  two views share these idents and can be read against each other. §6.15.
-- **Lengths follow the chords.** The points are spline control points and a bend's arc is up
-  to 16.4 m longer than its chords on one measured piece, so curved runs read slightly short
-  and the response says so instead of inventing an arc length.
+  simply continues into another — which is what lets a route be followed piece to piece.
+  Junctions, pumps and valves are in no placement table, so a pipe names one only where the
+  material graph does, as `via`. The EXACT answer to the same question is `factory_health`
+  and `trace_upstream`, which read the save's connection records instead; since schema 20
+  both tables carry an actor index, so the two views share these idents and can be read
+  against each other. §6.15.
+- **Lengths follow the drawn line.** A span whose tangents schema 15 records is integrated
+  along its own spline, and a span with none is its chord; the projection stores tangents
+  exactly where a chord would be out by a centimetre or more, so both measure the curve the
+  map draws. A chord across one measured bend was out by 16.4 m.
+- **Every distance is in metres and every coordinate in centimetres.** Coordinates stay in
+  the save's own units and every threshold is stated in the metres it is compared in, all
+  routed through `spatial.geo` (`domain/world/conduits.py` builds the runs,
+  `domain/world/conduit_search.py` answers the tool).
 - **It pages on the surface's `offset=` convention.** The truncation envelope ends "call again
   with offset=N", and a busy junction really does carry hundreds of chains — a next step the
   caller cannot take would be worse than none.
@@ -505,7 +544,7 @@ state the caller has never seen. Pinning a filename is no protection; pinning a 
 Tokens are recorded in `save-pins.json` under the cache directory (the newest 200), which is
 what lets the second refusal differ from the third. The ledger is best-effort like every other
 cache here — losing it costs a refusal's sharpness, never an answer. `domain/world/pin.py` is
-the implementation; `tests/test_save_pin.py` reproduces the hazard end to end.
+the implementation; `tests/domain/world/test_save_pin.py` reproduces the hazard end to end.
 
 ### 10.1j One word per question — the parameter vocabulary
 
@@ -514,7 +553,7 @@ An alias only helps the first. So a question asked by more than one tool has exa
 parameter name, and a retired spelling **errors with the caller's own value rewritten** —
 `! of='power' is retired -- write show='power' instead` — rather than silently working or
 failing schema validation with nothing to act on. `interfaces/mcp/app.py:retired` builds
-those messages; `tests/test_conventions.py` pins one per retirement.
+those messages; `tests/mcp/test_conventions.py` pins one per retirement.
 
 | the question | the parameter | retired |
 |---|---|---|
@@ -551,6 +590,215 @@ would have given one tool two spellings of one filter.
 node|well_sat|geyser, got 'all'` for the word its four siblings read as "no filter"; one
 member of a family rejecting the family's own wildcard is a bug whatever the family is
 called.
+
+### 10.1k Plan versions and the activity journal
+
+The web page and any number of chat sessions edit the **same** stored plans, so a plan is a
+history of versions rather than a file that is overwritten. The store, the merge rule and the
+wording are in [planner_slice_contract.md](planner_slice_contract.md) §3–§4 and §10; this is
+what the tools do with them.
+
+**Reads print the version.** `list_plans` has `ver` and `last change` columns
+(`page 2h: sloops 0→4`, cut to 36); `list_plans name=` heads with
+`# plan "north hmf" v14 (key a1b2c3d4)`; every tool that recalls a plan with `plan=` prints
+`recalled plan "north hmf" v14` as its first note.
+
+**Writes take `base_rev`**, the version the caller read: `plan_factory save_as=<existing>`,
+`rename_plan`, `forget_plan`, `site_plan` and `plan_log undo=/restore=`. Without it an existing
+plan is refused before anything is solved or written:
+
+```
+! plan "north hmf" exists at v14: read it (list_plans name="north hmf") and pass base_rev=14; nothing saved
+```
+
+With it, edits to different settings since `base_rev` merge (`merged onto v14 (you were on
+v11) -> now v15; others changed: ...`), and the same setting changed by someone else is
+refused whole as `! outdated: ...`, listing the conflicts and every version since. Nothing is
+ever applied partially. `save_as` over a plan sends the *whole* request, diffed against the
+`base_rev` state rather than the head, which is what makes the merge three-way. A new name
+ignores `base_rev` and says so. A write that finds the plan lock held for 10 s answers
+`! plans are busy (another writer held the lock 10 s); nothing written`.
+
+The store stamps each landing version with the new head's `plan_id` and resolved field
+(`head_stamper` in `tools/planning/_plan_log.py`), so `world moved` stays honest after merged edits and page
+edits alike.
+
+**`required`** on `plan_factory` takes recipe names or class ids. The tool resolves each to a
+class id among *all* recipes, exact id first, then exact display name (case-insensitive); an
+unknown or ambiguous one is refused by name before solving. A locked one passes through and the
+solve refuses it (contract §6).
+
+**`plan_log name=`** lists versions newest first with who, what, age, `merged over` and
+`undone in`; `since=` and `limit=` narrow it. `undo=<v>` writes the inverse of that version,
+`restore=<v>` writes the ops that make the head equal it; both merge like any write. A
+forgotten plan is found here too, so `undo=<the forget>` brings it back.
+
+**Who wrote it.** A chat write carries `Actor("chat", clientInfo.name, pid)`: the client name
+is what the MCP client sent at `initialize` (`claude-code` reads as "Claude Code", `claude-ai`
+as "Claude Desktop"), read through the `ctx: app.ToolContext` FastMCP injects and never shows in
+a schema. Called as a plain function (tests, scripts) the client is blank and reads as "chat".
+
+**The activity journal** (`domain/session/journal.py`, contract §8) holds what is not a plan
+edit: `plan.solve` for a `plan_factory` without `save_as` (the page offers it as a from-chat
+card), `plan.view` for `plan_layout`, `diff_vs_save` and `commission_plan` with `plan=`,
+`world.find` for the finder tools (docs/web-wire.md, World), and `plan.rejected` from the web. One file per process under `activity/<world>/`, `chat-<pid>.jsonl`
+or `web-<pid>.jsonl`, so a single writer needs no lock. Nothing is written until the process
+names itself: `server.main` calls `journal.set_writer("chat")` and the web lifespan
+`set_writer("web")`. Importing the tools, as the test suite does, journals nothing, so a test
+run cannot leak solves into the page's activity feed. A failed journal write is swallowed. An
+entry over 1 kB drops its `args`. `read` returns the newest `limit` entries after `since_ts`,
+oldest first.
+
+**`ui_context`** reads the page's focus file (the web group's `focus.read`, contract §9) and the
+logs, and answers in one block: open or closed by heartbeat age, world, whether the page reads
+the same save token as this session, the focused view, plan and version (with the head when
+the page is behind), tab and selection -- with the selection's selector after its label,
+`selected: node "Iron Ore, pure" (node:BP_...)`, so chat can resolve "the selected node" --,
+the follow setting, then *since you last looked*: every
+plan version and journal entry by someone else since this process's last call. The cursor is
+per process and in memory. The first call shows the last five of each; the process's own
+commits and entries are left out by pid. Plans past eight, versions past six per plan and
+journal entries past eight are counted as `(+N more)`, and the whole stays under 3,800
+characters. The server's `instructions` tell the client to call it when the user says "this",
+"here" or "what I have open".
+
+**Pins** (Planner P3, [planner_p3.md](planner_p3.md)). The page creates, renames and deletes
+pins. Chat creates one with `show_on_map(at=..., pin=True)`: a node, a factory, a sited plan or
+a point (anything else it shows pins as the point it resolved to; `resource:` refuses), the
+reply ends `pin: pinned as pin:N ...` or `pin: already pin:N ...`, and a `pin.add` journal entry
+by chat makes every open page refetch its pins. `ui_context` prints a `pins:` line (the newest eight live pins,
+ascending, each cut to 90 characters, `(+N more)` past them, `pins: none` when empty, gone
+pins ending `(gone)`) and appends `(pin:N)` to a selection that a pin matches. Every tool that
+takes a place, a node source, a machine select, `plan=`, `required=` or `exclude_recipes=`
+accepts `pin:<n>` as [selectors.md](selectors.md) "Pins" lists, and echoes what it expanded
+to. `alternates_for_item(plan=)` adds the plan's view of each recipe: its status in the plan,
+Δ machines, Δ MW draw and the first two raw inputs that change if it were required, and a
+note naming the `plan_factory(... required=[...], base_rev=, save_as=)` call that would do it.
+It journals `plan.view` with `args {"view": "alternates", "item": <class id>}` and text
+`looked at recipes for <item>`. No tool was added.
+
+**Track and asks** (Planner P4, [planner_p4.md](planner_p4.md)). A stored plan carries a
+startup headroom, `headroom_mw` (a plan scalar the page sets; `null` is the save's measured
+headroom, source `measured from the save`, the page's default too).
+`diff_vs_save(plan=)` and `commission_plan(plan=)` both use it, so the stage numbers chat reads
+are the page's; `commission_plan(headroom_mw=)` still overrides it for one call (source `given
+by caller`). Headroom sources read `stored on the plan`, `measured from the save`, `nameplate from
+the save` or `given by caller` in every tool; `commission_plan` names the nameplate figure as the
+safe bound when it used measured, and `diff_vs_save` notes the headroom its stages used. Both journal `plan.view` with `args {"view": "track", "stage": n|null, "section":
+"stages"|"startup"}`, which the page follows into its Track tab. Each process remembers the
+partition it last printed per plan; when a later read partitions differently, the first note is
+`the stages changed since you last read this plan (v14 -> v15): you were in stage 2 of 4, now
+stage 2 of 5`. A `commission_plan` with an explicit `headroom_mw` neither prints nor records it.
+`plan_factory save_as` never writes `headroom_mw`, so a chat save keeps the page's value.
+
+**Payback horizon** ([planner-payback-horizon_contract.md](planner-payback-horizon_contract.md)).
+`plan_factory` and `plan_layout` take `payback_hours` (0–100), `overclock_last` and
+`power_price` (points per MWh, default the save's grid mix). A row is spread over more, slower
+machines while the power saved repays their build points within that many hours of play;
+`overclock_last` builds a row one machine short with the last one overclocked, weighed against
+the same horizon and the shards in hand plus those craftable from slugs. `row_overclock`
+(`{recipe: "last" | "spread" | "default"}`) overrides the switch for one row; a call names only
+the rows it changes. Above 0 h, `max_mw` and `min_power` price each machine at its build points
+over the horizon instead of `machine_cost_mw`. They are stored `PlanArgs` fields that both chat
+and page write; unset, a plan follows the shared `payback_hours` and `overclock_last` settings,
+and `"default"` puts a recalled plan back on them. The notes say what the plan spreads against 0 h,
+what the next stop would change, and what the overclock saves or would save.
+
+The page queues **asks** (`ask:N`, a question about a plan, process, stage, item or pin) and
+the player pastes one into chat. `ui_context` prints `asks (N waiting): ...`, the newest six open
+or seen asks with what each is about, then a hint line; every listed open ask is marked seen
+(`seen_by` the client name) and journalled as `ask.seen`. `ui_context(answered=["ask:7"])` marks
+asks answered first (journal `ask.answered`) and prints `marked answered: ask:7` as the line
+after the header; an unknown or deleted id is refused on its own line and the rest still apply.
+An id may carry one line of answer after it (`"ask:7 it makes the diluted fuel"`, also `ask:7:`
+or `ask:7 -`): it is stored on the ask (`answer`, ≤ 200 characters, whitespace folded), shown on
+the page beside the ask, and quoted in the journal text; passing a new line replaces it.
+The server's `instructions` add "or quotes an ask: or pin: id". No tool was added.
+
+**Advisors** ([advisors_contract.md](advisors_contract.md) §6). `ui_context` prints an
+`advice (N, M hidden): ...` line after the asks: the first three rows the page's card shows,
+`adv:` id first, then a hint line. `ui_context(dismissed=["adv:3f9a", "adv:91c2 snooze 4h"])`
+hides rows on the page as chat (journal `advice.hide`), only when the user asks; the page can
+restore them. `world_summary` ends with a `## worth a look` block, every active row with its
+`next:` call, at most twelve. An ask about an advisory prints its `adv:` id. No tool was added.
+
+### 10.1l `settings` — what the page and chat share
+
+`settings()` prints every shared setting as `setting · value · takes · means`, marking a value
+nobody set `(default)`, with the last writer in the header. `settings(change={...})` writes as
+`chat`, last writer wins, and `null` resets a setting. The description tells the model to change
+one only when the user asks. `diff_vs_save` and `commission_plan` stage against
+`stage_headroom`, and `biomass=` on the four power tools defaults to `None`, meaning the shared
+value. An unreadable file falls back to the default with a note. Tool count 55.
+[shared-settings.md](shared-settings.md) is the specification.
+
+The header also carries one read-only line naming the base map types the page can show:
+`# base maps (show_on_map mode=): map (default), terrain, …, terrain-r3-502094 -- stale: newer
+heightfield (v3 → v5)`. `show_on_map(mode=)` takes one of those ids, `artwork` (read as `map`)
+or `plain`, and puts `mode=` in the local link, after `world=` as the page writes it; an unknown
+id is refused with the list. Chat cannot generate or delete a map: the runner lives in the web
+process and a job wants a visible confirm. [maps_contract.md](maps_contract.md) §7. No tool was
+added.
+
+### 10.1m The cave flag on every height
+
+`describe_location`, `whereami` and the siting z (`siting.settle_z`, which `site_plan` prints) read
+`Reading.cave` from the cave masks (spatial-and-map.md §23). A point with a cave under it gets
+one `cave=` line, and the height stays the surface. A point inside a cave (the player's z for
+`me` and `whereami`, the typed or built-median z for a site) gets
+`cave=in a cave: ground height unknown here (the surface above is 233 m)`: `terrain_m=unknown`
+in `describe_location`, and no site z. A ceiling is never printed. Without
+`data/local/caves/` nothing changes.
+
+### 10.1n Rock heights from the collision surface
+
+With `rocks.npz` beside the field (spatial-and-map.md §24), every height on rock is the
+surface the player and the build gun stand on: `describe_location`'s `terrain_m`, `whereami`,
+the inspector and the siting z. No tool or argument changed. Two things read differently:
+
+- A hint can pick a surface no plane holds: a lower shelf, a ledge under an overhang, a cave
+  floor. The siting reply names it `surface floor`.
+- Inside a cave with a hint, a collision floor at most 3 m under the hint (and not more than
+  2 m above it) is the answer: `terrain_m` is that floor and the line is
+  `cave=in a cave: floor -9.2 m, the rock collision just under the given height`. A site there
+  gets that z, with `in a cave: z is the rock collision just under the hint` on its terrain
+  line. With no floor in reach the answer stays `unknown`, as in §10.1m. No ceiling is printed.
+
+### 10.1o What the tool descriptions leave to this page
+
+A tool description is resident in every session, so it carries the usage contract and nothing
+else; `TOOL_DESCRIPTION_BUDGET` in `tests/mcp/test_surface.py` caps the total. The measurements and
+the history behind the contracts live here:
+
+- **`plan_factory`.** `machine_cost_mw` defaults to 5 MW, just above the 2.58 MW per machine
+  that spreading throughput over more machines was measured to save. Overclock modes are not
+  offered by default because they spend Power Shards. Somersloops are placed one at a time
+  across many machines because output is linear in sloops and power quadratic. How many
+  Water Extractors a body of water holds is placement geometry no data here carries, so
+  `site_at` measures the water and never moves an LP number.
+- **`propose_factories`** was validated leave-one-factory-out against the twelve hand-named
+  factories of the reference world: precision 1.000 on every fold, recall 0.945.
+- **`trace_upstream`.** 92.5% of the connectors landing on a machine name their direction;
+  the rest sit on extractors and generators, whose nature settles them. A trace from the
+  generators touches 331 nodes at depth 72, nearly all conveyor -- why belts and pipes are
+  walked through rather than listed.
+- **`select_machines`.** On the reference save 17 machines make Concrete and 15 of them are a
+  construction feed inside the steel site, which is why a product selector deserves a preview.
+- **`factory_map`.** Power islands left the reference world's grown-together base as one
+  476-machine blob.
+- **`list_buildings`.** `all` is 540 buildings, about 60k characters unpaged.
+- **`somersloops`.** Before it, the free sloop count could only be learned by guessing a
+  `sloops=` budget and reading the shortfall.
+- **`rename_factory`, `rename_plan`, `amend_factory`.** Before them a correction meant
+  naming or saving again under a second name, or re-selecting a whole factory to drop one
+  machine.
+- **`recipe_detail`** resolves a display name the way `match_recipes` does for
+  `exclude_recipes`; refusing one cost a caller two round trips.
+- **`mam_research`.** `BP_UnlockSubsystem_C` records overclocking as
+  `mIsBuildingOverclockUnlocked`; nothing in the save records production amplification.
+- **`diff_vs_save`.** A generator is matched on its building alone because its fuel is piped
+  in; Water Extractors have no recipe and no resolvable node; grid membership is not persisted.
+- **`commission_plan`.** Generators draw 0 MW in the dump, so energising one is free.
 
 ### 10.2 Context budget
 
@@ -672,9 +920,9 @@ why there is no resident daemon.
   146 s of a 198 s run — 74% of the wall clock in 3 tests out of 805 — and are 22 s now:
   `test_savparse_parity` 88.1 → 12.3 s, `test_savparse_trailers` 36.5 → 7.3 s,
   `test_sidecar_placed` 21.3 → 2.5 s. Every number in this bullet is reproducible with
-  `--durations=25`, and the settings that produced them carry their own measurement tables:
-  the worker count in `[tool.pytest.ini_options]`, the fan-out width in `tests/_pool.py`, and
-  the collection order in `tests/conftest.py`.
+  `--durations=25`, and the settings that produced them (the worker count, the fan-out width
+  in `tests/support/fanout.py` and the collection order in `tests/conftest.py`) carry their
+  measurement tables in docs/DEVELOPING.md, "Test suite".
 - **Parallel changed what "shared state" costs, and two things had to be fixed for it.** The
   projection disk cache is written through `core/atomic.py` rather than `Path.write_bytes` —
   eight workers resolve the same newest save and miss the same key at the same moment, so
@@ -684,6 +932,8 @@ why there is no resident daemon.
   server and every CLI invocation, and giving each worker its own would have replaced a 0.10 s
   warm load with a 3.17 s parse, eight times over.
 
-Deps: `mcp[cli]>=1.28`, `pydantic>=2.13`, `platformdirs`, `scipy>=1.11`, `numpy`; dev `pytest`,
-`pytest-cov`, `pytest-xdist>=3.6,<4`, `ruff`. `requires-python = ">=3.11"`.
+Deps: `mcp[cli]>=1.28`, `pydantic>=2.13`, `platformdirs`, `scipy>=1.11`, `numpy`,
+`typing-extensions>=4.6`; dev `pytest`, `pytest-cov`, `pytest-xdist>=3.6,<4`, `ruff`,
+`pyright[nodejs]` and `scipy-stubs` (exact pins, docs/DEVELOPING.md "Types").
+`requires-python = ">=3.11"`.
 
