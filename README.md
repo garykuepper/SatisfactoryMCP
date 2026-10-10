@@ -123,6 +123,21 @@ Both locations are auto-detected:
 Saves are grouped into worlds; within a world the newest save is used by default, and every
 answer says which file it read.
 
+### Agent skills
+
+`skills/` holds two Claude Code skills that run on the same save reading. Copy or symlink a
+folder into a project's `.claude/skills/` to use it:
+
+- **satisfactory-alt-recipes** ranks unlocked and pending MAM hard-drive alternates against a
+  tier list you supply (`--ranking` CSV or `SATISFACTORY_RANKING_CSV`), and flags screw
+  inputs, locked buildings and recipes you already own.
+- **satisfactory-surplus** reads a world's save history and shows how storage moved each
+  session: material placed with the build gun against everything else. It also sizes each
+  build item's surplus from that. `SATISFACTORY_SAVE_HISTORY` adds folders of older copies.
+
+Run them from this checkout with `uv run python skills/<name>/scripts/...`; each `SKILL.md`
+has the details.
+
 ## Licence
 
 **[PolyForm Noncommercial 1.0.0](LICENSE).** Free to use, modify and share for any
