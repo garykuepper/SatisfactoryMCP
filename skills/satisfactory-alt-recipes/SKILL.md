@@ -1,6 +1,6 @@
 ---
 name: satisfactory-alt-recipes
-description: Rank a Satisfactory save's unlocked and pending alternate recipes, and recommend which pending MAM hard drives to pick or reroll. Use this whenever the user asks which alt recipe to pick, what a hard drive is offering, whether to reroll a hard drive, "rank my alt recipes", "what should I pick in the MAM", or shows a screenshot of the Hard Drive Library UI. Trigger even without those exact words -- any question about MAM rewards, alternate recipes, or hard-drive decoding should run this skill's script rather than eyeballing a published tier list, because a tier list misses screw dependency, locked buildings, and redundancy with recipes already owned.
+description: Rank a Satisfactory save's unlocked and pending alternate recipes, and recommend which pending MAM hard drives to pick or reroll. Use when the user asks which alt recipe to pick, what a hard drive is offering, whether to reroll a hard drive, "rank my alt recipes", "what should I pick in the MAM", or shows a screenshot of the Hard Drive Library UI. Trigger even without those exact words -- any question about MAM rewards, alternate recipes, or hard-drive decoding should run this skill's script rather than eyeballing a published tier list, because a tier list misses screw dependency, locked buildings, and redundancy with recipes already owned.
 ---
 
 # Satisfactory alt-recipe ranking
