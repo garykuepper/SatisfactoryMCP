@@ -24,12 +24,12 @@ Three facts shape everything:
 
 ## Run it
 
-From the `satisfactory-mcp` checkout or configured environment:
+From the repository checkout or skill directory:
 
 ```bash
 SATISFACTORY_DOCS=/path/to/Docs/en-US.json \
 SATISFACTORY_SAVES=/path/to/server/saves \
-uv run --project /home/flynn/ai-stack/satisfactory-mcp python skills/satisfactory-surplus/scripts/surplus_report.py \
+uv run python path/to/skills/satisfactory-surplus/scripts/surplus_report.py \
   [--world NAME] [--item 'Copper Sheet' ...] [--sessions] [--json]
 ```
 
@@ -53,7 +53,7 @@ in the world, so you can see how storage moved session by session.
 |---|---|
 | `worst/h` | biggest **net** fall in stock per play hour across rated sessions (production already netted out) |
 | `built/h` | biggest fall per play hour that went **into building**: per session, min(stock fall, material placed) |
-| `cover h` | play hours current stock lasts at the `built/h` rate before hitting zero |
+| `cover h` | play hours current stock lasts at the `built/h` rate before hitting zero (`-` if drain is 0) |
 | `surplus/min` | recommended surplus: max(built/h, default stacks per play hour x stack size) / 60 |
 
 Per session (`--sessions`, or `per_session` in `--json`):
@@ -74,25 +74,24 @@ Stack sizes: 50 (HMF, Modular Frame, Computer, Motor), 100 (Reinforced Plate, Ro
 
 ## The 4 Inventory Health Tiers
 
-Run `surplus_report.py` to categorize every item in the save into one of four operational tiers:
+Use the report metrics (`stock_now`, `worst_build_drain_per_play_h`, and `hours_of_cover`) to categorize
+items into operational tiers:
 
-1. **Critical Deficit / Low Cover (`cover_h < 10h`)**:
-   - Stock is running dangerously low during active building sessions (e.g., Reinforced Iron Plates with
-     a cover horizon of 9.2h, or Encased Beams during heavy Mk.4 belt logistics runs).
-   - **Action**: High-priority target for dedicated factory surplus lines and immediate Dimensional Depot upload.
-     Check for alternate recipes that bypass stressed inputs (e.g. `Encased Industrial Pipe` using abundant steel pipes).
+1. **Critical Deficit / Low Cover (`cover_h < 10h` with active build drain)**:
+   - Current stock will be depleted in under 10 play hours at peak measured build rate.
+   - **Action**: High-priority target for dedicated factory surplus lines and priority Dimensional Depot upload.
+     Inspect whether alternate recipes can substitute stressed inputs (e.g. `Encased Industrial Pipe` using abundant steel pipes).
 2. **Nascent / Unautomated (Zero or Token Stock)**:
-   - High-tier items that have not yet been automated (e.g. Fused Modular Frames, Cooling Systems, Turbo Motors,
-     Radio Control Units). Stock exists only from loot or manual craft benches.
-   - **Action**: Size new production lines directly to Space Elevator phase demand plus a modest 1 stack/hour depot trickle.
-3. **Healthy Equilibrium (`cover_h > 50h`)**:
-   - Stock stably matches or exceeds building drain (e.g., Modular Frames, Motors, Heavy Modular Frames).
-   - **Action**: Maintain current production; no emergency surplus expansion needed.
-4. **Over-Target / Saturated Surplus (Massive Accumulation)**:
-   - Inventories accumulating by tens of thousands per session (e.g. Screws +37k, Wire +36k, Quickwire +35k,
-     Rubber +23k, Steel Pipe +16k).
-   - **Action**: Confirms `--no-screws` policy; identifies prime candidates to substitute into alternate recipes
-     (e.g., using Steel Pipes over Steel Beams, or Wire over Screws).
+   - High-tier items that have not yet been automated. Stock exists only from crash site loot or manual craft bench batches.
+   - **Action**: Size new production lines directly to Space Elevator phase demand plus a standard 1 stack/hour depot trickle.
+3. **Moderate & Healthy Buffers (`10h <= cover_h <= 50h` or `cover_h > 50h`)**:
+   - Stock matches or comfortably exceeds historical building drains.
+   - **Action**: Maintain current factory allocation; no emergency surplus expansion needed unless a massive expansion project is planned.
+4. **Over-Target / Saturated Surplus (Massive Session Accumulation)**:
+   - Inventories accumulating by tens of thousands per session with near-zero build consumption.
+   - **Action**: Do not add production. Check local house rules (e.g. `--no-screws` doctrine) and look for alternate recipes that consume this surplus as a cheap feed.
+
+*(Note: When `worst_build_drain_per_play_h` is 0, `cover_h` is reported as `-` / null. Check `stock_now`: large stock means healthy buffer; near-zero stock means nascent/unautomated).*
 
 ## Dimensional Depot Sizing (Satisfactory 1.0)
 
@@ -106,33 +105,49 @@ In Satisfactory 1.0, the Dimensional Depot fundamentally alters construction log
   - **Upgrade 2**: 60 items/min
   - **Upgrade 3**: 120 items/min
   - **Upgrade 4**: 240 items/min
-- Multiple uploaders on the same item **stack additively** into cloud storage.
+- Sizing formula:
+  $$\text{Depot Uploaders Needed} = \left\lceil \frac{\text{Target Replenishment Rate (items/min)}}{\text{Researched Upload Speed per Depot}} \right\rceil$$
+- Multiple uploaders on the same item **stack additively** into cloud storage. Note that total throughput
+  is also strictly capped by upstream factory production and feeding belt capacity.
 
-### 2. Concrete is Undisputed #1 (Recommend 2× Depots)
-- **Concrete represents >50% of all items physically placed in the world** (>120,000 placed in a typical mid-game world).
-- Average session building drain is **>3,000 / hour**, with peak sustained sessions exceeding **5,000 / hour (84 / min)**,
-  and rapid "zooping" bursts reaching **300 to 600 Concrete / minute**.
-- It is the **only material** whose sustained placement routinely exceeds a single Tier 2 depot (60/min).
-- **Rule**: Dedicate **two parallel Dimensional Depots on Concrete** (yielding up to 480/min upload throughput)
-  to ensure cloud storage never runs dry during massive foundation slab construction.
+### 2. High-Drain Materials (Concrete)
+- Foundations and walls consume large volumes of Concrete during construction bursts (often 300 to 600/min during rapid zooping).
+- While the cloud buffer absorbs short bursts, sustained multi-hour paving rates can exceed lower-tier upload speeds (e.g. 60/min).
+- **Rule**: Compare the measured `built/h` against your current research tier. If sustained placement exceeds a single uploader's speed,
+  place **two parallel Dimensional Depots on Concrete** (e.g., providing 120 to 480/min total upload).
 
-### 3. Items #2 through #12 (Recommend 1× Depot)
-- Materials like Iron Plates, Copper Sheets, Steel Beams, Encased Beams, Cable, and Reinforced Plates peak at
-  **8 to 26 items / minute** during heavy build sessions.
-- A single Dimensional Depot (60 to 240/min) replenishes the cloud buffer **2× to 10× faster** than a player
-  can place machines and belts.
-- **Rule**: A single depot uploader is completely sufficient for every construction item other than Concrete.
+### 3. Standard Construction Materials (Plates, Beams, Pipes, Cable, Frames)
+- Peak placement rates for machines and belts are typically under 30 items/min.
+- A single Dimensional Depot (60 to 240/min) replenishes the cloud buffer significantly faster than manual placement velocity.
+- **Rule**: One depot uploader is sufficient for standard construction items.
 
-### 4. Physical Factory Splitter Standard
-Connect the machine output to a Smart Splitter before storage:
+### 4. Sequential Splitter Standard (Protecting Downstream Production)
+A single Smart Splitter cannot prioritize between two active outputs; if both are set to the item, they split evenly.
+To strictly guarantee that downstream production lines never starve while keeping the depot and storage fed,
+use **two sequential Smart Splitters with Overflow priority**:
+
 ```
-[ Machine Output ] ---> [ Smart Splitter ]
-                             |---> [ Left: Downstream Production ]
-                             |---> [ Right: Dimensional Depot Uploader(s) ]
-                             +---> [ Center: Overflow ---> Industrial Storage / AWESOME Sink ]
+[ Factory Output ]
+        |
+        v
+[ Smart Splitter 1 ] --( Main Output: Item Name )--> [ Downstream Production Line ]
+        |
+   ( Overflow )
+        |
+        v
+[ Smart Splitter 2 ] --( Main Output: Item Name )--> [ Dimensional Depot Uploader(s) ]
+        |
+   ( Overflow )
+        |
+        v
+[ Industrial Storage Container ]
+        |
+        v
+[ Smart Splitter 3 ] --( Overflow )-----------------> [ AWESOME Sink ]
 ```
-When cloud capacity is full (1 to 5 stacks depending on MAM research), the depot pauses with a full stack
-in its local buffer. Any excess automatically overflows into local storage or the sink without clogging the factory.
+- **Splitter 1**: Guarantees 100% of factory demand is satisfied first. Only unconsumed surplus passes to Overflow.
+- **Splitter 2**: Directs surplus into the Dimensional Depot Uploader until the cloud capacity (1 to 5 stacks) and machine input buffer are full, then overflows.
+- **Splitter 3**: Once local buffer storage is saturated, overflow routes to an AWESOME Sink to prevent upstream line lockup.
 
 ## Turn it into a plan
 
@@ -143,7 +158,7 @@ in its local buffer. Any excess automatically overflows into local storage or th
    source must also cover what that source made.
 3. Pass the result to the renderer as `--export 'Item=<demand+surplus>'`, and record the
    split (demand vs surplus, and the basis) in the plan's `plan.md` Why section.
-4. Route surplus to Dimensional Depot Uploader(s), with overflow to Industrial Storage -> AWESOME Sink.
+4. Route surplus using the sequential splitter standard: Downstream -> Depot -> Storage -> Sink.
 
 ## Judgement calls (say them out loud)
 
@@ -156,8 +171,9 @@ in its local buffer. Any excess automatically overflows into local storage or th
   measured numbers as floors, not exact.
 - **Big stock, small drain** (`cover h` in the tens or hundreds) means no extra surplus
   needed: say so instead of padding the plan.
-- **Saturated stockpiles**: Check if items with >10k surplus (e.g. Steel Pipe) can replace
-  strained items (e.g. Steel Beams) using alternate recipes like `Encased Industrial Pipe`.
+- **Saturated stockpiles**: Check if items with massive surpluses can replace strained inputs
+  via alternate recipes. Always check world-specific house rules (e.g. `--no-screws` if applicable)
+  before recommending recipes.
 - **No history yet** (HMF, Computers, HSC before they're produced) uses the stack default.
   Re-run the report after a few sessions with the new plant and adjust.
 
