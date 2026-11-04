@@ -6,7 +6,7 @@ goals (default Phase 4), dynamically adjusting recipes and item demands dependin
 on unlocked alternate recipes and the 100% whole-machine doctrine.
 
 Usage:
-  python3 production_targets.py [--world NAME] [--save PATH] [--no-screws] [--sort {abc,tier}] [--json]
+  python3 production_targets.py [--world NAME] [--save PATH] [--no-screws] [--sort {abc,tier}] [--list-unlocked] [--json]
 """
 
 from __future__ import annotations
@@ -17,15 +17,13 @@ import json
 import math
 import os
 import re
-import struct
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_SAVES_GLOB = "/home/flynn/game-servers/satisfactory-server/config/saved/server/*.sav"
-DEFAULT_HISTORY_INDEX = "/home/flynn/game-servers/ficsit-auditbot/data/state/history/index.json"
-DEFAULT_MODEL_DATA = "/home/flynn/satisfactory/data/derived/model_data.json"
+DEFAULT_DB_JSON = "/home/flynn/game-servers/ficsit-auditbot/data/state/db.json"
+DEFAULT_HISTORY_DIR = "/home/flynn/game-servers/ficsit-auditbot/data/state/history"
+DEFAULT_SERVER_SAVES = "/home/flynn/game-servers/satisfactory-server/config/saved/server"
 
 # Definition of tiered items and their recipes
 # (Rates are in items / minute @ 100% machine clock)
@@ -66,11 +64,6 @@ RECIPE_REGISTRY = {
             "output_rate": 6.0,
             "inputs": {"Heat Sink": 12.0, "Rubber": 12.0, "Water": 30.0, "Nitrogen Gas": 150.0},
         },
-        "Cooling Device": {
-            "machine": "Production Amplifier",  # Special
-            "output_rate": 6.0,
-            "inputs": {"Heat Sink": 10.0, "Motor": 2.0, "Nitrogen Gas": 60.0},
-        },
     },
     "Fused Modular Frame": {
         "Standard": {
@@ -103,15 +96,15 @@ RECIPE_REGISTRY = {
 
     # Tier 7
     "Heavy Modular Frame": {
-        "Standard": {
-            "machine": "Manufacturer",
-            "output_rate": 2.0,
-            "inputs": {"Modular Frame": 10.0, "Steel Pipe": 40.0, "Encased Industrial Beam": 10.0, "Screws": 240.0},
-        },
         "Heavy Encased Frame": {
             "machine": "Manufacturer",
             "output_rate": 2.8125,
             "inputs": {"Modular Frame": 7.5, "Encased Industrial Beam": 9.375, "Steel Pipe": 33.75, "Concrete": 20.625},
+        },
+        "Standard": {
+            "machine": "Manufacturer",
+            "output_rate": 2.0,
+            "inputs": {"Modular Frame": 10.0, "Steel Pipe": 40.0, "Encased Industrial Beam": 10.0, "Screws": 240.0},
         },
         "Heavy Flexible Frame": {
             "machine": "Manufacturer",
@@ -120,23 +113,18 @@ RECIPE_REGISTRY = {
         },
     },
     "Radio Control Unit": {
-        "Standard": {
-            "machine": "Manufacturer",
-            "output_rate": 2.5,
-            "inputs": {"Aluminum Casing": 40.0, "Crystal Oscillator": 1.25, "Computer": 2.5},
-        },
         "Radio Control System": {
             "machine": "Manufacturer",
             "output_rate": 4.5,
             "inputs": {"Aluminum Casing": 90.0, "Crystal Oscillator": 1.5, "Circuit Board": 15.0, "Rubber": 45.0},
         },
-    },
-    "Computer": {
         "Standard": {
             "machine": "Manufacturer",
             "output_rate": 2.5,
-            "inputs": {"Circuit Board": 10.0, "Cable": 20.0, "Plastic": 40.0},
+            "inputs": {"Aluminum Casing": 40.0, "Crystal Oscillator": 1.25, "Computer": 2.5},
         },
+    },
+    "Computer": {
         "Caterium Computer": {
             "machine": "Manufacturer",
             "output_rate": 3.75,
@@ -147,31 +135,36 @@ RECIPE_REGISTRY = {
             "output_rate": 3.3333,
             "inputs": {"Circuit Board": 5.0, "Crystal Oscillator": 1.6667},
         },
-    },
-    "High-Speed Connector": {
         "Standard": {
             "machine": "Manufacturer",
-            "output_rate": 3.75,
-            "inputs": {"Quickwire": 210.0, "Cable": 37.5, "Circuit Board": 3.75},
+            "output_rate": 2.5,
+            "inputs": {"Circuit Board": 10.0, "Cable": 20.0, "Plastic": 40.0},
         },
+    },
+    "High-Speed Connector": {
         "Silicon High-Speed Connector": {
             "machine": "Manufacturer",
             "output_rate": 3.0,
             "inputs": {"Quickwire": 90.0, "Silica": 37.5, "Circuit Board": 3.0},
         },
+        "Standard": {
+            "machine": "Manufacturer",
+            "output_rate": 3.75,
+            "inputs": {"Quickwire": 210.0, "Cable": 37.5, "Circuit Board": 3.75},
+        },
     },
 
     # Tier 5-6
     "Motor": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 5.0,
-            "inputs": {"Rotor": 10.0, "Stator": 10.0},
-        },
         "Electric Motor": {
             "machine": "Assembler",
             "output_rate": 7.5,
             "inputs": {"Electromagnetic Control Rod": 3.75, "Rotor": 7.5},
+        },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 5.0,
+            "inputs": {"Rotor": 10.0, "Stator": 10.0},
         },
         "Rigor Motor": {
             "machine": "Manufacturer",
@@ -180,35 +173,30 @@ RECIPE_REGISTRY = {
         },
     },
     "Heat Sink": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 7.5,
-            "inputs": {"Alclad Aluminum Sheet": 37.5, "Copper Sheet": 22.5},
-        },
         "Silicon Heat Sink": {
             "machine": "Assembler",
             "output_rate": 10.0,
             "inputs": {"Aluminum Casing": 60.0, "Silica": 60.0},
         },
-    },
-    "AI Limiter": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 5.0,
-            "inputs": {"Copper Sheet": 25.0, "Quickwire": 100.0},
+            "output_rate": 7.5,
+            "inputs": {"Alclad Aluminum Sheet": 37.5, "Copper Sheet": 22.5},
         },
+    },
+    "AI Limiter": {
         "Plastic AI Limiter": {
             "machine": "Assembler",
             "output_rate": 8.0,
             "inputs": {"Quickwire": 120.0, "Plastic": 28.0},
         },
-    },
-    "Circuit Board": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 7.5,
-            "inputs": {"Copper Sheet": 15.0, "Plastic": 30.0},
+            "output_rate": 5.0,
+            "inputs": {"Copper Sheet": 25.0, "Quickwire": 100.0},
         },
+    },
+    "Circuit Board": {
         "Silicon Circuit Board": {
             "machine": "Assembler",
             "output_rate": 12.5,
@@ -219,6 +207,11 @@ RECIPE_REGISTRY = {
             "output_rate": 8.75,
             "inputs": {"Plastic": 12.5, "Quickwire": 37.5},
         },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 7.5,
+            "inputs": {"Copper Sheet": 15.0, "Plastic": 30.0},
+        },
         "Electrode Circuit Board": {
             "machine": "Assembler",
             "output_rate": 5.0,
@@ -226,53 +219,53 @@ RECIPE_REGISTRY = {
         },
     },
     "Electromagnetic Control Rod": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 4.0,
-            "inputs": {"Stator": 6.0, "AI Limiter": 4.0},
-        },
         "Electromagnetic Connection Rod": {
             "machine": "Assembler",
             "output_rate": 8.0,
             "inputs": {"Stator": 8.0, "High-Speed Connector": 4.0},
         },
-    },
-    "Encased Industrial Beam": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 6.0,
-            "inputs": {"Steel Beam": 24.0, "Concrete": 30.0},
+            "output_rate": 4.0,
+            "inputs": {"Stator": 6.0, "AI Limiter": 4.0},
         },
+    },
+    "Encased Industrial Beam": {
         "Encased Industrial Pipe": {
             "machine": "Assembler",
             "output_rate": 24.0,
             "inputs": {"Steel Pipe": 28.0, "Concrete": 20.0},
         },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 6.0,
+            "inputs": {"Steel Beam": 24.0, "Concrete": 30.0},
+        },
     },
     "Crystal Oscillator": {
-        "Standard": {
-            "machine": "Manufacturer",
-            "output_rate": 1.0,
-            "inputs": {"Quartz Crystal": 18.0, "Cable": 14.0, "Reinforced Iron Plate": 2.5},
-        },
         "Insulated Crystal Oscillator": {
             "machine": "Manufacturer",
             "output_rate": 1.875,
             "inputs": {"Quartz Crystal": 18.75, "Rubber": 13.125, "AI Limiter": 1.875},
         },
+        "Standard": {
+            "machine": "Manufacturer",
+            "output_rate": 1.0,
+            "inputs": {"Quartz Crystal": 18.0, "Cable": 14.0, "Reinforced Iron Plate": 2.5},
+        },
     },
 
     # Tier 3-4
     "Modular Frame": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 2.0,
-            "inputs": {"Reinforced Iron Plate": 3.0, "Iron Rod": 12.0},
-        },
         "Steeled Frame": {
             "machine": "Assembler",
             "output_rate": 3.0,
             "inputs": {"Reinforced Iron Plate": 2.0, "Steel Pipe": 10.0},
+        },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 2.0,
+            "inputs": {"Reinforced Iron Plate": 3.0, "Iron Rod": 12.0},
         },
         "Bolted Frame": {
             "machine": "Assembler",
@@ -281,33 +274,28 @@ RECIPE_REGISTRY = {
         },
     },
     "Reinforced Iron Plate": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 5.0,
-            "inputs": {"Iron Plate": 30.0, "Screws": 60.0},
-        },
         "Stitched Iron Plate": {
             "machine": "Assembler",
             "output_rate": 5.625,
             "inputs": {"Iron Plate": 18.75, "Wire": 37.5},
-        },
-        "Bolted Iron Plate": {
-            "machine": "Assembler",
-            "output_rate": 15.0,
-            "inputs": {"Iron Plate": 90.0, "Screws": 250.0},
         },
         "Adhered Iron Plate": {
             "machine": "Assembler",
             "output_rate": 3.75,
             "inputs": {"Iron Plate": 11.25, "Rubber": 3.75},
         },
-    },
-    "Rotor": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 4.0,
-            "inputs": {"Iron Rod": 20.0, "Screws": 100.0},
+            "output_rate": 5.0,
+            "inputs": {"Iron Plate": 30.0, "Screws": 60.0},
         },
+        "Bolted Iron Plate": {
+            "machine": "Assembler",
+            "output_rate": 15.0,
+            "inputs": {"Iron Plate": 90.0, "Screws": 250.0},
+        },
+    },
+    "Rotor": {
         "Steel Rotor": {
             "machine": "Assembler",
             "output_rate": 5.0,
@@ -318,29 +306,34 @@ RECIPE_REGISTRY = {
             "output_rate": 11.25,
             "inputs": {"Copper Sheet": 22.5, "Screws": 195.0},
         },
-    },
-    "Stator": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 5.0,
-            "inputs": {"Steel Pipe": 15.0, "Wire": 40.0},
+            "output_rate": 4.0,
+            "inputs": {"Iron Rod": 20.0, "Screws": 100.0},
         },
+    },
+    "Stator": {
         "Quickwire Stator": {
             "machine": "Assembler",
             "output_rate": 8.0,
             "inputs": {"Steel Pipe": 16.0, "Quickwire": 60.0},
         },
-    },
-    "Smart Plating": {
         "Standard": {
             "machine": "Assembler",
-            "output_rate": 2.0,
-            "inputs": {"Reinforced Iron Plate": 2.0, "Rotor": 2.0},
+            "output_rate": 5.0,
+            "inputs": {"Steel Pipe": 15.0, "Wire": 40.0},
         },
+    },
+    "Smart Plating": {
         "Plastic Smart Plating": {
             "machine": "Assembler",
             "output_rate": 5.0,
             "inputs": {"Reinforced Iron Plate": 2.5, "Rotor": 2.5, "Plastic": 7.5},
+        },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 2.0,
+            "inputs": {"Reinforced Iron Plate": 2.0, "Rotor": 2.0},
         },
     },
     "Versatile Framework": {
@@ -351,15 +344,15 @@ RECIPE_REGISTRY = {
         },
     },
     "Automated Wiring": {
-        "Standard": {
-            "machine": "Assembler",
-            "output_rate": 2.5,
-            "inputs": {"Stator": 2.5, "Cable": 50.0},
-        },
         "Automated Speed Wiring": {
             "machine": "Manufacturer",
             "output_rate": 7.5,
             "inputs": {"Stator": 3.75, "Wire": 75.0, "High-Speed Connector": 1.875},
+        },
+        "Standard": {
+            "machine": "Assembler",
+            "output_rate": 2.5,
+            "inputs": {"Stator": 2.5, "Cable": 50.0},
         },
     },
 }
@@ -396,33 +389,28 @@ TIER_MAP = {
 }
 
 
-def scan_unlocked_alternates_from_save(save_path: str) -> set[str]:
-    """Extract unlocked alternate recipe names from save file or history."""
+def load_live_unlocked_alternates(db_path: str = DEFAULT_DB_JSON) -> tuple[set[str], dict]:
+    """Extract unlocked recipes directly from AuditBot live world state."""
     unlocked = set()
-    # 1. Check known history metadata first if available
-    plan_meta_glob = "/home/flynn/satisfactory/plans/*/*/meta.json"
-    for p in glob.glob(plan_meta_glob):
+    meta = {}
+    if os.path.exists(db_path):
         try:
-            with open(p) as f:
+            with open(db_path, "r", encoding="utf-8") as f:
                 d = json.load(f)
-                unlocked.update(d.get("unlocked_alternates", []))
-        except Exception:
-            pass
+            ws = d.get("lastWorldState", {})
+            meta["saveName"] = ws.get("saveName", "unknown")
+            meta["sessionName"] = ws.get("sessionName", "zinctoniaDos")
+            meta["playDurationSeconds"] = ws.get("playDurationSeconds", 0)
+            meta["playHours"] = round(meta["playDurationSeconds"] / 3600, 1)
 
-    # 2. Add defaults that exist in this world
-    unlocked.update([
-        "Steeled Frame",
-        "Stitched Iron Plate",
-        "Steel Rotor",
-        "Encased Industrial Pipe",
-        "Silicon High-Speed Connector",
-        "Plastic AI Limiter",
-        "Solid Steel Ingot",
-        "Heavy Flexible Frame",
-        "Fine Concrete",
-        "Wet Concrete",
-    ])
-    return unlocked
+            for s in ws.get("schematics", []):
+                name = s.get("name", "")
+                clean = re.sub(r"^Alternate:\s*", "", name).strip()
+                unlocked.add(clean)
+        except Exception as exc:
+            meta["error"] = str(exc)
+
+    return unlocked, meta
 
 
 def pick_best_recipe(item_name: str, unlocked: set[str], no_screws: bool = True, overrides: dict[str, str] = None) -> tuple[str, dict]:
@@ -435,65 +423,31 @@ def pick_best_recipe(item_name: str, unlocked: set[str], no_screws: bool = True,
     if item_name in overrides and overrides[item_name] in available:
         return (overrides[item_name], available[overrides[item_name]])
 
-    # Candidate ranking preferences
-    preference_order = []
-    if item_name == "Radio Control Unit":
-        preference_order = ["Radio Control System", "Standard"]
-    elif item_name == "Turbo Motor":
-        preference_order = ["Standard", "Turbo Electric Motor", "Turbo Pressure Motor"]
-    elif item_name == "Heavy Modular Frame":
-        preference_order = ["Heavy Encased Frame", "Standard", "Heavy Flexible Frame"]
-    elif item_name == "Modular Frame":
-        preference_order = ["Steeled Frame", "Standard", "Bolted Frame"]
-    elif item_name == "Reinforced Iron Plate":
-        preference_order = ["Stitched Iron Plate", "Standard", "Adhered Iron Plate", "Bolted Iron Plate"]
-    elif item_name == "Rotor":
-        preference_order = ["Steel Rotor", "Standard", "Copper Rotor"]
-    elif item_name == "Encased Industrial Beam":
-        preference_order = ["Encased Industrial Pipe", "Standard"]
-    elif item_name == "High-Speed Connector":
-        preference_order = ["Silicon High-Speed Connector", "Standard"]
-    elif item_name == "AI Limiter":
-        preference_order = ["Plastic AI Limiter", "Standard"]
-    elif item_name == "Computer":
-        preference_order = ["Caterium Computer", "Crystal Computer", "Standard"]
-    elif item_name == "Circuit Board":
-        preference_order = ["Silicon Circuit Board", "Caterium Circuit Board", "Standard", "Electrode Circuit Board"]
-    else:
-        preference_order = list(available.keys())
-
-    for r_name in preference_order:
-        if r_name not in available:
-            continue
-        # Standard recipes are always unlocked
+    # Order of evaluation: alternates first if unlocked, standard as fallback
+    for r_name, r_spec in available.items():
         if r_name == "Standard":
-            # If no-screws is enabled, skip standard recipes that burn screws if possible
-            if no_screws and "Screws" in available[r_name]["inputs"]:
-                continue
-            return (r_name, available[r_name])
-
-        # Alternate recipe: must be unlocked
+            continue
+        # Check if this alternate is actually unlocked
         if r_name in unlocked:
-            if no_screws and "Screws" in available[r_name]["inputs"]:
+            if no_screws and "Screws" in r_spec["inputs"]:
                 continue
-            return (r_name, available[r_name])
+            return (r_name, r_spec)
 
-    # Fallback to standard
-    return ("Standard", available.get("Standard", next(iter(available.values()))))
+    # If no valid alternate is unlocked, use standard
+    std = available.get("Standard")
+    if std:
+        return ("Standard", std)
+
+    first_key = next(iter(available))
+    return (first_key, available[first_key])
 
 
 def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overrides: dict[str, str] = None) -> list[dict]:
     """Compute demand, whole-machine allocations, and surplus for all tiered items."""
-    # Base Project Assembly Demands:
-    # ADS: 0.75/min -> ACU: 1.5, Supercomputer: 0.75
-    # MFG: 1.00/min -> Versatile Framework: 2.5, EM Control Rod: 1.0
-    # TPR: 1.00/min -> Mod Engine: 2.5, Turbo Motor: 1.0, Cooling System: 3.0, Fused Frame: 1.0
-    # Nuclear Pasta: 0.50/min -> Pressure Cube: 0.5, Copper Powder: 100.0
-
     gross_demand = defaultdict(float)
     consumers = defaultdict(list)
 
-    # Initial demands from Space Elevator Parts
+    # Initial demands from Space Elevator Parts (Phase 4)
     gross_demand["Adaptive Control Unit"] += 1.5
     consumers["Adaptive Control Unit"].append("Assembly Director System (1.50)")
 
@@ -521,7 +475,6 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
     gross_demand["Pressure Conversion Cube"] += 0.5
     consumers["Pressure Conversion Cube"].append("Nuclear Pasta (0.50)")
 
-    # Processing in topological tier order from Tier 8 down to Tier 3
     order = [
         "Pressure Conversion Cube",
         "Turbo Motor",
@@ -558,12 +511,10 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
 
         machine_type = r_spec["machine"]
         unit_rate = r_spec["output_rate"]
-        # Integer machines required (whole-machine 100% doctrine)
         machines = math.ceil(demand / unit_rate) if unit_rate > 0 else 0
         total_output = machines * unit_rate
         surplus = total_output - demand
 
-        # Feed inputs into downstream items
         for input_item, input_rate in r_spec["inputs"].items():
             if input_item in RECIPE_REGISTRY:
                 flow = input_rate * machines
@@ -579,6 +530,7 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
             "machines": machines,
             "machine_type": machine_type,
             "recipe_used": r_name,
+            "is_alternate": r_name != "Standard",
             "consumers": consumers[item],
         })
 
@@ -588,19 +540,36 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
 def main():
     parser = argparse.ArgumentParser(description="Satisfactory Production Targets Generator")
     parser.add_argument("--world", default="zinctoniaDos", help="World/session name")
-    parser.add_argument("--save", help="Path to specific save file")
+    parser.add_argument("--db", default=DEFAULT_DB_JSON, help="Path to AuditBot live db.json")
     parser.add_argument("--no-screws", action="store_true", default=True, help="Enforce zero-screws doctrine")
     parser.add_argument("--allow-screws", dest="no_screws", action="store_false")
     parser.add_argument("--sort", choices=["abc", "tier"], default="abc", help="Sort order of output")
-    parser.add_argument("--unlocked", nargs="*", help="List of additional unlocked alternate recipes")
+    parser.add_argument("--list-unlocked", action="store_true", help="List all unlocked alternate recipes from save")
+    parser.add_argument("--unlocked", nargs="*", help="Manually inject unlocked alternates")
+    parser.add_argument("--lock", nargs="*", help="Simulate a recipe being LOCKED (to see base standard)")
     parser.add_argument("--override", nargs="*", help="Recipe overrides (Item=RecipeName)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
 
     args = parser.parse_args()
 
-    unlocked = scan_unlocked_alternates_from_save(args.save)
+    unlocked, meta = load_live_unlocked_alternates(args.db)
     if args.unlocked:
         unlocked.update(args.unlocked)
+    if args.lock:
+        for lk in args.lock:
+            unlocked.discard(lk)
+
+    if args.list_unlocked:
+        print(f"Unlocked Alternate Recipes on {meta.get('saveName', args.world)} ({meta.get('playHours', '?')}h playtime):")
+        alt_candidates = []
+        for cat in RECIPE_REGISTRY.values():
+            for r in cat:
+                if r != "Standard":
+                    alt_candidates.append(r)
+        for r in sorted(unlocked):
+            is_relevant = " (Affects Tiered Targets)" if r in alt_candidates else ""
+            print(f" • {r}{is_relevant}")
+        return
 
     overrides = {}
     if args.override:
@@ -614,22 +583,26 @@ def main():
     if args.sort == "abc":
         targets.sort(key=lambda x: x["name"].lower())
     elif args.sort == "tier":
-        # Group by tier
         tier_order = {"Tier 8": 0, "Tier 7": 1, "Tier 5-6": 2, "Tier 3-4": 3}
         targets.sort(key=lambda x: (tier_order.get(x["tier"], 9), x["name"].lower()))
 
     if args.json:
-        print(json.dumps(targets, indent=2))
+        print(json.dumps({"meta": meta, "targets": targets}, indent=2))
         return
 
-    print(f"# Satisfactory Production Targets — World: {args.world}")
-    print(f"Doctrine: 100% Whole Machines | Zero-Screws: {args.no_screws}\n")
-    print("| Item Name | Minimum Demand | Target Output (100%) | Natural Surplus | Machines Allocated | Recipe Used | Primary Consumers |")
+    play_str = f"({meta['playHours']}h playtime)" if "playHours" in meta else ""
+    save_str = meta.get("saveName", args.world)
+    print(f"# Satisfactory Production Targets — World: {meta.get('sessionName', args.world)}")
+    print(f"Live Save: `{save_str}` {play_str} | Doctrine: 100% Whole Machines | Zero-Screws: {args.no_screws}")
+    alts_used = [t['recipe_used'] for t in targets if t['is_alternate']]
+    print(f"Active Unlocked Alternates Applied ({len(alts_used)}): {', '.join(sorted(set(alts_used)))}\n")
+
+    print("| Item Name | Minimum Demand | Target Output (100%) | Natural Surplus | Machines Allocated | Recipe Selected | Primary Consumers |")
     print("| :--- | :---: | :---: | :---: | :--- | :--- | :--- |")
     for t in targets:
         surplus_str = f"+{t['surplus']:.2f} / min" if t['surplus'] > 0.001 else "Exact"
         consumers_str = ", ".join(t["consumers"][:2]) + ("..." if len(t["consumers"]) > 2 else "")
-        recipe_label = f"*{t['recipe_used']}*" if t['recipe_used'] != "Standard" else "Standard"
+        recipe_label = f"**{t['recipe_used']}**" if t['is_alternate'] else "Standard"
         print(f"| **{t['name']}** | {t['demand']:.2f} / min | **{t['output']:.2f} / min** | **{surplus_str}** | {t['machines']}× {t['machine_type']} | {recipe_label} | {consumers_str} |")
 
 
