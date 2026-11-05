@@ -6,27 +6,24 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-from nonbase_report import CORE_TARGETS, BASE_ITEMS, analyze_world
+from nonbase_report import BASE_ITEMS, analyze_world, solved_targets
 
 class TestNonbaseReport(unittest.TestCase):
-    def test_core_targets_present(self):
-        self.assertIn("Reinforced Iron Plate", CORE_TARGETS)
-        self.assertIn("Modular Frame", CORE_TARGETS)
-        self.assertIn("Motor", CORE_TARGETS)
-        self.assertIn("Rotor", CORE_TARGETS)
-        self.assertIn("Stator", CORE_TARGETS)
-        self.assertIn("Encased Industrial Beam", CORE_TARGETS)
-        self.assertIn("Heavy Modular Frame", CORE_TARGETS)
+    def test_targets_are_nonbase(self):
+        targets = solved_targets()
+        for item in ["Reinforced Iron Plate", "Modular Frame", "Motor", "Rotor", "Stator",
+                     "Encased Industrial Beam", "Heavy Modular Frame"]:
+            self.assertIn(item, targets)
+        # Base items must never be solved targets
+        self.assertFalse(BASE_ITEMS & set(targets))
 
-    def test_base_items_excluded(self):
-        # Base items should not be in core targets
-        for base in ["Iron Plate", "Wire", "Cable", "Concrete", "Steel Pipe", "Steel Beam"]:
-            self.assertIn(base, BASE_ITEMS)
-            self.assertNotIn(base, CORE_TARGETS)
+    def test_whole_machines(self):
+        for t in solved_targets().values():
+            self.assertGreaterEqual(t["output"], t["demand"] - 1e-9)
 
     def test_analyze_world(self):
         try:
-            results = analyze_world(world_name="LFG", include_all=False)
+            results = analyze_world(include_all=False)
             self.assertGreater(len(results), 0)
             items = [r["item"] for r in results]
             self.assertIn("Rotor", items)

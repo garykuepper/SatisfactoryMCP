@@ -531,6 +531,7 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
             "machine_type": machine_type,
             "recipe_used": r_name,
             "is_alternate": r_name != "Standard",
+            "inputs": list(r_spec["inputs"]),
             "consumers": consumers[item],
         })
 
