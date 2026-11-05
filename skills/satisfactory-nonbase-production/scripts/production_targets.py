@@ -389,6 +389,42 @@ TIER_MAP = {
 }
 
 
+def load_save_unlocked(world: str | None = None, save: str | None = None) -> tuple[set[str], set[str], dict]:
+    """Read the save itself: unlocked alternate names, items with an unlocked recipe, and meta.
+
+    This is the source of truth. The AuditBot db.json is only a fallback when the save
+    cannot be read (satisfactory_mcp not importable, or no such world).
+    """
+    _src = Path(__file__).resolve().parents[3] / "src"
+    if _src.exists() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+    from satisfactory_mcp.interfaces.mcp import app
+
+    st = app.load_world(world=world, save=save) if save else app.load_world(world=world)
+    game = st.game
+    avail = set(st.available_recipe_ids)
+    alts: set[str] = set()
+    items: set[str] = set()
+    for rid in avail:
+        rec = game.recipes.get(rid)
+        if rec is None:
+            continue
+        if rec.name.startswith("Alternate:"):
+            alts.add(re.sub(r"^Alternate:\s*", "", rec.name).strip())
+        if rec.kind == "part":
+            for flow in rec.products:
+                items.add(game.item_name(flow.item))
+    hdr = st.header
+    meta = {
+        "source": "save",
+        "saveName": hdr.get("filename", "unknown"),
+        "sessionName": hdr.get("session_name", world or "unknown"),
+        "playDurationSeconds": hdr.get("play_duration_s", 0),
+        "playHours": round(hdr.get("play_duration_s", 0) / 3600, 1),
+    }
+    return alts, items, meta
+
+
 def load_live_unlocked_alternates(db_path: str = DEFAULT_DB_JSON) -> tuple[set[str], dict]:
     """Extract unlocked recipes directly from AuditBot live world state."""
     unlocked = set()
@@ -540,7 +576,7 @@ def solve_phase4_targets(unlocked_alts: set[str], no_screws: bool = True, overri
 
 def main():
     parser = argparse.ArgumentParser(description="Satisfactory Production Targets Generator")
-    parser.add_argument("--world", default="zinctoniaDos", help="World/session name")
+    parser.add_argument("--world", default=None, help="World/session name (default: the save reader's default world)")
     parser.add_argument("--db", default=DEFAULT_DB_JSON, help="Path to AuditBot live db.json")
     parser.add_argument("--no-screws", action="store_true", default=True, help="Enforce zero-screws doctrine")
     parser.add_argument("--allow-screws", dest="no_screws", action="store_false")
@@ -549,11 +585,18 @@ def main():
     parser.add_argument("--unlocked", nargs="*", help="Manually inject unlocked alternates")
     parser.add_argument("--lock", nargs="*", help="Simulate a recipe being LOCKED (to see base standard)")
     parser.add_argument("--override", nargs="*", help="Recipe overrides (Item=RecipeName)")
+    parser.add_argument("--all", action="store_true", help="Also list items whose recipe is not unlocked yet")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
 
     args = parser.parse_args()
 
-    unlocked, meta = load_live_unlocked_alternates(args.db)
+    unlocked_items: set[str] | None = None
+    try:
+        unlocked, unlocked_items, meta = load_save_unlocked(args.world)
+    except Exception as exc:
+        print(f"warning: could not read the save ({exc}); falling back to {args.db}. "
+              "Locked items cannot be filtered.", file=sys.stderr)
+        unlocked, meta = load_live_unlocked_alternates(args.db)
     if args.unlocked:
         unlocked.update(args.unlocked)
     if args.lock:
@@ -581,6 +624,11 @@ def main():
 
     targets = solve_phase4_targets(unlocked, no_screws=args.no_screws, overrides=overrides)
 
+    locked = []
+    if unlocked_items is not None and not args.all:
+        locked = sorted(t["name"] for t in targets if t["name"] not in unlocked_items)
+        targets = [t for t in targets if t["name"] in unlocked_items]
+
     if args.sort == "abc":
         targets.sort(key=lambda x: x["name"].lower())
     elif args.sort == "tier":
@@ -588,7 +636,7 @@ def main():
         targets.sort(key=lambda x: (tier_order.get(x["tier"], 9), x["name"].lower()))
 
     if args.json:
-        print(json.dumps({"meta": meta, "targets": targets}, indent=2))
+        print(json.dumps({"meta": meta, "targets": targets, "locked": locked}, indent=2))
         return
 
     play_str = f"({meta['playHours']}h playtime)" if "playHours" in meta else ""
@@ -605,6 +653,8 @@ def main():
         consumers_str = ", ".join(t["consumers"][:2]) + ("..." if len(t["consumers"]) > 2 else "")
         recipe_label = f"**{t['recipe_used']}**" if t['is_alternate'] else "Standard"
         print(f"| **{t['name']}** | {t['demand']:.2f} / min | **{t['output']:.2f} / min** | **{surplus_str}** | {t['machines']}× {t['machine_type']} | {recipe_label} | {consumers_str} |")
+    if locked:
+        print(f"\nNot unlocked yet (hidden; --all shows them): {', '.join(locked)}")
 
 
 if __name__ == "__main__":

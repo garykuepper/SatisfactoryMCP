@@ -45,6 +45,8 @@ python3 skills/satisfactory-nonbase-production/scripts/production_targets.py [--
 | `--lock R ...` | none | Pretend these are locked. |
 | `--override "Item=Recipe"` | none | Force a recipe, e.g. `"Computer=Crystal Computer"`. |
 | `--allow-screws` | off | Allow screw recipes. |
+| `--world NAME` | save reader default | World to read. The save is read first for unlocked recipes; AuditBot `db.json` is only a fallback (locked items then cannot be filtered). |
+| `--all` | off | Also list items whose recipe is not unlocked yet; by default they are hidden and named under the table. |
 | `--list-unlocked` | off | List the save's unlocked alternates, flagging the ones that change a target. |
 | `--json` | off | JSON instead of a table. |
 
