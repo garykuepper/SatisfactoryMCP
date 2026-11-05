@@ -38,6 +38,9 @@ Planned as 0.2.0.
 
 ### Added
 
+- Agent skill `satisfactory-nonbase-production` (in `skills/`) reports the multi-input parts
+  (Rotor, Stator, Modular Frame, Motor and the like) against Space Elevator plus Dimensional
+  Depot targets, comparing configured rate with the save's last five minutes of production.
 - Map generator: `python -m mapgen calibrate` derives the game-painted style's display colours
   from the game install: the level's noon light and its atmosphere volumes, the baked ground,
   the textures and the tree crowns, through a model of the game's camera. It writes

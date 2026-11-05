@@ -130,7 +130,7 @@ answer says which file it read.
 
 ### Agent skills
 
-`skills/` holds two Claude Code skills that run on the same save reading. Copy or symlink a
+`skills/` holds three Claude Code skills that run on the same save reading. Copy or symlink a
 folder into a project's `.claude/skills/` to use it:
 
 - **satisfactory-alt-recipes** ranks unlocked and pending MAM hard-drive alternates against a
@@ -139,6 +139,11 @@ folder into a project's `.claude/skills/` to use it:
 - **satisfactory-surplus** reads a world's save history and shows how storage moved each
   session: material placed with the build gun against everything else. It also sizes each
   build item's surplus from that. `SATISFACTORY_SAVE_HISTORY` adds folders of older copies.
+- **satisfactory-nonbase-production** reports the multi-input parts (Rotor, Stator, Modular
+  Frame, Motor and the like, not plates, wire or cable) against Space Elevator plus
+  Dimensional Depot targets, comparing configured rate with what the save recorded in its last
+  five minutes. `--world`, `--all` and `--json` select the save, widen the list and change the
+  output.
 
 Run them from this checkout with `uv run python skills/<name>/scripts/...`; each `SKILL.md`
 has the details.
